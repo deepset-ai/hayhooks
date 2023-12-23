@@ -26,6 +26,8 @@ classifiers = [
 ]
 dependencies = [
   "click",
+  "fastapi",
+  "uvicorn",
 ]
 
 [project.urls]
