@@ -1,0 +1,19 @@
+components:
+  double:
+    init_parameters: {}
+    type: haystack.testing.sample_components.double.Double
+  first_addition:
+    init_parameters:
+      add: 2
+    type: haystack.testing.sample_components.add_value.AddFixedValue
+  second_addition:
+    init_parameters:
+      add: 1
+    type: haystack.testing.sample_components.add_value.AddFixedValue
+connections:
+- receiver: double.value
+  sender: first_addition.result
+- receiver: second_addition.value
+  sender: double.value
+max_loops_allowed: 100
+metadata: {}

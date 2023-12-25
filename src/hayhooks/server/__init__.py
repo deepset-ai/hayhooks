@@ -1,8 +1,4 @@
-from fastapi import FastAPI
+from hayhooks.server.app import app
+from hayhooks.server.handlers import *
 
-app = FastAPI()
-
-
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
+__all__ = ["app"]

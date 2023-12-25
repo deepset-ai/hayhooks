@@ -11,9 +11,8 @@ from hayhooks.cli.status import status
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
 @click.version_option(version=__version__, prog_name="Hayhooks")
-@click.pass_context
-def hayhooks(ctx):
-    click.echo(ctx.get_help())
+def hayhooks():
+    pass
 
 
 hayhooks.add_command(run)
