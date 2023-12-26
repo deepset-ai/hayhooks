@@ -8,7 +8,7 @@ class _PipelineRegistry:
     def __init__(self) -> None:
         self._pipelines: dict[str, Pipeline] = {}
 
-    def add(self, name: str, source: str) -> None:
+    def add(self, name: str, source: str) -> Pipeline:
         if name in self._pipelines:
             msg = f"A pipeline with name {name} is already in the registry."
             raise ValueError(msg)
@@ -18,6 +18,8 @@ class _PipelineRegistry:
         except PipelineError as e:
             msg = f"Unable to parse Haystack Pipeline {name}: {e}"
             raise ValueError(msg) from e
+
+        return self._pipelines[name]
 
     def get(self, name: str) -> Optional[Pipeline]:
         return self._pipelines.get(name)
