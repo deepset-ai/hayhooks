@@ -48,6 +48,9 @@ async def serve(pipeline_def: PipelineDefinition):
 
     PipelineRunResponse = create_model('PipelineRunResponse', **response_model)
 
+    # There's no way in FastAPI to define the type of the request body other than annotating
+    # the endpoint handler. We have to ignore the type here to make FastAPI happy while
+    # silencing static type checkers (that would have good reasons to trigger!).
     async def pipeline_run(pipeline_run_req: PipelineRunRequest) -> JSONResponse:  # type: ignore
         output = pipe.run(data=pipeline_run_req.dict())
         return JSONResponse(PipelineRunResponse(**output).model_dump(), status_code=200)
