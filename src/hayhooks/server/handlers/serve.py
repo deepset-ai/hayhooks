@@ -1,5 +1,4 @@
-from typing import ForwardRef
-
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, create_model
 
@@ -14,7 +13,10 @@ class PipelineDefinition(BaseModel):
 
 @app.post("/serve")
 async def serve(pipeline_def: PipelineDefinition):
-    pipe = registry.add(pipeline_def.name, pipeline_def.source_code)
+    try:
+        pipe = registry.add(pipeline_def.name, pipeline_def.source_code)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=f"{e}") from e
 
     request_model = {}
     for component_name, inputs in pipe.inputs().items():
@@ -65,4 +67,4 @@ async def serve(pipeline_def: PipelineDefinition):
     app.openapi_schema = None
     app.setup()
 
-    return {"pipeline_name": "foo"}
+    return {"status": "ok"}
