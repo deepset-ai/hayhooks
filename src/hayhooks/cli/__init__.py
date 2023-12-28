@@ -5,7 +5,7 @@ import click
 
 from hayhooks.__about__ import __version__
 from hayhooks.cli.run import run
-from hayhooks.cli.serve import serve
+from hayhooks.cli.deploy import deploy
 from hayhooks.cli.status import status
 
 
@@ -16,5 +16,5 @@ def hayhooks():
 
 
 hayhooks.add_command(run)
-hayhooks.add_command(serve)
+hayhooks.add_command(deploy)
 hayhooks.add_command(status)

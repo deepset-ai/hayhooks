@@ -11,8 +11,8 @@ class PipelineDefinition(BaseModel):
     source_code: str
 
 
-@app.post("/serve")
-async def serve(pipeline_def: PipelineDefinition):
+@app.post("/deploy")
+async def deploy(pipeline_def: PipelineDefinition):
     try:
         pipe = registry.add(pipeline_def.name, pipeline_def.source_code)
     except ValueError as e:
@@ -67,4 +67,4 @@ async def serve(pipeline_def: PipelineDefinition):
     app.openapi_schema = None
     app.setup()
 
-    return {"status": "ok"}
+    return {"name": pipeline_def.name}

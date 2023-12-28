@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "hayhooks"
 dynamic = ["version"]
-description = 'Grab and serve Haystack pipelines'
+description = 'Grab and deploy Haystack pipelines'
 readme = "README.md"
 requires-python = ">=3.7"
 license = "Apache-2.0"
