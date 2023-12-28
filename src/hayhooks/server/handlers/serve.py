@@ -22,13 +22,13 @@ async def serve(pipeline_def: PipelineDefinition):
         # {
         #     'first_addition': { <-- Component Name
         #         'value': {'type': <class 'int'>, 'is_mandatory': True}, <-- Input
-        #         'add': {'type': typing.Optional[int], 'is_mandatory': False}, <-- Input
+        #         'add': {'type': typing.Optional[int], 'is_mandatory': False, 'default_value': None}, <-- Input
         #     },
         #     'second_addition': {'add': {'type': typing.Optional[int], 'is_mandatory': False}},
         # }
         component_model = {}
         for name, typedef in inputs.items():
-            component_model[name] = (typedef["type"], ...)
+            component_model[name] = (typedef["type"], typedef.get("default_value", ...))
         request_model[component_name] = (create_model('ComponentParams', **component_model), ...)
 
     PipelineRunRequest = create_model('PipelineRunRequest', **request_model)
