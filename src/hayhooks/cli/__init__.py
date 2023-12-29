@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import click
 
-from hayhooks.__about__ import __version__
 from hayhooks.cli.run import run
 from hayhooks.cli.deploy import deploy
 from hayhooks.cli.status import status
@@ -11,7 +10,7 @@ from hayhooks.cli.undeploy import undeploy
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
-@click.version_option(version=__version__, prog_name="Hayhooks")
+@click.version_option(prog_name="Hayhooks")
 def hayhooks():
     pass
 

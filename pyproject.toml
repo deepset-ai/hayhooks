@@ -149,9 +149,7 @@ ban-relative-imports = "all"
 source_pkgs = ["hayhooks", "tests"]
 branch = true
 parallel = true
-omit = [
-  "src/hayhooks/__about__.py",
-]
+omit = []
 
 [tool.coverage.paths]
 hayhooks = ["src/hayhooks", "*/hayhooks/src/hayhooks"]
