@@ -21,6 +21,10 @@ class _PipelineRegistry:
 
         return self._pipelines[name]
 
+    def remove(self, name: str):
+        if name in self._pipelines:
+            del self._pipelines[name]
+
     def get(self, name: str) -> Optional[Pipeline]:
         return self._pipelines.get(name)
 
