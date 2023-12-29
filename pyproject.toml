@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -40,7 +40,7 @@ Source = "https://github.com/unknown/hayhooks"
 hayhooks = "hayhooks.cli:hayhooks"
 
 [tool.hatch.version]
-path = "src/hayhooks/__about__.py"
+source = "vcs"
 
 [tool.hatch.envs.default]
 dependencies = [
