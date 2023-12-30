@@ -64,7 +64,7 @@ $ curl http://localhost:1416/draw/test_pipeline_01 --output test_pipeline_01.png
 
 The downloaded image should look like this:
 
-![test pipeline](img/test_pipeline_01)
+![test pipeline](img/test_pipeline_01.png)
 
 
 ## License
