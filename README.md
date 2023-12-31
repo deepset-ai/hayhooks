@@ -13,6 +13,7 @@
     - [Check Hayhooks status](#check-hayhooks-status)
     - [Deploy a Haystack pipeline](#deploy-a-haystack-pipeline)
     - [Have a look at the API schema](#have-a-look-at-the-api-schema)
+    - [Run your pipeline](#run-your-pipeline)
   - [License](#license)
 
 ## Quick start
@@ -96,6 +97,23 @@ And another one for the Response, where we'll receive the pipeline results:
 Test_pipeline_01RunResponse
     double
         value* integer
+```
+
+### Run your pipeline
+
+At this point, knowing the schema we can run our pipeline with an HTTP client:
+
+```console
+$ curl -X 'POST' \
+  'http://localhost:1416/test_pipeline_01' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "first_addition": {
+    "value": 19
+  }
+}'
+{"double":{"value":42}}%
 ```
 
 
