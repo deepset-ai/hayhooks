@@ -13,7 +13,10 @@
     - [Check Hayhooks status](#check-hayhooks-status)
     - [Deploy a Haystack pipeline](#deploy-a-haystack-pipeline)
     - [Have a look at the API schema](#have-a-look-at-the-api-schema)
-    - [Run your pipeline](#run-your-pipeline)
+    - [Run the pipeline](#run-the-pipeline)
+    - [Undeploy the pipeline](#undeploy-the-pipeline)
+  - [Docker setup](#docker-setup)
+  - [Next steps](#next-steps)
   - [License](#license)
 
 ## Quick start
@@ -99,7 +102,7 @@ Test_pipeline_01RunResponse
         value* integer
 ```
 
-### Run your pipeline
+### Run the pipeline
 
 At this point, knowing the schema we can run our pipeline with an HTTP client:
 
@@ -113,8 +116,44 @@ $ curl -X 'POST' \
     "value": 19
   }
 }'
+
 {"double":{"value":42}}%
 ```
+
+### Undeploy the pipeline
+
+Hayhooks tries to to as much bookkeeping as possible without restarting the server. For example, to free up
+resources you can undeploy the pipeline directly from the client:
+
+```console
+$ hayhooks undeploy test_pipeline_01
+Pipeline successfully undeployed
+```
+
+## Docker setup
+
+Instead of launching the server in a separate shell like we did in the Quick Start, you can run it in a Docker
+container using the `Dockerfile` from this repo. First, build the image locally:
+
+```console
+$ docker build . -t hayhooks
+...
+```
+
+Then run it in background:
+
+```console
+$ docker run --rm -p 1416:1416 hayhooks
+...
+```
+## Next steps
+
+At this stage Hayhooks is just a prototype, the natural next steps would be:
+
+- Improve server configuration management (easy)
+- Add CLI configuration profiles, so it's easy to address different servers (easy)
+- Manage pipeline dependencies: one way could be adding the required packages in the pipeline's metadata and let the
+  server handle installation (complex)
 
 
 ## License
