@@ -33,7 +33,7 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
             component_model[name] = (typedef["type"], typedef.get("default_value", ...))
         request_model[component_name] = (create_model('ComponentParams', **component_model, __config__=config), ...)
 
-    PipelineRunRequest = create_model(f'{pipeline_def.name.capitalize()}RunRequest', **request_model)
+    PipelineRunRequest = create_model(f'{pipeline_def.name.capitalize()}RunRequest', **request_model, __config__=config)
 
     response_model = {}
     for component_name, outputs in pipe.outputs().items():
@@ -48,7 +48,9 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
             component_model[name] = (typedef["type"], ...)
         response_model[component_name] = (create_model('ComponentParams', **component_model, __config__=config), ...)
 
-    PipelineRunResponse = create_model(f'{pipeline_def.name.capitalize()}RunResponse', **response_model)
+    PipelineRunResponse = create_model(
+        f'{pipeline_def.name.capitalize()}RunResponse', **response_model, __config__=config
+    )
 
     # There's no way in FastAPI to define the type of the request body other than annotating
     # the endpoint handler. We have to ignore the type here to make FastAPI happy while
