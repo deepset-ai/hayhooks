@@ -16,6 +16,8 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
     except ValueError as e:
         raise HTTPException(status_code=409, detail=f"{e}") from e
 
+    config = ConfigDict(arbitrary_types_allowed=True)
+
     request_model = {}
     for component_name, inputs in pipe.inputs().items():
         # Inputs have this form:
@@ -26,7 +28,6 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
         #     },
         #     'second_addition': {'add': {'type': typing.Optional[int], 'is_mandatory': False}},
         # }
-        config = ConfigDict(arbitrary_types_allowed=True)
         component_model = {}
         for name, typedef in inputs.items():
             component_model[name] = (typedef["type"], typedef.get("default_value", ...))
@@ -45,7 +46,7 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
         component_model = {}
         for name, typedef in outputs.items():
             component_model[name] = (typedef["type"], ...)
-        response_model[component_name] = (create_model('ComponentParams', **component_model), ...)
+        response_model[component_name] = (create_model('ComponentParams', **component_model, __config__=config), ...)
 
     PipelineRunResponse = create_model(f'{pipeline_def.name.capitalize()}RunResponse', **response_model)
 
