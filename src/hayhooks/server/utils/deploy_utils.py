@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, create_model, ConfigDict
 
 from hayhooks.server.pipelines import registry
 
@@ -26,10 +26,11 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
         #     },
         #     'second_addition': {'add': {'type': typing.Optional[int], 'is_mandatory': False}},
         # }
+        config = ConfigDict(arbitrary_types_allowed=True)
         component_model = {}
         for name, typedef in inputs.items():
             component_model[name] = (typedef["type"], typedef.get("default_value", ...))
-        request_model[component_name] = (create_model('ComponentParams', **component_model), ...)
+        request_model[component_name] = (create_model('ComponentParams', **component_model, __config__=config), ...)
 
     PipelineRunRequest = create_model(f'{pipeline_def.name.capitalize()}RunRequest', **request_model)
 
