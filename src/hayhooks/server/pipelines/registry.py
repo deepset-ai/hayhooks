@@ -1,5 +1,3 @@
-from typing import Any
-
 from haystack.pipeline import Pipeline, Optional
 from haystack.core.errors import PipelineError
 
