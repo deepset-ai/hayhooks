@@ -1,6 +1,6 @@
 from typing import get_args, get_origin, List
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, create_model, ConfigDict
 from haystack.dataclasses import Document
 
 
@@ -26,6 +26,8 @@ def get_request_model(pipeline_name: str, pipeline_inputs):
     }
     """
     request_model = {}
+    config = ConfigDict(arbitrary_types_allowed=True)
+
     for component_name, inputs in pipeline_inputs.items():
 
         component_model = {}
@@ -46,7 +48,9 @@ def get_response_model(pipeline_name: str, pipeline_outputs):
     }
     """
     response_model = {}
-    for component_name, outputs in pipe.outputs().items():
+    config = ConfigDict(arbitrary_types_allowed=True)
+
+    for component_name, outputs in pipeline_outputs.items():
         component_model = {}
         for name, typedef in outputs.items():
             output_type = typedef["type"]

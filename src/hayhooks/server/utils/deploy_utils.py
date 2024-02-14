@@ -1,16 +1,14 @@
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import ConfigDict
+
 
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.models import (
-    HaystackDocument,
     PipelineDefinition,
     get_request_model,
     get_response_model,
     convert_component_output,
 )
-from haystack.dataclasses import Document
 
 
 def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
@@ -18,8 +16,6 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
         pipe = registry.add(pipeline_def.name, pipeline_def.source_code)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=f"{e}") from e
-
-    config = ConfigDict(arbitrary_types_allowed=True)
 
     PipelineRunRequest = get_request_model(pipeline_def.name, pipe.inputs())
     PipelineRunResponse = get_response_model(pipeline_def.name, pipe.outputs())
