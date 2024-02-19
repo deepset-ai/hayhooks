@@ -133,19 +133,21 @@ Pipeline successfully undeployed
 ## Docker setup
 
 Instead of launching the server in a separate shell like we did in the Quick Start, you can run it in a Docker
-container using the `Dockerfile` from this repo. First, build the image locally:
+container :
 
 ```console
-$ docker build . -t hayhooks
+$ docker run --rm -p 1416:1416 deepset/hayhooks:main
 ...
 ```
 
-Then run it in background:
+If you want to build the container yourself:
 
 ```console
-$ docker run --rm -p 1416:1416 hayhooks
+$ cd docker
+$ docker buildx bake
 ...
 ```
+
 ## Next steps
 
 At this stage Hayhooks is just a prototype, the natural next steps would be:
