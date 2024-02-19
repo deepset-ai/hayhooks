@@ -41,5 +41,4 @@ jobs:
           HAYSTACK_VERSION: ${{ steps.meta.outputs.version }}
         with:
           workdir: docker
-          targets: hayhooks
           push: true
