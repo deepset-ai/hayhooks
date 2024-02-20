@@ -1,0 +1,14 @@
+components:
+  hello:
+    init_parameters: {}
+    type: hayhooks.testing.components.Hello
+  fstring:
+    init_parameters:
+      template: "This is the greeting: {greeting}!"
+      variables: ["greeting"]
+    type: haystack.testing.sample_components.fstring.FString
+connections:
+- receiver: fstring.greeting
+  sender: hello.output
+max_loops_allowed: 100
+metadata: {}

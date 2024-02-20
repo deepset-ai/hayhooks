@@ -1,0 +1,27 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: hayhooks
+  labels:
+    app: haystack
+spec:
+  containers:
+  # We use the unstable release to keep this example fresh and relevant.
+  - image: deepset/hayhooks:main
+    name: hayhooks
+    # Since we're using the moving tag `main`, we have to always pull
+    # to be sure we're getting the latest.
+    imagePullPolicy: Always
+
+---
+
+kind: Service
+apiVersion: v1
+metadata:
+  name: haystack-service
+spec:
+  selector:
+    app: haystack
+  ports:
+  # Default port used by the Hayhooks Docker image
+  - port: 1416
