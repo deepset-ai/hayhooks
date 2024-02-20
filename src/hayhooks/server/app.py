@@ -12,15 +12,17 @@ def create_app():
     app = FastAPI()
 
     # Deploy all pipelines in the pipelines directory
-    pipelines_dir = os.environ.get("PIPELINES_DIR")
-    for pipeline_file_path in glob.glob(f"{pipelines_dir}/*.yml"):
-        name = Path(pipeline_file_path).stem
-        with open(pipeline_file_path, "r") as pipeline_file:
-            source_code = pipeline_file.read()
+    pipelines_dir = os.environ.get("HAYHOOKS_PIPELINES_DIR")
+    if pipelines_dir:
+        logger.info(f"Pipelines dir set to: {pipelines_dir}")
+        for pipeline_file_path in glob.glob(f"{pipelines_dir}/*.yml"):
+            name = Path(pipeline_file_path).stem
+            with open(pipeline_file_path, "r") as pipeline_file:
+                source_code = pipeline_file.read()
 
-        pipeline_defintion = PipelineDefinition(name=name, source_code=source_code)
-        deployed_pipeline = deploy_pipeline_def(app, pipeline_defintion)
-        logger.info(f"Deployed pipeline: {deployed_pipeline['name']}")
+            pipeline_defintion = PipelineDefinition(name=name, source_code=source_code)
+            deployed_pipeline = deploy_pipeline_def(app, pipeline_defintion)
+            logger.info(f"Deployed pipeline: {deployed_pipeline['name']}")
     return app
 
 
