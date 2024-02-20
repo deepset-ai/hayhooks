@@ -1,4 +1,6 @@
-from haystack.pipeline import Pipeline, Optional
+from typing import Optional
+
+from haystack import Pipeline
 from haystack.core.errors import PipelineError
 
 
