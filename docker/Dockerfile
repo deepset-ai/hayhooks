@@ -30,4 +30,4 @@ EXPOSE 1416
 
 ENV PATH="/opt/venv/bin:$PATH"
 
-CMD ["hayhooks", "run", "0.0.0.0"]
+CMD ["hayhooks", "run", "--host", "0.0.0.0", "--port", "1416"]
