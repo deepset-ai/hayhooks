@@ -9,7 +9,10 @@ logger = logging.getLogger("uvicorn.info")
 
 
 def create_app():
-    app = FastAPI()
+    if root_path := os.environ.get("HAYHOOKS_ROOT_PATH"):
+        app = FastAPI(root_path=root_path)
+    else:
+        app = FastAPI()
 
     # Deploy all pipelines in the pipelines directory
     pipelines_dir = os.environ.get("HAYHOOKS_PIPELINES_DIR")
