@@ -18,7 +18,7 @@ def create_app():
     pipelines_dir = os.environ.get("HAYHOOKS_PIPELINES_DIR")
     if pipelines_dir:
         logger.info(f"Pipelines dir set to: {pipelines_dir}")
-        for pipeline_file_path in glob.glob(f"{pipelines_dir}/*.yml"):
+        for pipeline_file_path in glob.glob(f"{pipelines_dir}/*.y*ml"):
             name = Path(pipeline_file_path).stem
             with open(pipeline_file_path, "r") as pipeline_file:
                 source_code = pipeline_file.read()
