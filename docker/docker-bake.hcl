@@ -2,10 +2,6 @@ variable "HAYHOOKS_VERSION" {
   default = "main"
 }
 
-variable "GITHUB_REF" {
-  default = ""
-}
-
 variable "IMAGE_NAME" {
   default = "deepset/hayhooks"
 }
@@ -14,8 +10,12 @@ variable "IMAGE_TAG_SUFFIX" {
   default = "local"
 }
 
-variable "BASE_IMAGE_TAG_SUFFIX" {
-  default = "local"
+variable "PIPELINES_DIR" {
+  default = "/opt/pipelines"
+}
+
+variable "ADDITIONAL_PYTHON_PATH" {
+  default = "/opt/custom-components"
 }
 
 target "default" {
@@ -25,6 +25,8 @@ target "default" {
     build_image = "deepset/haystack:base-main"
     base_image = "deepset/haystack:base-main"
     hayhooks_version = "${HAYHOOKS_VERSION}"
+    pipelines_dir = "${PIPELINES_DIR}"
+    additional_python_path = "${ADDITIONAL_PYTHON_PATH}"
   }
   platforms = ["linux/amd64", "linux/arm64"]
 }

@@ -26,8 +26,16 @@ FROM $base_image AS final
 
 COPY --from=build-image /opt/venv /opt/venv
 
+ARG pipelines_dir
+RUN mkdir -p $pipelines_dir
+ENV HAYHOOKS_PIPELINES_DIR=$pipelines_dir
+
+ARG additional_python_path
+RUN mkdir -p $additional_python_path
+ENV HAYHOOKS_ADDITIONAL_PYTHONPATH=$additional_python_path
+
 EXPOSE 1416
 
 ENV PATH="/opt/venv/bin:$PATH"
 
-CMD ["hayhooks", "run", "--host", "0.0.0.0", "--port", "1416"]
+CMD ["hayhooks", "run", "--host", "0.0.0.0"]
