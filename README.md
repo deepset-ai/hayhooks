@@ -8,6 +8,7 @@
 **Table of Contents**
 
 - [Hayhooks](#hayhooks)
+  - [](#)
   - [Quick start](#quick-start)
     - [Install the package](#install-the-package)
     - [Check Hayhooks status](#check-hayhooks-status)
@@ -146,6 +147,16 @@ If you want to build the container yourself:
 $ cd docker
 $ docker buildx bake
 ...
+```
+
+There are 2 special folders in the container you can override using a `mount`:
+1. A folder containing pipeline definitions that will be automatically deployed when the container starts
+2. A folder containing custom components that Haystack will be able to import if part of a pipeline
+
+For example, you can mount a local `./pipelines` folder containing pipelines you want to run at start-up like this:
+
+```console
+$ docker run --rm -p 1416:1416 -v $PWD/pipelines:/opt/pipelines "deepset/hayhooks:main"
 ```
 
 ## Next steps
