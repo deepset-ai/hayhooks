@@ -133,6 +133,9 @@ Pipeline successfully undeployed
 
 ## Docker setup
 
+> [!TIP]
+> If you have docker-compose installed and you want to quickly get up and running, just do `docker-compose up -d`
+
 Instead of launching the server in a separate shell like we did in the Quick Start, you can run it in a Docker
 container :
 

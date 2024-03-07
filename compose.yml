@@ -1,0 +1,13 @@
+services:
+  hayhooks:
+    image: deepset/hayhooks:main
+    container_name: hayhooks
+    ports:
+      - '1416:1416'
+    volumes:
+      - ./tests/test_files:/opt/pipelines
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail localhost:1416/status || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
