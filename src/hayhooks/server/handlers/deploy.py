@@ -4,4 +4,4 @@ from hayhooks.server.utils.deploy_utils import deploy_pipeline_def, PipelineDefi
 
 @app.post("/deploy")
 async def deploy(pipeline_def: PipelineDefinition):
-    return await deploy_pipeline_def(app, pipeline_def)
+    return deploy_pipeline_def(app, pipeline_def)
