@@ -1,7 +1,9 @@
-from typing import get_args, get_origin, List
-
+from typing import get_args, get_origin, List, get_type_hints
+from hayhooks.server.utils.create_valid_type import create_valid_pydantic_model, create_valid_type
+from pandas import DataFrame
 from pydantic import BaseModel, create_model, ConfigDict
 from haystack.dataclasses import Document
+import json
 
 
 class HaystackDocument(BaseModel):
@@ -54,10 +56,7 @@ def get_response_model(pipeline_name: str, pipeline_outputs):
         component_model = {}
         for name, typedef in outputs.items():
             output_type = typedef["type"]
-            if get_origin(output_type) == list and get_args(output_type)[0] == Document:
-                component_model[name] = (List[HaystackDocument], ...)
-            else:
-                component_model[name] = (typedef["type"], ...)
+            component_model[name] = (create_valid_type(output_type, { DataFrame: List}), ...)
         response_model[component_name] = (create_model('ComponentParams', **component_model, __config__=config), ...)
 
     return create_model(f'{pipeline_name.capitalize()}RunResponse', **response_model, __config__=config)
