@@ -2,14 +2,13 @@ from typing import get_args, get_origin, List, get_type_hints
 from hayhooks.server.utils.create_valid_type import create_valid_type
 from pandas import DataFrame
 from pydantic import BaseModel, create_model, ConfigDict
-from haystack.dataclasses import Document
+from haystack.dataclasses import Document, ExtractedAnswer
 import json
 
 
 class HaystackDocument(BaseModel):
     id: str
     content: str
-
 
 class PipelineDefinition(BaseModel):
     name: str
@@ -51,7 +50,6 @@ def get_response_model(pipeline_name: str, pipeline_outputs):
     """
     response_model = {}
     config = ConfigDict(arbitrary_types_allowed=True)
-
     for component_name, outputs in pipeline_outputs.items():
         component_model = {}
         for name, typedef in outputs.items():
@@ -77,12 +75,10 @@ def convert_component_output(component_output):
         # Empty containers, None values, empty strings and the likes: do nothing
         if not data:
             result[output_name] = data
-
+        get_value = lambda data: data.to_dict()["init_parameters"] if hasattr(data, "to_dict") else data
         # Output contains a list of Document
         if type(data) is list:
-            result[output_name] = [d.to_dict() for d in data]
+            result[output_name] = [get_value(d) for d in data]
         else:
-            result[output_name] = data.to_dict()
-        # Output is a single Document
-
+            result[output_name] = get_value(data)
     return result
