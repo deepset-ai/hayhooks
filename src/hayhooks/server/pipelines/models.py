@@ -1,14 +1,7 @@
-from typing import get_args, get_origin, List, get_type_hints
 from hayhooks.server.utils.create_valid_type import create_valid_type
 from pandas import DataFrame
 from pydantic import BaseModel, create_model, ConfigDict
-from haystack.dataclasses import Document, ExtractedAnswer
-import json
 
-
-class HaystackDocument(BaseModel):
-    id: str
-    content: str
 
 class PipelineDefinition(BaseModel):
     name: str
@@ -62,21 +55,18 @@ def get_response_model(pipeline_name: str, pipeline_outputs):
 
 def convert_component_output(component_output):
     """
+    Converts outputs from a component as a dict so that it can be validated against response model
+
     Component output has this form:
 
     "documents":[
         {"id":"818170...", "content":"RapidAPI for Mac is a full-featured HTTP client."}
     ]
 
-    We inspect the output and convert haystack.Document into the HaystackDocument pydantic model as needed
     """
     result = {}
     for output_name, data in component_output.items():
-        # Empty containers, None values, empty strings and the likes: do nothing
-        if not data:
-            result[output_name] = data
         get_value = lambda data: data.to_dict()["init_parameters"] if hasattr(data, "to_dict") else data
-        # Output contains a list of Document
         if type(data) is list:
             result[output_name] = [get_value(d) for d in data]
         else:
