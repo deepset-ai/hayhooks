@@ -1,5 +1,5 @@
 from typing import get_args, get_origin, List, get_type_hints
-from hayhooks.server.utils.create_valid_type import create_valid_pydantic_model, create_valid_type
+from hayhooks.server.utils.create_valid_type import create_valid_type
 from pandas import DataFrame
 from pydantic import BaseModel, create_model, ConfigDict
 from haystack.dataclasses import Document
@@ -56,7 +56,7 @@ def get_response_model(pipeline_name: str, pipeline_outputs):
         component_model = {}
         for name, typedef in outputs.items():
             output_type = typedef["type"]
-            component_model[name] = (create_valid_type(output_type, { DataFrame: List}), ...)
+            component_model[name] = (create_valid_type(output_type, { DataFrame: dict}), ...)
         response_model[component_name] = (create_model('ComponentParams', **component_model, __config__=config), ...)
 
     return create_model(f'{pipeline_name.capitalize()}RunResponse', **response_model, __config__=config)
@@ -79,13 +79,10 @@ def convert_component_output(component_output):
             result[output_name] = data
 
         # Output contains a list of Document
-        if type(data) is list and type(data[0]) is Document:
-            result[output_name] = [HaystackDocument(id=d.id, content=d.content) for d in data]
-        # Output is a single Document
-        elif type(data) is Document:
-            result[output_name] = HaystackDocument(id=data.id, content=data.content or "")
-        # Any other type: do nothing
+        if type(data) is list:
+            result[output_name] = [d.to_dict() for d in data]
         else:
-            result[output_name] = data
+            result[output_name] = data.to_dict()
+        # Output is a single Document
 
     return result
