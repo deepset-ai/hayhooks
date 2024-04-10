@@ -11,8 +11,10 @@ from hayhooks.cli.undeploy import undeploy
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
 @click.version_option(prog_name="Hayhooks")
-def hayhooks():
-    pass
+@click.option('--server', default="http://localhost:1416")
+@click.pass_context
+def hayhooks(ctx, server):
+    ctx.obj = server
 
 
 hayhooks.add_command(run)

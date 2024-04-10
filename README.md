@@ -167,7 +167,6 @@ $ docker run --rm -p 1416:1416 -v $PWD/pipelines:/opt/pipelines "deepset/hayhook
 At this stage Hayhooks is just a prototype, the natural next steps would be:
 
 - Improve server configuration management (easy)
-- Add CLI configuration profiles, so it's easy to address different servers (easy)
 - Manage pipeline dependencies: one way could be adding the required packages in the pipeline's metadata and let the
   server handle installation (complex)
 

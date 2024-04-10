@@ -4,9 +4,10 @@ from requests.exceptions import ConnectionError
 
 
 @click.command()
-def status():
+@click.pass_obj
+def status(server):
     try:
-        r = requests.get("http://localhost:1416/status")
+        r = requests.get(f"{server}/status")
     except ConnectionError:
         click.echo("Hayhooks server is not responding. To start one, run `hayooks run`")
         return
