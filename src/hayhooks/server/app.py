@@ -34,4 +34,10 @@ app = create_app()
 
 @app.get("/")
 async def root():
-    return {}
+    return {
+        "swagger_docs" : "http://localhost:1416/docs",
+        "deploy_pipeline" : "http://localhost:1416/deploy",
+        "draw_pipeline" : "http://localhost:1416/draw/{pipeline_name}",
+        "server_status" : "http://localhost:1416/status",
+        "undeploy_pipeline" : "http://localhost:1416/undeploy/{pipeline_name}",
+    }
