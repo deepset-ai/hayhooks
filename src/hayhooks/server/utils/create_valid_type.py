@@ -1,32 +1,43 @@
-from typing import get_type_hints, Dict, get_origin, get_args
-from typing_extensions import TypedDict
-from types import GenericAlias
 from inspect import isclass
+from types import GenericAlias
+from typing import Dict, Union, get_args, get_origin, get_type_hints
 
-def create_valid_type(typed_object:type, invalid_types:Dict[type, type]):
-    """ 
-        Returns a new type specification, replacing invalid_types in typed_object.
-        example: replace_invalid_types(ExtractedAnswer, {DataFrame: List}]) returns 
-        a TypedDict with DataFrame types replaced with List
+from typing_extensions import TypedDict
+
+
+def handle_unsupported_types(type_: type, types_mapping: Dict[type, type]) -> Union[GenericAlias, type]:
     """
-    def validate_type(v):
+    Recursively handle types that are not supported by Pydantic by replacing them with the given types mapping.
+
+    :param type_: Type to replace if not supported
+    :param types_mapping: Mapping of types to replace
+    """
+
+    def _handle_generics(t_) -> GenericAlias:
+        """
+        Handle generics recursively
+        """
         child_typing = []
-        for t in get_args(v):
-            if t in invalid_types:
-                result = invalid_types[t]
+        for t in get_args(t_):
+            if t in types_mapping:
+                result = types_mapping[t]
             elif isclass(t):
-                result = create_valid_type(t, invalid_types)
-            else: result = t
+                result = handle_unsupported_types(t, types_mapping)
+            else:
+                result = t
             child_typing.append(result)
-        return GenericAlias(get_origin(v), tuple(child_typing))
-    if isclass(typed_object):
-        new_typing = {}
-        for k, v in get_type_hints(typed_object).items():
-            if(get_args(v) != ()):
-                new_typing[k] = validate_type(v)
-            else: new_typing[k] = v
-        if new_typing == {}:
-            return typed_object
-        else: return TypedDict(typed_object.__name__, new_typing)
-    else:
-        return validate_type(typed_object)
+        return GenericAlias(get_origin(t_), tuple(child_typing))
+
+    if isclass(type_):
+        new_type = {}
+        for arg_name, arg_type in get_type_hints(type_).items():
+            if get_args(arg_type):
+                new_type[arg_name] = _handle_generics(arg_type)
+            else:
+                new_type[arg_name] = arg_type
+        if new_type:
+            return TypedDict(type_.__name__, new_type)
+
+        return type_
+
+    return _handle_generics(type_)
