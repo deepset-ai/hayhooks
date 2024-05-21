@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import urljoin
 
 import click
 import requests
@@ -8,9 +9,10 @@ from requests import ConnectionError
 @click.command()
 @click.pass_obj
 @click.argument('pipeline_name')
-def undeploy(server, pipeline_name):
+def undeploy(server_conf, pipeline_name):
+    server, disable_ssl = server_conf
     try:
-        resp = requests.post(f"{server}/undeploy/{pipeline_name}")
+        resp = requests.post(urljoin(server, f"undeploy/{pipeline_name}"), verify=not disable_ssl)
 
         if resp.status_code >= 400:
             click.echo(f"Cannot undeploy pipeline: {resp.json().get('detail')}")

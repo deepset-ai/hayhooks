@@ -11,10 +11,11 @@ from hayhooks.cli.undeploy import undeploy
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
 @click.version_option(prog_name="Hayhooks")
-@click.option('--server', default="http://localhost:1416")
+@click.option('-s', '--server', default="http://localhost:1416", help="Hayhooks server URL")
+@click.option('-k', '--disable-ssl', default=False, is_flag=True, help="Disable SSL certificate verification")
 @click.pass_context
-def hayhooks(ctx, server):
-    ctx.obj = server
+def hayhooks(ctx, server, disable_ssl):
+    ctx.obj = server, disable_ssl
 
 
 hayhooks.add_command(run)
