@@ -131,6 +131,20 @@ $ hayhooks undeploy test_pipeline_01
 Pipeline successfully undeployed
 ```
 
+### Set a hayhooks server
+
+To connect to a specific server you can pass a `--server` argument to the client:
+```bash
+$ hayhooks --server http://myserver:1416 status
+```
+
+#### Disable SSL verification
+
+For development purposes, you can disable SSL verification with the `--disable-ssl` flag:
+```bash
+$ hayhooks --disable-ssl status
+```
+
 ## Docker setup
 
 > [!TIP]

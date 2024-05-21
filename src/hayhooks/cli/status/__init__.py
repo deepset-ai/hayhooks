@@ -1,3 +1,5 @@
+from urllib.parse import urljoin
+
 import click
 import requests
 from requests.exceptions import ConnectionError
@@ -5,9 +7,10 @@ from requests.exceptions import ConnectionError
 
 @click.command()
 @click.pass_obj
-def status(server):
+def status(server_conf):
+    server, disable_ssl = server_conf
     try:
-        r = requests.get(f"{server}/status")
+        r = requests.get(urljoin(server, "status"), verify=not disable_ssl)
     except ConnectionError:
         click.echo("Hayhooks server is not responding. To start one, run `hayooks run`")
         return
