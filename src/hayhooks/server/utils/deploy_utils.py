@@ -37,6 +37,7 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
         methods=["POST"],
         name=pipeline_def.name,
         response_model=PipelineRunResponse,
+        tags=["pipelines"],
     )
     app.openapi_schema = None
     app.setup()
