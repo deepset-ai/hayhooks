@@ -6,7 +6,7 @@ from hayhooks.server import app
 from hayhooks.server.pipelines import registry
 
 
-@app.post("/undeploy/{pipeline_name}")
+@app.post("/undeploy/{pipeline_name}", tags=["config"])
 async def deploy(pipeline_name: str):
     if pipeline_name not in registry.get_names():
         raise HTTPException(status_code=404)
