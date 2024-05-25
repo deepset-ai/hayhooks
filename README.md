@@ -176,15 +176,6 @@ For example, you can mount a local `./pipelines` folder containing pipelines you
 $ docker run --rm -p 1416:1416 -v $PWD/pipelines:/opt/pipelines "deepset/hayhooks:main"
 ```
 
-## Next steps
-
-At this stage Hayhooks is just a prototype, the natural next steps would be:
-
-- Improve server configuration management (easy)
-- Manage pipeline dependencies: one way could be adding the required packages in the pipeline's metadata and let the
-  server handle installation (complex)
-
-
 ## License
 
 `hayhooks` is distributed under the terms of the [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html) license.
