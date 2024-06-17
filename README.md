@@ -168,7 +168,7 @@ $ docker buildx bake
 
 There are 2 special folders in the container you can override using a `mount`:
 1. A folder `/opt/pipelines` containing pipeline definitions that will be automatically deployed when the container starts
-2. A folder `/opt/custom-components` containing custom components that Haystack will be able to import if part of a pipeline
+2. A folder `/opt/custom_components` containing custom components that Haystack will be able to import if part of a pipeline
 
 For example, you can mount a local `./pipelines` folder containing pipelines you want to run at start-up like this:
 

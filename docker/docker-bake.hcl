@@ -15,7 +15,7 @@ variable "PIPELINES_DIR" {
 }
 
 variable "ADDITIONAL_PYTHON_PATH" {
-  default = "/opt/custom-components"
+  default = "/opt/custom_components"
 }
 
 target "default" {
