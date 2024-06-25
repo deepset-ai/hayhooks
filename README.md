@@ -8,7 +8,6 @@
 **Table of Contents**
 
 - [Hayhooks](#hayhooks)
-  - [](#)
   - [Quick start](#quick-start)
     - [Install the package](#install-the-package)
     - [Check Hayhooks status](#check-hayhooks-status)
@@ -123,7 +122,7 @@ $ curl -X 'POST' \
 
 ### Undeploy the pipeline
 
-Hayhooks tries to to as much bookkeeping as possible without restarting the server. For example, to free up
+Hayhooks tries to do as much bookkeeping as possible without restarting the server. For example, to free up
 resources you can undeploy the pipeline directly from the client:
 
 ```console
