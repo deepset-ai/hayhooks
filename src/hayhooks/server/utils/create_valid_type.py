@@ -1,6 +1,6 @@
 from inspect import isclass
 from types import GenericAlias
-from typing import Dict, Union, get_args, get_origin, get_type_hints
+from typing import Dict, Union, Optional, get_args, get_origin, get_type_hints
 
 from typing_extensions import TypedDict
 
@@ -36,6 +36,12 @@ def handle_unsupported_types(type_: type, types_mapping: Dict[type, type]) -> Un
             else:
                 new_type[arg_name] = arg_type
         if new_type:
+            # because TypedDict can't handle union types with None
+            # rewrite them as Optional[type]
+            for arg_name, arg_type in new_type.items():
+                type_args = get_args(arg_type)
+                if len(type_args) == 2 and type_args[1] is type(None):
+                    new_type[arg_name] = Optional[type_args[0]]
             return TypedDict(type_.__name__, new_type)
 
         return type_
