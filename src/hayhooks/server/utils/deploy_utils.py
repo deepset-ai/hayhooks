@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-
+from fastapi.concurrency import run_in_threadpool
 
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.models import (
@@ -9,7 +9,6 @@ from hayhooks.server.pipelines.models import (
     get_response_model,
     convert_component_output,
 )
-
 
 def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
     try:
@@ -24,7 +23,7 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
     # the endpoint handler. We have to ignore the type here to make FastAPI happy while
     # silencing static type checkers (that would have good reasons to trigger!).
     async def pipeline_run(pipeline_run_req: PipelineRunRequest) -> JSONResponse:  # type: ignore
-        result = pipe.run(data=pipeline_run_req.dict())
+        result = await run_in_threadpool(pipe.run, data=pipeline_run_req.dict())
         final_output = {}
         for component_name, output in result.items():
             final_output[component_name] = convert_component_output(output)
