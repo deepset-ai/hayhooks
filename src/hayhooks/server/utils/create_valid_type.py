@@ -1,8 +1,6 @@
 from inspect import isclass
 from types import GenericAlias
-from typing import Dict, Union, Optional, get_args, get_origin, get_type_hints
-
-from typing_extensions import TypedDict
+from typing import Dict, Optional, Union, get_args, get_origin, get_type_hints
 
 
 def handle_unsupported_types(type_: type, types_mapping: Dict[type, type]) -> Union[GenericAlias, type]:
