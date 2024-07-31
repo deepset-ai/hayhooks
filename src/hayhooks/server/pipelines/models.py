@@ -26,7 +26,11 @@ def get_request_model(pipeline_name: str, pipeline_inputs):
     for component_name, inputs in pipeline_inputs.items():
         component_model = {}
         for name, typedef in inputs.items():
-            input_type = handle_unsupported_types(typedef["type"], {DataFrame: dict})
+            try:
+                input_type = handle_unsupported_types(typedef["type"], {DataFrame: dict})
+            except TypeError as e:
+                print(f"ERROR at {component_name!r}, {name}: {typedef}")
+                raise e
             component_model[name] = (
                 input_type,
                 typedef.get("default_value", ...),
@@ -70,7 +74,10 @@ def convert_component_output(component_output):
     """
     result = {}
     for output_name, data in component_output.items():
-        get_value = lambda data: data.to_dict()["init_parameters"] if hasattr(data, "to_dict") else data
+
+        def get_value(data):
+            return data.to_dict()["init_parameters"] if hasattr(data, "to_dict") else data
+
         if type(data) is list:
             result[output_name] = [get_value(d) for d in data]
         else:
