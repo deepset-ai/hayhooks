@@ -12,7 +12,7 @@ def status(server_conf):
     try:
         r = requests.get(urljoin(server, "status"), verify=not disable_ssl)
     except ConnectionError:
-        click.echo("Hayhooks server is not responding. To start one, run `hayooks run`")
+        click.echo("Hayhooks server is not responding. To start one, run `hayhooks run`")
         return
 
     if r.status_code >= 400:
