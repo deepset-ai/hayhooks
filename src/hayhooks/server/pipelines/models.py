@@ -76,7 +76,12 @@ def convert_component_output(component_output):
     for output_name, data in component_output.items():
 
         def get_value(data):
-            return data.to_dict()["init_parameters"] if hasattr(data, "to_dict") else data
+            if hasattr(data, "to_dict") and "init_parameters" in data.to_dict():
+                return data.to_dict()["init_parameters"]
+            elif hasattr(data, "to_dict"):
+                return data.to_dict()
+            else:
+                return data
 
         if type(data) is list:
             result[output_name] = [get_value(d) for d in data]
