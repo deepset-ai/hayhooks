@@ -60,7 +60,6 @@ def get_response_model(pipeline_name: str, pipeline_outputs):
 
     return create_model(f"{pipeline_name.capitalize()}RunResponse", **response_model, __config__=config)
 
-
 def convert_component_output(component_output):
     """
     Converts outputs from a component as a dict so that it can be validated against response model
@@ -80,10 +79,12 @@ def convert_component_output(component_output):
                 return data.to_dict()["init_parameters"]
             elif hasattr(data, "to_dict"):
                 return data.to_dict()
+            elif hasattr(data, "__dict__"):
+                return {k: v for k, v in data.__dict__.items() if not k.startswith('_')}
             else:
                 return data
 
-        if type(data) is list:
+        if isinstance(data, list):
             result[output_name] = [get_value(d) for d in data]
         else:
             result[output_name] = get_value(data)
