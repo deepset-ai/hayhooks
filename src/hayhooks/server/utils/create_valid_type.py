@@ -1,24 +1,31 @@
 from collections.abc import Callable as CallableABC
 from inspect import isclass
 from types import GenericAlias
-from typing import Dict, Optional, Union, get_args, get_origin, get_type_hints, Callable
+from typing import Callable, Dict, Optional, Union, get_args, get_origin, get_type_hints
+
+
+def is_callable_type(t):
+    """Check if a type is any form of callable"""
+    if t in (Callable, CallableABC):
+        return True
+
+    # Check origin type
+    origin = get_origin(t)
+    if origin in (Callable, CallableABC):
+        return True
+
+    # Handle Optional/Union types
+    if origin in (Union, type(Optional[int])):  # type(Optional[int]) handles runtime Optional type
+        args = get_args(t)
+        return any(is_callable_type(arg) for arg in args)
+
+    return False
 
 
 def handle_unsupported_types(type_: type, types_mapping: Dict[type, type]) -> Union[GenericAlias, type]:
     """
     Recursively handle types that are not supported by Pydantic by replacing them with the given types mapping.
     """
-
-    def is_callable_type(t):
-        """Check if a type is any form of callable"""
-        origin = get_origin(t)
-        return (
-            t is Callable
-            or origin is Callable
-            or origin is CallableABC
-            or (origin is not None and isinstance(origin, type) and issubclass(origin, CallableABC))
-            or (isinstance(t, type) and issubclass(t, CallableABC))
-        )
 
     def handle_generics(t_) -> GenericAlias:
         """Handle generics recursively"""
