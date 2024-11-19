@@ -27,7 +27,7 @@ def test_is_callable_type(t, expected):
     assert is_callable_type(t) == expected
 
 
-def test_handle_callable_type_when_creating_pipeline_models():
+def test_skip_callables_when_creating_pipeline_models():
     pipeline_name = "test_pipeline"
     pipeline_inputs = {
         "generator": {
@@ -51,3 +51,4 @@ def test_handle_callable_type_when_creating_pipeline_models():
     # by the handle_unsupported_types function
     assert request_model.model_json_schema() is not None
     assert request_model.__name__ == "Test_pipelineRunRequest"
+    assert "streaming_callback" not in request_model.model_json_schema()["$defs"]["ComponentParams"]["properties"]

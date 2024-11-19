@@ -22,22 +22,22 @@ def is_callable_type(t):
     return False
 
 
-def handle_unsupported_types(type_: type, types_mapping: Dict[type, type]) -> Union[GenericAlias, type]:
+def handle_unsupported_types(
+    type_: type, types_mapping: Dict[type, type], skip_callables: bool = True
+) -> Union[GenericAlias, type, None]:
     """
     Recursively handle types that are not supported by Pydantic by replacing them with the given types mapping.
     """
 
-    def handle_generics(t_) -> GenericAlias:
+    def handle_generics(t_) -> Union[GenericAlias, None]:
         """Handle generics recursively"""
-        if is_callable_type(t_):
-            return types_mapping[Callable]
+        if is_callable_type(t_) and skip_callables:
+            return None
 
         child_typing = []
         for t in get_args(t_):
             if t in types_mapping:
                 result = types_mapping[t]
-            elif is_callable_type(t):
-                result = types_mapping[Callable]
             elif isclass(t):
                 result = handle_unsupported_types(t, types_mapping)
             else:
@@ -49,8 +49,8 @@ def handle_unsupported_types(type_: type, types_mapping: Dict[type, type]) -> Un
         else:
             return GenericAlias(get_origin(t_), tuple(child_typing))
 
-    if is_callable_type(type_):
-        return types_mapping[Callable]
+    if is_callable_type(type_) and skip_callables:
+        return None
 
     if isclass(type_):
         new_type = {}
