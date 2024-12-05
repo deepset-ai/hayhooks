@@ -1,0 +1,169 @@
+components:
+  embedder:
+    init_parameters:
+      batch_size: 32
+      config_kwargs: null
+      device:
+        device: cpu
+        type: single
+      model: sentence-transformers/all-MiniLM-L6-v2
+      model_kwargs: null
+      normalize_embeddings: false
+      precision: float32
+      prefix: ''
+      progress_bar: true
+      suffix: ''
+      token:
+        env_vars:
+        - HF_API_TOKEN
+        - HF_TOKEN
+        strict: false
+        type: env_var
+      tokenizer_kwargs: null
+      truncate_dim: null
+      trust_remote_code: false
+    type: haystack.components.embedders.sentence_transformers_text_embedder.SentenceTransformersTextEmbedder
+  list_to_str_adapter:
+    init_parameters:
+      custom_filters: {}
+      output_type: str
+      template: '{{ replies[0] }}'
+      unsafe: false
+    type: haystack.components.converters.output_adapter.OutputAdapter
+  llm:
+    init_parameters:
+      api_base_url: http://localhost:8000/v1
+      api_key:
+        env_vars:
+        - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      generation_kwargs: {}
+      model: mistralai/Mistral-Nemo-Instruct-2407
+      organization: null
+      streaming_callback: null
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+  memory_joiner:
+    init_parameters:
+      type_: list[haystack.dataclasses.chat_message.ChatMessage]
+    type: haystack.components.joiners.branch.BranchJoiner
+  memory_retriever:
+    init_parameters:
+      last_k: 10
+      message_store:
+        init_parameters: {}
+        type: haystack_experimental.chat_message_stores.in_memory.InMemoryChatMessageStore
+    type: haystack_experimental.components.retrievers.chat_message_retriever.ChatMessageRetriever
+  memory_writer:
+    init_parameters:
+      message_store:
+        init_parameters: {}
+        type: haystack_experimental.chat_message_stores.in_memory.InMemoryChatMessageStore
+    type: haystack_experimental.components.writers.chat_message_writer.ChatMessageWriter
+  prompt_builder:
+    init_parameters:
+      required_variables: &id001 !!python/tuple
+      - query
+      - documents
+      - memories
+      template: null
+      variables: *id001
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+  query_rephrase_llm:
+    init_parameters:
+      api_base_url: http://localhost:8000/v1
+      api_key:
+        env_vars:
+        - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      generation_kwargs: {}
+      model: mistralai/Mistral-Nemo-Instruct-2407
+      organization: null
+      streaming_callback: null
+      system_prompt: null
+    type: haystack.components.generators.openai.OpenAIGenerator
+  query_rephrase_prompt_builder:
+    init_parameters:
+      required_variables: null
+      template: "\nRewrite the question for semantic search while keeping its meaning\
+        \ and key terms intact.\nIf the conversation history is empty, DO NOT change\
+        \ the query.\nDo not translate the question.\nUse conversation history only\
+        \ if necessary, and avoid extending the query with your own knowledge.\nIf\
+        \ no changes are needed, output the current question as is.\n\nConversation\
+        \ history:\n{% for memory in memories %}\n    {{ memory.content }}\n{% endfor\
+        \ %}\n\nUser Query: {{query}}\nRewritten Query:\n"
+      variables: null
+    type: haystack.components.builders.prompt_builder.PromptBuilder
+  retriever:
+    init_parameters:
+      document_store:
+        init_parameters:
+          api_key: null
+          embedding_dim: 768
+          force_disable_check_same_thread: false
+          grpc_port: 6334
+          hnsw_config: null
+          host: null
+          https: null
+          index: Document
+          init_from: null
+          location: null
+          metadata: {}
+          on_disk: false
+          on_disk_payload: null
+          optimizers_config: null
+          path: null
+          payload_fields_to_index: null
+          port: 6333
+          prefer_grpc: false
+          prefix: null
+          progress_bar: false
+          quantization_config: null
+          recreate_index: false
+          replication_factor: null
+          return_embedding: false
+          scroll_size: 10000
+          shard_number: null
+          similarity: cosine
+          sparse_idf: false
+          timeout: null
+          url: http://localhost:6333
+          use_sparse_embeddings: false
+          wait_result_from_api: true
+          wal_config: null
+          write_batch_size: 100
+          write_consistency_factor: null
+        type: haystack_integrations.document_stores.qdrant.document_store.QdrantDocumentStore
+      filter_policy: replace
+      filters: null
+      group_by: null
+      group_size: null
+      return_embedding: false
+      scale_score: false
+      score_threshold: null
+      top_k: 3
+    type: haystack_integrations.components.retrievers.qdrant.retriever.QdrantEmbeddingRetriever
+connections:
+- receiver: query_rephrase_llm.prompt
+  sender: query_rephrase_prompt_builder.prompt
+- receiver: list_to_str_adapter.replies
+  sender: query_rephrase_llm.replies
+- receiver: embedder.text
+  sender: list_to_str_adapter.output
+- receiver: retriever.query_embedding
+  sender: embedder.embedding
+- receiver: prompt_builder.documents
+  sender: retriever.documents
+- receiver: llm.messages
+  sender: prompt_builder.prompt
+- receiver: memory_joiner.value
+  sender: llm.replies
+- receiver: query_rephrase_prompt_builder.memories
+  sender: memory_retriever.messages
+- receiver: prompt_builder.memories
+  sender: memory_retriever.messages
+- receiver: memory_writer.messages
+  sender: memory_joiner.value
+max_runs_per_component: 100
+metadata: {}
