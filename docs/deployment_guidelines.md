@@ -67,3 +67,5 @@ Instead, you want to provide the env var `HAYHOOKS_PIPELINES_DIR` pointing to a 
 ### Handling concurrent requests (multiple workers)
 
 When having multiple workers and pipelines deployed using `HAYHOOKS_PIPELINES_DIR`, you will be able to handle concurrent requests as each worker will be able to run a pipeline independently. This should be enough to make your application scalable, according to your needs.
+
+Note that even in a multiple-workers environment the individual single workers will have the same GIL limitation discussed above, so if your pipeline is mainly CPU-bound, you will need to scale horizontally according to your needs.
