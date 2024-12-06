@@ -36,7 +36,7 @@ command or do a `POST /deploy` request.
 The `run()` method of the pipeline instance is synchronous code, and it's executed using `run_in_threadpool` to avoid blocking the main async event loop.
 
 - If your pipeline is doing **mainly I/O operations** (like making HTTP requests, reading/writing files, etc.), the single worker should be able to handle concurrent requests.
-- If your pipeline is doing **mainly CPU-bound operations** (like computating embeddings), the GIL (Global Interpreter Lock) will prevent the worker from handling concurrent requests, so they will be queued.
+- If your pipeline is doing **mainly CPU-bound operations** (like computing embeddings), the GIL (Global Interpreter Lock) will prevent the worker from handling concurrent requests, so they will be queued.
 
 ## Multiple workers environment
 
