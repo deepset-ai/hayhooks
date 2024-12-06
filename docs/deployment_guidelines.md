@@ -50,7 +50,7 @@ For example, if you have enough cores to run 4 workers, you can use the followin
 fastapi run src/hayhooks/server/app.py --workers 4
 ```
 
-This vertical scaling approach allows you to handle more concurrent requests (according the available resources).
+This vertical scaling approach allows you to handle more concurrent requests (depending on available resources).
 
 ### Multiple single-worker instances behind a load balancer
 
