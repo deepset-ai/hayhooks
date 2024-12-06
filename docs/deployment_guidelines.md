@@ -54,7 +54,7 @@ This vertical scaling approach allows you to handle more concurrent requests (de
 
 ### Multiple single-worker instances behind a load balancer
 
-In a multi-worker environment (for example on a Kubernetes `Deployment`) you typically have a `LoadBalancer` Service which distributes the traffic to a number of `Pod`s running the application (using `hayhooks run` command).
+In a multi-worker environment (for example on a Kubernetes `Deployment`) you typically have a `LoadBalancer` Service, which distributes the traffic to a number of `Pod`s running the application (using `hayhooks run` command).
 
 This horizontal scaling approach allows you to handle more concurrent requests.
 
