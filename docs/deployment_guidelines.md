@@ -44,7 +44,7 @@ The `run()` method of the pipeline instance is synchronous code, and it's execut
 
 Currently, `hayhooks run` command does not support multiple `uvicorn` workers. However, you can run multiple instances of the application using directly the `uvicorn` command or [FastAPI CLI](https://fastapi.tiangolo.com/fastapi-cli/#fastapi-run) using `fastapi run` command.
 
-For example, if you enough cores to run 4 workers, you can use the following command:
+For example, if you have enough cores to run 4 workers, you can use the following command:
 
 ```bash
 fastapi run src/hayhooks/server/app.py --workers 4
