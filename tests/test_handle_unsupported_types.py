@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict
+from typing import Optional, List
 from hayhooks.server.utils.create_valid_type import handle_unsupported_types
 
 
@@ -9,7 +9,7 @@ def test_handle_simple_type():
 
 def test_handle_generic_type():
     result = handle_unsupported_types(List[int], {})
-    assert result == List[int]
+    assert result == list[int]
 
 
 def test_handle_recursive_type():
@@ -36,6 +36,6 @@ def test_handle_circular_reference():
 
 
 def test_handle_nested_generics():
-    NestedType = Dict[str, List[Optional[int]]]
-    result = handle_unsupported_types(NestedType, {})
-    assert result == NestedType
+    nested_type = dict[str, list[Optional[int]]]
+    result = handle_unsupported_types(nested_type, {})
+    assert result == nested_type
