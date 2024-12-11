@@ -29,6 +29,7 @@ dependencies = [
   "uvicorn",
   "requests",
   "python-multipart",
+  "loguru",
 ]
 
 [project.urls]
