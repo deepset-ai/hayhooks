@@ -1,11 +1,18 @@
 from pandas import DataFrame
 from pydantic import BaseModel, ConfigDict, create_model
 from hayhooks.server.utils.create_valid_type import handle_unsupported_types
+from haystack import Document
 
 
 class PipelineDefinition(BaseModel):
     name: str
     source_code: str
+
+
+DEFAULT_TYPES_MAPPING = {
+    DataFrame: dict,
+    Document: dict,
+}
 
 
 def get_request_model(pipeline_name: str, pipeline_inputs):
@@ -26,7 +33,7 @@ def get_request_model(pipeline_name: str, pipeline_inputs):
         component_model = {}
         for name, typedef in inputs.items():
             try:
-                input_type = handle_unsupported_types(typedef["type"], {DataFrame: dict})
+                input_type = handle_unsupported_types(type_=typedef["type"], types_mapping=DEFAULT_TYPES_MAPPING)
             except TypeError as e:
                 print(f"ERROR at {component_name!r}, {name}: {typedef}")
                 raise e
@@ -56,7 +63,10 @@ def get_response_model(pipeline_name: str, pipeline_outputs):
         component_model = {}
         for name, typedef in outputs.items():
             output_type = typedef["type"]
-            component_model[name] = (handle_unsupported_types(output_type, {DataFrame: dict}), ...)
+            component_model[name] = (
+                handle_unsupported_types(type_=output_type, types_mapping=DEFAULT_TYPES_MAPPING),
+                ...,
+            )
         response_model[component_name] = (create_model("ComponentParams", **component_model, __config__=config), ...)
 
     return create_model(f"{pipeline_name.capitalize()}RunResponse", **response_model, __config__=config)
