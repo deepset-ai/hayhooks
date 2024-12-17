@@ -16,6 +16,8 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
         pipe = registry.add(pipeline_def.name, pipeline_def.source_code)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=f"{e}") from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{e}") from e
 
     PipelineRunRequest = get_request_model(pipeline_def.name, pipe.inputs())
     PipelineRunResponse = get_response_model(pipeline_def.name, pipe.outputs())

@@ -1,0 +1,79 @@
+components:
+  document_embedder:
+    init_parameters:
+      batch_size: 32
+      config_kwargs: null
+      device:
+        device: cpu
+        type: single
+      model: sentence-transformers/paraphrase-MiniLM-L3-v2
+      model_kwargs: null
+      normalize_embeddings: false
+      precision: float32
+      prefix: ""
+      progress_bar: true
+      suffix: ""
+      token:
+        env_vars:
+          - HF_API_TOKEN
+          - HF_TOKEN
+        strict: false
+        type: env_var
+      tokenizer_kwargs: null
+      truncate_dim: null
+      trust_remote_code: false
+    type: haystack.components.embedders.sentence_transformers_text_embedder.SentenceTransformersTextEmbedder
+  document_retriever:
+    init_parameters:
+      document_store:
+        init_parameters:
+          api_key: null
+          embedding_dim: 384
+          force_disable_check_same_thread: false
+          grpc_port: 6334
+          hnsw_config: null
+          host: null
+          https: null
+          index: Document
+          init_from: null
+          location: null
+          metadata: {}
+          on_disk: false
+          on_disk_payload: null
+          optimizers_config: null
+          path: null
+          payload_fields_to_index: null
+          port: 6333
+          prefer_grpc: false
+          prefix: null
+          progress_bar: true
+          quantization_config: null
+          recreate_index: false
+          replication_factor: null
+          return_embedding: false
+          scroll_size: 10000
+          shard_number: null
+          similarity: cosine
+          sparse_idf: false
+          timeout: null
+          url: http://localhost:6333
+          use_sparse_embeddings: false
+          wait_result_from_api: true
+          wal_config: null
+          write_batch_size: 100
+          write_consistency_factor: null
+        type: haystack_integrations.document_stores.qdrant.document_store.QdrantDocumentStore
+      filter_policy: replace
+      filters: null
+      group_by: null
+      group_size: null
+      return_embedding: false
+      scale_score: false
+      score_threshold: null
+      top_k: 3
+    type: haystack_integrations.components.retrievers.qdrant.retriever.QdrantEmbeddingRetriever
+connections:
+  - receiver: document_retriever.query_embedding
+    sender: document_embedder.embedding
+max_runs_per_component: 100
+metadata: {}
