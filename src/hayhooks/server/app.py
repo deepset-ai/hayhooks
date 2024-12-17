@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger("uvicorn.info")
 
 
-def create_app():
+def create_app() -> FastAPI:
     if root_path := os.environ.get("HAYHOOKS_ROOT_PATH"):
         app = FastAPI(root_path=root_path)
     else:
