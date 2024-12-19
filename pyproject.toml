@@ -59,7 +59,6 @@ cov = [
 ]
 
 [tool.hatch.envs.test]
-installer = "uv"
 extra-dependencies = [
   "coverage[toml]>=6.5",
   "pytest",
