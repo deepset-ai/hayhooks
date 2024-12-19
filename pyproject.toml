@@ -7,7 +7,7 @@ name = "hayhooks"
 dynamic = ["version"]
 description = 'Grab and deploy Haystack pipelines'
 readme = "README.md"
-requires-python = ">=3.7,<3.13"
+requires-python = ">=3.9,<3.13"
 license = "Apache-2.0"
 keywords = []
 authors = [
@@ -44,25 +44,31 @@ hayhooks = "hayhooks.cli:hayhooks"
 source = "vcs"
 
 [tool.hatch.envs.default]
-dependencies = [
-  "coverage[toml]>=6.5",
-  "pytest",
-  "pytest-mock",
-]
-[tool.hatch.envs.default.scripts]
-test = "pytest {args:tests}"
-test-cov = "coverage run -m pytest {args:tests}"
+installer = "uv"
+
+[tool.hatch.envs.test.scripts]
+all = "pytest -vv {args:tests}"
+all-cov = "coverage run -m pytest {args:tests}"
 cov-report = [
   "- coverage combine",
   "coverage report",
 ]
 cov = [
-  "test-cov",
+  "all-cov",
   "cov-report",
 ]
 
+[tool.hatch.envs.test]
+extra-dependencies = [
+  "coverage[toml]>=6.5",
+  "pytest",
+  "pytest-mock",
+  "qdrant-haystack",
+  "trafilatura",
+]
+
 [[tool.hatch.envs.all.matrix]]
-python = ["3.10", "3.11", "3.12"]
+python = ["3.9", "3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.lint]
 detached = true
