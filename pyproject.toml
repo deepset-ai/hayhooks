@@ -50,7 +50,7 @@ dependencies = [
   "pytest-mock",
 ]
 [tool.hatch.envs.default.scripts]
-test = "pytest {args:tests}"
+test = "pytest -vv -s {args:tests}"
 test-cov = "coverage run -m pytest {args:tests}"
 cov-report = [
   "- coverage combine",
