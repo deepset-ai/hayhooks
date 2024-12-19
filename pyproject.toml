@@ -54,7 +54,7 @@ cov-report = [
   "coverage report",
 ]
 cov = [
-  "test-cov",
+  "all-cov",
   "cov-report",
 ]
 

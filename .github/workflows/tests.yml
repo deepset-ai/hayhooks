@@ -31,5 +31,5 @@ jobs:
       - name: Install Hatch
         run: pip install hatch==${{ env.HATCH_VERSION }}
 
-      - name: Run unit and integration tests
-        run: hatch run test:all
+      - name: Run tests and generate coverage report
+        run: hatch run test:cov
