@@ -43,6 +43,9 @@ hayhooks = "hayhooks.cli:hayhooks"
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.envs.default]
+installer = "uv"
+
 [tool.hatch.envs.test.scripts]
 all = "pytest -vv {args:tests}"
 all-cov = "coverage run -m pytest {args:tests}"
@@ -56,6 +59,7 @@ cov = [
 ]
 
 [tool.hatch.envs.test]
+installer = "uv"
 extra-dependencies = [
   "coverage[toml]>=6.5",
   "pytest",
