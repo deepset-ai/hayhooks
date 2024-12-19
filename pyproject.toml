@@ -43,15 +43,9 @@ hayhooks = "hayhooks.cli:hayhooks"
 [tool.hatch.version]
 source = "vcs"
 
-[tool.hatch.envs.default]
-dependencies = [
-  "coverage[toml]>=6.5",
-  "pytest",
-  "pytest-mock",
-]
-[tool.hatch.envs.default.scripts]
-test = "pytest -vv -s {args:tests}"
-test-cov = "coverage run -m pytest {args:tests}"
+[tool.hatch.envs.test.scripts]
+all = "pytest -vv {args:tests}"
+all-cov = "coverage run -m pytest {args:tests}"
 cov-report = [
   "- coverage combine",
   "coverage report",
@@ -61,8 +55,17 @@ cov = [
   "cov-report",
 ]
 
+[tool.hatch.envs.test]
+extra-dependencies = [
+  "coverage[toml]>=6.5",
+  "pytest",
+  "pytest-mock",
+  "qdrant-haystack",
+  "trafilatura",
+]
+
 [[tool.hatch.envs.all.matrix]]
-python = ["3.10", "3.11", "3.12"]
+python = ["3.9", "3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.lint]
 detached = true
