@@ -7,7 +7,7 @@ name = "hayhooks"
 dynamic = ["version"]
 description = 'Grab and deploy Haystack pipelines'
 readme = "README.md"
-requires-python = ">=3.7,<3.13"
+requires-python = ">=3.9,<3.13"
 license = "Apache-2.0"
 keywords = []
 authors = [
