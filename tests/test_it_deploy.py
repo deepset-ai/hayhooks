@@ -35,8 +35,8 @@ def test_deploy_pipeline_def(pipeline_data: dict):
     deploy_response = deploy_pipeline(pipeline_data)
     assert deploy_response.status_code == 200
 
-    status_response = client.get("/status")
-    assert pipeline_data["name"] in status_response.json()["pipelines"]
+    status_response = client.get(f"/status/{pipeline_data['name']}")
+    assert pipeline_data["name"] in status_response.json()["pipeline"]
 
     docs_response = client.get("/docs")
     assert docs_response.status_code == 200
@@ -52,5 +52,15 @@ def test_undeploy_pipeline_def():
     undeploy_response = undeploy_pipeline(pipeline_data)
     assert undeploy_response.status_code == 200
 
-    status_response = client.get("/status")
-    assert pipeline_data["name"] not in status_response.json()["pipelines"]
+    status_response = client.get(f"/status/{pipeline_data['name']}")
+    assert status_response.status_code == 404
+
+
+def test_undeploy_non_existent_pipeline():
+    undeploy_response = client.post("/undeploy/non_existent_pipeline")
+    assert undeploy_response.status_code == 404
+
+
+def test_undeploy_no_pipelines():
+    undeploy_response = client.post("/undeploy")
+    assert undeploy_response.status_code == 404

@@ -7,7 +7,6 @@ from pathlib import Path
 
 client = TestClient(app)
 
-
 @pytest.fixture(autouse=True)
 def clear_registry():
     registry.clear()
@@ -25,13 +24,13 @@ def test_status_single_pipeline():
 
     deploy_pipeline(pipeline_data)
 
-    status_response = client.get(f"/status", params={"pipeline_name": pipeline_data["name"]})
+    status_response = client.get(f"/status/{pipeline_data['name']}")
     assert status_response.status_code == 200
     assert status_response.json()["pipeline"] == pipeline_data["name"]
 
 
 def test_status_non_existent_pipeline():
-    status_response = client.get("/status", params={"pipeline_name": "non_existent_pipeline"})
+    status_response = client.get("/status/non_existent_pipeline")
     assert status_response.status_code == 404
     assert status_response.json()["detail"] == f"Pipeline 'non_existent_pipeline' not found"
 
