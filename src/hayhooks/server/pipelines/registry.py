@@ -31,5 +31,8 @@ class _PipelineRegistry:
     def get_names(self) -> list[str]:
         return list(self._pipelines.keys())
 
+    def clear(self):
+        self._pipelines.clear()
+
 
 registry = _PipelineRegistry()
