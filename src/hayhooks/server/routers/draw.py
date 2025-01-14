@@ -1,14 +1,14 @@
 import tempfile
 from pathlib import Path
-
-from fastapi import HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from hayhooks.server import app
 from hayhooks.server.pipelines import registry
 
+router = APIRouter()
 
-@app.get("/draw/{pipeline_name}", tags=["config"])
-async def status(pipeline_name):
+
+@router.get("/draw/{pipeline_name}", tags=["config"])
+async def draw(pipeline_name):
     pipeline = registry.get(pipeline_name)
     if not pipeline:
         raise HTTPException(status_code=404)
