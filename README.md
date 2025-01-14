@@ -40,6 +40,23 @@ INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://localhost:1416 (Press CTRL+C to quit)
 ```
+
+### Configuration
+
+Currently, you can configure the server by:
+
+- set the environment variables in an `.env` file in the root of the project
+- passing the arguments to the `run` command.
+- passing the environment variables to the `hayhooks` command.
+
+The following environment variables are supported:
+
+- `HAYHOOKS_HOST`: Host for the FastAPI app
+- `HAYHOOKS_PORT`: Port for the FastAPI app
+- `HAYHOOKS_PIPELINES_DIR`: Path to the folder containing the pipelines
+- `HAYHOOKS_ROOT_PATH`: Root path for the FastAPI app
+- `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path
+
 ### Check Hayhooks status
 
 From a different shell, you can query the status of the server with:
@@ -48,6 +65,7 @@ From a different shell, you can query the status of the server with:
 $ hayhooks status
 Hayhooks server is up and running.
 ```
+
 ### Deploy a Haystack pipeline
 
 Time to deploy a Haystack pipeline. The pipeline must be in Yaml format (the output of [`pipeline.dump()`](https://docs.haystack.deepset.ai/v2.0/docs/serialization#converting-a-pipeline-to-yaml)), if you don't have one at hand, you can use
@@ -74,7 +92,7 @@ Hayhooks will use introspection to set up the OpenAPI schema accordingly to the 
 and to see how this works let's get the pipeline diagram with:
 
 ```console
-$ curl http://localhost:1416/draw/test_pipeline_01 --output test_pipeline_01.png
+curl http://localhost:1416/draw/test_pipeline_01 --output test_pipeline_01.png
 ```
 
 The downloaded image should look like this:
@@ -134,15 +152,17 @@ Pipeline successfully undeployed
 ### Set a hayhooks server
 
 To connect to a specific server you can pass a `--server` argument to the client:
+
 ```bash
-$ hayhooks --server http://myserver:1416 status
+hayhooks --server http://myserver:1416 status
 ```
 
 #### Disable SSL verification
 
 For development purposes, you can disable SSL verification with the `--disable-ssl` flag:
+
 ```bash
-$ hayhooks --disable-ssl status
+hayhooks --disable-ssl status
 ```
 
 ## Docker setup
@@ -167,13 +187,14 @@ $ docker buildx bake
 ```
 
 There are 2 special folders in the container you can override using a `mount`:
+
 1. A folder `/opt/pipelines` containing pipeline definitions that will be automatically deployed when the container starts
 2. A folder `/opt/custom_components` containing custom components that Haystack will be able to import if part of a pipeline
 
 For example, you can mount a local `./pipelines` folder containing pipelines you want to run at start-up like this:
 
 ```console
-$ docker run --rm -p 1416:1416 -v $PWD/pipelines:/opt/pipelines "deepset/hayhooks:main"
+docker run --rm -p 1416:1416 -v $PWD/pipelines:/opt/pipelines "deepset/hayhooks:main"
 ```
 
 ## License
