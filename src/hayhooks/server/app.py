@@ -1,16 +1,17 @@
-from fastapi import FastAPI
+import logging
 import os
 import glob
+from fastapi import FastAPI
 from pathlib import Path
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_def, PipelineDefinition
 from hayhooks.server.routers import status_router, draw_router, deploy_router, undeploy_router
-import logging
+from hayhooks.settings import settings
 
 logger = logging.getLogger("uvicorn.info")
 
 
 def create_app() -> FastAPI:
-    if root_path := os.environ.get("HAYHOOKS_ROOT_PATH"):
+    if root_path := settings.root_path:
         app = FastAPI(root_path=root_path)
     else:
         app = FastAPI()
@@ -22,7 +23,8 @@ def create_app() -> FastAPI:
     app.include_router(undeploy_router)
 
     # Deploy all pipelines in the pipelines directory
-    pipelines_dir = os.environ.get("HAYHOOKS_PIPELINES_DIR")
+    pipelines_dir = settings.pipelines_dir
+
     if pipelines_dir:
         logger.info(f"Pipelines dir set to: {pipelines_dir}")
         for pipeline_file_path in glob.glob(f"{pipelines_dir}/*.y*ml"):
