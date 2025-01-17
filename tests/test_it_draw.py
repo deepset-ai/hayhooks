@@ -6,7 +6,7 @@ client = TestClient(app)
 
 
 def test_draw_pipeline(deploy_pipeline, draw_pipeline):
-    pipeline_file = Path(__file__).parent / "test_files" / "working_pipelines/test_pipeline_01.yml"
+    pipeline_file = Path(__file__).parent / "test_files/yaml" / "working_pipelines/test_pipeline_01.yml"
     pipeline_data = {"name": pipeline_file.stem, "source_code": pipeline_file.read_text()}
 
     deploy_pipeline(client, pipeline_data["name"], pipeline_data["source_code"])

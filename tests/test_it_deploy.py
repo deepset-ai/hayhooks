@@ -13,7 +13,7 @@ def clear_registry():
 
 
 # Load pipeline definitions from test_files
-test_files = Path(__file__).parent / "test_files" / "working_pipelines"
+test_files = Path(__file__).parent / "test_files/yaml" / "working_pipelines"
 pipeline_data = [{"name": file.stem, "source_code": file.read_text()} for file in test_files.glob("*.yml")]
 
 
@@ -30,7 +30,7 @@ def test_deploy_pipeline_def(deploy_pipeline, status_pipeline, pipeline_data: di
 
 
 def test_undeploy_pipeline_def(deploy_pipeline, undeploy_pipeline, status_pipeline):
-    pipeline_file = Path(__file__).parent / "test_files" / "working_pipelines/test_pipeline_01.yml"
+    pipeline_file = Path(__file__).parent / "test_files/yaml" / "working_pipelines/test_pipeline_01.yml"
     pipeline_data = {"name": pipeline_file.stem, "source_code": pipeline_file.read_text()}
 
     deploy_response = deploy_pipeline(client, pipeline_data["name"], pipeline_data["source_code"])
