@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Callable
 from hayhooks.server.utils.deploy_utils import load_pipeline_module, save_pipeline_files
 from hayhooks.server.exceptions import PipelineFilesError
-from hayhooks.settings import settings
 
 TEST_PIPELINES_DIR = Path("tests/test_files/test_pipelines")
 
@@ -76,3 +75,16 @@ def test_save_pipeline_files_empty():
     assert (TEST_PIPELINES_DIR / pipeline_name).exists()
     assert (TEST_PIPELINES_DIR / pipeline_name).is_dir()
     assert len([file for file in (TEST_PIPELINES_DIR / pipeline_name).iterdir()]) == 0
+
+
+def test_save_pipeline_files_raises_error(tmp_path):
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    readonly_dir.chmod(0o444)
+
+    files = {"test.py": "print('hello')"}
+
+    with pytest.raises(PipelineFilesError) as exc_info:
+        save_pipeline_files(pipeline_name="test_pipeline", files=files, pipelines_dir=str(readonly_dir))
+
+    assert "Failed to save pipeline files" in str(exc_info.value)
