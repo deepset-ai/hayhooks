@@ -3,6 +3,9 @@ from typing import List
 
 
 class BasePipelineWrapper(ABC):
+    def __init__(self):
+        self.pipeline = None
+
     @abstractmethod
     def setup(self) -> None:
         """

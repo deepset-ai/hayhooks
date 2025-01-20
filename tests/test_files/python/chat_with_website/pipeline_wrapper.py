@@ -8,9 +8,6 @@ URLS = ["https://haystack.deepset.ai", "https://www.redis.io"]
 
 
 class PipelineWrapper(BasePipelineWrapper):
-    def __init__(self) -> None:
-        self.pipeline: Pipeline = None
-
     def setup(self) -> None:
         pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
         self.pipeline = Pipeline.loads(pipeline_yaml)
