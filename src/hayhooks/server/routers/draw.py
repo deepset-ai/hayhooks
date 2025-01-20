@@ -9,7 +9,7 @@ router = APIRouter()
 
 @router.get("/draw/{pipeline_name}", tags=["config"])
 async def draw(pipeline_name):
-    pipeline = registry.get(pipeline_name)
+    pipeline = registry.get(pipeline_name, use_pipeline=True)
     if not pipeline:
         raise HTTPException(status_code=404)
 
