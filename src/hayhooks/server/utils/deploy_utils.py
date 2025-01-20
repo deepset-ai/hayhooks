@@ -1,5 +1,5 @@
-import tempfile
 import importlib.util
+from typing import Union
 from fastapi import HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
@@ -89,7 +89,7 @@ def save_pipeline_files(
         raise PipelineFilesError(f"Failed to save pipeline files: {str(e)}") from e
 
 
-def load_pipeline_module(pipeline_name: str, folder_path: Path | str):
+def load_pipeline_module(pipeline_name: str, folder_path: Union[Path, str]):
     """Load a pipeline module from a folder path.
 
     Args:
