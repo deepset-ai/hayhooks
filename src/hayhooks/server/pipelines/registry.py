@@ -32,11 +32,8 @@ class _PipelineRegistry:
         if name in self._pipelines:
             del self._pipelines[name]
 
-    def get(self, name: str, use_pipeline: bool = False) -> Optional[PipelineType]:
-        pipeline = self._pipelines.get(name)
-        if use_pipeline and isinstance(pipeline, BasePipelineWrapper):
-            return pipeline.pipeline
-        return pipeline
+    def get(self, name: str) -> Optional[PipelineType]:
+        return self._pipelines.get(name)
 
     def get_names(self) -> list[str]:
         return list(self._pipelines.keys())
