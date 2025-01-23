@@ -77,6 +77,19 @@ def test_deploy_files_duplicate_pipeline():
     assert response.status_code == 200
 
     response = client.post("/deploy_files", json={"name": "test_pipeline", "files": PIPELINE_FILES})
-    print(response.json())
     assert response.status_code == 409
     assert "Pipeline 'test_pipeline' already exists" in response.json()["detail"]
+
+
+def test_pipeline_endpoint_error_handling():
+    pipeline_data = {"name": "test_pipeline", "files": PIPELINE_FILES}
+
+    response = client.post("/deploy_files", json=pipeline_data)
+    assert response.status_code == 200
+
+    run_response = client.post(
+        "/test_pipeline/run",
+        json={"urls": ["hptts://www.redis.io"], "question": "What is Redis?"},  # malformed url should trigger an error
+    )
+    assert run_response.status_code == 500
+    assert "Pipeline execution failed" in run_response.json()["detail"]

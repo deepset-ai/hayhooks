@@ -1,5 +1,6 @@
 import inspect
 import importlib.util
+from functools import wraps
 from types import ModuleType
 from typing import Callable, Union, List
 from fastapi import FastAPI, HTTPException
@@ -182,6 +183,23 @@ def create_response_model_from_callable(func: Callable, model_name: str):
     return create_model(f'{model_name}Response', result=(return_type, ...))
 
 
+def handle_pipeline_exceptions():
+    """Decorator to handle pipeline execution exceptions."""
+
+    def decorator(func):
+        @wraps(func)  # Preserve the original function's metadata
+        async def wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                log.error(f"Pipeline execution error: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}")
+
+        return wrapper
+
+    return decorator
+
+
 def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str]):
     """Deploy pipeline files to the FastAPI application and set up endpoints.
 
@@ -223,12 +241,14 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
     RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
     RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
 
-    clog.debug("Creating endpoints")
+    clog.debug("Adding new API endpoints")
 
+    @handle_pipeline_exceptions()
     async def run_endpoint(run_req: RunRequest) -> JSONResponse:  # type: ignore
         result = await run_in_threadpool(pipeline_wrapper.run_api, urls=run_req.urls, question=run_req.question)
         return JSONResponse({"result": result}, status_code=200)
 
+    @handle_pipeline_exceptions()
     async def chat_endpoint(chat_req: ChatRequest) -> JSONResponse:
         result = await run_in_threadpool(
             pipeline_wrapper.run_chat,
