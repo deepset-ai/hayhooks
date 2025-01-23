@@ -2,20 +2,7 @@ import click
 import requests
 from pathlib import Path
 from urllib.parse import urljoin
-
-
-def should_skip_file(file_path: Path) -> bool:
-    """
-    Determine if a file should be skipped during deployment.
-    Handles hidden files across different operating systems.
-    """
-    if file_path.is_dir():
-        return True
-
-    if file_path.name.startswith('.'):
-        return True
-
-    return False
+from hayhooks.server.utils.deploy_utils import read_pipeline_files_from_folder
 
 
 @click.command()
@@ -28,15 +15,7 @@ def deploy_files(server_conf, name, folder):
 
     files_dict = {}
     try:
-        for file_path in folder.iterdir():
-            if should_skip_file(file_path):
-                continue
-
-            try:
-                files_dict[file_path.name] = file_path.read_text()
-            except Exception as e:
-                click.echo(f"Error reading file {file_path}: {str(e)}")
-                return
+        files_dict = read_pipeline_files_from_folder(folder)
 
         if not files_dict:
             click.echo("Error: No valid files found in the specified folder")

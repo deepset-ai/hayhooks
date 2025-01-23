@@ -285,3 +285,33 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
     clog.success("Pipeline deployment complete")
 
     return {"name": pipeline_name}
+
+
+def read_pipeline_files_from_folder(folder_path: Path) -> dict[str, str]:
+    """Read pipeline files from a folder and return a dictionary mapping filenames to their contents.
+    Skips directories, hidden files, and common Python artifacts.
+
+    Args:
+        folder_path: Path to the folder containing the pipeline files
+
+    Returns:
+        Dictionary mapping filenames to their contents
+    """
+
+    files = {}
+    for file_path in folder_path.rglob("*"):
+        # Skip directories and hidden files
+        if file_path.is_dir() or file_path.name.startswith('.'):
+            continue
+
+        # Skip files matching ignore patterns
+        if any(file_path.match(pattern) for pattern in settings.files_to_ignore_patterns):
+            continue
+
+        try:
+            files[str(file_path.relative_to(folder_path))] = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception as e:
+            log.warning(f"Skipping file {file_path}: {str(e)}")
+            continue
+
+    return files
