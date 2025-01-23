@@ -2,8 +2,19 @@ import pytest
 import shutil
 from pathlib import Path
 from typing import Callable
-from hayhooks.server.utils.deploy_utils import load_pipeline_module, save_pipeline_files
-from hayhooks.server.exceptions import PipelineFilesError
+from hayhooks.server.utils.deploy_utils import (
+    load_pipeline_module,
+    save_pipeline_files,
+    create_request_model_from_callable,
+    create_response_model_from_callable,
+    deploy_pipeline_files,
+)
+from hayhooks.server.exceptions import (
+    PipelineFilesError,
+    PipelineModuleLoadError,
+    PipelineWrapperError,
+    PipelineAlreadyExistsError,
+)
 
 TEST_PIPELINES_DIR = Path("tests/test_files/test_pipelines")
 
@@ -34,7 +45,7 @@ def test_load_pipeline_wrong_folder():
     pipeline_folder_path = Path("tests/test_files/python/wrong_folder")
 
     with pytest.raises(
-        ValueError,
+        PipelineModuleLoadError,
         match="Required file 'tests/test_files/python/wrong_folder/pipeline_wrapper.py' not found",
     ):
         load_pipeline_module(pipeline_name, pipeline_folder_path)
@@ -45,7 +56,7 @@ def test_load_pipeline_no_wrapper():
     pipeline_folder_path = Path("tests/test_files/python/no_wrapper")
 
     with pytest.raises(
-        ValueError,
+        PipelineModuleLoadError,
         match="Required file 'tests/test_files/python/no_wrapper/pipeline_wrapper.py' not found",
     ):
         load_pipeline_module(pipeline_name, pipeline_folder_path)
@@ -88,3 +99,29 @@ def test_save_pipeline_files_raises_error(tmp_path):
         save_pipeline_files(pipeline_name="test_pipeline", files=files, pipelines_dir=str(readonly_dir))
 
     assert "Failed to save pipeline files" in str(exc_info.value)
+
+
+def test_create_request_model_from_callable():
+    def sample_func(name: str, age: int = 25, optional: str = ""):
+        pass
+
+    model = create_request_model_from_callable(sample_func, "Test")
+
+    assert model.__name__ == "TestRequest"
+    assert model.model_fields["name"].annotation == str
+    assert model.model_fields["name"].is_required
+    assert model.model_fields["age"].annotation == int
+    assert model.model_fields["age"].default == 25
+    assert model.model_fields["optional"].annotation == str
+    assert model.model_fields["optional"].default == ""
+
+
+def test_create_response_model_from_callable():
+    def sample_func() -> dict:
+        return {"result": "test"}
+
+    model = create_response_model_from_callable(sample_func, "Test")
+
+    assert model.__name__ == "TestResponse"
+    assert model.model_fields["result"].annotation == dict
+    assert model.model_fields["result"].is_required

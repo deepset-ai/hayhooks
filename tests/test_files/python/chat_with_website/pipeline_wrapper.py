@@ -12,9 +12,11 @@ class PipelineWrapper(BasePipelineWrapper):
         pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
-    def run_api(self, urls: List[str], question: str) -> dict:
-        return self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+    def run_api(self, urls: List[str], question: str) -> str:
+        result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]
 
-    def run_chat(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> dict:
+    def run_chat(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
         question = user_message
-        return self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
+        result = self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]

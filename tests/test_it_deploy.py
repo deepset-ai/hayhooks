@@ -10,6 +10,7 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def clear_registry():
     registry.clear()
+    yield
 
 
 # Load pipeline definitions from test_files
