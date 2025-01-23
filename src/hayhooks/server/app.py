@@ -91,12 +91,20 @@ def create_app() -> FastAPI:
         if yaml_files:
             log.info(f"Deploying {len(yaml_files)} pipeline(s) from YAML files")
             for pipeline_file_path in yaml_files:
-                deploy_yaml_pipeline(app, pipeline_file_path)
+                try:
+                    deploy_yaml_pipeline(app, pipeline_file_path)
+                except Exception as e:
+                    log.warning(f"Skipping pipeline file {pipeline_file_path}: {str(e)}")
+                    continue
 
         if pipeline_dirs:
             log.info(f"Deploying {len(pipeline_dirs)} pipeline(s) from folders")
             for pipeline_dir in pipeline_dirs:
-                deploy_files_pipeline(app, pipeline_dir)
+                try:
+                    deploy_files_pipeline(app, pipeline_dir)
+                except Exception as e:
+                    log.warning(f"Skipping pipeline folder {pipeline_dir}: {str(e)}")
+                    continue
 
     return app
 
