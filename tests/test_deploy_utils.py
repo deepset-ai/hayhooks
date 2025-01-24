@@ -26,7 +26,7 @@ def cleanup_test_pipelines():
 
 def test_load_pipeline_module():
     pipeline_name = "chat_with_website"
-    pipeline_folder_path = Path("tests/test_files/python/chat_with_website")
+    pipeline_folder_path = Path("tests/test_files/files/chat_with_website")
 
     module = load_pipeline_module(pipeline_name, pipeline_folder_path)
 
@@ -39,22 +39,22 @@ def test_load_pipeline_module():
 
 def test_load_pipeline_wrong_folder():
     pipeline_name = "chat_with_website"
-    pipeline_folder_path = Path("tests/test_files/python/wrong_folder")
+    pipeline_folder_path = Path("tests/test_files/files/wrong_folder")
 
     with pytest.raises(
         PipelineModuleLoadError,
-        match="Required file 'tests/test_files/python/wrong_folder/pipeline_wrapper.py' not found",
+        match="Required file 'tests/test_files/files/wrong_folder/pipeline_wrapper.py' not found",
     ):
         load_pipeline_module(pipeline_name, pipeline_folder_path)
 
 
 def test_load_pipeline_no_wrapper():
     pipeline_name = "chat_with_website"
-    pipeline_folder_path = Path("tests/test_files/python/no_wrapper")
+    pipeline_folder_path = Path("tests/test_files/files/no_wrapper")
 
     with pytest.raises(
         PipelineModuleLoadError,
-        match="Required file 'tests/test_files/python/no_wrapper/pipeline_wrapper.py' not found",
+        match="Required file 'tests/test_files/files/no_wrapper/pipeline_wrapper.py' not found",
     ):
         load_pipeline_module(pipeline_name, pipeline_folder_path)
 

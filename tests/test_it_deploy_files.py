@@ -28,7 +28,7 @@ def final_cleanup():
 
 
 # Load test pipeline files from test directory
-TEST_FILES_DIR = Path(__file__).parent / "test_files/python/chat_with_website"
+TEST_FILES_DIR = Path(__file__).parent / "test_files/files/chat_with_website"
 PIPELINE_FILES = {
     "pipeline_wrapper.py": (TEST_FILES_DIR / "pipeline_wrapper.py").read_text(),
     "chat_with_website.yml": (TEST_FILES_DIR / "chat_with_website.yml").read_text(),
