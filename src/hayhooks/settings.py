@@ -22,6 +22,9 @@ class AppSettings(BaseSettings):
     # Port for the FastAPI app
     port: int = 1416
 
+    # Files to ignore when reading pipeline files from a folder
+    files_to_ignore_patterns: list[str] = ["*.pyc", "*.pyo", "*.pyd", "__pycache__", "*.so", "*.egg", "*.egg-info"]
+
     @field_validator("pipelines_dir")
     def validate_pipelines_dir(cls, v):
         path = Path(v)

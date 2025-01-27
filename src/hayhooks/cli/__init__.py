@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import click
 
+from hayhooks.cli.deploy_files import deploy_files
 from hayhooks.cli.run import run
 from hayhooks.cli.deploy import deploy
 from hayhooks.cli.status import status
@@ -22,3 +23,4 @@ hayhooks.add_command(run)
 hayhooks.add_command(deploy)
 hayhooks.add_command(status)
 hayhooks.add_command(undeploy)
+hayhooks.add_command(deploy_files)

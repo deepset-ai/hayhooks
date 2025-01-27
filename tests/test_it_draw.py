@@ -1,12 +1,16 @@
 from fastapi.testclient import TestClient
 from hayhooks.server import app
 from pathlib import Path
+from typing import List
+from haystack import Pipeline
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.pipelines import registry
 
 client = TestClient(app)
 
 
 def test_draw_pipeline(deploy_pipeline, draw_pipeline):
-    pipeline_file = Path(__file__).parent / "test_files" / "working_pipelines/test_pipeline_01.yml"
+    pipeline_file = Path(__file__).parent / "test_files/yaml" / "working_pipelines/test_pipeline_01.yml"
     pipeline_data = {"name": pipeline_file.stem, "source_code": pipeline_file.read_text()}
 
     deploy_pipeline(client, pipeline_data["name"], pipeline_data["source_code"])
@@ -21,3 +25,25 @@ def test_draw_pipeline(deploy_pipeline, draw_pipeline):
 def test_draw_non_existent_pipeline(draw_pipeline):
     draw_response = draw_pipeline(client, "non_existent_pipeline")
     assert draw_response.status_code == 404
+
+
+def test_draw_pipeline_wrapper(deploy_pipeline, draw_pipeline):
+    class TestPipelineWrapper(BasePipelineWrapper):
+        def setup(self) -> None:
+            pipeline_file = Path(__file__).parent / "test_files/yaml" / "working_pipelines/test_pipeline_01.yml"
+            self.pipeline = Pipeline.loads(pipeline_file.read_text())
+
+        def run_api(self, urls: List[str], question: str) -> dict:
+            return {}
+
+        def run_chat(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> dict:
+            return {}
+
+    wrapper = TestPipelineWrapper()
+    wrapper.setup()
+    registry.add("test_wrapper", wrapper)
+
+    draw_response = draw_pipeline(client, "test_wrapper")
+    assert draw_response.status_code == 200
+    assert draw_response.headers["Content-Type"] == "image/png"
+    assert len(draw_response.content) > 0
