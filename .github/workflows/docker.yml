@@ -41,5 +41,6 @@ jobs:
           IMAGE_TAG_SUFFIX: ${{ steps.meta.outputs.version }}
           HAYHOOKS_VERSION: ${{ steps.meta.outputs.version }}
         with:
-          workdir: docker
+          files: |
+            docker/docker-bake.hcl
           push: true
