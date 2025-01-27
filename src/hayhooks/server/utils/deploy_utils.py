@@ -245,6 +245,7 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
         RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
 
         @handle_pipeline_exceptions()
+        # See comment on pipeline_run() for explanation of the "type: ignore" below
         async def run_endpoint(run_req: RunRequest) -> JSONResponse:  # type: ignore
             result = await run_in_threadpool(pipeline_wrapper.run_api, urls=run_req.urls, question=run_req.question)
             return JSONResponse({"result": result}, status_code=200)
