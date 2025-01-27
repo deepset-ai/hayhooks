@@ -238,7 +238,7 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
     clog.debug("Adding pipeline to registry")
     registry.add(pipeline_name, pipeline_wrapper)
 
-    if pipeline_wrapper._has_run_api:
+    if pipeline_wrapper._is_run_api_implemented:
         clog.debug("Creating dynamic Pydantic models for run_api")
 
         RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
@@ -258,7 +258,7 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
             tags=["pipelines"],
         )
 
-    if pipeline_wrapper._has_run_chat:
+    if pipeline_wrapper._is_run_chat_implemented:
         clog.debug("Creating dynamic Pydantic models for run_chat")
 
         @handle_pipeline_exceptions()
@@ -301,15 +301,10 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
     except Exception as e:
         raise PipelineWrapperError(f"Failed to call setup() on pipeline wrapper instance: {str(e)}") from e
 
-    has_run_api = pipeline_wrapper.run_api.__func__ is not BasePipelineWrapper.run_api
-    if has_run_api:
-        pipeline_wrapper._has_run_api = True
+    pipeline_wrapper._is_run_api_implemented = pipeline_wrapper.run_api.__func__ is not BasePipelineWrapper.run_api
+    pipeline_wrapper._is_run_chat_implemented = pipeline_wrapper.run_chat.__func__ is not BasePipelineWrapper.run_chat
 
-    has_run_chat = pipeline_wrapper.run_chat.__func__ is not BasePipelineWrapper.run_chat
-    if has_run_chat:
-        pipeline_wrapper._has_run_chat = True
-
-    if not (has_run_api or has_run_chat):
+    if not (pipeline_wrapper._is_run_api_implemented or pipeline_wrapper._is_run_chat_implemented):
         raise PipelineWrapperError("At least one of run_api or run_chat must be implemented")
 
     return pipeline_wrapper
