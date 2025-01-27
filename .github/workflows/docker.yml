@@ -36,11 +36,10 @@ jobs:
           images: deepset/hayhooks
 
       - name: Build base images
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v5
         env:
           IMAGE_TAG_SUFFIX: ${{ steps.meta.outputs.version }}
           HAYHOOKS_VERSION: ${{ steps.meta.outputs.version }}
         with:
-          files: |
-            docker/docker-bake.hcl
+          workdir: docker
           push: true
