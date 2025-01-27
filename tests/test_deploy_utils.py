@@ -1,5 +1,6 @@
 import pytest
 import shutil
+from haystack import Pipeline
 from pathlib import Path
 from typing import Callable
 from hayhooks.server.utils.deploy_utils import (
@@ -7,11 +8,14 @@ from hayhooks.server.utils.deploy_utils import (
     save_pipeline_files,
     create_request_model_from_callable,
     create_response_model_from_callable,
+    create_pipeline_wrapper_instance,
 )
 from hayhooks.server.exceptions import (
     PipelineFilesError,
     PipelineModuleLoadError,
+    PipelineWrapperError,
 )
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 TEST_PIPELINES_DIR = Path("tests/test_files/test_pipelines")
 
@@ -122,3 +126,61 @@ def test_create_response_model_from_callable():
     assert model.__name__ == "TestResponse"
     assert model.model_fields["result"].annotation == dict
     assert model.model_fields["result"].is_required
+
+
+def test_create_pipeline_wrapper_instance_success():
+    class ValidPipelineWrapper(BasePipelineWrapper):
+        def setup(self):
+            self.pipeline = Pipeline()
+
+        def run_api(self):
+            pass
+
+        def run_chat(self, model_id, messages, body):
+            pass
+
+    module = type('Module', (), {'PipelineWrapper': ValidPipelineWrapper})
+
+    wrapper = create_pipeline_wrapper_instance(module)
+    assert isinstance(wrapper, BasePipelineWrapper)
+    assert hasattr(wrapper, 'run_api')
+    assert hasattr(wrapper, 'run_chat')
+    assert isinstance(wrapper.pipeline, Pipeline)
+
+
+def test_create_pipeline_wrapper_instance_init_error():
+    class BrokenPipelineWrapper:
+        def __init__(self):
+            raise ValueError("Init error")
+
+    module = type('Module', (), {'PipelineWrapper': BrokenPipelineWrapper})
+
+    with pytest.raises(PipelineWrapperError, match="Failed to create pipeline wrapper instance: Init error"):
+        create_pipeline_wrapper_instance(module)
+
+
+def test_create_pipeline_wrapper_instance_setup_error():
+    class BrokenSetupWrapper(BasePipelineWrapper):
+        def setup(self):
+            raise ValueError("Setup error")
+
+        def run_api(self):
+            pass
+
+    module = type('Module', (), {'PipelineWrapper': BrokenSetupWrapper})
+
+    with pytest.raises(
+        PipelineWrapperError, match="Failed to call setup\\(\\) on pipeline wrapper instance: Setup error"
+    ):
+        create_pipeline_wrapper_instance(module)
+
+
+def test_create_pipeline_wrapper_instance_missing_methods():
+    class IncompleteWrapper(BasePipelineWrapper):
+        def setup(self):
+            self.pipeline = Pipeline()
+
+    module = type('Module', (), {'PipelineWrapper': IncompleteWrapper})
+
+    with pytest.raises(PipelineWrapperError, match="At least one of run_api or run_chat must be implemented"):
+        create_pipeline_wrapper_instance(module)

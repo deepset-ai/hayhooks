@@ -21,6 +21,7 @@ from hayhooks.server.pipelines.models import (
     get_response_model,
 )
 from hayhooks.server.logger import log
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.settings import settings
 from pydantic import BaseModel, create_model
 
@@ -229,7 +230,7 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
     module = load_pipeline_module(pipeline_name, folder_path=pipeline_dir)
 
     clog.debug("Creating PipelineWrapper instance")
-    pipeline_wrapper = module.PipelineWrapper()
+    pipeline_wrapper = create_pipeline_wrapper_instance(module)
 
     clog.debug("Running setup()")
     pipeline_wrapper.setup()
@@ -237,46 +238,48 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
     clog.debug("Adding pipeline to registry")
     registry.add(pipeline_name, pipeline_wrapper)
 
-    clog.debug("Creating dynamic Pydantic models for run_api")
-    RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
-    RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
+    if pipeline_wrapper._has_run_api:
+        clog.debug("Creating dynamic Pydantic models for run_api")
 
-    clog.debug("Adding new API endpoints")
+        RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
+        RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
 
-    @handle_pipeline_exceptions()
-    async def run_endpoint(run_req: RunRequest) -> JSONResponse:  # type: ignore
-        result = await run_in_threadpool(pipeline_wrapper.run_api, urls=run_req.urls, question=run_req.question)
-        return JSONResponse({"result": result}, status_code=200)
+        @handle_pipeline_exceptions()
+        async def run_endpoint(run_req: RunRequest) -> JSONResponse:  # type: ignore
+            result = await run_in_threadpool(pipeline_wrapper.run_api, urls=run_req.urls, question=run_req.question)
+            return JSONResponse({"result": result}, status_code=200)
 
-    @handle_pipeline_exceptions()
-    async def chat_endpoint(chat_req: ChatRequest) -> JSONResponse:
-        result = await run_in_threadpool(
-            pipeline_wrapper.run_chat,
-            user_message=chat_req.user_message,
-            model_id=chat_req.model_id,
-            messages=chat_req.messages,
-            body=chat_req.body,
+        app.add_api_route(
+            path=f"/{pipeline_name}/run",
+            endpoint=run_endpoint,
+            methods=["POST"],
+            name=f"{pipeline_name}_run",
+            response_model=RunResponse,
+            tags=["pipelines"],
         )
-        return JSONResponse({"result": result}, status_code=200)
 
-    # Add routes
-    app.add_api_route(
-        path=f"/{pipeline_name}/run",
-        endpoint=run_endpoint,
-        methods=["POST"],
-        name=f"{pipeline_name}_run",
-        response_model=RunResponse,
-        tags=["pipelines"],
-    )
+    if pipeline_wrapper._has_run_chat:
+        clog.debug("Creating dynamic Pydantic models for run_chat")
 
-    app.add_api_route(
-        path=f"/{pipeline_name}/chat",
-        endpoint=chat_endpoint,
-        methods=["POST"],
-        name=f"{pipeline_name}_chat",
-        response_model=ChatResponse,
-        tags=["pipelines"],
-    )
+        @handle_pipeline_exceptions()
+        async def chat_endpoint(chat_req: ChatRequest) -> JSONResponse:
+            result = await run_in_threadpool(
+                pipeline_wrapper.run_chat,
+                user_message=chat_req.user_message,
+                model_id=chat_req.model_id,
+                messages=chat_req.messages,
+                body=chat_req.body,
+            )
+            return JSONResponse({"result": result}, status_code=200)
+
+        app.add_api_route(
+            path=f"/{pipeline_name}/chat",
+            endpoint=chat_endpoint,
+            methods=["POST"],
+            name=f"{pipeline_name}_chat",
+            response_model=ChatResponse,
+            tags=["pipelines"],
+        )
 
     clog.debug("Setting up FastAPI app")
     app.openapi_schema = None
@@ -285,6 +288,31 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
     clog.success("Pipeline deployment complete")
 
     return {"name": pipeline_name}
+
+
+def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelineWrapper:
+    try:
+        pipeline_wrapper = pipeline_module.PipelineWrapper()
+    except Exception as e:
+        raise PipelineWrapperError(f"Failed to create pipeline wrapper instance: {str(e)}") from e
+
+    try:
+        pipeline_wrapper.setup()
+    except Exception as e:
+        raise PipelineWrapperError(f"Failed to call setup() on pipeline wrapper instance: {str(e)}") from e
+
+    has_run_api = pipeline_wrapper.run_api.__func__ is not BasePipelineWrapper.run_api
+    if has_run_api:
+        pipeline_wrapper._has_run_api = True
+
+    has_run_chat = pipeline_wrapper.run_chat.__func__ is not BasePipelineWrapper.run_chat
+    if has_run_chat:
+        pipeline_wrapper._has_run_chat = True
+
+    if not (has_run_api or has_run_chat):
+        raise PipelineWrapperError("At least one of run_api or run_chat must be implemented")
+
+    return pipeline_wrapper
 
 
 def read_pipeline_files_from_folder(folder_path: Path) -> dict[str, str]:
@@ -300,11 +328,9 @@ def read_pipeline_files_from_folder(folder_path: Path) -> dict[str, str]:
 
     files = {}
     for file_path in folder_path.rglob("*"):
-        # Skip directories and hidden files
         if file_path.is_dir() or file_path.name.startswith('.'):
             continue
 
-        # Skip files matching ignore patterns
         if any(file_path.match(pattern) for pattern in settings.files_to_ignore_patterns):
             continue
 

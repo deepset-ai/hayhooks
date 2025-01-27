@@ -18,7 +18,6 @@ class BasePipelineWrapper(ABC):
         """
         pass
 
-    @abstractmethod
     def run_api(self):
         """
         Execute the pipeline in API mode.
@@ -29,9 +28,8 @@ class BasePipelineWrapper(ABC):
         An API endpoint will call this method and will use dynamically created
         pydantic models for request and response validation.
         """
-        pass
+        raise NotImplementedError("run_api not implemented")
 
-    @abstractmethod
     def run_chat(self, model_id: str, messages: List[dict], body: dict):
         """
         This method is called when a user sends an OpenAI-compatible chat completion request.
@@ -44,4 +42,4 @@ class BasePipelineWrapper(ABC):
             messages: List of previous conversation messages for context
             body: Additional parameters and configuration options
         """
-        pass
+        raise NotImplementedError("run_chat not implemented")
