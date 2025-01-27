@@ -25,8 +25,10 @@ class BasePipelineWrapper(ABC):
         This method provides a generic interface for running the pipeline
         with implementation-specific parameters.
 
-        An API endpoint will call this method and will use dynamically created
-        pydantic models for request and response validation.
+        This method will be used as the handler for the `/run` API endpoint.
+
+        Pydantic models will be automatically generated based on this method's
+        signature and return type for request validation and response serialization.
         """
         raise NotImplementedError("run_api not implemented")
 
@@ -37,9 +39,11 @@ class BasePipelineWrapper(ABC):
         This method handles conversational interactions with the pipeline,
         maintaining context and processing chat-specific parameters.
 
+        This method will be used as the handler for the `/chat` API endpoint.
+
         Args:
-            model_id: The model (Haystack pipeline) to run
-            messages: List of previous conversation messages for context
+            model_id: The `name` of the deployed Haystack pipeline to run
+            messages: The history of messages as OpenAI-compatible list of dicts
             body: Additional parameters and configuration options
         """
         raise NotImplementedError("run_chat not implemented")
