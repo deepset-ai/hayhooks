@@ -136,7 +136,7 @@ def test_create_pipeline_wrapper_instance_success():
         def run_api(self):
             pass
 
-        def run_chat(self, model_id, messages, body):
+        def run_chat(self, model, messages, body):
             pass
 
     module = type('Module', (), {'PipelineWrapper': ValidPipelineWrapper})

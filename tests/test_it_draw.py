@@ -36,7 +36,7 @@ def test_draw_pipeline_wrapper(deploy_pipeline, draw_pipeline):
         def run_api(self, urls: List[str], question: str) -> dict:
             return {}
 
-        def run_chat(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> dict:
+        def run_chat(self, model: str, messages: List[dict], body: dict) -> dict:
             return {}
 
     wrapper = TestPipelineWrapper()

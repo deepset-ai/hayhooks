@@ -6,7 +6,7 @@ from hayhooks.server.utils.deploy_utils import (
     deploy_pipeline_files,
     read_pipeline_files_from_folder,
 )
-from hayhooks.server.routers import status_router, draw_router, deploy_router, undeploy_router
+from hayhooks.server.routers import status_router, draw_router, deploy_router, undeploy_router, openai_router
 from hayhooks.settings import settings
 from hayhooks.server.logger import log
 
@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(draw_router)
     app.include_router(deploy_router)
     app.include_router(undeploy_router)
+    app.include_router(openai_router)
 
     # Deploy all pipelines in the pipelines directory
     pipelines_dir = settings.pipelines_dir
