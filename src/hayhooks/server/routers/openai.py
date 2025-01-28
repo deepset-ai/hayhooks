@@ -1,8 +1,9 @@
 import time
 import uuid
-from typing import List, Literal, Union
+from typing import Generator, List, Literal, Union
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.deploy_utils import handle_pipeline_exceptions
@@ -90,7 +91,6 @@ async def get_models():
 @router.post("/{pipeline_name}/chat", response_model=ChatCompletion)
 @handle_pipeline_exceptions()
 async def chat_endpoint(chat_req: ChatRequest) -> ChatCompletion:
-    log.debug(f"registry: {registry.get_names()}")
     pipeline_wrapper = registry.get(chat_req.model)
 
     if not pipeline_wrapper:
@@ -106,13 +106,51 @@ async def chat_endpoint(chat_req: ChatRequest) -> ChatCompletion:
         body=chat_req.model_dump(),
     )
 
-    resp = ChatCompletion(
-        id=f"{chat_req.model}-{uuid.uuid4()}",
-        object="chat.completion",
-        created=int(time.time()),
-        model=chat_req.model,
-        choices=[Choice(index=0, message=Message(role="assistant", content=result), finish_reason="stop")],
-    )
+    resp_id = f"{chat_req.model}-{uuid.uuid4()}"
 
-    log.debug(f"resp: {resp.model_dump_json()}")
-    return resp
+    if isinstance(result, str):
+        # If the pipeline returns a string, we can directly return a ChatCompletion object
+
+        resp = ChatCompletion(
+            id=resp_id,
+            object="chat.completion",
+            created=int(time.time()),
+            model=chat_req.model,
+            choices=[Choice(index=0, message=Message(role="assistant", content=result), finish_reason="stop")],
+        )
+
+        log.debug(f"resp: {resp.model_dump_json()}")
+        return resp
+
+    elif isinstance(result, Generator):
+        # If the pipeline returns a generator, we need to stream the chunks as SSE events
+
+        def stream_chunks() -> Generator:
+            # Consume the input generator sending chunks as SSE events
+            for chunk in result:
+                resp = ChatCompletion(
+                    id=resp_id,
+                    object="chat.completion.chunk",
+                    created=int(time.time()),
+                    model=chat_req.model,
+                    choices=[Choice(index=0, delta=Message(role="assistant", content=chunk), finish_reason=None)],
+                )
+
+                # This is the format for SSE
+                # Ref: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
+                yield f"data: {resp.model_dump_json()}\n\n"
+
+            # After consuming the generator, send a final event with finish_reason "stop"
+            final_resp = ChatCompletion(
+                id=resp_id,
+                object="chat.completion.chunk",
+                created=int(time.time()),
+                model=chat_req.model,
+                choices=[Choice(index=0, finish_reason="stop")],
+            )
+            yield f"data: {final_resp.model_dump_json()}\n\n"
+
+        return StreamingResponse(stream_chunks(), media_type="text/event-stream")
+
+    else:
+        raise HTTPException(status_code=500, detail="Unsupported response type from pipeline")
