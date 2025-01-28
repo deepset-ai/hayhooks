@@ -1,12 +1,11 @@
 import shutil
 import pytest
 from hayhooks.settings import settings
-from hayhooks.server.schema import ModelObject, ModelsResponse
 from pathlib import Path
 from fastapi.testclient import TestClient
 from hayhooks.server import app
 from hayhooks.server.pipelines import registry
-from hayhooks.server.routers.openai import ChatRequest, ChatCompletion, Choice
+from hayhooks.server.routers.openai import ChatRequest, ChatCompletion, ModelObject, ModelsResponse
 
 client = TestClient(app)
 

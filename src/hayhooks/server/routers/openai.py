@@ -3,13 +3,25 @@ import uuid
 from typing import List, Literal, Union
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from hayhooks.server.pipelines import registry
-from hayhooks.server.schema import ModelsResponse, ModelObject
 from hayhooks.server.utils.deploy_utils import handle_pipeline_exceptions
 from hayhooks.server.logger import log
 
 router = APIRouter()
+
+
+class ModelObject(BaseModel):
+    id: str
+    name: str
+    object: Literal["model"]
+    created: int
+    owned_by: str
+
+
+class ModelsResponse(BaseModel):
+    data: List[ModelObject]
+    object: Literal["list"]
 
 
 class OpenAIBaseModel(BaseModel):
