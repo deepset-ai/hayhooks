@@ -23,6 +23,9 @@ class PipelineWrapper(BasePipelineWrapper):
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
 
         question = get_last_user_message(messages)
-        result = self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
+        log.trace(f"Question: {question}")
 
-        return result["llm"]["replies"][0]
+        # We don't need to run the pipeline here, we just return a mock response
+        # result = self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
+
+        return "This is a mock response from the pipeline"
