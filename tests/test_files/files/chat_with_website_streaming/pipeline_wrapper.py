@@ -1,7 +1,8 @@
 from pathlib import Path
+from pprint import pprint
 from typing import Generator, List, Union
 from haystack import Pipeline
-from hayhooks.server.pipelines.utils import get_last_user_message
+from hayhooks.server.pipelines.utils import get_last_user_message, streaming_generator
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.logger import log
 
@@ -21,20 +22,11 @@ class PipelineWrapper(BasePipelineWrapper):
 
     def run_chat(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
-
+        pprint(messages)
         question = get_last_user_message(messages)
         log.trace(f"Question: {question}")
 
-        # Plain pipeline run, will return a string
-        # result = self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
-        # return result["llm"]["replies"][0]
-
-        # Streaming pipeline run, will return a generator
-        # def pipeline_runner():
-        #     self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
-
-        # return streaming_generator(self.pipeline, pipeline_runner)
-
-        # Mock streaming pipeline run, will return a fixed string
-        # NOTE: This is used in tests, please don't change it
-        return "This is a mock response from the pipeline"
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"fetcher": {"urls": URLS}, "prompt": {"query": question}},
+        )
