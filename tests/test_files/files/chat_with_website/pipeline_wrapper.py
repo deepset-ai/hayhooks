@@ -19,7 +19,7 @@ class PipelineWrapper(BasePipelineWrapper):
         result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
         return result["llm"]["replies"][0]
 
-    def run_chat(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
 
         question = get_last_user_message(messages)

@@ -270,13 +270,13 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
         raise PipelineWrapperError(f"Failed to call setup() on pipeline wrapper instance: {str(e)}") from e
 
     pipeline_wrapper._is_run_api_implemented = pipeline_wrapper.run_api.__func__ is not BasePipelineWrapper.run_api
-    pipeline_wrapper._is_run_chat_implemented = pipeline_wrapper.run_chat.__func__ is not BasePipelineWrapper.run_chat
+    pipeline_wrapper._is_run_chat_completion_implemented = pipeline_wrapper.run_chat_completion.__func__ is not BasePipelineWrapper.run_chat_completion
 
     log.debug(f"pipeline_wrapper._is_run_api_implemented: {pipeline_wrapper._is_run_api_implemented}")
-    log.debug(f"pipeline_wrapper._is_run_chat_implemented: {pipeline_wrapper._is_run_chat_implemented}")
+    log.debug(f"pipeline_wrapper._is_run_chat_completion_implemented: {pipeline_wrapper._is_run_chat_completion_implemented}")
 
-    if not (pipeline_wrapper._is_run_api_implemented or pipeline_wrapper._is_run_chat_implemented):
-        raise PipelineWrapperError("At least one of run_api or run_chat must be implemented")
+    if not (pipeline_wrapper._is_run_api_implemented or pipeline_wrapper._is_run_chat_completion_implemented):
+        raise PipelineWrapperError("At least one of run_api or run_chat_completion must be implemented")
 
     return pipeline_wrapper
 

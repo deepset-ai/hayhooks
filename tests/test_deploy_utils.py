@@ -37,7 +37,7 @@ def test_load_pipeline_module():
     assert module is not None
     assert hasattr(module, "PipelineWrapper")
     assert isinstance(getattr(module.PipelineWrapper, "run_api"), Callable)
-    assert isinstance(getattr(module.PipelineWrapper, "run_chat"), Callable)
+    assert isinstance(getattr(module.PipelineWrapper, "run_chat_completion"), Callable)
     assert isinstance(getattr(module.PipelineWrapper, "setup"), Callable)
 
 
@@ -136,7 +136,7 @@ def test_create_pipeline_wrapper_instance_success():
         def run_api(self):
             pass
 
-        def run_chat(self, model, messages, body):
+        def run_chat_completion(self, model, messages, body):
             pass
 
     module = type('Module', (), {'PipelineWrapper': ValidPipelineWrapper})
@@ -144,7 +144,7 @@ def test_create_pipeline_wrapper_instance_success():
     wrapper = create_pipeline_wrapper_instance(module)
     assert isinstance(wrapper, BasePipelineWrapper)
     assert hasattr(wrapper, 'run_api')
-    assert hasattr(wrapper, 'run_chat')
+    assert hasattr(wrapper, 'run_chat_completion')
     assert isinstance(wrapper.pipeline, Pipeline)
 
 
@@ -182,5 +182,5 @@ def test_create_pipeline_wrapper_instance_missing_methods():
 
     module = type('Module', (), {'PipelineWrapper': IncompleteWrapper})
 
-    with pytest.raises(PipelineWrapperError, match="At least one of run_api or run_chat must be implemented"):
+    with pytest.raises(PipelineWrapperError, match="At least one of run_api or run_chat_completion must be implemented"):
         create_pipeline_wrapper_instance(module)

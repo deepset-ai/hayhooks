@@ -32,7 +32,7 @@ class BasePipelineWrapper(ABC):
         """
         raise NotImplementedError("run_api not implemented")
 
-    def run_chat(self, model: str, messages: List[dict], body: dict):
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict):
         """
         This method is called when a user sends an OpenAI-compatible chat completion request.
 
@@ -46,4 +46,4 @@ class BasePipelineWrapper(ABC):
             messages: The history of messages as OpenAI-compatible list of dicts
             body: Additional parameters and configuration options
         """
-        raise NotImplementedError("run_chat not implemented")
+        raise NotImplementedError("run_chat_completion not implemented")

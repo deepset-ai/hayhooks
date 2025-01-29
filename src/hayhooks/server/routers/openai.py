@@ -96,11 +96,11 @@ async def chat_endpoint(chat_req: ChatRequest) -> ChatCompletion:
     if not pipeline_wrapper:
         raise HTTPException(status_code=404, detail=f"Pipeline '{chat_req.model}' not found")
 
-    if not pipeline_wrapper._is_run_chat_implemented:
+    if not pipeline_wrapper._is_run_chat_completion_implemented:
         raise HTTPException(status_code=501, detail="Chat endpoint not implemented for this model")
 
     result = await run_in_threadpool(
-        pipeline_wrapper.run_chat,
+        pipeline_wrapper.run_chat_completion,
         model=chat_req.model,
         messages=chat_req.messages,
         body=chat_req.model_dump(),
