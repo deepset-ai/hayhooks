@@ -22,11 +22,25 @@ class PipelineWrapper(BasePipelineWrapper):
 
     def run_chat(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
-        pprint(messages)
+
         question = get_last_user_message(messages)
         log.trace(f"Question: {question}")
 
-        return streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={"fetcher": {"urls": URLS}, "prompt": {"query": question}},
-        )
+        # Real pipeline run with streaming
+        # return streaming_generator(
+        #     pipeline=self.pipeline,
+        #     pipeline_run_args={"fetcher": {"urls": URLS}, "prompt": {"query": question}},
+        # )
+
+        # Mock streaming pipeline run, will return a fixed string
+        # NOTE: This is used in tests, please don't change it
+        if "Redis" in question:
+            mock_response = "Redis is an in-memory data structure store, used as a database, cache and message broker."
+        else:
+            mock_response = "This is a mock response from the pipeline"
+
+        def mock_generator():
+            for word in mock_response.split():
+                yield word + " "
+
+        return mock_generator()
