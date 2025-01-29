@@ -1,8 +1,7 @@
 from pathlib import Path
-from pprint import pprint
 from typing import Generator, List, Union
 from haystack import Pipeline
-from hayhooks.server.pipelines.utils import get_last_user_message, streaming_generator
+from hayhooks.server.pipelines.utils import get_last_user_message
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.logger import log
 
@@ -26,15 +25,6 @@ class PipelineWrapper(BasePipelineWrapper):
         question = get_last_user_message(messages)
         log.trace(f"Question: {question}")
 
-        # Mock streaming pipeline run, will return a fixed string
-        # NOTE: This is used in tests, please don't change it
-        if "Redis" in question:
-            mock_response = "Redis is an in-memory data structure store, used as a database, cache and message broker."
-        else:
-            mock_response = "This is a mock response from the pipeline"
-
-        def mock_generator():
-            for word in mock_response.split():
-                yield word + " "
-
-        return mock_generator()
+        # Plain pipeline run, will return a string
+        result = self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]
