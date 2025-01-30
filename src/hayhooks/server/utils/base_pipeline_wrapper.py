@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Generator, List, Union
 
 
 class BasePipelineWrapper(ABC):
@@ -32,7 +32,7 @@ class BasePipelineWrapper(ABC):
         """
         raise NotImplementedError("run_api not implemented")
 
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict):
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
         """
         This method is called when a user sends an OpenAI-compatible chat completion request.
 
