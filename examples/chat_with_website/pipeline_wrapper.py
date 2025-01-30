@@ -25,6 +25,6 @@ class PipelineWrapper(BasePipelineWrapper):
         question = get_last_user_message(messages)
         log.trace(f"Question: {question}")
 
-        # Mock streaming pipeline run, will return a fixed string
-        # NOTE: This is used in tests, please don't change it
-        return "This is a mock response from the pipeline"
+        # Plain pipeline run, will return a string
+        result = self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]

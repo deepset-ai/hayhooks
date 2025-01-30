@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Generator, List, Union
 
 
 class BasePipelineWrapper(ABC):
@@ -32,7 +32,7 @@ class BasePipelineWrapper(ABC):
         """
         raise NotImplementedError("run_api not implemented")
 
-    def run_chat(self, model_id: str, messages: List[dict], body: dict):
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
         """
         This method is called when a user sends an OpenAI-compatible chat completion request.
 
@@ -42,8 +42,8 @@ class BasePipelineWrapper(ABC):
         This method will be used as the handler for the `/chat` API endpoint.
 
         Args:
-            model_id: The `name` of the deployed Haystack pipeline to run
+            model: The `name` of the deployed Haystack pipeline to run
             messages: The history of messages as OpenAI-compatible list of dicts
             body: Additional parameters and configuration options
         """
-        raise NotImplementedError("run_chat not implemented")
+        raise NotImplementedError("run_chat_completion not implemented")

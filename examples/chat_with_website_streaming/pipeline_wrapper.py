@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Generator, List, Union
 from haystack import Pipeline
-from hayhooks.server.pipelines.utils import get_last_user_message
+from hayhooks.server.pipelines.utils import get_last_user_message, streaming_generator
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.logger import log
 
@@ -25,6 +25,8 @@ class PipelineWrapper(BasePipelineWrapper):
         question = get_last_user_message(messages)
         log.trace(f"Question: {question}")
 
-        # Mock streaming pipeline run, will return a fixed string
-        # NOTE: This is used in tests, please don't change it
-        return "This is a mock response from the pipeline"
+        # Streaming pipeline run, will return a generator
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"fetcher": {"urls": URLS}, "prompt": {"query": question}},
+        )

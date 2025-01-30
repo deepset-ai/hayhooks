@@ -1,8 +1,9 @@
 import inspect
 import importlib.util
 from functools import wraps
+import traceback
 from types import ModuleType
-from typing import Callable, Union, List
+from typing import Callable, Union
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
@@ -23,18 +24,7 @@ from hayhooks.server.pipelines.models import (
 from hayhooks.server.logger import log
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.settings import settings
-from pydantic import BaseModel, create_model
-
-
-class ChatRequest(BaseModel):
-    user_message: str
-    model_id: str
-    messages: List[dict]
-    body: dict
-
-
-class ChatResponse(BaseModel):
-    result: dict
+from pydantic import create_model
 
 
 def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
@@ -192,9 +182,11 @@ def handle_pipeline_exceptions():
         async def wrapper(*args, **kwargs):
             try:
                 return await func(*args, **kwargs)
+            except HTTPException as e:
+                raise e from e
             except Exception as e:
-                log.error(f"Pipeline execution error: {str(e)}")
-                raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}")
+                log.error(f"Pipeline execution error: {str(e)} - {traceback.format_exc()}")
+                raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}") from e
 
         return wrapper
 
@@ -245,10 +237,9 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
         RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
 
         @handle_pipeline_exceptions()
-        # See comment on pipeline_run() for explanation of the "type: ignore" below
-        async def run_endpoint(run_req: RunRequest) -> JSONResponse:  # type: ignore
+        async def run_endpoint(run_req: RunRequest) -> RunResponse:  # type: ignore
             result = await run_in_threadpool(pipeline_wrapper.run_api, urls=run_req.urls, question=run_req.question)
-            return JSONResponse({"result": result}, status_code=200)
+            return RunResponse(result=result)
 
         app.add_api_route(
             path=f"/{pipeline_name}/run",
@@ -259,35 +250,11 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
             tags=["pipelines"],
         )
 
-    if pipeline_wrapper._is_run_chat_implemented:
-        clog.debug("Creating dynamic Pydantic models for run_chat")
-
-        @handle_pipeline_exceptions()
-        async def chat_endpoint(chat_req: ChatRequest) -> JSONResponse:
-            result = await run_in_threadpool(
-                pipeline_wrapper.run_chat,
-                user_message=chat_req.user_message,
-                model_id=chat_req.model_id,
-                messages=chat_req.messages,
-                body=chat_req.body,
-            )
-            return JSONResponse({"result": result}, status_code=200)
-
-        app.add_api_route(
-            path=f"/{pipeline_name}/chat",
-            endpoint=chat_endpoint,
-            methods=["POST"],
-            name=f"{pipeline_name}_chat",
-            response_model=ChatResponse,
-            tags=["pipelines"],
-        )
-
     clog.debug("Setting up FastAPI app")
     app.openapi_schema = None
     app.setup()
 
     clog.success("Pipeline deployment complete")
-
     return {"name": pipeline_name}
 
 
@@ -303,10 +270,13 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
         raise PipelineWrapperError(f"Failed to call setup() on pipeline wrapper instance: {str(e)}") from e
 
     pipeline_wrapper._is_run_api_implemented = pipeline_wrapper.run_api.__func__ is not BasePipelineWrapper.run_api
-    pipeline_wrapper._is_run_chat_implemented = pipeline_wrapper.run_chat.__func__ is not BasePipelineWrapper.run_chat
+    pipeline_wrapper._is_run_chat_completion_implemented = pipeline_wrapper.run_chat_completion.__func__ is not BasePipelineWrapper.run_chat_completion
 
-    if not (pipeline_wrapper._is_run_api_implemented or pipeline_wrapper._is_run_chat_implemented):
-        raise PipelineWrapperError("At least one of run_api or run_chat must be implemented")
+    log.debug(f"pipeline_wrapper._is_run_api_implemented: {pipeline_wrapper._is_run_api_implemented}")
+    log.debug(f"pipeline_wrapper._is_run_chat_completion_implemented: {pipeline_wrapper._is_run_chat_completion_implemented}")
+
+    if not (pipeline_wrapper._is_run_api_implemented or pipeline_wrapper._is_run_chat_completion_implemented):
+        raise PipelineWrapperError("At least one of run_api or run_chat_completion must be implemented")
 
     return pipeline_wrapper
 

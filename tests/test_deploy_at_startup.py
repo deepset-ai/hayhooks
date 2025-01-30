@@ -68,7 +68,7 @@ def test_app_loads_pipeline_from_files_directory(test_client_files, test_files_p
     assert response.status_code == 200
 
     pipelines = response.json()["pipelines"]
-    assert len(pipelines) == 1  # only one pipeline should be loaded
+    assert len(pipelines) >= 1  # at least one pipeline should be loaded
     assert "chat_with_website" in pipelines
 
 

@@ -32,3 +32,11 @@ def status_pipeline():
         status_response = client.get(f"/status/{pipeline_name}")
         return status_response
     return _status_pipeline
+
+
+@pytest.fixture
+def deploy_files():
+    def _deploy_files(client: TestClient, pipeline_name: str, pipeline_files: dict):
+        deploy_response = client.post("/deploy_files", json={"name": pipeline_name, "files": pipeline_files})
+        return deploy_response
+    return _deploy_files

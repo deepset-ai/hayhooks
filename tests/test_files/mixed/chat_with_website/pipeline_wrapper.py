@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import List
 from haystack import Pipeline
+from hayhooks.server.pipelines.utils import get_last_user_message
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.logger import log
 
@@ -18,10 +19,10 @@ class PipelineWrapper(BasePipelineWrapper):
         result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
         return result["llm"]["replies"][0]
 
-    def run_chat(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
-        log.trace(
-            f"Running pipeline with user_message: {user_message}, model_id: {model_id}, messages: {messages}, body: {body}"
-        )
-        question = user_message
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> str:
+        log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+
+        question = get_last_user_message(messages)
         result = self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
+
         return result["llm"]["replies"][0]

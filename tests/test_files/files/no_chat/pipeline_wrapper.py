@@ -1,8 +1,9 @@
+from haystack import Pipeline
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self):
-        raise ValueError("Setup failed!")
+        self.pipeline = Pipeline()
 
     def run_api(self) -> dict:
-        return {"result": "This should never be reached"}
+        return {"result": "Dummy result"}
