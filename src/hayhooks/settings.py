@@ -10,8 +10,9 @@ class AppSettings(BaseSettings):
     # Root path for the FastAPI app
     root_path: str = ""
 
-    # Path to the folder containing the pipelines
-    pipelines_dir: str = "pipelines"
+    # Path to the directory containing the pipelines
+    # Default to project root / pipelines
+    pipelines_dir: str = str(Path(__file__).parent.parent.parent / "pipelines")
 
     # Additional Python path to be added to the Python path
     additional_python_path: str = ""
@@ -22,20 +23,8 @@ class AppSettings(BaseSettings):
     # Port for the FastAPI app
     port: int = 1416
 
-    # Files to ignore when reading pipeline files from a folder
+    # Files to ignore when reading pipeline files from a directory
     files_to_ignore_patterns: list[str] = ["*.pyc", "*.pyo", "*.pyd", "__pycache__", "*.so", "*.egg", "*.egg-info"]
-
-    @field_validator("pipelines_dir")
-    def validate_pipelines_dir(cls, v):
-        path = Path(v)
-
-        if not path.exists():
-            path.mkdir(parents=True, exist_ok=True)
-
-        if not path.is_dir():
-            raise ValueError(f"pipelines_dir '{v}' exists but is not a directory")
-
-        return str(path)
 
 
 settings = AppSettings()

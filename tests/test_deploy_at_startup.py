@@ -2,7 +2,6 @@ import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
 from hayhooks.server.app import create_app
-from hayhooks.settings import settings
 from hayhooks.server.pipelines.registry import registry
 
 
@@ -28,22 +27,22 @@ def test_mixed_pipelines_dir():
 
 
 @pytest.fixture
-def app_with_files_pipelines(test_files_pipelines_dir, monkeypatch):
-    monkeypatch.setattr(settings, "pipelines_dir", str(test_files_pipelines_dir))
+def app_with_files_pipelines(test_settings, test_files_pipelines_dir, monkeypatch):
+    monkeypatch.setattr(test_settings, "pipelines_dir", str(test_files_pipelines_dir))
     app = create_app()
     return app
 
 
 @pytest.fixture
-def app_with_yaml_pipelines(test_yaml_pipelines_dir, monkeypatch):
-    monkeypatch.setattr(settings, "pipelines_dir", str(test_yaml_pipelines_dir))
+def app_with_yaml_pipelines(test_settings, test_yaml_pipelines_dir, monkeypatch):
+    monkeypatch.setattr(test_settings, "pipelines_dir", str(test_yaml_pipelines_dir))
     app = create_app()
     return app
 
 
 @pytest.fixture
-def app_with_mixed_pipelines(test_mixed_pipelines_dir, monkeypatch):
-    monkeypatch.setattr(settings, "pipelines_dir", str(test_mixed_pipelines_dir))
+def app_with_mixed_pipelines(test_settings, test_mixed_pipelines_dir, monkeypatch):
+    monkeypatch.setattr(test_settings, "pipelines_dir", str(test_mixed_pipelines_dir))
     app = create_app()
     return app
 

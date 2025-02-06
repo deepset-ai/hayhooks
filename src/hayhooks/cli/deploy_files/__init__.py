@@ -2,23 +2,23 @@ import click
 import requests
 from pathlib import Path
 from urllib.parse import urljoin
-from hayhooks.server.utils.deploy_utils import read_pipeline_files_from_folder
+from hayhooks.server.utils.deploy_utils import read_pipeline_files_from_dir
 
 
 @click.command()
 @click.pass_obj
 @click.option('-n', '--name', required=True, help="Name of the pipeline to deploy")
-@click.argument('folder', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path))
-def deploy_files(server_conf, name, folder):
-    """Deploy all pipeline files from a folder to the Hayhooks server."""
+@click.argument('pipeline_dir', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path))
+def deploy_files(server_conf, name, pipeline_dir):
+    """Deploy pipeline files from a directory to the Hayhooks server."""
     server, disable_ssl = server_conf
 
     files_dict = {}
     try:
-        files_dict = read_pipeline_files_from_folder(folder)
+        files_dict = read_pipeline_files_from_dir(pipeline_dir)
 
         if not files_dict:
-            click.echo("Error: No valid files found in the specified folder")
+            click.echo("Error: No valid files found in the specified directory")
             return
 
         resp = requests.post(
@@ -31,4 +31,4 @@ def deploy_files(server_conf, name, folder):
             click.echo(f"Pipeline successfully deployed with name: {resp.json().get('name')}")
 
     except Exception as e:
-        click.echo(f"Error processing folder: {str(e)}")
+        click.echo(f"Error processing directory: {str(e)}")

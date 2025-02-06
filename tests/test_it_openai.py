@@ -1,15 +1,11 @@
-from concurrent.futures import ThreadPoolExecutor
 import json
 import shutil
 import pytest
+from concurrent.futures import ThreadPoolExecutor
 from hayhooks.settings import settings
 from pathlib import Path
-from fastapi.testclient import TestClient
-from hayhooks.server import app
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.openai import ChatRequest, ChatCompletion, ModelObject, ModelsResponse
-
-client = TestClient(app)
 
 
 def cleanup():
@@ -51,13 +47,13 @@ SAMPLE_PIPELINE_FILES_STREAMING = {
 }
 
 
-def test_get_models_empty():
+def test_get_models_empty(client):
     response = client.get("/models")
     assert response.status_code == 200
     assert response.json() == {"data": [], "object": "list"}
 
 
-def test_get_models():
+def test_get_models(client):
     pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES}
 
     response = client.post("/deploy_files", json=pipeline_data)
@@ -84,7 +80,7 @@ def test_get_models():
     assert response_data == expected_response.model_dump()
 
 
-def test_chat_completion_success(deploy_files):
+def test_chat_completion_success(client, deploy_files):
     pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES}
 
     response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
@@ -116,14 +112,14 @@ def test_chat_completion_success(deploy_files):
     assert chat_completion.choices[0].logprobs is None
 
 
-def test_chat_completion_invalid_model():
+def test_chat_completion_invalid_model(client):
     request = ChatRequest(model="nonexistent_model", messages=[{"role": "user", "content": "Hello"}])
 
     response = client.post("/chat/completions", json=request.model_dump())
     assert response.status_code == 404
 
 
-def test_chat_completion_not_implemented(deploy_files):
+def test_chat_completion_not_implemented(client, deploy_files):
     pipeline_file = Path(__file__).parent / "test_files/files/no_chat/pipeline_wrapper.py"
     pipeline_data = {"name": "test_pipeline_no_chat", "files": {"pipeline_wrapper.py": pipeline_file.read_text()}}
 
@@ -138,7 +134,7 @@ def test_chat_completion_not_implemented(deploy_files):
     assert response.json()["detail"] == "Chat endpoint not implemented for this model"
 
 
-def test_chat_completion_streaming(deploy_files):
+def test_chat_completion_streaming(client, deploy_files):
     pipeline_data = {"name": "test_pipeline_streaming", "files": SAMPLE_PIPELINE_FILES_STREAMING}
 
     response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
@@ -175,7 +171,7 @@ def test_chat_completion_streaming(deploy_files):
     assert chat_completion.choices[0].logprobs is None
 
 
-def test_chat_completion_concurrent_requests(deploy_files):
+def test_chat_completion_concurrent_requests(client, deploy_files):
     pipeline_data = {"name": "test_pipeline_streaming", "files": SAMPLE_PIPELINE_FILES_STREAMING}
 
     response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])

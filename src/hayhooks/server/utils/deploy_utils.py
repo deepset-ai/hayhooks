@@ -63,15 +63,13 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
     return {"name": pipeline_def.name}
 
 
-def save_pipeline_files(
-    pipeline_name: str, files: dict[str, str], pipelines_dir: str = settings.pipelines_dir
-) -> dict[str, str]:
+def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir: str) -> dict[str, str]:
     """Save pipeline files to disk and return their paths.
 
     Args:
         pipeline_name: Name of the pipeline
         files: Dictionary mapping filenames to their contents
-
+        pipelines_dir: Path to the pipelines directory
     Returns:
         Dictionary mapping filenames to their saved paths
 
@@ -81,6 +79,8 @@ def save_pipeline_files(
     try:
         # Create pipeline directory under the configured pipelines directory
         pipeline_dir = Path(pipelines_dir) / pipeline_name
+        log.debug(f"Creating pipeline dir: {pipeline_dir}")
+
         pipeline_dir.mkdir(parents=True, exist_ok=True)
         saved_files = {}
 
@@ -100,12 +100,12 @@ def save_pipeline_files(
         raise PipelineFilesError(f"Failed to save pipeline files: {str(e)}") from e
 
 
-def load_pipeline_module(pipeline_name: str, folder_path: Union[Path, str]) -> ModuleType:
-    """Load a pipeline module from a folder path.
+def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> ModuleType:
+    """Load a pipeline module from a directory path.
 
     Args:
         pipeline_name: Name of the pipeline
-        folder_path: Path to the folder containing the pipeline files
+        dir_path: Path to the directory containing the pipeline files
 
     Returns:
         The loaded module
@@ -114,8 +114,8 @@ def load_pipeline_module(pipeline_name: str, folder_path: Union[Path, str]) -> M
         ValueError: If the module cannot be loaded
     """
     try:
-        folder_path = Path(folder_path)
-        wrapper_path = folder_path / "pipeline_wrapper.py"
+        dir_path = Path(dir_path)
+        wrapper_path = dir_path / "pipeline_wrapper.py"
 
         if not wrapper_path.exists():
             raise PipelineWrapperError(f"Required file '{wrapper_path}' not found")
@@ -212,14 +212,14 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
     if registry.get(pipeline_name):
         raise PipelineAlreadyExistsError(f"Pipeline '{pipeline_name}' already exists")
 
-    log.debug(f"Saving pipeline files for '{pipeline_name}'")
-    save_pipeline_files(pipeline_name, files=files)
+    log.debug(f"Saving pipeline files for '{pipeline_name}' in '{settings.pipelines_dir}'")
+    save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
 
     pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
     clog = log.bind(pipeline_name=pipeline_name, pipeline_dir=str(pipeline_dir), files=list(files.keys()))
 
     clog.debug("Loading pipeline module")
-    module = load_pipeline_module(pipeline_name, folder_path=pipeline_dir)
+    module = load_pipeline_module(pipeline_name, dir_path=pipeline_dir)
 
     clog.debug("Creating PipelineWrapper instance")
     pipeline_wrapper = create_pipeline_wrapper_instance(module)
@@ -288,19 +288,19 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
     return pipeline_wrapper
 
 
-def read_pipeline_files_from_folder(folder_path: Path) -> dict[str, str]:
-    """Read pipeline files from a folder and return a dictionary mapping filenames to their contents.
+def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
+    """Read pipeline files from a directory and return a dictionary mapping filenames to their contents.
     Skips directories, hidden files, and common Python artifacts.
 
     Args:
-        folder_path: Path to the folder containing the pipeline files
+        dir_path: Path to the directory containing the pipeline files
 
     Returns:
         Dictionary mapping filenames to their contents
     """
 
     files = {}
-    for file_path in folder_path.rglob("*"):
+    for file_path in dir_path.rglob("*"):
         if file_path.is_dir() or file_path.name.startswith('.'):
             continue
 
@@ -308,7 +308,7 @@ def read_pipeline_files_from_folder(folder_path: Path) -> dict[str, str]:
             continue
 
         try:
-            files[str(file_path.relative_to(folder_path))] = file_path.read_text(encoding="utf-8", errors="ignore")
+            files[str(file_path.relative_to(dir_path))] = file_path.read_text(encoding="utf-8", errors="ignore")
         except Exception as e:
             log.warning(f"Skipping file {file_path}: {str(e)}")
             continue

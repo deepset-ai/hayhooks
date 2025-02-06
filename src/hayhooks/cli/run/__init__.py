@@ -1,6 +1,7 @@
 import click
 import uvicorn
 import sys
+from hayhooks.server.app import create_app
 from hayhooks.settings import settings
 
 
@@ -20,4 +21,5 @@ def run(host, port, pipelines_dir, root_path, additional_python_path):
     if additional_python_path:
         sys.path.append(additional_python_path)
 
-    uvicorn.run("hayhooks.server:app", host=host, port=port)
+    app = create_app()
+    uvicorn.run(app, host=host, port=port)

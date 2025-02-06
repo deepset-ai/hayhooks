@@ -17,22 +17,20 @@ from hayhooks.server.exceptions import (
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
-TEST_PIPELINES_DIR = Path("tests/test_files/test_pipelines")
-
 
 @pytest.fixture(autouse=True)
-def cleanup_test_pipelines():
+def cleanup_test_pipelines(test_settings):
     yield
 
-    if TEST_PIPELINES_DIR.exists():
-        shutil.rmtree(TEST_PIPELINES_DIR)
+    if test_settings.pipelines_dir.exists():
+        shutil.rmtree(test_settings.pipelines_dir)
 
 
 def test_load_pipeline_module():
     pipeline_name = "chat_with_website"
-    pipeline_folder_path = Path("tests/test_files/files/chat_with_website")
+    pipeline_dir_path = Path("tests/test_files/files/chat_with_website")
 
-    module = load_pipeline_module(pipeline_name, pipeline_folder_path)
+    module = load_pipeline_module(pipeline_name, pipeline_dir_path)
 
     assert module is not None
     assert hasattr(module, "PipelineWrapper")
@@ -41,35 +39,35 @@ def test_load_pipeline_module():
     assert isinstance(getattr(module.PipelineWrapper, "setup"), Callable)
 
 
-def test_load_pipeline_wrong_folder():
+def test_load_pipeline_wrong_dir():
     pipeline_name = "chat_with_website"
-    pipeline_folder_path = Path("tests/test_files/files/wrong_folder")
+    pipeline_dir_path = Path("tests/test_files/files/wrong_dir")
 
     with pytest.raises(
         PipelineModuleLoadError,
-        match="Required file 'tests/test_files/files/wrong_folder/pipeline_wrapper.py' not found",
+        match="Required file 'tests/test_files/files/wrong_dir/pipeline_wrapper.py' not found",
     ):
-        load_pipeline_module(pipeline_name, pipeline_folder_path)
+        load_pipeline_module(pipeline_name, pipeline_dir_path)
 
 
 def test_load_pipeline_no_wrapper():
     pipeline_name = "chat_with_website"
-    pipeline_folder_path = Path("tests/test_files/files/no_wrapper")
+    pipeline_dir_path = Path("tests/test_files/files/no_wrapper")
 
     with pytest.raises(
         PipelineModuleLoadError,
         match="Required file 'tests/test_files/files/no_wrapper/pipeline_wrapper.py' not found",
     ):
-        load_pipeline_module(pipeline_name, pipeline_folder_path)
+        load_pipeline_module(pipeline_name, pipeline_dir_path)
 
 
-def test_save_pipeline_files_basic():
+def test_save_pipeline_files_basic(test_settings):
     files = {
         "pipeline_wrapper.py": "print('hello')",
         "extra_file.txt": "extra content",
     }
 
-    saved_paths = save_pipeline_files("test_pipeline", files, pipelines_dir=TEST_PIPELINES_DIR)
+    saved_paths = save_pipeline_files("test_pipeline", files, pipelines_dir=test_settings.pipelines_dir)
 
     assert len(saved_paths) == 2
     for filename, path in saved_paths.items():
@@ -77,16 +75,16 @@ def test_save_pipeline_files_basic():
         assert Path(path).read_text() == files[filename]
 
 
-def test_save_pipeline_files_empty():
+def test_save_pipeline_files_empty(test_settings):
     pipeline_name = "test_pipeline"
     files = {}
 
-    saved_paths = save_pipeline_files(pipeline_name, files, pipelines_dir=TEST_PIPELINES_DIR)
+    saved_paths = save_pipeline_files(pipeline_name, files, pipelines_dir=test_settings.pipelines_dir)
 
     assert len(saved_paths) == 0
-    assert (TEST_PIPELINES_DIR / pipeline_name).exists()
-    assert (TEST_PIPELINES_DIR / pipeline_name).is_dir()
-    assert len([file for file in (TEST_PIPELINES_DIR / pipeline_name).iterdir()]) == 0
+    assert (test_settings.pipelines_dir / pipeline_name).exists()
+    assert (test_settings.pipelines_dir / pipeline_name).is_dir()
+    assert len([file for file in (test_settings.pipelines_dir / pipeline_name).iterdir()]) == 0
 
 
 def test_save_pipeline_files_raises_error(tmp_path):
@@ -182,5 +180,7 @@ def test_create_pipeline_wrapper_instance_missing_methods():
 
     module = type('Module', (), {'PipelineWrapper': IncompleteWrapper})
 
-    with pytest.raises(PipelineWrapperError, match="At least one of run_api or run_chat_completion must be implemented"):
+    with pytest.raises(
+        PipelineWrapperError, match="At least one of run_api or run_chat_completion must be implemented"
+    ):
         create_pipeline_wrapper_instance(module)

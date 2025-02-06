@@ -1,30 +1,19 @@
 import pytest
 import shutil
-from fastapi.testclient import TestClient
-from hayhooks.server import app
 from pathlib import Path
 from hayhooks.server.pipelines.registry import registry
-from hayhooks.settings import settings
-
-client = TestClient(app)
 
 
-def cleanup():
+def cleanup(pipelines_dir: str):
     registry.clear()
-    if Path(settings.pipelines_dir).exists():
-        shutil.rmtree(settings.pipelines_dir)
+    if Path(pipelines_dir).exists():
+        shutil.rmtree(pipelines_dir)
 
 
 @pytest.fixture(autouse=True)
-def clear_registry():
-    cleanup()
+def clear_registry(test_settings):
+    cleanup(test_settings.pipelines_dir)
     yield
-
-
-@pytest.fixture(scope="session", autouse=True)
-def final_cleanup():
-    yield
-    cleanup()
 
 
 TEST_FILES_DIR = Path(__file__).parent / "test_files/files"
@@ -46,7 +35,7 @@ SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION = {
     "pipeline_files",
     [("test_pipeline_1", SAMPLE_PIPELINE_FILES), ("test_pipeline_2", SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION)],
 )
-def test_deploy_files_ok(status_pipeline, pipeline_files):
+def test_deploy_files_ok(status_pipeline, pipeline_files, client, test_settings):
     pipeline_data = {"name": pipeline_files[0], "files": pipeline_files[1]}
 
     response = client.post("/deploy_files", json=pipeline_data)
@@ -80,7 +69,7 @@ def test_deploy_files_ok(status_pipeline, pipeline_files):
         assert response.json() == {"result": "Dummy result with test_value"}
 
 
-def test_deploy_files_missing_wrapper():
+def test_deploy_files_missing_wrapper(client):
     pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES.copy()}
     pipeline_data["files"].pop("pipeline_wrapper.py")
 
@@ -89,7 +78,7 @@ def test_deploy_files_missing_wrapper():
     assert "Required file" in response.json()["detail"]
 
 
-def test_deploy_files_invalid_wrapper():
+def test_deploy_files_invalid_wrapper(client):
     invalid_files = {
         "pipeline_wrapper.py": "invalid python code",
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
@@ -100,7 +89,7 @@ def test_deploy_files_invalid_wrapper():
     assert "Failed to load pipeline module" in response.json()["detail"]
 
 
-def test_deploy_files_duplicate_pipeline():
+def test_deploy_files_duplicate_pipeline(client):
     response = client.post("/deploy_files", json={"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES})
     assert response.status_code == 200
 
@@ -109,7 +98,7 @@ def test_deploy_files_duplicate_pipeline():
     assert "Pipeline 'test_pipeline' already exists" in response.json()["detail"]
 
 
-def test_pipeline_endpoint_error_handling():
+def test_pipeline_endpoint_error_handling(client):
     pipeline_files = {
         "pipeline_wrapper.py": (RUN_API_ERROR_DIR / "pipeline_wrapper.py").read_text(),
     }  # This pipeline wrapper will raise an error in run_api
@@ -126,7 +115,7 @@ def test_pipeline_endpoint_error_handling():
     assert "This is a test error" in run_response.json()["detail"]
 
 
-def test_deploy_files_missing_required_methods():
+def test_deploy_files_missing_required_methods(client):
     invalid_files = {
         "pipeline_wrapper.py": (MISSING_METHODS_DIR / "pipeline_wrapper.py").read_text(),
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
@@ -137,7 +126,7 @@ def test_deploy_files_missing_required_methods():
     assert "At least one of run_api or run_chat_completion must be implemented" in response.json()["detail"]
 
 
-def test_deploy_files_setup_error():
+def test_deploy_files_setup_error(client):
     invalid_files = {
         "pipeline_wrapper.py": (SETUP_ERROR_DIR / "pipeline_wrapper.py").read_text(),
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
