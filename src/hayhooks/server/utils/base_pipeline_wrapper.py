@@ -5,6 +5,8 @@ from typing import Generator, List, Union
 class BasePipelineWrapper(ABC):
     def __init__(self):
         self.pipeline = None
+        self._is_run_api_implemented = False
+        self._is_run_chat_completion_implemented = False
 
     @abstractmethod
     def setup(self) -> None:
