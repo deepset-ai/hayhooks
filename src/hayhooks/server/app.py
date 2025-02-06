@@ -1,10 +1,12 @@
+from os import PathLike
+from typing import Union
 from fastapi import FastAPI
 from pathlib import Path
 from hayhooks.server.utils.deploy_utils import (
     deploy_pipeline_def,
     PipelineDefinition,
     deploy_pipeline_files,
-    read_pipeline_files_from_folder,
+    read_pipeline_files_from_dir,
 )
 from hayhooks.server.routers import status_router, draw_router, deploy_router, undeploy_router, openai_router
 from hayhooks.settings import settings
@@ -44,13 +46,38 @@ def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> dict:
         dict: Deployment result containing pipeline name
     """
     name = pipeline_dir.name
-    files = read_pipeline_files_from_folder(pipeline_dir)
+    files = read_pipeline_files_from_dir(pipeline_dir)
 
     if files:
         deployed_pipeline = deploy_pipeline_files(app, name, files)
-        log.info(f"Deployed pipeline from directory: {deployed_pipeline['name']}")
+        log.info(f"Deployed pipeline from dir: {deployed_pipeline['name']}")
         return deployed_pipeline
     return {"name": name}
+
+
+def create_pipeline_dir(pipelines_dir: Union[PathLike, str]):
+    """
+    Create a directory for pipelines if it doesn't exist.
+
+    If the directory doesn't exist, it will be created.
+    If the directory exists but is not a directory, an error will be raised.
+
+    Args:
+        pipelines_dir: Path to the pipelines directory
+
+    Returns:
+        str: Path to the pipelines directory
+    """
+    pipelines_dir = Path(pipelines_dir)
+
+    if not pipelines_dir.exists():
+        log.info(f"Creating pipelines dir: {pipelines_dir}")
+        pipelines_dir.mkdir(parents=True, exist_ok=True)
+
+    if not pipelines_dir.is_dir():
+        raise ValueError(f"pipelines_dir '{pipelines_dir}' exists but is not a directory")
+
+    return str(pipelines_dir)
 
 
 def create_app() -> FastAPI:
@@ -62,7 +89,7 @@ def create_app() -> FastAPI:
     - Includes all router endpoints (status, draw, deploy, undeploy)
     - Auto-deploys pipelines from the configured pipelines directory:
         - YAML pipeline definitions (*.yml, *.yaml)
-        - Pipeline folders containing multiple files
+        - Pipeline directories containing multiple files
 
     Returns:
         FastAPI: Configured FastAPI application instance
@@ -80,7 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(openai_router)
 
     # Deploy all pipelines in the pipelines directory
-    pipelines_dir = settings.pipelines_dir
+    pipelines_dir = create_pipeline_dir(settings.pipelines_dir)
 
     if pipelines_dir:
         log.info(f"Pipelines dir set to: {pipelines_dir}")
@@ -99,26 +126,12 @@ def create_app() -> FastAPI:
                     continue
 
         if pipeline_dirs:
-            log.info(f"Deploying {len(pipeline_dirs)} pipeline(s) from folders")
+            log.info(f"Deploying {len(pipeline_dirs)} pipeline(s) from directories")
             for pipeline_dir in pipeline_dirs:
                 try:
                     deploy_files_pipeline(app, pipeline_dir)
                 except Exception as e:
-                    log.warning(f"Skipping pipeline folder {pipeline_dir}: {str(e)}")
+                    log.warning(f"Skipping pipeline directory {pipeline_dir}: {str(e)}")
                     continue
 
     return app
-
-
-app = create_app()
-
-
-@app.get("/")
-async def root():
-    return {
-        "swagger_docs": "http://localhost:1416/docs",
-        "deploy_pipeline": "http://localhost:1416/deploy",
-        "draw_pipeline": "http://localhost:1416/draw/{pipeline_name}",
-        "server_status": "http://localhost:1416/status",
-        "undeploy_pipeline": "http://localhost:1416/undeploy/{pipeline_name}",
-    }

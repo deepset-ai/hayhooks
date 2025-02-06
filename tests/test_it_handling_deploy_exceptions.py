@@ -1,11 +1,7 @@
-from fastapi.testclient import TestClient
-from hayhooks.server import app
 from pathlib import Path
 
-client = TestClient(app)
 
-
-def test_gracefully_handle_deploy_exception(deploy_pipeline):
+def test_gracefully_handle_deploy_exception(client, deploy_pipeline):
     pipeline_name = "broken_rag_pipeline"
     pipeline_def = (Path(__file__).parent / "test_files/yaml" / "broken_rag_pipeline.yml").read_text()
 
