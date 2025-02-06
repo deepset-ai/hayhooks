@@ -28,31 +28,56 @@ def final_cleanup():
 
 
 TEST_FILES_DIR = Path(__file__).parent / "test_files/files"
-VALID_PIPELINE_DIR = TEST_FILES_DIR / "chat_with_website"
 MISSING_METHODS_DIR = TEST_FILES_DIR / "missing_methods"
 SETUP_ERROR_DIR = TEST_FILES_DIR / "setup_error"
+RUN_API_ERROR_DIR = TEST_FILES_DIR / "run_api_error"
 
 SAMPLE_PIPELINE_FILES = {
-    "pipeline_wrapper.py": (VALID_PIPELINE_DIR / "pipeline_wrapper.py").read_text(),
-    "chat_with_website.yml": (VALID_PIPELINE_DIR / "chat_with_website.yml").read_text(),
+    "pipeline_wrapper.py": (TEST_FILES_DIR / "chat_with_website" / "pipeline_wrapper.py").read_text(),
+    "chat_with_website.yml": (TEST_FILES_DIR / "chat_with_website" / "chat_with_website.yml").read_text(),
+}
+
+SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION = {
+    "pipeline_wrapper.py": (TEST_FILES_DIR / "no_chat" / "pipeline_wrapper.py").read_text(),
 }
 
 
-def test_deploy_files_ok(status_pipeline):
-    pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES}
+@pytest.mark.parametrize(
+    "pipeline_files",
+    [("test_pipeline_1", SAMPLE_PIPELINE_FILES), ("test_pipeline_2", SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION)],
+)
+def test_deploy_files_ok(status_pipeline, pipeline_files):
+    pipeline_data = {"name": pipeline_files[0], "files": pipeline_files[1]}
 
     response = client.post("/deploy_files", json=pipeline_data)
     assert response.status_code == 200
-    assert response.json() == {"name": "test_pipeline"}
+    assert response.json() == {"name": pipeline_files[0]}
 
-    status_response = status_pipeline(client, pipeline_data["name"])
-    assert pipeline_data["name"] in status_response.json()["pipeline"]
+    status_response = status_pipeline(client, pipeline_files[0])
+    assert pipeline_files[0] in status_response.json()["pipeline"]
 
     docs_response = client.get("/docs")
     assert docs_response.status_code == 200
 
-    status_response = status_pipeline(client, pipeline_data["name"])
-    assert pipeline_data["name"] in status_response.json()["pipeline"]
+    status_response = status_pipeline(client, pipeline_files[0])
+    assert pipeline_files[0] in status_response.json()["pipeline"]
+
+    # Test if /{pipeline_name}/run endpoint accepts the expected parameters
+    if pipeline_data["name"] == "test_pipeline_1":
+        response = client.post(
+            f"/{pipeline_data['name']}/run",
+            json={"urls": ["https://www.redis.io"], "question": "What is Redis?"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"result": "This is a mock response from the pipeline"}
+
+    if pipeline_data["name"] == "test_pipeline_2":
+        response = client.post(
+            f"/{pipeline_data['name']}/run",
+            json={"test_param": "test_value"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"result": "Dummy result with test_value"}
 
 
 def test_deploy_files_missing_wrapper():
@@ -85,17 +110,20 @@ def test_deploy_files_duplicate_pipeline():
 
 
 def test_pipeline_endpoint_error_handling():
-    pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES}
+    pipeline_files = {
+        "pipeline_wrapper.py": (RUN_API_ERROR_DIR / "pipeline_wrapper.py").read_text(),
+    }  # This pipeline wrapper will raise an error in run_api
 
-    response = client.post("/deploy_files", json=pipeline_data)
+    response = client.post("/deploy_files", json={"name": "errored_pipeline", "files": pipeline_files})
     assert response.status_code == 200
 
     run_response = client.post(
-        "/test_pipeline/run",
-        json={"urls": ["hptts://www.redis.io"], "question": "What is Redis?"},  # malformed url should trigger an error
+        "/errored_pipeline/run",
+        json={"test_param": "test_value"},
     )
     assert run_response.status_code == 500
     assert "Pipeline execution failed" in run_response.json()["detail"]
+    assert "This is a test error" in run_response.json()["detail"]
 
 
 def test_deploy_files_missing_required_methods():
@@ -105,7 +133,6 @@ def test_deploy_files_missing_required_methods():
     }
 
     response = client.post("/deploy_files", json={"name": "test_pipeline", "files": invalid_files})
-    print(response.json())
     assert response.status_code == 422
     assert "At least one of run_api or run_chat_completion must be implemented" in response.json()["detail"]
 

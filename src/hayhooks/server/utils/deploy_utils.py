@@ -236,9 +236,12 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
         RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
         RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
 
+        # There's no way in FastAPI to define the type of the request body other than annotating
+        # the endpoint handler. We have to ignore the type here to make FastAPI happy while
+        # silencing static type checkers (that would have good reasons to trigger!).
         @handle_pipeline_exceptions()
         async def run_endpoint(run_req: RunRequest) -> RunResponse:  # type: ignore
-            result = await run_in_threadpool(pipeline_wrapper.run_api, urls=run_req.urls, question=run_req.question)
+            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
             return RunResponse(result=result)
 
         app.add_api_route(
@@ -270,10 +273,14 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
         raise PipelineWrapperError(f"Failed to call setup() on pipeline wrapper instance: {str(e)}") from e
 
     pipeline_wrapper._is_run_api_implemented = pipeline_wrapper.run_api.__func__ is not BasePipelineWrapper.run_api
-    pipeline_wrapper._is_run_chat_completion_implemented = pipeline_wrapper.run_chat_completion.__func__ is not BasePipelineWrapper.run_chat_completion
+    pipeline_wrapper._is_run_chat_completion_implemented = (
+        pipeline_wrapper.run_chat_completion.__func__ is not BasePipelineWrapper.run_chat_completion
+    )
 
     log.debug(f"pipeline_wrapper._is_run_api_implemented: {pipeline_wrapper._is_run_api_implemented}")
-    log.debug(f"pipeline_wrapper._is_run_chat_completion_implemented: {pipeline_wrapper._is_run_chat_completion_implemented}")
+    log.debug(
+        f"pipeline_wrapper._is_run_chat_completion_implemented: {pipeline_wrapper._is_run_chat_completion_implemented}"
+    )
 
     if not (pipeline_wrapper._is_run_api_implemented or pipeline_wrapper._is_run_chat_completion_implemented):
         raise PipelineWrapperError("At least one of run_api or run_chat_completion must be implemented")

@@ -90,7 +90,7 @@ async def get_models():
 @router.post("/chat/completions", response_model=ChatCompletion)
 @router.post("/{pipeline_name}/chat", response_model=ChatCompletion)
 @handle_pipeline_exceptions()
-async def chat_endpoint(chat_req: ChatRequest) -> ChatCompletion:
+async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, StreamingResponse]:
     pipeline_wrapper = registry.get(chat_req.model)
 
     if not pipeline_wrapper:
