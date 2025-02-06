@@ -6,9 +6,6 @@ from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.logger import log
 
 
-URLS = ["https://haystack.deepset.ai", "https://www.redis.io", "https://ssi.inc"]
-
-
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
@@ -16,8 +13,9 @@ class PipelineWrapper(BasePipelineWrapper):
 
     def run_api(self, urls: List[str], question: str) -> str:
         log.trace(f"Running pipeline with urls: {urls} and question: {question}")
-        result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
-        return result["llm"]["replies"][0]
+
+        # NOTE: This is used in tests, please don't change it
+        return "This is a mock response from the pipeline"
 
     def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
