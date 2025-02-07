@@ -9,6 +9,7 @@ from hayhooks.server.utils.deploy_utils import (
     create_request_model_from_callable,
     create_response_model_from_callable,
     create_pipeline_wrapper_instance,
+    deploy_pipeline_files,
 )
 from hayhooks.server.exceptions import (
     PipelineFilesError,
@@ -184,3 +185,31 @@ def test_create_pipeline_wrapper_instance_missing_methods():
         PipelineWrapperError, match="At least one of run_api or run_chat_completion must be implemented"
     ):
         create_pipeline_wrapper_instance(module)
+
+
+def test_deploy_pipeline_files_without_saving(test_settings, mocker):
+    mock_app = mocker.Mock()
+
+    # We're saving the pipeline wrapper file in the test_files directory
+    test_file_path = Path("tests/test_files/files/no_chat/pipeline_wrapper.py")
+    files = {"pipeline_wrapper.py": test_file_path.read_text()}
+
+    # Save the files to the pipelines directory
+    save_pipeline_files("test_pipeline", files, pipelines_dir=test_settings.pipelines_dir)
+
+    # Now we mock the save_pipeline_files function to ensure it's not called during the deploy
+    mock_save = mocker.patch('hayhooks.server.utils.deploy_utils.save_pipeline_files')
+
+    # Run deploy_pipeline_files without saving the files
+    result = deploy_pipeline_files(app=mock_app, pipeline_name="test_pipeline", files=files, save_files=False)
+    assert result == {"name": "test_pipeline"}
+
+    # Verify save_pipeline_files was not called
+    mock_save.assert_not_called()
+
+    # Verify the pipeline was deployed successfully
+    assert result == {"name": "test_pipeline"}
+
+    # Verify FastAPI routes were set up
+    assert mock_app.add_api_route.called
+    assert mock_app.setup.called

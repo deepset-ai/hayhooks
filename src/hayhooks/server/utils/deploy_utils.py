@@ -193,7 +193,7 @@ def handle_pipeline_exceptions():
     return decorator
 
 
-def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str]):
+def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str], save_files: bool = True):
     """Deploy pipeline files to the FastAPI application and set up endpoints.
 
     Args:
@@ -212,8 +212,9 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
     if registry.get(pipeline_name):
         raise PipelineAlreadyExistsError(f"Pipeline '{pipeline_name}' already exists")
 
-    log.debug(f"Saving pipeline files for '{pipeline_name}' in '{settings.pipelines_dir}'")
-    save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
+    if save_files:
+        log.debug(f"Saving pipeline files for '{pipeline_name}' in '{settings.pipelines_dir}'")
+        save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
 
     pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
     clog = log.bind(pipeline_name=pipeline_name, pipeline_dir=str(pipeline_dir), files=list(files.keys()))

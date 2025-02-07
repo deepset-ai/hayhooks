@@ -23,6 +23,9 @@ class AppSettings(BaseSettings):
     # Port for the FastAPI app
     port: int = 1416
 
+    # Disable SSL verification when making requests from the CLI
+    disable_ssl: bool = False
+
     # Files to ignore when reading pipeline files from a directory
     files_to_ignore_patterns: list[str] = ["*.pyc", "*.pyo", "*.pyd", "__pycache__", "*.so", "*.egg", "*.egg-info"]
 
