@@ -37,7 +37,7 @@ def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
     return deployed_pipeline
 
 
-def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> dict | None:
+def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> Union[dict, None]:
     """
     Deploy a pipeline from a directory containing multiple files.
 
