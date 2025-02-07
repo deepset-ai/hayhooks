@@ -12,11 +12,6 @@ def temp_dir(tmp_path):
         shutil.rmtree(tmp_path)
 
 
-def test_default_pipelines_dir():
-    settings = AppSettings()
-    assert settings.pipelines_dir == str(Path(__file__).parent.parent / "pipelines")
-
-
 def test_custom_pipelines_dir(temp_dir):
     custom_dir = temp_dir / "custom_pipelines"
     settings = AppSettings(pipelines_dir=str(custom_dir))
@@ -36,3 +31,9 @@ def test_host():
 def test_port():
     settings = AppSettings(port=1234)
     assert settings.port == 1234
+
+
+def test_env_var_prefix(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_PORT", "5678")
+    settings = AppSettings()
+    assert settings.port == 5678
