@@ -24,9 +24,10 @@ classifiers = [
 ]
 dependencies = [
   "haystack-ai",
-  "click",
-  "fastapi",
+  "fastapi[standard]",
+  "typer",
   "uvicorn",
+  "rich",
   "requests",
   "python-multipart",
   "loguru",
