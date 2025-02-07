@@ -2,6 +2,8 @@ from os import PathLike
 from typing import Union
 from fastapi import FastAPI
 from pathlib import Path
+
+from fastapi.concurrency import asynccontextmanager
 from hayhooks.server.utils.deploy_utils import (
     deploy_pipeline_def,
     PipelineDefinition,
@@ -31,10 +33,11 @@ def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
     pipeline_definition = PipelineDefinition(name=name, source_code=source_code)
     deployed_pipeline = deploy_pipeline_def(app, pipeline_definition)
     log.info(f"Deployed pipeline from yaml: {deployed_pipeline['name']}")
+
     return deployed_pipeline
 
 
-def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> dict:
+def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> Union[dict, None]:
     """
     Deploy a pipeline from a directory containing multiple files.
 
@@ -45,17 +48,20 @@ def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> dict:
     Returns:
         dict: Deployment result containing pipeline name
     """
-    name = pipeline_dir.name
     files = read_pipeline_files_from_dir(pipeline_dir)
 
     if files:
-        deployed_pipeline = deploy_pipeline_files(app, name, files)
+        deployed_pipeline = deploy_pipeline_files(
+            app=app, pipeline_name=pipeline_dir.name, files=files, save_files=False
+        )
         log.info(f"Deployed pipeline from dir: {deployed_pipeline['name']}")
         return deployed_pipeline
-    return {"name": name}
+    else:
+        log.warning(f"No files found in pipeline directory: {pipeline_dir}")
+        return None
 
 
-def create_pipeline_dir(pipelines_dir: Union[PathLike, str]):
+def init_pipeline_dir(pipelines_dir: Union[PathLike, str]):
     """
     Create a directory for pipelines if it doesn't exist.
 
@@ -80,34 +86,15 @@ def create_pipeline_dir(pipelines_dir: Union[PathLike, str]):
     return str(pipelines_dir)
 
 
-def create_app() -> FastAPI:
+def deploy_pipelines(app: FastAPI, pipelines_dir: Union[PathLike, str]) -> None:
     """
-    Create and configure a FastAPI application.
+    Deploy all pipelines from the specified directory.
 
-    This function initializes a FastAPI application with the following features:
-    - Configures root path from settings if provided
-    - Includes all router endpoints (status, draw, deploy, undeploy)
-    - Auto-deploys pipelines from the configured pipelines directory:
-        - YAML pipeline definitions (*.yml, *.yaml)
-        - Pipeline directories containing multiple files
-
-    Returns:
-        FastAPI: Configured FastAPI application instance
+    Args:
+        app: FastAPI application instance
+        pipelines_dir: Path to the pipelines directory
     """
-    if root_path := settings.root_path:
-        app = FastAPI(root_path=root_path)
-    else:
-        app = FastAPI()
-
-    # Include all routers
-    app.include_router(status_router)
-    app.include_router(draw_router)
-    app.include_router(deploy_router)
-    app.include_router(undeploy_router)
-    app.include_router(openai_router)
-
-    # Deploy all pipelines in the pipelines directory
-    pipelines_dir = create_pipeline_dir(settings.pipelines_dir)
+    pipelines_dir = init_pipeline_dir(pipelines_dir)
 
     if pipelines_dir:
         log.info(f"Pipelines dir set to: {pipelines_dir}")
@@ -133,5 +120,37 @@ def create_app() -> FastAPI:
                 except Exception as e:
                     log.warning(f"Skipping pipeline directory {pipeline_dir}: {str(e)}")
                     continue
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.pipelines_dir:
+        deploy_pipelines(app, settings.pipelines_dir)
+
+    yield
+
+
+def create_app() -> FastAPI:
+    """
+    Create and configure a FastAPI application.
+
+    This function initializes a FastAPI application with the following features:
+    - Configures root path from settings if provided
+    - Includes all router endpoints (status, draw, deploy, undeploy)
+
+    Returns:
+        FastAPI: Configured FastAPI application instance
+    """
+    if root_path := settings.root_path:
+        app = FastAPI(root_path=root_path, lifespan=lifespan)
+    else:
+        app = FastAPI(lifespan=lifespan)
+
+    # Include all routers
+    app.include_router(status_router)
+    app.include_router(draw_router)
+    app.include_router(deploy_router)
+    app.include_router(undeploy_router)
+    app.include_router(openai_router)
 
     return app

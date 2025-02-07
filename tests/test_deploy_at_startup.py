@@ -47,19 +47,29 @@ def app_with_mixed_pipelines(test_settings, test_mixed_pipelines_dir, monkeypatc
     return app
 
 
+# When testing the Hayhooks server, it's important to ensure that the FastAPI "lifespan" events
+# (startup and shutdown) are properly executed. The pipeline deployment logic is now located in
+# the startup event via the app's lifespan function.
+#
+# Using the TestClient as a context manager (i.e., with the "with" statement) ensures that the
+# startup event is triggered, which in turn deploys all the pipelines from the specified directory.
+# Without the context manager, the lifespan events would not run, and the pipelines would not be deployed.
 @pytest.fixture
 def test_client_files(app_with_files_pipelines):
-    return TestClient(app_with_files_pipelines)
+    with TestClient(app_with_files_pipelines) as client:
+        yield client
 
 
 @pytest.fixture
 def test_client_yaml(app_with_yaml_pipelines):
-    return TestClient(app_with_yaml_pipelines)
+    with TestClient(app_with_yaml_pipelines) as client:
+        yield client
 
 
 @pytest.fixture
 def test_client_mixed(app_with_mixed_pipelines):
-    return TestClient(app_with_mixed_pipelines)
+    with TestClient(app_with_mixed_pipelines) as client:
+        yield client
 
 
 def test_app_loads_pipeline_from_files_directory(test_client_files, test_files_pipelines_dir):
