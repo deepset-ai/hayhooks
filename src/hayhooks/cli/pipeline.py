@@ -79,7 +79,9 @@ def deploy_files(
 
     if not files_dict:
         console.print(
-            Panel.fit("No valid pipeline files found in the specified directory.", border_style="yellow", title="Warning")
+            Panel.fit(
+                "No valid pipeline files found in the specified directory.", border_style="yellow", title="Warning"
+            )
         )
         raise typer.Abort()
 
@@ -93,7 +95,7 @@ def deploy_files(
 @pipeline.command()
 def undeploy(
     ctx: typer.Context,
-    name: str = typer.Option(help="The name of the pipeline to undeploy."),
+    name: Annotated[Optional[str], typer.Option(help="The name of the pipeline to deploy.")],
 ):
     """Undeploy a pipeline from the Hayhooks server."""
     response = make_request(
