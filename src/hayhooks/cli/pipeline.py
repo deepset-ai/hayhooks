@@ -68,7 +68,7 @@ def deploy(
 @pipeline.command()
 def deploy_files(
     ctx: typer.Context,
-    name: Optional[str] = None,
+    name: Annotated[Optional[str], typer.Option(help="The name of the pipeline to deploy.")],
     pipeline_dir: Path = typer.Argument(help="The path to the directory containing the pipeline files to deploy."),
 ):
     """Deploy all pipeline files from a directory to the Hayhooks server."""

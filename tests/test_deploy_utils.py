@@ -23,7 +23,7 @@ from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 def cleanup_test_pipelines(test_settings):
     yield
 
-    if test_settings.pipelines_dir.exists():
+    if Path(test_settings.pipelines_dir).exists():
         shutil.rmtree(test_settings.pipelines_dir)
 
 
@@ -83,9 +83,9 @@ def test_save_pipeline_files_empty(test_settings):
     saved_paths = save_pipeline_files(pipeline_name, files, pipelines_dir=test_settings.pipelines_dir)
 
     assert len(saved_paths) == 0
-    assert (test_settings.pipelines_dir / pipeline_name).exists()
-    assert (test_settings.pipelines_dir / pipeline_name).is_dir()
-    assert len([file for file in (test_settings.pipelines_dir / pipeline_name).iterdir()]) == 0
+    assert (Path(test_settings.pipelines_dir) / pipeline_name).exists()
+    assert (Path(test_settings.pipelines_dir) / pipeline_name).is_dir()
+    assert len([file for file in (Path(test_settings.pipelines_dir) / pipeline_name).iterdir()]) == 0
 
 
 def test_save_pipeline_files_raises_error(tmp_path):
