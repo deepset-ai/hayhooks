@@ -4,21 +4,17 @@
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![Docker image release](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml)
 [![Tests](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml)
------
 
 **Table of Contents**
 
-- [Hayhooks](#hayhooks)
-  - [Quick start](#quick-start)
-    - [Install the package](#install-the-package)
-    - [Check Hayhooks status](#check-hayhooks-status)
-    - [Deploy a Haystack pipeline](#deploy-a-haystack-pipeline)
-    - [Have a look at the API schema](#have-a-look-at-the-api-schema)
-    - [Run the pipeline](#run-the-pipeline)
-    - [Undeploy the pipeline](#undeploy-the-pipeline)
-  - [Docker setup](#docker-setup)
-  - [Next steps](#next-steps)
-  - [License](#license)
+- [Install the package](#install-the-package)
+- [Configuration](#configuration)
+  - [Environment Variables](#environment-variables)
+- [CLI Commands](#cli-commands)
+- [Start hayhooks](#start-hayhooks)
+- [Deploy a pipeline](#deploy-a-pipeline)
+- [OpenAI Compatibility](#openai-compatible-endpoints-generation)
+  - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
 
 ## Quick start
 
@@ -30,173 +26,198 @@ Start by installing the package:
 pip install hayhooks
 ```
 
-The `hayhooks` package ships both the server and the client component, and the client is capable of starting the
-server. From a shell, start the server with:
-
-```console
-$ hayhooks run
-INFO:     Started server process [44782]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://localhost:1416 (Press CTRL+C to quit)
-```
-
 ### Configuration
 
-Currently, you can configure the server by:
+Currently, you can configure **hayhooks** by:
 
-- set the environment variables in an `.env` file in the root of the project
-- passing the arguments to the `run` command.
-- passing the environment variables to the `hayhooks` command.
+- Set the environment variables in an `.env` file in the root of your project.
+- Pass the supported arguments and options to `hayhooks run` command.
+- Pass the environment variables to the `hayhooks` command.
+
+#### Environment variables
 
 The following environment variables are supported:
 
-- `HAYHOOKS_HOST`: Host for the FastAPI app
-- `HAYHOOKS_PORT`: Port for the FastAPI app
-- `HAYHOOKS_PIPELINES_DIR`: Path to the folder containing the pipelines
-- `HAYHOOKS_ROOT_PATH`: Root path for the FastAPI app
-- `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path
+- `HAYHOOKS_HOST`: The host on which the server will listen.
+- `HAYHOOKS_PORT`: The port on which the server will listen.
+- `HAYHOOKS_PIPELINES_DIR`: The path to the directory containing the pipelines.
+- `HAYHOOKS_ROOT_PATH`: The root path of the server.
+- `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path.
+- `HAYHOOKS_DISABLE_SSL`: Whether to disable SSL verification when making requests from the CLI.
 
-### Check Hayhooks status
+### CLI commands
 
-From a different shell, you can query the status of the server with:
+The `hayhooks` package provides a CLI to manage the server and the pipelines.
+Any command can be run with `hayhooks <command> --help` to get more information.
+
+CLI commands are basically wrappers around the HTTP API of the server. The full API reference is available at [http://HAYSTACK_HOST:HAYSTACK_PORT/docs](http://HAYSTACK_HOST:HAYSTACK_PORT/docs) or [http://HAYSTACK_HOST:HAYSTACK_PORT/redoc](http://HAYSTACK_HOST:HAYSTACK_PORT/redoc).
+
+```shell
+hayhooks run     # Start the server
+hayhooks status  # Check the status of the server and show deployed pipelines
+
+hayhooks pipeline deploy-files <path_to_files> # Deploy a pipeline using PipelineWrapper
+hayhooks pipeline deploy <pipeline_name>       # Deploy a pipeline from a YAML file
+hayhooks pipeline undeploy <pipeline_name>     # Undeploy a pipeline
+```
+
+### Start hayhooks
+
+To start the server, run:
 
 ```console
-$ hayhooks status
-Hayhooks server is up and running.
+hayhooks run
 ```
 
-### Deploy a Haystack pipeline
+This will start the hayhooks server on `HAYHOOKS_HOST:HAYHOOKS_PORT`.
 
-Time to deploy a Haystack pipeline. The pipeline must be in Yaml format (the output of [`pipeline.dump()`](https://docs.haystack.deepset.ai/v2.0/docs/serialization#converting-a-pipeline-to-yaml)), if you don't have one at hand, you can use
-one from this repository. From the root of the repo:
+### Deploy a pipeline
 
-```console
-$ hayhooks deploy tests/test_files/test_pipeline_01.yml
-Pipeline successfully deployed with name: test_pipeline_01
+Now we will deploy the [Chat with website](https://docs.haystack.deepset.ai/docs/pipeline-templates#chat-with-website) pipeline. We have created an example in the [examples/chat_with_website_streaming](examples/chat_with_website_streaming) folder.
+
+In the example folder, we have two files:
+
+- `chat_with_website.yml`: The pipeline definition in YAML format.
+- `pipeline_wrapper.py`: A pipeline wrapper that uses the pipeline definition.
+
+The `pipeline_wrapper.py` file must contain an implementation of the `BasePipelineWrapper` class (see [here](src/hayhooks/server/utils/base_pipeline_wrapper.py) for more details).
+
+A minimal wrapper looks like this:
+
+```python
+from pathlib import Path
+from typing import List
+from haystack import Pipeline
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.logger import log
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
+        self.pipeline = Pipeline.loads(pipeline_yaml)
+
+    def run_api(self, urls: List[str], question: str) -> str:
+        log.trace(f"Running pipeline with urls: {urls} and question: {question}")
+        result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]
 ```
 
-Another call to `status` should confirm your pipeline is ready to serve requests:
+It contains two methods:
 
-```console
-$ hayhooks status
-Hayhooks server is up and running.
+#### setup()
 
-Pipelines deployed:
-- test_pipeline_01
+This method will be called when the pipeline is deployed. It should initialize the `self.pipeline` attribute as a Haystack pipeline.
+
+You can initialize the pipeline in many ways:
+
+- Load it from a YAML file.
+- Define it inline as a Haystack pipeline code.
+- Load it from a [Haystack pipeline template](https://docs.haystack.deepset.ai/docs/pipeline-templates).
+
+#### run_api(Pydantic-compatible arguments) -> (any Pydantic-compatible type)
+
+This method will be used to run the pipeline in API mode, when you call the `{pipeline_name}/run` endpoint.
+
+**You can define the input arguments of the method according to your needs**. The input arguments will be used to generate a Pydantic model that will be used to validate the request body. The same will be done for the response type.
+
+**NOTE**: Since hayhooks will _dynamically_ create the Pydantic models, you need to make sure that the input arguments are JSON-serializable.
+
+To deploy the pipeline, run:
+
+```shell
+hayhooks pipeline deploy-files -n chat_with_website examples/chat_with_website
 ```
 
-### Have a look at the API schema
+This will deploy the pipeline with the name `chat_with_website`. Any error encountered during development will be printed to the console and show in the server logs.
 
-Hayhooks will use introspection to set up the OpenAPI schema accordingly to the inputs and outputs of your pipeline,
-and to see how this works let's get the pipeline diagram with:
+### OpenAI-compatible endpoints generation
 
-```console
-curl http://localhost:1416/draw/test_pipeline_01 --output test_pipeline_01.png
+`hayhooks` now can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` method in your pipeline wrapper.
+
+This will make hayhooks compatible with fully-featured chat interfaces like [open-webui](https://openwebui.com/).
+
+To enable the automatic generation of OpenAI-compatible endpoints, you need only to implement the `run_chat_completion` method in your pipeline wrapper.
+
+Let's update the previous example to add a streaming response:
+
+```python
+from pathlib import Path
+from typing import Generator, List, Union
+from haystack import Pipeline
+from hayhooks.server.pipelines.utils import get_last_user_message
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.logger import log
+
+
+URLS = ["https://haystack.deepset.ai", "https://www.redis.io", "https://ssi.inc"]
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        ...  # Same as before
+
+    def run_api(self, urls: List[str], question: str) -> str:
+        ...  # Same as before
+
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+        log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+
+        question = get_last_user_message(messages)
+        log.trace(f"Question: {question}")
+
+        # Plain pipeline run, will return a string
+        result = self.pipeline.run({"fetcher": {"urls": URLS}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]
 ```
 
-The downloaded image should look like this:
+Differently from the `run_api` method, the `run_chat_completion` has a **fixed signature** and will be called with the arguments specified in the OpenAI-compatible endpoint.
 
-![test pipeline](img/test_pipeline_01.png)
+- `model`: The `name` of the Haystack pipeline which is called.
+- `messages`: The list of messages from the chat.
+- `body`: The full body of the request.
 
-As you can see, the pipeline in order to start requires an input of type `int` named `value`, and optionally we can
-pass another input of type `int` named `add`. At the end of the run, the pipeline will return an output of type `int`
-named `result`.
+Some notes:
 
-If you open a browser at [http://localhost:1416/docs#/](http://localhost:1416/docs#/) you should see two schemas, one
-for the Request, where we'll pass the pipeline inputs (note how `add` is optional):
+- Since we have only the user messages as input here, the `question` is extracted from the last user message and the `urls` argument is hardcoded.
+- In this example, the `run_chat_completion` method is returning a string, so the `open-webui` will receive a string as response and show the pipeline output in the chat all at once. But we can do better!
 
-```
-Test_pipeline_01RunRequest
-    first_addition
-        value* integer
-        add (integer | null)
-```
+### Streaming responses in OpenAI-compatible endpoints
 
-And another one for the Response, where we'll receive the pipeline results:
+Hayhooks now provides a `streaming_generator` utility function that can be used to stream the pipeline output to the client.
 
-```
-Test_pipeline_01RunResponse
-    double
-        value* integer
-```
+Let's update the previous example to stream the pipeline output:
 
-### Run the pipeline
+```python
+from pathlib import Path
+from typing import Generator, List, Union
+from haystack import Pipeline
+from hayhooks.server.pipelines.utils import get_last_user_message, streaming_generator
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.logger import log
 
-At this point, knowing the schema we can run our pipeline with an HTTP client:
 
-```console
-$ curl -X 'POST' \
-  'http://localhost:1416/test_pipeline_01' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: application/json' \
-  -d '{
-  "first_addition": {
-    "value": 19
-  }
-}'
+URLS = ["https://haystack.deepset.ai", "https://www.redis.io", "https://ssi.inc"]
 
-{"double":{"value":42}}%
-```
 
-### Undeploy the pipeline
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        ...  # Same as before
 
-Hayhooks tries to do as much bookkeeping as possible without restarting the server. For example, to free up
-resources you can undeploy the pipeline directly from the client:
+    def run_api(self, urls: List[str], question: str) -> str:
+        ...  # Same as before
 
-```console
-$ hayhooks undeploy test_pipeline_01
-Pipeline successfully undeployed
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+        log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+
+        question = get_last_user_message(messages)
+        log.trace(f"Question: {question}")
+
+        # Streaming pipeline run, will return a generator
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"fetcher": {"urls": URLS}, "prompt": {"query": question}},
+        )
 ```
 
-### Set a hayhooks server
-
-To connect to a specific server you can pass a `--server` argument to the client:
-
-```bash
-hayhooks --server http://myserver:1416 status
-```
-
-#### Disable SSL verification
-
-For development purposes, you can disable SSL verification with the `--disable-ssl` flag:
-
-```bash
-hayhooks --disable-ssl status
-```
-
-## Docker setup
-
-> [!TIP]
-> If you have docker-compose installed and you want to quickly get up and running, just do `docker-compose up -d`
-
-Instead of launching the server in a separate shell like we did in the Quick Start, you can run it in a Docker
-container :
-
-```console
-$ docker run --rm -p 1416:1416 deepset/hayhooks:main
-...
-```
-
-If you want to build the container yourself:
-
-```console
-$ cd docker
-$ docker buildx bake
-...
-```
-
-There are 2 special folders in the container you can override using a `mount`:
-
-1. A folder `/opt/pipelines` containing pipeline definitions that will be automatically deployed when the container starts
-2. A folder `/opt/custom_components` containing custom components that Haystack will be able to import if part of a pipeline
-
-For example, you can mount a local `./pipelines` folder containing pipelines you want to run at start-up like this:
-
-```console
-docker run --rm -p 1416:1416 -v $PWD/pipelines:/opt/pipelines "deepset/hayhooks:main"
-```
-
-## License
-
-`hayhooks` is distributed under the terms of the [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html) license.
+Now, if you run the pipeline and call the `{pipeline_name}/chat/completions` endpoint, you will see the pipeline output being streamed to the client and you'll be able to see the output in chunks.
