@@ -28,7 +28,7 @@ pip install hayhooks
 
 ### Configuration
 
-Currently, you can configure **hayhooks** by:
+Currently, you can configure Hayhooks by:
 
 - Set the environment variables in an `.env` file in the root of your project.
 - Pass the supported arguments and options to `hayhooks run` command.
@@ -50,26 +50,26 @@ The following environment variables are supported:
 The `hayhooks` package provides a CLI to manage the server and the pipelines.
 Any command can be run with `hayhooks <command> --help` to get more information.
 
-CLI commands are basically wrappers around the HTTP API of the server. The full API reference is available at [http://HAYSTACK_HOST:HAYSTACK_PORT/docs](http://HAYSTACK_HOST:HAYSTACK_PORT/docs) or [http://HAYSTACK_HOST:HAYSTACK_PORT/redoc](http://HAYSTACK_HOST:HAYSTACK_PORT/redoc).
+CLI commands are basically wrappers around the HTTP API of the server. The full API reference is available at [//HAYSTACK_HOST:HAYSTACK_PORT/docs](http://HAYSTACK_HOST:HAYSTACK_PORT/docs) or [//HAYSTACK_HOST:HAYSTACK_PORT/redoc](http://HAYSTACK_HOST:HAYSTACK_PORT/redoc).
 
 ```shell
 hayhooks run     # Start the server
 hayhooks status  # Check the status of the server and show deployed pipelines
 
-hayhooks pipeline deploy-files <path_to_files> # Deploy a pipeline using PipelineWrapper
+hayhooks pipeline deploy-files <path_to_dir>   # Deploy a pipeline using PipelineWrapper
 hayhooks pipeline deploy <pipeline_name>       # Deploy a pipeline from a YAML file
 hayhooks pipeline undeploy <pipeline_name>     # Undeploy a pipeline
 ```
 
-### Start hayhooks
+### Start Hayhooks
 
-To start the server, run:
+Let's start Hayhooks:
 
 ```console
 hayhooks run
 ```
 
-This will start the hayhooks server on `HAYHOOKS_HOST:HAYHOOKS_PORT`.
+This will start the Hayhooks server on `HAYHOOKS_HOST:HAYHOOKS_PORT`.
 
 ### Deploy a pipeline
 
@@ -82,7 +82,7 @@ In the example folder, we have two files:
 
 The `pipeline_wrapper.py` file must contain an implementation of the `BasePipelineWrapper` class (see [here](src/hayhooks/server/utils/base_pipeline_wrapper.py) for more details).
 
-A minimal wrapper looks like this:
+A minimal `PipelineWrapper` looks like this:
 
 ```python
 from pathlib import Path
@@ -115,13 +115,13 @@ You can initialize the pipeline in many ways:
 - Define it inline as a Haystack pipeline code.
 - Load it from a [Haystack pipeline template](https://docs.haystack.deepset.ai/docs/pipeline-templates).
 
-#### run_api(Pydantic-compatible arguments) -> (any Pydantic-compatible type)
+#### run_api(Pydantic-compatible arguments) -> (Pydantic-compatible type)
 
 This method will be used to run the pipeline in API mode, when you call the `{pipeline_name}/run` endpoint.
 
 **You can define the input arguments of the method according to your needs**. The input arguments will be used to generate a Pydantic model that will be used to validate the request body. The same will be done for the response type.
 
-**NOTE**: Since hayhooks will _dynamically_ create the Pydantic models, you need to make sure that the input arguments are JSON-serializable.
+**NOTE**: Since Hayhooks will _dynamically_ create the Pydantic models, you need to make sure that the input arguments are JSON-serializable.
 
 To deploy the pipeline, run:
 
@@ -133,9 +133,9 @@ This will deploy the pipeline with the name `chat_with_website`. Any error encou
 
 ### OpenAI-compatible endpoints generation
 
-`hayhooks` now can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` method in your pipeline wrapper.
+Hayhooks now can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` method in your pipeline wrapper.
 
-This will make hayhooks compatible with fully-featured chat interfaces like [open-webui](https://openwebui.com/).
+This will make Hayhooks compatible with fully-featured chat interfaces like [open-webui](https://openwebui.com/).
 
 To enable the automatic generation of OpenAI-compatible endpoints, you need only to implement the `run_chat_completion` method in your pipeline wrapper.
 
@@ -171,22 +171,25 @@ class PipelineWrapper(BasePipelineWrapper):
         return result["llm"]["replies"][0]
 ```
 
+#### run_chat_completion(model: str, messages: List[dict], body: dict) -> Union[str, Generator]
+
 Differently from the `run_api` method, the `run_chat_completion` has a **fixed signature** and will be called with the arguments specified in the OpenAI-compatible endpoint.
 
 - `model`: The `name` of the Haystack pipeline which is called.
-- `messages`: The list of messages from the chat.
+- `messages`: The list of messages from the chat in the OpenAI format.
 - `body`: The full body of the request.
 
 Some notes:
 
 - Since we have only the user messages as input here, the `question` is extracted from the last user message and the `urls` argument is hardcoded.
 - In this example, the `run_chat_completion` method is returning a string, so the `open-webui` will receive a string as response and show the pipeline output in the chat all at once. But we can do better!
+- The `body` argument contains the full request body, which may be used to extract more information like the `temperature` or the `max_tokens` (see the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create) for more information).
 
 ### Streaming responses in OpenAI-compatible endpoints
 
 Hayhooks now provides a `streaming_generator` utility function that can be used to stream the pipeline output to the client.
 
-Let's update the previous example to stream the pipeline output:
+Let's update the `run_chat_completion` method of the previous example:
 
 ```python
 from pathlib import Path
@@ -220,4 +223,10 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 ```
 
-Now, if you run the pipeline and call the `{pipeline_name}/chat/completions` endpoint, you will see the pipeline output being streamed to the client and you'll be able to see the output in chunks.
+Now, if you run the pipeline and call one of the following endpoints:
+
+- `{pipeline_name}/chat`
+- `/chat/completions`
+- `/v1/chat/completions`
+
+You will see the pipeline output being streamed [in OpenAI-compatible format](https://platform.openai.com/docs/api-reference/chat/streaming) to the client and you'll be able to see the output in chunks.
