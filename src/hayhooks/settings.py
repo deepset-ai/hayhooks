@@ -1,8 +1,8 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from pathlib import Path
 
-load_dotenv()
+load_dotenv(dotenv_path=find_dotenv(usecwd=True))
 
 
 class AppSettings(BaseSettings):
