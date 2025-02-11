@@ -74,3 +74,36 @@ def test_status_command(monkeypatch):
     assert result.exit_code == 0, result.output
     assert "Hayhooks server is up and running" in result.output
     assert "test_pipeline" in result.output
+
+
+def test_deploy_files_command_name_options(monkeypatch, tmp_path):
+    import hayhooks.cli.pipeline as pipeline
+
+    # Create a dummy pipeline directory with a file
+    pipeline_dir = tmp_path / "test_pipeline"
+    pipeline_dir.mkdir()
+    (pipeline_dir / "main.py").write_text("print('test')")
+
+    calls = []
+
+    def fake_deploy_with_progress(*args, **kwargs):
+        calls.append(kwargs)
+        return
+
+    monkeypatch.setattr(pipeline, "_deploy_with_progress", fake_deploy_with_progress)
+
+    # Test long form --name
+    result = runner.invoke(
+        hayhooks_cli,
+        ["pipeline", "deploy-files", "--name", "test-long", str(pipeline_dir)],
+    )
+    assert result.exit_code == 0
+    assert calls[0]["name"] == "test-long"
+
+    # Test short form -n
+    result = runner.invoke(
+        hayhooks_cli,
+        ["pipeline", "deploy-files", "-n", "test-short", str(pipeline_dir)],
+    )
+    assert result.exit_code == 0
+    assert calls[1]["name"] == "test-short"

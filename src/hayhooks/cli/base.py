@@ -2,7 +2,7 @@ import typer
 import sys
 import uvicorn
 import rich
-from typing import Optional
+from typing import Annotated, Optional
 from hayhooks.cli.pipeline import pipeline
 from hayhooks.cli.utils import get_server_url, make_request
 from hayhooks.server.app import create_app
@@ -27,15 +27,13 @@ def get_app():
 
 @hayhooks_cli.command()
 def run(
-    host: str = typer.Option(default=settings.host, help="Host to run the server on"),
-    port: int = typer.Option(default=settings.port, help="Port to run the server on"),
-    pipelines_dir: str = typer.Option(default=settings.pipelines_dir, help="Directory containing the pipelines"),
-    root_path: str = typer.Option(default=settings.root_path, help="Root path of the server"),
-    additional_python_path: Optional[str] = typer.Option(
-        default=settings.additional_python_path, help="Additional Python path to add to sys.path"
-    ),
-    workers: int = typer.Option(default=1, help="Number of workers to run the server with"),
-    reload: bool = typer.Option(default=False, help="Whether to reload the server on file changes"),
+    host: Annotated[str, typer.Option("--host", "-h", help="Host to run the server on")] = settings.host,
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to run the server on")] = settings.port,
+    pipelines_dir: Annotated[str, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")] = settings.pipelines_dir,
+    root_path: Annotated[str, typer.Option(help="Root path of the server")] = settings.root_path,
+    additional_python_path: Annotated[Optional[str], typer.Option(help="Additional Python path to add to sys.path")] = settings.additional_python_path,
+    workers: Annotated[int, typer.Option("--workers", "-w", help="Number of workers to run the server with")] = 1,
+    reload: Annotated[bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")] = False,
 ):
     """
     Run the Hayhooks server.
