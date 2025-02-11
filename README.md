@@ -135,7 +135,9 @@ This will deploy the pipeline with the name `chat_with_website`. Any error encou
 
 Hayhooks now can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` method in your pipeline wrapper.
 
-This will make Hayhooks compatible with fully-featured chat interfaces like [open-webui](https://openwebui.com/).
+This will make Hayhooks compatible with fully-featured chat interfaces like [open-webui](https://openwebui.com/), so you can use it as a backend for your chat interface.
+
+![open-webui OpenAI connections](./docs/assets/open-webui-connections.png)
 
 To enable the automatic generation of OpenAI-compatible endpoints, you need only to implement the `run_chat_completion` method in your pipeline wrapper.
 
