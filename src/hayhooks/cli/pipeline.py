@@ -51,8 +51,8 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
 @pipeline.command()
 def deploy(
     ctx: typer.Context,
-    name: Annotated[Optional[str], typer.Option(help="The name of the pipeline to deploy.")],
-    pipeline_file: Path = typer.Option(help="The path to the pipeline file to deploy."),
+    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
+    pipeline_file: Path = typer.Argument(help="The path to the pipeline file to deploy."),
 ):
     """Deploy a pipeline to the Hayhooks server."""
     if not pipeline_file.exists():
@@ -68,7 +68,7 @@ def deploy(
 @pipeline.command()
 def deploy_files(
     ctx: typer.Context,
-    name: Annotated[Optional[str], typer.Option(help="The name of the pipeline to deploy.")],
+    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
     pipeline_dir: Path = typer.Argument(help="The path to the directory containing the pipeline files to deploy."),
 ):
     """Deploy all pipeline files from a directory to the Hayhooks server."""
@@ -95,7 +95,7 @@ def deploy_files(
 @pipeline.command()
 def undeploy(
     ctx: typer.Context,
-    name: Annotated[Optional[str], typer.Option(help="The name of the pipeline to deploy.")],
+    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
 ):
     """Undeploy a pipeline from the Hayhooks server."""
     response = make_request(
