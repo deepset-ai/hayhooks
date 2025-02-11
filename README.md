@@ -82,7 +82,7 @@ This will start the Hayhooks server on `HAYHOOKS_HOST:HAYHOOKS_PORT`.
 
 ### Deploy a pipeline
 
-Now we will deploy the [Chat with website](https://docs.haystack.deepset.ai/docs/pipeline-templates#chat-with-website) pipeline. We have created an example in the [examples/chat_with_website_streaming](examples/chat_with_website_streaming) folder.
+Now, we will deploy a pipeline to chat with a website. We have created an example in the [examples/chat_with_website_streaming](examples/chat_with_website_streaming) folder.
 
 In the example folder, we have two files:
 
