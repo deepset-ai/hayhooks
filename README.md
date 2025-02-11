@@ -18,12 +18,14 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 - [CLI Commands](#cli-commands)
 - [Start hayhooks](#start-hayhooks)
 - [Deploy a pipeline](#deploy-a-pipeline)
-  - [Pipeline Wrapper](#pipeline-wrapper)
+  - [Pipeline Wrapper](#why-a-pipeline-wrapper)
   - [Setup Method](#setup)
   - [Run API Method](#run_api)
 - [OpenAI Compatibility](#openai-compatible-endpoints-generation)
   - [Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
+- [Deployment](#deployment)
+- [License](#license)
 
 ## Quick start
 
