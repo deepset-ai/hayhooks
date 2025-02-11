@@ -1,5 +1,4 @@
 import pytest
-from pathlib import Path
 from typer.testing import CliRunner
 from hayhooks.cli.base import hayhooks_cli
 from hayhooks.settings import settings
