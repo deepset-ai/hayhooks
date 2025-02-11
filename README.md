@@ -1,5 +1,9 @@
 # Hayhooks
 
+**Hayhooks** makes it easy to deploy and serve [Haystack](https://haystack.deepset.ai/) pipelines as REST APIs.
+
+It provides a simple way to wrap your Haystack pipelines with custom logic and expose them via HTTP endpoints, including OpenAI-compatible chat completion endpoints. With Hayhooks, you can quickly turn your Haystack pipelines into API services with minimal boilerplate code.
+
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![Docker image release](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml)
