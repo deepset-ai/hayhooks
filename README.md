@@ -87,7 +87,15 @@ Now, we will deploy a pipeline to chat with a website. We have created an exampl
 In the example folder, we have two files:
 
 - `chat_with_website.yml`: The pipeline definition in YAML format.
-- `pipeline_wrapper.py`: A pipeline wrapper that uses the pipeline definition.
+- `pipeline_wrapper.py` (mandatory): A pipeline wrapper that uses the pipeline definition.
+
+#### Why a pipeline wrapper?
+
+The pipeline wrapper provides a flexible foundation for deploying Haystack pipelines by allowing users to:
+
+- Choose their preferred pipeline initialization method (YAML files, Haystack templates, or inline code)
+- Define custom pipeline execution logic with configurable inputs and outputs
+- Optionally expose OpenAI-compatible chat endpoints with streaming support for integration with interfaces like [open-webui](https://openwebui.com/)
 
 The `pipeline_wrapper.py` file must contain an implementation of the `BasePipelineWrapper` class (see [here](src/hayhooks/server/utils/base_pipeline_wrapper.py) for more details).
 
@@ -98,8 +106,6 @@ from pathlib import Path
 from typing import List
 from haystack import Pipeline
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.logger import log
-
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
@@ -107,7 +113,6 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
     def run_api(self, urls: List[str], question: str) -> str:
-        log.trace(f"Running pipeline with urls: {urls} and question: {question}")
         result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
         return result["llm"]["replies"][0]
 ```
