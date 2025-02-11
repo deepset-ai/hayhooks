@@ -184,8 +184,12 @@ Differently from the `run_api` method, the `run_chat_completion` has a **fixed s
 Some notes:
 
 - Since we have only the user messages as input here, the `question` is extracted from the last user message and the `urls` argument is hardcoded.
-- In this example, the `run_chat_completion` method is returning a string, so the `open-webui` will receive a string as response and show the pipeline output in the chat all at once. But we can do better!
+- In this example, the `run_chat_completion` method is returning a string, so the `open-webui` will receive a string as response and show the pipeline output in the chat all at once.
 - The `body` argument contains the full request body, which may be used to extract more information like the `temperature` or the `max_tokens` (see the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create) for more information).
+
+Here's how it looks like from the `open-webui` side:
+
+![chat-completion-example](./docs/assets/chat-completion.gif)
 
 ### Streaming responses in OpenAI-compatible endpoints
 
@@ -232,3 +236,7 @@ Now, if you run the pipeline and call one of the following endpoints:
 - `/v1/chat/completions`
 
 You will see the pipeline output being streamed [in OpenAI-compatible format](https://platform.openai.com/docs/api-reference/chat/streaming) to the client and you'll be able to see the output in chunks.
+
+Here's how it looks like from the `open-webui` side:
+
+![chat-completion-streaming-example](./docs/assets/chat-completion-streaming.gif)
