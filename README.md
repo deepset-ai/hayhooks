@@ -61,7 +61,7 @@ The following environment variables are supported:
 The `hayhooks` package provides a CLI to manage the server and the pipelines.
 Any command can be run with `hayhooks <command> --help` to get more information.
 
-CLI commands are basically wrappers around the HTTP API of the server. The full API reference is available at [//HAYSTACK_HOST:HAYSTACK_PORT/docs](http://HAYSTACK_HOST:HAYSTACK_PORT/docs) or [//HAYSTACK_HOST:HAYSTACK_PORT/redoc](http://HAYSTACK_HOST:HAYSTACK_PORT/redoc).
+CLI commands are basically wrappers around the HTTP API of the server. The full API reference is available at [//HAYHOOKS_HOST:HAYHOOKS_PORT/docs](http://HAYHOOKS_HOST:HAYHOOKS_PORT/docs) or [//HAYHOOKS_HOST:HAYHOOKS_PORT/redoc](http://HAYHOOKS_HOST:HAYHOOKS_PORT/redoc).
 
 ```shell
 hayhooks run     # Start the server
