@@ -7,13 +7,18 @@
 
 **Table of Contents**
 
+- [Quick Start](#quick-start)
 - [Install the package](#install-the-package)
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
 - [CLI Commands](#cli-commands)
 - [Start hayhooks](#start-hayhooks)
 - [Deploy a pipeline](#deploy-a-pipeline)
+  - [Pipeline Wrapper](#pipeline-wrapper)
+  - [Setup Method](#setup)
+  - [Run API Method](#run_api)
 - [OpenAI Compatibility](#openai-compatible-endpoints-generation)
+  - [Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
 
 ## Quick start
@@ -240,3 +245,11 @@ You will see the pipeline output being streamed [in OpenAI-compatible format](ht
 Here's how it looks like from the `open-webui` side:
 
 ![chat-completion-streaming-example](./docs/assets/chat-completion-streaming.gif)
+
+### Deployment
+
+For detailed deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
+
+### License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
