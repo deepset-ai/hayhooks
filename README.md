@@ -257,6 +257,22 @@ Here's how it looks like from the `open-webui` side:
 
 ![chat-completion-streaming-example](./docs/assets/chat-completion-streaming.gif)
 
+### Deploy a pipeline using only its YAML definition
+
+**⚠️ This way of deployment is not maintained anymore and will be deprecated in the future**.
+
+We're still supporting the Hayhooks _former_ way to deploy a pipeline.
+
+The former command `hayhooks deploy` is now changed to `hayhooks pipeline deploy` and can be used to deploy a pipeline only from a YAML definition file.
+
+For example:
+
+```shell
+hayhooks pipeline deploy -n chat_with_website examples/chat_with_website/chat_with_website.yml
+```
+
+This will deploy the pipeline with the name `chat_with_website` from the YAML definition file `examples/chat_with_website/chat_with_website.yml`. You then can check the generated docs at `http://HAYHOOKS_HOST:HAYHOOKS_PORT/docs` or `http://HAYHOOKS_HOST:HAYHOOKS_PORT/redoc`, looking at the `POST /chat_with_website` endpoint.
+
 ### Deployment
 
 For detailed deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
