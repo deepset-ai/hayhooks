@@ -54,7 +54,8 @@ The following environment variables are supported:
 - `HAYHOOKS_PIPELINES_DIR`: The path to the directory containing the pipelines.
 - `HAYHOOKS_ROOT_PATH`: The root path of the server.
 - `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path.
-- `HAYHOOKS_DISABLE_SSL`: Whether to disable SSL verification when making requests from the CLI.
+- `HAYHOOKS_DISABLE_SSL`: Boolean flag to disable SSL verification when making requests from the CLI.
+- `HAYHOOKS_SHOW_TRACEBACKS`: Boolean flag to show tracebacks on errors during pipeline execution and deployment.
 
 ### CLI commands
 

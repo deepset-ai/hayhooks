@@ -1,7 +1,7 @@
 import inspect
 import importlib.util
-from functools import wraps
 import traceback
+from functools import wraps
 from types import ModuleType
 from typing import Callable, Union
 from fastapi import FastAPI, HTTPException
@@ -137,7 +137,10 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
 
     except Exception as e:
         log.error(f"Error loading pipeline module: {str(e)}")
-        raise PipelineModuleLoadError(f"Failed to load pipeline module '{pipeline_name}' - {str(e)}") from e
+        error_msg = f"Failed to load pipeline module '{pipeline_name}' - {str(e)}"
+        if settings.show_tracebacks:
+            error_msg += f"\n{traceback.format_exc()}"
+        raise PipelineModuleLoadError(error_msg) from e
 
 
 def create_request_model_from_callable(func: Callable, model_name: str):
@@ -185,8 +188,13 @@ def handle_pipeline_exceptions():
             except HTTPException as e:
                 raise e from e
             except Exception as e:
-                log.error(f"Pipeline execution error: {str(e)} - {traceback.format_exc()}")
-                raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}") from e
+                error_msg = f"Pipeline execution failed: {str(e)}"
+                if settings.show_tracebacks:
+                    log.error(f"Pipeline execution error: {str(e)} - {traceback.format_exc()}")
+                    error_msg += f"\n{traceback.format_exc()}"
+                else:
+                    log.error(f"Pipeline execution error: {str(e)}")
+                raise HTTPException(status_code=500, detail=error_msg) from e
 
         return wrapper
 
@@ -266,12 +274,18 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
     try:
         pipeline_wrapper = pipeline_module.PipelineWrapper()
     except Exception as e:
-        raise PipelineWrapperError(f"Failed to create pipeline wrapper instance: {str(e)}") from e
+        error_msg = "Failed to create pipeline wrapper instance: " + str(e)
+        if settings.show_tracebacks:
+            error_msg += f"\n{traceback.format_exc()}"
+        raise PipelineWrapperError(error_msg) from e
 
     try:
         pipeline_wrapper.setup()
     except Exception as e:
-        raise PipelineWrapperError(f"Failed to call setup() on pipeline wrapper instance: {str(e)}") from e
+        error_msg = "Failed to call setup() on pipeline wrapper instance: " + str(e)
+        if settings.show_tracebacks:
+            error_msg += f"\n{traceback.format_exc()}"
+        raise PipelineWrapperError(error_msg) from e
 
     pipeline_wrapper._is_run_api_implemented = pipeline_wrapper.run_api.__func__ is not BasePipelineWrapper.run_api
     pipeline_wrapper._is_run_chat_completion_implemented = (

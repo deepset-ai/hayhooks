@@ -28,6 +28,9 @@ class AppSettings(BaseSettings):
     # Files to ignore when reading pipeline files from a directory
     files_to_ignore_patterns: list[str] = ["*.pyc", "*.pyo", "*.pyd", "__pycache__", "*.so", "*.egg", "*.egg-info"]
 
+    # Show tracebacks on errors during pipeline execution and deployment
+    show_tracebacks: bool = False
+
     # Prefix for the environment variables to avoid conflicts
     # with other similar environment variables
     model_config = SettingsConfigDict(env_prefix='hayhooks_')
