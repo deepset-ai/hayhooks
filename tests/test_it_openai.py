@@ -170,6 +170,14 @@ def test_chat_completion_streaming(client, deploy_files):
     assert chat_completion.choices[0].index == 0
     assert chat_completion.choices[0].logprobs is None
 
+    # check if last chunk contains a delta with empty content
+    last_chunk = chunks[-1]
+    last_chat_completion = ChatCompletion(**json.loads(last_chunk.split("data:")[1]))
+    assert last_chat_completion.choices[0].delta.content == ""
+    assert last_chat_completion.choices[0].delta.role == "assistant"
+    assert last_chat_completion.choices[0].index == 0
+    assert last_chat_completion.choices[0].logprobs is None
+
 
 def test_chat_completion_concurrent_requests(client, deploy_files):
     pipeline_data = {"name": "test_pipeline_streaming", "files": SAMPLE_PIPELINE_FILES_STREAMING}

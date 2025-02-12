@@ -146,7 +146,7 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
                 object="chat.completion.chunk",
                 created=int(time.time()),
                 model=chat_req.model,
-                choices=[Choice(index=0, finish_reason="stop")],
+                choices=[Choice(index=0, delta=Message(role="assistant", content=""), finish_reason="stop")],
             )
             yield f"data: {final_resp.model_dump_json()}\n\n"
 
