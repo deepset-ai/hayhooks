@@ -16,7 +16,7 @@ def is_user_message(msg: Union[Message, Dict]) -> bool:
 def get_content(msg: Union[Message, Dict]) -> str:
     if isinstance(msg, Message):
         return msg.content
-    return msg.get("content")
+    return msg.get("content", "")
 
 
 def get_last_user_message(messages: List[Union[Message, Dict]]) -> Union[str, None]:
@@ -28,7 +28,7 @@ def get_last_user_message(messages: List[Union[Message, Dict]]) -> Union[str, No
     return None
 
 
-def find_streaming_component(pipeline) -> Tuple[Component, str]:
+def find_streaming_component(pipeline: Pipeline) -> Tuple[Component, str]:
     """
     Finds the component in the pipeline that supports streaming_callback
 
@@ -36,7 +36,7 @@ def find_streaming_component(pipeline) -> Tuple[Component, str]:
         The first component that supports streaming
     """
     streaming_component = None
-    streaming_component_name = None
+    streaming_component_name = ""
 
     for name, component in pipeline.walk():
         if hasattr(component, "streaming_callback"):
@@ -54,7 +54,7 @@ def streaming_generator(pipeline: Pipeline, pipeline_run_args: Dict) -> Generato
     Creates a generator that yields streaming chunks from a pipeline execution.
     Automatically finds the streaming-capable component in the pipeline.
     """
-    queue = Queue()
+    queue: Queue[str] = Queue()
 
     def streaming_callback(chunk):
         queue.put(chunk.content)
