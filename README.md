@@ -21,9 +21,12 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Pipeline Wrapper](#why-a-pipeline-wrapper)
   - [Setup Method](#setup)
   - [Run API Method](#run_api)
+  - [Additional Dependencies](#additional-dependencies)
 - [OpenAI Compatibility](#openai-compatible-endpoints-generation)
   - [Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
+  - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
+- [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
 - [Deployment](#deployment)
 - [License](#license)
 
@@ -266,7 +269,7 @@ Here's how it looks like from the `open-webui` side:
 
 ![chat-completion-streaming-example](./docs/assets/chat-completion-streaming.gif)
 
-### Integration with haystack `OpenAIChatGenerator`
+### Integration with haystack OpenAIChatGenerator
 
 Since Hayhooks is OpenAI-compatible, it can be used as a backend for the [haystack OpenAIChatGenerator](https://docs.haystack.deepset.ai/docs/openaichatgenerator).
 
