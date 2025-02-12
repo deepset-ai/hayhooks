@@ -148,6 +148,18 @@ hayhooks pipeline deploy-files -n chat_with_website examples/chat_with_website
 
 This will deploy the pipeline with the name `chat_with_website`. Any error encountered during development will be printed to the console and show in the server logs.
 
+#### Additional dependencies
+
+After installing the Hayhooks package, it might happen that during pipeline deployment you need to install additional dependencies in order to correctly initialize the pipeline instance when calling the wrapper's `setup()` method. For instance, the `chat_with_website` pipeline requires the `trafilatura` package, which is **not installed by default**.
+
+⚠️ Sometimes you may need to enable tracebacks in hayhooks to see the full error message. You can do this by setting the `HAYHOOKS_SHOW_TRACEBACKS` environment variable to `true` or `1`.
+
+Then, assuming you've installed the Hayhooks package in a virtual environment, you will need to install the additional required dependencies yourself by running:
+
+```shell
+pip install trafilatura
+```
+
 ### OpenAI-compatible endpoints generation
 
 Hayhooks now can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` method in your pipeline wrapper.
