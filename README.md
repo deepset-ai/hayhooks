@@ -257,6 +257,31 @@ Here's how it looks like from the `open-webui` side:
 
 ![chat-completion-streaming-example](./docs/assets/chat-completion-streaming.gif)
 
+### Integration with haystack `OpenAIChatGenerator`
+
+Since Hayhooks is OpenAI-compatible, it can be used as a backend for the [haystack OpenAIChatGenerator](https://docs.haystack.deepset.ai/docs/openaichatgenerator).
+
+Assuming you have a Haystack pipeline named `chat_with_website_streaming` and you have deployed it using Hayhooks, here's an example script of how to use it with the `OpenAIChatGenerator`:
+
+```python
+from haystack.components.generators.chat.openai import OpenAIChatGenerator
+from haystack.utils import Secret
+from haystack.dataclasses import ChatMessage
+from haystack.components.generators.utils import print_streaming_chunk
+
+client = OpenAIChatGenerator(
+    model="chat_with_website_streaming",
+    api_key=Secret.from_token("not-relevant"),  # This is not used, you can set it to anything
+    api_base_url="http://localhost:1416/v1/",
+    streaming_callback=print_streaming_chunk,
+)
+
+client.run([ChatMessage.from_user("Where are the offices or SSI?")])
+# > The offices of Safe Superintelligence Inc. (SSI) are located in Palo Alto, California, and Tel Aviv, Israel.
+
+# > {'replies': [ChatMessage(_role=<ChatRole.ASSISTANT: 'assistant'>, _content=[TextContent(text='The offices of Safe >Superintelligence Inc. (SSI) are located in Palo Alto, California, and Tel Aviv, Israel.')], _name=None, _meta={'model': >'chat_with_website_streaming', 'index': 0, 'finish_reason': 'stop', 'completion_start_time': '2025-02-11T15:31:44.599726', >'usage': {}})]}
+```
+
 ### Deploy a pipeline using only its YAML definition
 
 **⚠️ This way of deployment is not maintained anymore and will be deprecated in the future**.
