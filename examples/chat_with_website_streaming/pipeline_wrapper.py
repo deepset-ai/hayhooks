@@ -1,9 +1,7 @@
 from pathlib import Path
 from typing import Generator, List, Union
 from haystack import Pipeline
-from hayhooks.server.pipelines.utils import get_last_user_message, streaming_generator
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.logger import log
+from hayhooks import get_last_user_message, BasePipelineWrapper, log, streaming_generator
 
 
 URLS = ["https://haystack.deepset.ai", "https://www.redis.io", "https://ssi.inc"]
