@@ -7,9 +7,10 @@ Following are some guidelines about deploying and running Haystack pipelines.
 
 ## TL;DR
 
-- Use a single worker environment if you have mainly I/O operations in your pipeline and/or a low number of concurrent requests.
-- Use a multi-worker environment if you have mainly CPU-bound operations in your pipeline and/or a high number of concurrent requests.
+- Use a **single worker environment** if you have mainly I/O operations in your pipeline and/or a low number of concurrent requests.
+- Use a **multi-worker environment** if you have mainly CPU-bound operations in your pipeline and/or a high number of concurrent requests.
 - In any case, use `HAYHOOKS_PIPELINES_DIR` to share pipeline definitions across workers (if possible).
+- You can use [any additional supported `uvicorn` environment variables](https://www.uvicorn.org/settings) to the `hayhooks run` command (or put them in a `.env` file).
 
 ## Single worker environment
 
@@ -26,31 +27,35 @@ command (or having a single Docker container running). This will launch a **sing
 You can deploy a pipeline using:
 
 ```bash
-hayhooks deploy
+hayhooks deploy-files # recommended
+
+# or
+
+hayhooks deploy ...
 ```
 
-command or do a `POST /deploy` request.
+or make `POST /deploy` / `POST /deploy-files` requests.
 
 ### Handling concurrent requests (single worker)
 
-The `run()` method of the pipeline instance is synchronous code, and it's executed using `run_in_threadpool` to avoid blocking the main async event loop.
+The `run()` method of the pipeline instance is _synchronous_ code, and it's executed using `run_in_threadpool` to avoid blocking the main async event loop.
 
 - If your pipeline is doing **mainly I/O operations** (like making HTTP requests, reading/writing files, etc.), the single worker should be able to handle concurrent requests.
 - If your pipeline is doing **mainly CPU-bound operations** (like computing embeddings), the GIL (Global Interpreter Lock) will prevent the worker from handling concurrent requests, so they will be queued.
 
 ## Multiple workers environment
 
-### Single instance with multiple workers
+### Using `uvicorn` with multiple workers
 
-Currently, `hayhooks run` command does not support multiple `uvicorn` workers. However, you can run multiple instances of the application using directly the `uvicorn` command or [FastAPI CLI](https://fastapi.tiangolo.com/fastapi-cli/#fastapi-run) using `fastapi run` command.
+Hayhooks supports multiple `uvicorn` workers running on a single instance, you can use the `hayhooks run` command with the `--workers` flag to start the application with the desired number of workers.
 
 For example, if you have enough cores to run 4 workers, you can use the following command:
 
 ```bash
-fastapi run src/hayhooks/server/app.py --workers 4
+hayhooks run --workers 4
 ```
 
-This vertical scaling approach allows you to handle more concurrent requests (depending on available resources).
+This vertical scaling approach allows you to handle more concurrent requests (depending on environment available resources).
 
 ### Multiple single-worker instances behind a load balancer
 
@@ -60,12 +65,12 @@ This horizontal scaling approach allows you to handle more concurrent requests.
 
 ### Pipeline deployment (multiple workers)
 
-In both the above scenarios, **it's NOT recommended** to deploy a pipeline using the `hayhooks deploy` command (or `POST /deploy` request) as it will deploy the pipeline only on one of the workers, which is not ideal.
+In both the above scenarios, **it's NOT recommended** to deploy a pipeline using Hayhooks CLI commands (or corresponding API requests) as **it will deploy the pipeline only on one of the workers**, which is not ideal.
 
-Instead, you want to provide the env var `HAYHOOKS_PIPELINES_DIR` pointing to a shared folder where all the workers can read the pipeline definitions at startup and load them. This way, all the workers will have the same pipelines available and there will be no issues when calling the API to run a pipeline.
+Instead, set the environment variable `HAYHOOKS_PIPELINES_DIR` to point to a shared directory accessible by all workers. When Hayhooks starts up, each worker will load pipeline definitions from this shared location, ensuring consistent pipeline availability across all workers when handling API requests.
 
 ### Handling concurrent requests (multiple workers)
 
-When having multiple workers and pipelines deployed using `HAYHOOKS_PIPELINES_DIR`, you will be able to handle concurrent requests as each worker will be able to run a pipeline independently. This should be enough to make your application scalable, according to your needs.
+When having multiple workers and pipelines deployed using `HAYHOOKS_PIPELINES_DIR`, you will be able to handle concurrent requests as each worker should be able to run a pipeline independently. This may be enough to make your application scalable, according to your needs.
 
-Note that even in a multiple-workers environment the individual single workers will have the same GIL limitation discussed above, so if your pipeline is mainly CPU-bound, you will need to scale horizontally according to your needs.
+Note that even in a multiple-workers environment, the individual single worker will have the same GIL limitations discussed above, so if your pipeline is mainly CPU-bound, you will need to scale horizontally according to your needs.

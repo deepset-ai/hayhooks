@@ -16,6 +16,7 @@ authors = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
+  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -41,7 +42,7 @@ Issues = "https://github.com/unknown/hayhooks/issues"
 Source = "https://github.com/unknown/hayhooks"
 
 [project.scripts]
-hayhooks = "hayhooks.cli:hayhooks"
+hayhooks = "hayhooks.cli:hayhooks_cli"
 
 [tool.hatch.version]
 source = "vcs"

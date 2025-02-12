@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich import box
 
-hayhooks_cli = typer.Typer()
+hayhooks_cli = typer.Typer(name="hayhooks")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
 
 console = Console()
