@@ -108,7 +108,7 @@ A minimal `PipelineWrapper` looks like this:
 from pathlib import Path
 from typing import List
 from haystack import Pipeline
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks import BasePipelineWrapper
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
@@ -176,9 +176,7 @@ Let's update the previous example to add a streaming response:
 from pathlib import Path
 from typing import Generator, List, Union
 from haystack import Pipeline
-from hayhooks.server.pipelines.utils import get_last_user_message
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.logger import log
+from hayhooks import get_last_user_message, BasePipelineWrapper, log
 
 
 URLS = ["https://haystack.deepset.ai", "https://www.redis.io", "https://ssi.inc"]
@@ -230,9 +228,7 @@ Let's update the `run_chat_completion` method of the previous example:
 from pathlib import Path
 from typing import Generator, List, Union
 from haystack import Pipeline
-from hayhooks.server.pipelines.utils import get_last_user_message, streaming_generator
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.logger import log
+from hayhooks import get_last_user_message, BasePipelineWrapper, log, streaming_generator
 
 
 URLS = ["https://haystack.deepset.ai", "https://www.redis.io", "https://ssi.inc"]

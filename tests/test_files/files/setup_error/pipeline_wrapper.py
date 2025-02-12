@@ -1,4 +1,5 @@
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks import BasePipelineWrapper
+
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self):
