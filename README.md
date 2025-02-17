@@ -26,6 +26,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
+- [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
 - [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
 - [Deployment](#deployment)
 - [License](#license)
@@ -292,6 +293,40 @@ client.run([ChatMessage.from_user("Where are the offices or SSI?")])
 # > The offices of Safe Superintelligence Inc. (SSI) are located in Palo Alto, California, and Tel Aviv, Israel.
 
 # > {'replies': [ChatMessage(_role=<ChatRole.ASSISTANT: 'assistant'>, _content=[TextContent(text='The offices of Safe >Superintelligence Inc. (SSI) are located in Palo Alto, California, and Tel Aviv, Israel.')], _name=None, _meta={'model': >'chat_with_website_streaming', 'index': 0, 'finish_reason': 'stop', 'completion_start_time': '2025-02-11T15:31:44.599726', >'usage': {}})]}
+```
+
+### Run Hayhooks programmatically
+
+An Hayhooks app instance can be run programmatically created by using the `create_app` function. This is useful if you want to add custom routes or middleware to Hayhooks.
+
+Here's an example script:
+
+```python
+import uvicorn
+from hayhooks.settings import settings
+from fastapi import Request
+from hayhooks import create_app
+
+# Create the Hayhooks app
+hayhooks = create_app()
+
+
+# Add a custom route
+@hayhooks.get("/custom")
+async def custom_route():
+    return {"message": "Hi, this is a custom route!"}
+
+
+# Add a custom middleware
+@hayhooks.middleware("http")
+async def custom_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Custom-Header"] = "custom-header-value"
+    return response
+
+
+if __name__ == "__main__":
+    uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
 ```
 
 ### Deploy a pipeline using only its YAML definition
