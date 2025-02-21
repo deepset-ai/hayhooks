@@ -22,13 +22,15 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Setup Method](#setup)
   - [Run API Method](#run_api)
   - [Additional Dependencies](#additional-dependencies)
+  - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
 - [OpenAI Compatibility](#openai-compatible-endpoints-generation)
   - [Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
-- [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
-- [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
-- [Deployment](#deployment)
+- [Advanced Usage](#advanced-usage)
+  - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
+  - [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
+  - [Deployment Guidelines](#deployment)
 - [License](#license)
 
 ## Quick start
@@ -37,7 +39,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 
 Start by installing the package:
 
-```console
+```shell
 pip install hayhooks
 ```
 
@@ -81,7 +83,7 @@ hayhooks pipeline undeploy <pipeline_name>     # Undeploy a pipeline
 
 Let's start Hayhooks:
 
-```console
+```shell
 hayhooks run
 ```
 
@@ -151,6 +153,38 @@ hayhooks pipeline deploy-files -n chat_with_website examples/chat_with_website
 ```
 
 This will deploy the pipeline with the name `chat_with_website`. Any error encountered during development will be printed to the console and show in the server logs.
+
+#### PipelineWrapper development with overwrite option
+
+During development, you can use the `--overwrite` flag to redeploy your pipeline without restarting the Hayhooks server:
+
+```shell
+hayhooks pipeline deploy-files -n {pipeline_name} --overwrite {pipeline_dir}
+```
+
+This is particularly useful when:
+
+- Iterating on your pipeline wrapper implementation
+- Debugging pipeline setup issues
+- Testing different pipeline configurations
+
+The `--overwrite` flag will:
+
+1. Remove the existing pipeline from the registry
+2. Delete the pipeline files from disk
+3. Deploy the new version of your pipeline
+
+For even faster development iterations, you can combine `--overwrite` with `--skip-saving-files` to avoid writing files to disk:
+
+```shell
+hayhooks pipeline deploy-files -n {pipeline_name} --overwrite --skip-saving-files {pipeline_dir}
+```
+
+This is useful when:
+
+- You're making frequent changes during development
+- You want to test a pipeline without persisting it
+- You're running in an environment with limited disk access
 
 #### Additional dependencies
 
