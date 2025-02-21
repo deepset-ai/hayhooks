@@ -17,6 +17,8 @@ router = APIRouter()
 class PipelineFilesRequest(BaseModel):
     name: str
     files: Dict[str, str]
+    overwrite: bool = False
+    save_files: bool = True
 
 
 @router.post("/deploy", tags=["config"])
@@ -25,16 +27,22 @@ async def deploy(pipeline_def: PipelineDefinition, request: Request):
 
 
 @router.post("/deploy_files", tags=["config"])
-async def deploy_files(pipeline_files: PipelineFilesRequest, request: Request):
+async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Request):
     try:
-        return deploy_pipeline_files(request.app, pipeline_files.name, pipeline_files.files)
+        return deploy_pipeline_files(
+            app=request.app,
+            pipeline_name=pipeline_files_request.name,
+            files=pipeline_files_request.files,
+            save_files=pipeline_files_request.save_files,
+            overwrite=pipeline_files_request.overwrite,
+        )
     except PipelineFilesError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     except PipelineModuleLoadError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineWrapperError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineAlreadyExistsError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error deploying pipeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error deploying pipeline: {str(e)}") from e
