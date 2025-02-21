@@ -236,14 +236,14 @@ def deploy_pipeline_files(
 
     log.debug(f"Checking if pipeline '{pipeline_name}' already exists: {registry.get(pipeline_name)}")
     if registry.get(pipeline_name):
-        if not overwrite:
-            raise PipelineAlreadyExistsError(f"Pipeline '{pipeline_name}' already exists")
-        else:
+        if overwrite:
             log.debug(f"Clearing existing pipeline '{pipeline_name}'")
             registry.remove(pipeline_name)
 
             log.debug(f"Removing pipeline files for '{pipeline_name}'")
             remove_pipeline_files(pipeline_name, settings.pipelines_dir)
+        else:
+            raise PipelineAlreadyExistsError(f"Pipeline '{pipeline_name}' already exists")
 
     tmp_dir = None
 
