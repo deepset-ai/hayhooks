@@ -70,6 +70,12 @@ def deploy_files(
     ctx: typer.Context,
     name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
     pipeline_dir: Path = typer.Argument(help="The path to the directory containing the pipeline files to deploy."),
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", "-o", help="Whether to overwrite the pipeline if it already exists.")
+    ] = False,
+    skip_saving_files: Annotated[
+        bool, typer.Option("--skip-saving-files", "-s", help="Whether to skip saving the files to the server.")
+    ] = False,
 ):
     """Deploy all pipeline files from a directory to the Hayhooks server."""
     if not pipeline_dir.exists():
@@ -88,7 +94,7 @@ def deploy_files(
     if name is None:
         name = pipeline_dir.stem
 
-    payload = {"name": name, "files": files_dict}
+    payload = {"name": name, "files": files_dict, "save_files": not skip_saving_files, "overwrite": overwrite}
     _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy_files", payload=payload)
 
 

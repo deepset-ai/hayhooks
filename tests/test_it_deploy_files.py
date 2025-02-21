@@ -35,10 +35,10 @@ SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION = {
     "pipeline_files",
     [("test_pipeline_1", SAMPLE_PIPELINE_FILES), ("test_pipeline_2", SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION)],
 )
-def test_deploy_files_ok(status_pipeline, pipeline_files, client, test_settings):
+def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
     pipeline_data = {"name": pipeline_files[0], "files": pipeline_files[1]}
 
-    response = client.post("/deploy_files", json=pipeline_data)
+    response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
     assert response.status_code == 200
     assert response.json() == {"name": pipeline_files[0]}
 
@@ -69,41 +69,41 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, test_settings)
         assert response.json() == {"result": "Dummy result with test_value"}
 
 
-def test_deploy_files_missing_wrapper(client):
+def test_deploy_files_missing_wrapper(client, deploy_files):
     pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES.copy()}
     pipeline_data["files"].pop("pipeline_wrapper.py")
 
-    response = client.post("/deploy_files", json=pipeline_data)
+    response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
     assert response.status_code == 422
     assert "Required file" in response.json()["detail"]
 
 
-def test_deploy_files_invalid_wrapper(client):
+def test_deploy_files_invalid_wrapper(client, deploy_files):
     invalid_files = {
         "pipeline_wrapper.py": "invalid python code",
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
 
-    response = client.post("/deploy_files", json={"name": "test_pipeline", "files": invalid_files})
+    response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
     assert "Failed to load pipeline module" in response.json()["detail"]
 
 
-def test_deploy_files_duplicate_pipeline(client):
-    response = client.post("/deploy_files", json={"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES})
+def test_deploy_files_duplicate_pipeline(client, deploy_files):
+    response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=SAMPLE_PIPELINE_FILES)
     assert response.status_code == 200
 
-    response = client.post("/deploy_files", json={"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES})
+    response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=SAMPLE_PIPELINE_FILES)
     assert response.status_code == 409
     assert "Pipeline 'test_pipeline' already exists" in response.json()["detail"]
 
 
-def test_pipeline_endpoint_error_handling(client):
+def test_pipeline_endpoint_error_handling(client, deploy_files):
     pipeline_files = {
         "pipeline_wrapper.py": (RUN_API_ERROR_DIR / "pipeline_wrapper.py").read_text(),
     }  # This pipeline wrapper will raise an error in run_api
 
-    response = client.post("/deploy_files", json={"name": "errored_pipeline", "files": pipeline_files})
+    response = deploy_files(client, pipeline_name="errored_pipeline", pipeline_files=pipeline_files)
     assert response.status_code == 200
 
     run_response = client.post(
@@ -115,23 +115,68 @@ def test_pipeline_endpoint_error_handling(client):
     assert "This is a test error" in run_response.json()["detail"]
 
 
-def test_deploy_files_missing_required_methods(client):
+def test_deploy_files_missing_required_methods(client, deploy_files):
     invalid_files = {
         "pipeline_wrapper.py": (MISSING_METHODS_DIR / "pipeline_wrapper.py").read_text(),
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
 
-    response = client.post("/deploy_files", json={"name": "test_pipeline", "files": invalid_files})
+    response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
     assert "At least one of run_api or run_chat_completion must be implemented" in response.json()["detail"]
 
 
-def test_deploy_files_setup_error(client):
+def test_deploy_files_setup_error(client, deploy_files):
     invalid_files = {
         "pipeline_wrapper.py": (SETUP_ERROR_DIR / "pipeline_wrapper.py").read_text(),
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
 
-    response = client.post("/deploy_files", json={"name": "test_pipeline", "files": invalid_files})
+    response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
     assert "Failed to call setup() on pipeline wrapper instance: Setup failed!" in response.json()["detail"]
+
+
+def test_deploy_files_using_overwrite(status_pipeline, client, deploy_files, chat_completion):
+    # Deploy the pipeline with the chat completion method
+    response = deploy_files(
+        client,
+        pipeline_name="test_pipeline",
+        pipeline_files=SAMPLE_PIPELINE_FILES,
+        overwrite=True,
+    )
+    assert response.status_code == 200
+
+    # Check status
+    status = status_pipeline(client, "test_pipeline")
+    assert status.status_code == 200
+    assert status.json()["pipeline"] == "test_pipeline"
+
+    # Call chat endpoint (which is implemented)
+    response = chat_completion(
+        client,
+        pipeline_name="test_pipeline",
+        messages=[{"role": "user", "content": "Dummy question"}],
+    )
+    assert response.status_code == 200
+
+    # Deploy the pipeline without the chat completion method
+    response = deploy_files(
+        client,
+        pipeline_name="test_pipeline",
+        pipeline_files=SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION,
+        overwrite=True,
+    )
+    assert response.status_code == 200
+
+    status = status_pipeline(client, "test_pipeline")
+    assert status.status_code == 200
+    assert status.json()["pipeline"] == "test_pipeline"
+
+    # Call chat completion (which is NOT implemented after the overwrite)
+    response = chat_completion(
+        client,
+        pipeline_name="test_pipeline",
+        messages=[{"role": "user", "content": "Dummy question"}],
+    )
+    assert response.status_code == 501

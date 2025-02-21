@@ -1,5 +1,6 @@
 import inspect
 import importlib.util
+import shutil
 import traceback
 from functools import wraps
 from types import ModuleType
@@ -98,6 +99,18 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
 
     except Exception as e:
         raise PipelineFilesError(f"Failed to save pipeline files: {str(e)}") from e
+
+
+def remove_pipeline_files(pipeline_name: str, pipelines_dir: str):
+    """Remove pipeline files from disk.
+
+    Args:
+        pipeline_name: Name of the pipeline
+        pipelines_dir: Path to the pipelines directory
+    """
+    pipeline_dir = Path(pipelines_dir) / pipeline_name
+    if pipeline_dir.exists():
+        shutil.rmtree(pipeline_dir, ignore_errors=True)
 
 
 def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> ModuleType:
@@ -201,7 +214,9 @@ def handle_pipeline_exceptions():
     return decorator
 
 
-def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str], save_files: bool = True):
+def deploy_pipeline_files(
+    app: FastAPI, pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
+):
     """Deploy pipeline files to the FastAPI application and set up endpoints.
 
     Args:
@@ -218,7 +233,14 @@ def deploy_pipeline_files(app: FastAPI, pipeline_name: str, files: dict[str, str
 
     log.debug(f"Checking if pipeline '{pipeline_name}' already exists: {registry.get(pipeline_name)}")
     if registry.get(pipeline_name):
-        raise PipelineAlreadyExistsError(f"Pipeline '{pipeline_name}' already exists")
+        if not overwrite:
+            raise PipelineAlreadyExistsError(f"Pipeline '{pipeline_name}' already exists")
+        else:
+            log.debug(f"Clearing existing pipeline '{pipeline_name}'")
+            registry.remove(pipeline_name)
+
+            log.debug(f"Removing pipeline files for '{pipeline_name}'")
+            remove_pipeline_files(pipeline_name, settings.pipelines_dir)
 
     if save_files:
         log.debug(f"Saving pipeline files for '{pipeline_name}' in '{settings.pipelines_dir}'")

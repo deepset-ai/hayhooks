@@ -72,9 +72,21 @@ def status_pipeline():
 
 
 @pytest.fixture
+def chat_completion():
+    def _chat_completion(client: TestClient, pipeline_name: str, messages: list):
+        chat_response = client.post(f"/{pipeline_name}/chat", json={"messages": messages, "model": pipeline_name})
+        return chat_response
+
+    return _chat_completion
+
+
+@pytest.fixture
 def deploy_files():
-    def _deploy_files(client: TestClient, pipeline_name: str, pipeline_files: dict):
-        deploy_response = client.post("/deploy_files", json={"name": pipeline_name, "files": pipeline_files})
+    def _deploy_files(client: TestClient, pipeline_name: str, pipeline_files: dict, overwrite: bool = False):
+        deploy_response = client.post(
+            "/deploy_files",
+            json={"name": pipeline_name, "files": pipeline_files, "overwrite": overwrite},
+        )
         return deploy_response
 
     return _deploy_files
