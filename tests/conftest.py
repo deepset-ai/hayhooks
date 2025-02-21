@@ -82,10 +82,12 @@ def chat_completion():
 
 @pytest.fixture
 def deploy_files():
-    def _deploy_files(client: TestClient, pipeline_name: str, pipeline_files: dict, overwrite: bool = False):
+    def _deploy_files(
+        client: TestClient, pipeline_name: str, pipeline_files: dict, overwrite: bool = False, save_files: bool = True
+    ):
         deploy_response = client.post(
             "/deploy_files",
-            json={"name": pipeline_name, "files": pipeline_files, "overwrite": overwrite},
+            json={"name": pipeline_name, "files": pipeline_files, "overwrite": overwrite, "save_files": save_files},
         )
         return deploy_response
 

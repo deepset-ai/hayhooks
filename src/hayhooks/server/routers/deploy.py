@@ -27,14 +27,14 @@ async def deploy(pipeline_def: PipelineDefinition, request: Request):
 
 
 @router.post("/deploy_files", tags=["config"])
-async def deploy_files(pipeline_files: PipelineFilesRequest, request: Request):
+async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Request):
     try:
         return deploy_pipeline_files(
             app=request.app,
-            pipeline_name=pipeline_files.name,
-            files=pipeline_files.files,
-            save_files=pipeline_files.save_files,
-            overwrite=pipeline_files.overwrite,
+            pipeline_name=pipeline_files_request.name,
+            files=pipeline_files_request.files,
+            save_files=pipeline_files_request.save_files,
+            overwrite=pipeline_files_request.overwrite,
         )
     except PipelineFilesError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

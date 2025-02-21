@@ -194,18 +194,13 @@ def test_deploy_pipeline_files_without_saving(test_settings, mocker):
     test_file_path = Path("tests/test_files/files/no_chat/pipeline_wrapper.py")
     files = {"pipeline_wrapper.py": test_file_path.read_text()}
 
-    # Save the files to the pipelines directory
-    save_pipeline_files("test_pipeline", files, pipelines_dir=test_settings.pipelines_dir)
-
-    # Now we mock the save_pipeline_files function to ensure it's not called during the deploy
-    mock_save = mocker.patch('hayhooks.server.utils.deploy_utils.save_pipeline_files')
-
     # Run deploy_pipeline_files without saving the files
     result = deploy_pipeline_files(app=mock_app, pipeline_name="test_pipeline", files=files, save_files=False)
     assert result == {"name": "test_pipeline"}
 
-    # Verify save_pipeline_files was not called
-    mock_save.assert_not_called()
+    # Check that pipeline files are not saved to disk
+    pipeline_dir = Path(test_settings.pipelines_dir) / "test_pipeline"
+    assert not pipeline_dir.exists()
 
     # Verify the pipeline was deployed successfully
     assert result == {"name": "test_pipeline"}

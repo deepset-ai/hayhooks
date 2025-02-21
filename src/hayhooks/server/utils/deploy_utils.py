@@ -1,6 +1,7 @@
 import inspect
 import importlib.util
 import shutil
+import tempfile
 import traceback
 from functools import wraps
 from types import ModuleType
@@ -126,6 +127,8 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
     Raises:
         ValueError: If the module cannot be loaded
     """
+    log.warning(f"Loading pipeline module from {dir_path}")
+    log.warning(f"Is folder present: {Path(dir_path).exists()}")
     try:
         dir_path = Path(dir_path)
         wrapper_path = dir_path / "pipeline_wrapper.py"
@@ -242,11 +245,19 @@ def deploy_pipeline_files(
             log.debug(f"Removing pipeline files for '{pipeline_name}'")
             remove_pipeline_files(pipeline_name, settings.pipelines_dir)
 
+    tmp_dir = None
+
     if save_files:
         log.debug(f"Saving pipeline files for '{pipeline_name}' in '{settings.pipelines_dir}'")
         save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
+        pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
+    else:
+        # We still need to save the pipeline files to disk to be able to load the module
+        # We do in a temporary directory to avoid polluting the pipelines directory
+        tmp_dir = tempfile.mkdtemp()
+        save_pipeline_files(pipeline_name, files=files, pipelines_dir=tmp_dir)
+        pipeline_dir = Path(tmp_dir) / pipeline_name
 
-    pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
     clog = log.bind(pipeline_name=pipeline_name, pipeline_dir=str(pipeline_dir), files=list(files.keys()))
 
     clog.debug("Loading pipeline module")
@@ -289,6 +300,11 @@ def deploy_pipeline_files(
     app.setup()
 
     clog.success("Pipeline deployment complete")
+
+    if tmp_dir is not None:
+        log.debug(f"Removing temporary pipeline files for '{pipeline_name}'")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
     return {"name": pipeline_name}
 
 

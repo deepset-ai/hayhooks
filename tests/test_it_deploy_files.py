@@ -4,15 +4,15 @@ from pathlib import Path
 from hayhooks.server.pipelines.registry import registry
 
 
-def cleanup(pipelines_dir: str):
+def clear_registry_and_files(pipelines_dir: str):
     registry.clear()
     if Path(pipelines_dir).exists():
         shutil.rmtree(pipelines_dir)
 
 
 @pytest.fixture(autouse=True)
-def clear_registry(test_settings):
-    cleanup(test_settings.pipelines_dir)
+def cleanup(test_settings):
+    clear_registry_and_files(test_settings.pipelines_dir)
     yield
 
 
@@ -180,3 +180,42 @@ def test_deploy_files_using_overwrite(status_pipeline, client, deploy_files, cha
         messages=[{"role": "user", "content": "Dummy question"}],
     )
     assert response.status_code == 501
+
+
+def test_deploy_files_overwrite_without_saving(status_pipeline, client, deploy_files, test_settings):
+    # First deploy with chat completion and save files
+    response = deploy_files(
+        client,
+        pipeline_name="test_pipeline",
+        pipeline_files=SAMPLE_PIPELINE_FILES,
+        overwrite=True,
+        save_files=False,
+    )
+    assert response.status_code == 200
+
+    # Check that the pipeline files are not saved to disk
+    pipeline_dir = Path(test_settings.pipelines_dir) / "test_pipeline"
+    assert not pipeline_dir.exists()
+
+    # Check that the pipeline is available
+    status = status_pipeline(client, "test_pipeline")
+    assert status.status_code == 200
+    assert status.json()["pipeline"] == "test_pipeline"
+
+    # Deploy again without saving files
+    response = deploy_files(
+        client,
+        pipeline_name="test_pipeline",
+        pipeline_files=SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION,
+        overwrite=True,
+        save_files=False,
+    )
+    assert response.status_code == 200
+
+    # Check that the pipeline files are not saved to disk
+    assert not pipeline_dir.exists()
+
+    # Check that the pipeline is available
+    status = status_pipeline(client, "test_pipeline")
+    assert status.status_code == 200
+    assert status.json()["pipeline"] == "test_pipeline"
