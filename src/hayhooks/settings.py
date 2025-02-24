@@ -31,6 +31,15 @@ class AppSettings(BaseSettings):
     # Show tracebacks on errors during pipeline execution and deployment
     show_tracebacks: bool = False
 
+    # CORS Settings
+    cors_allow_origins: list[str] = ["*"]
+    cors_allow_methods: list[str] = ["*"]
+    cors_allow_headers: list[str] = ["*"]
+    cors_allow_credentials: bool = False
+    cors_allow_origin_regex: str | None = None
+    cors_expose_headers: list[str] = []
+    cors_max_age: int = 600
+
     # Prefix for the environment variables to avoid conflicts
     # with other similar environment variables
     model_config = SettingsConfigDict(env_prefix='hayhooks_')
