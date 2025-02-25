@@ -73,7 +73,7 @@ The following environment variables are supported:
 - `HAYHOOKS_CORS_ALLOW_CREDENTIALS`: Allow credentials (default: false)
 - `HAYHOOKS_CORS_ALLOW_ORIGIN_REGEX`: Regex pattern for allowed origins (default: null)
 - `HAYHOOKS_CORS_EXPOSE_HEADERS`: Headers to expose in response (default: [])
-- `HAYHOOKS_CORS_MAX_AGE`: Max age for CORS preflight responses in seconds (default: 600)
+- `HAYHOOKS_CORS_MAX_AGE`: Maxium age for CORS preflight responses in seconds (default: 600)
 
 ### CLI commands
 
