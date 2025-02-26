@@ -1,6 +1,6 @@
+import warnings
 import pytest
 import shutil
-from pathlib import Path
 from hayhooks.settings import AppSettings
 
 
@@ -84,3 +84,19 @@ def test_cors_env_vars(monkeypatch):
     assert settings.cors_allow_origin_regex == "https://.*\\.test\\.com"
     assert settings.cors_expose_headers == ["X-Expose-Test"]
     assert settings.cors_max_age == 1800
+
+
+def test_cors_warning():
+    with pytest.warns(
+        UserWarning, match="Using default CORS settings - All origins, methods, and headers are allowed."
+    ):
+        AppSettings()
+
+    with warnings.catch_warnings(record=True) as recorded_warnings:
+        warnings.simplefilter("always")
+        AppSettings(
+            cors_allow_origins=["https://example.com"],
+            cors_allow_methods=["GET", "POST"],
+            cors_allow_headers=["X-Custom-Header"],
+        )
+        assert len(recorded_warnings) == 0
