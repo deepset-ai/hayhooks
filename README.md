@@ -15,6 +15,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 - [Install the package](#install-the-package)
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
+  - [CORS Settings](#cors-settings)
 - [CLI Commands](#cli-commands)
 - [Start hayhooks](#start-hayhooks)
 - [Deploy a pipeline](#deploy-a-pipeline)
@@ -29,8 +30,9 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
 - [Advanced Usage](#advanced-usage)
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
+- [Deployment Guidelines](#deployment)
+- [Legacy Features](#legacy-features)
   - [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
-  - [Deployment Guidelines](#deployment)
 - [License](#license)
 
 ## Quick start
@@ -62,6 +64,16 @@ The following environment variables are supported:
 - `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path.
 - `HAYHOOKS_DISABLE_SSL`: Boolean flag to disable SSL verification when making requests from the CLI.
 - `HAYHOOKS_SHOW_TRACEBACKS`: Boolean flag to show tracebacks on errors during pipeline execution and deployment.
+
+##### CORS Settings
+
+- `HAYHOOKS_CORS_ALLOW_ORIGINS`: List of allowed origins (default: ["*"])
+- `HAYHOOKS_CORS_ALLOW_METHODS`: List of allowed HTTP methods (default: ["*"])
+- `HAYHOOKS_CORS_ALLOW_HEADERS`: List of allowed headers (default: ["*"])
+- `HAYHOOKS_CORS_ALLOW_CREDENTIALS`: Allow credentials (default: false)
+- `HAYHOOKS_CORS_ALLOW_ORIGIN_REGEX`: Regex pattern for allowed origins (default: null)
+- `HAYHOOKS_CORS_EXPOSE_HEADERS`: Headers to expose in response (default: [])
+- `HAYHOOKS_CORS_MAX_AGE`: Maxium age for CORS preflight responses in seconds (default: 600)
 
 ### CLI commands
 
@@ -363,7 +375,13 @@ if __name__ == "__main__":
     uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
 ```
 
-### Deploy a pipeline using only its YAML definition
+### Deployment
+
+For detailed deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
+
+### Legacy Features
+
+#### Deploy a pipeline using only its YAML definition
 
 **⚠️ This way of deployment is not maintained anymore and will be deprecated in the future**.
 
@@ -378,10 +396,6 @@ hayhooks pipeline deploy -n chat_with_website examples/chat_with_website/chat_wi
 ```
 
 This will deploy the pipeline with the name `chat_with_website` from the YAML definition file `examples/chat_with_website/chat_with_website.yml`. You then can check the generated docs at `http://HAYHOOKS_HOST:HAYHOOKS_PORT/docs` or `http://HAYHOOKS_HOST:HAYHOOKS_PORT/redoc`, looking at the `POST /chat_with_website` endpoint.
-
-### Deployment
-
-For detailed deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
 
 ### License
 

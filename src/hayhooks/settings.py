@@ -1,4 +1,7 @@
+from typing import Union
+from warnings import warn
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
 from dotenv import load_dotenv, find_dotenv
 from pathlib import Path
 
@@ -31,9 +34,24 @@ class AppSettings(BaseSettings):
     # Show tracebacks on errors during pipeline execution and deployment
     show_tracebacks: bool = False
 
+    # CORS Settings
+    cors_allow_origins: list[str] = ["*"]
+    cors_allow_methods: list[str] = ["*"]
+    cors_allow_headers: list[str] = ["*"]
+    cors_allow_credentials: bool = False
+    cors_allow_origin_regex: Union[str, None] = None
+    cors_expose_headers: list[str] = []
+    cors_max_age: int = 600
+
     # Prefix for the environment variables to avoid conflicts
     # with other similar environment variables
     model_config = SettingsConfigDict(env_prefix='hayhooks_')
+
+    @model_validator(mode="after")
+    def check_if_cors_are_configured(self):
+        if self.cors_allow_origins == ["*"] and self.cors_allow_methods == ["*"] and self.cors_allow_headers == ["*"]:
+            warn("Using default CORS settings - All origins, methods, and headers are allowed.")
+        return self
 
 
 settings = AppSettings()

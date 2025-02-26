@@ -13,6 +13,7 @@ from hayhooks.server.utils.deploy_utils import (
 from hayhooks.server.routers import status_router, draw_router, deploy_router, undeploy_router, openai_router
 from hayhooks.settings import settings
 from hayhooks.server.logger import log
+from fastapi.middleware.cors import CORSMiddleware
 
 
 def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
@@ -145,6 +146,18 @@ def create_app() -> FastAPI:
         app = FastAPI(root_path=root_path, lifespan=lifespan)
     else:
         app = FastAPI(lifespan=lifespan)
+
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allow_origins,
+        allow_methods=settings.cors_allow_methods,
+        allow_headers=settings.cors_allow_headers,
+        allow_credentials=settings.cors_allow_credentials,
+        allow_origin_regex=settings.cors_allow_origin_regex,
+        expose_headers=settings.cors_expose_headers,
+        max_age=settings.cors_max_age,
+    )
 
     # Include all routers
     app.include_router(status_router)

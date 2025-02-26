@@ -1,6 +1,6 @@
+import warnings
 import pytest
 import shutil
-from pathlib import Path
 from hayhooks.settings import AppSettings
 
 
@@ -37,3 +37,66 @@ def test_env_var_prefix(monkeypatch):
     monkeypatch.setenv("HAYHOOKS_PORT", "5678")
     settings = AppSettings()
     assert settings.port == 5678
+
+
+def test_cors():
+    default_settings = AppSettings()
+    assert default_settings.cors_allow_origins == ["*"]
+    assert default_settings.cors_allow_methods == ["*"]
+    assert default_settings.cors_allow_headers == ["*"]
+    assert default_settings.cors_allow_credentials is False
+    assert default_settings.cors_allow_origin_regex is None
+    assert default_settings.cors_expose_headers == []
+    assert default_settings.cors_max_age == 600
+
+    custom_settings = AppSettings(
+        cors_allow_origins=["https://example.com", "https://test.com"],
+        cors_allow_methods=["GET", "POST"],
+        cors_allow_headers=["X-Custom-Header"],
+        cors_allow_credentials=True,
+        cors_allow_origin_regex="https://.*\.example\.com",
+        cors_expose_headers=["X-Custom-Expose"],
+        cors_max_age=3600,
+    )
+    assert custom_settings.cors_allow_origins == ["https://example.com", "https://test.com"]
+    assert custom_settings.cors_allow_methods == ["GET", "POST"]
+    assert custom_settings.cors_allow_headers == ["X-Custom-Header"]
+    assert custom_settings.cors_allow_credentials is True
+    assert custom_settings.cors_allow_origin_regex == "https://.*\.example\.com"
+    assert custom_settings.cors_expose_headers == ["X-Custom-Expose"]
+    assert custom_settings.cors_max_age == 3600
+
+
+def test_cors_env_vars(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_CORS_ALLOW_ORIGINS", '["https://example.com"]')
+    monkeypatch.setenv("HAYHOOKS_CORS_ALLOW_METHODS", '["GET", "POST"]')
+    monkeypatch.setenv("HAYHOOKS_CORS_ALLOW_HEADERS", '["X-Test-Header"]')
+    monkeypatch.setenv("HAYHOOKS_CORS_ALLOW_CREDENTIALS", "true")
+    monkeypatch.setenv("HAYHOOKS_CORS_ALLOW_ORIGIN_REGEX", "https://.*\\.test\\.com")
+    monkeypatch.setenv("HAYHOOKS_CORS_EXPOSE_HEADERS", '["X-Expose-Test"]')
+    monkeypatch.setenv("HAYHOOKS_CORS_MAX_AGE", "1800")
+
+    settings = AppSettings()
+    assert settings.cors_allow_origins == ["https://example.com"]
+    assert settings.cors_allow_methods == ["GET", "POST"]
+    assert settings.cors_allow_headers == ["X-Test-Header"]
+    assert settings.cors_allow_credentials is True
+    assert settings.cors_allow_origin_regex == "https://.*\\.test\\.com"
+    assert settings.cors_expose_headers == ["X-Expose-Test"]
+    assert settings.cors_max_age == 1800
+
+
+def test_cors_warning():
+    with pytest.warns(
+        UserWarning, match="Using default CORS settings - All origins, methods, and headers are allowed."
+    ):
+        AppSettings()
+
+    with warnings.catch_warnings(record=True) as recorded_warnings:
+        warnings.simplefilter("always")
+        AppSettings(
+            cors_allow_origins=["https://example.com"],
+            cors_allow_methods=["GET", "POST"],
+            cors_allow_headers=["X-Custom-Header"],
+        )
+        assert len(recorded_warnings) == 0
