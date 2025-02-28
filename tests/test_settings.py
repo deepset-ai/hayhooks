@@ -1,7 +1,7 @@
 import warnings
 import pytest
 import shutil
-from hayhooks.settings import AppSettings
+from hayhooks.settings import AppSettings, check_cors_settings
 
 
 @pytest.fixture
@@ -90,7 +90,7 @@ def test_cors_warning():
     with pytest.warns(
         UserWarning, match="Using default CORS settings - All origins, methods, and headers are allowed."
     ):
-        AppSettings()
+        check_cors_settings()
 
     with warnings.catch_warnings(record=True) as recorded_warnings:
         warnings.simplefilter("always")

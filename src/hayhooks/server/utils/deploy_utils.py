@@ -127,8 +127,9 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
     Raises:
         ValueError: If the module cannot be loaded
     """
-    log.warning(f"Loading pipeline module from {dir_path}")
-    log.warning(f"Is folder present: {Path(dir_path).exists()}")
+    log.trace(f"Loading pipeline module from {dir_path}")
+    log.trace(f"Is folder present: {Path(dir_path).exists()}")
+
     try:
         dir_path = Path(dir_path)
         wrapper_path = dir_path / "pipeline_wrapper.py"
