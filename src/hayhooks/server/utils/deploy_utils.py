@@ -3,6 +3,7 @@ import importlib.util
 import shutil
 import tempfile
 import traceback
+import sys
 from functools import wraps
 from types import ModuleType
 from typing import Callable, Union
@@ -10,6 +11,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pathlib import Path
+
+from fastapi.routing import APIRoute
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
@@ -136,6 +139,12 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
 
         if not wrapper_path.exists():
             raise PipelineWrapperError(f"Required file '{wrapper_path}' not found")
+
+        # Clear the module from sys.modules if it exists to ensure a fresh load
+        module_name = pipeline_name
+        if module_name in sys.modules:
+            log.debug(f"Removing existing module {module_name} from sys.modules")
+            del sys.modules[module_name]
 
         spec = importlib.util.spec_from_file_location(pipeline_name, wrapper_path)
         if spec is None or spec.loader is None:
@@ -286,6 +295,11 @@ def deploy_pipeline_files(
         async def run_endpoint(run_req: RunRequest) -> RunResponse:  # type: ignore
             result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
             return RunResponse(result=result)
+
+        # Clear existing pipeline run route if it exists
+        for route in app.routes:
+            if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run":
+                app.routes.remove(route)
 
         app.add_api_route(
             path=f"/{pipeline_name}/run",
