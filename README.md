@@ -25,6 +25,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Additional Dependencies](#additional-dependencies)
   - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
 - [OpenAI Compatibility](#openai-compatible-endpoints-generation)
+  - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
   - [Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
@@ -216,7 +217,34 @@ Hayhooks now can automatically generate OpenAI-compatible endpoints if you imple
 
 This will make Hayhooks compatible with fully-featured chat interfaces like [open-webui](https://openwebui.com/), so you can use it as a backend for your chat interface.
 
-![open-webui OpenAI connections](./docs/assets/open-webui-connections.png)
+### Using Hayhooks as `open-webui` backend
+
+Requirements:
+
+- Ensure you have [open-webui](https://openwebui.com/) up and running (you can do it easily using `docker`, check [their quick start guide](https://docs.openwebui.com/getting-started/quick-start)).
+- Ensure you have Hayhooks server running somewhere. We will run it locally on `http://localhost:1416`.
+
+#### Configuring `open-webui`
+
+First, you need to **turn off `tags` and `title` generation from `Admin settings -> Interface`**:
+
+![open-webui-settings](./docs/assets/open-webui-settings.png)
+
+Then you have two options to connect Hayhooks as a backend.
+
+Add a **Direct Connection** from `Settings -> Connections`:
+
+NOTE: **Fill a random value as API key as it's not needed**
+
+![open-webui-settings-connections](./docs/assets/open-webui-settings-connections.png)
+
+Alternatively, you can add an additional **OpenAI API Connections** from `Admin settings -> Connections`:
+
+![open-webui-admin-settings-connections](./docs/assets/open-webui-admin-settings-connections.png)
+
+Even in this case, remember to **Fill a random value as API key**.
+
+#### run_chat_completion(model: str, messages: List[dict], body: dict) -> Union[str, Generator]
 
 To enable the automatic generation of OpenAI-compatible endpoints, you need only to implement the `run_chat_completion` method in your pipeline wrapper.
 
@@ -250,8 +278,6 @@ class PipelineWrapper(BasePipelineWrapper):
         return result["llm"]["replies"][0]
 ```
 
-#### run_chat_completion(model: str, messages: List[dict], body: dict) -> Union[str, Generator]
-
 Differently from the `run_api` method, the `run_chat_completion` has a **fixed signature** and will be called with the arguments specified in the OpenAI-compatible endpoint.
 
 - `model`: The `name` of the Haystack pipeline which is called.
@@ -264,7 +290,9 @@ Some notes:
 - In this example, the `run_chat_completion` method is returning a string, so the `open-webui` will receive a string as response and show the pipeline output in the chat all at once.
 - The `body` argument contains the full request body, which may be used to extract more information like the `temperature` or the `max_tokens` (see the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create) for more information).
 
-Here's how it looks like from the `open-webui` side:
+Finally, to use non-streaming responses in `open-webui` you need also to turn of `Stream Chat Response` chat settings.
+
+Here's a video example:
 
 ![chat-completion-example](./docs/assets/chat-completion.gif)
 
@@ -312,7 +340,9 @@ Now, if you run the pipeline and call one of the following endpoints:
 
 You will see the pipeline output being streamed [in OpenAI-compatible format](https://platform.openai.com/docs/api-reference/chat/streaming) to the client and you'll be able to see the output in chunks.
 
-Here's how it looks like from the `open-webui` side:
+Since output will be streamed to `open-webui` there's **no need to change `Stream Chat Response`** chat setting (leave it as `Default` or `On`).
+
+Here's a video example:
 
 ![chat-completion-streaming-example](./docs/assets/chat-completion-streaming.gif)
 
@@ -343,7 +373,7 @@ client.run([ChatMessage.from_user("Where are the offices or SSI?")])
 
 ### Run Hayhooks programmatically
 
-An Hayhooks app instance can be run programmatically created by using the `create_app` function. This is useful if you want to add custom routes or middleware to Hayhooks.
+A Hayhooks app instance can be run programmatically created by using the `create_app` function. This is useful if you want to add custom routes or middleware to Hayhooks.
 
 Here's an example script:
 
