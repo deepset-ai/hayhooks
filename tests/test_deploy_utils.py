@@ -1,3 +1,4 @@
+from fastapi.routing import APIRoute
 import pytest
 import shutil
 from haystack import Pipeline
@@ -190,9 +191,12 @@ def test_create_pipeline_wrapper_instance_missing_methods():
 def test_deploy_pipeline_files_without_saving(test_settings, mocker):
     mock_app = mocker.Mock()
 
-    # We're saving the pipeline wrapper file in the test_files directory
+    # We're saving the pipeline wrapper file in the test_files directory
     test_file_path = Path("tests/test_files/files/no_chat/pipeline_wrapper.py")
     files = {"pipeline_wrapper.py": test_file_path.read_text()}
+
+    # Mock the app routes to mimic the existing route
+    mock_app.routes = [APIRoute(path="/test_pipeline/run", endpoint=lambda: None, methods=["POST"])]
 
     # Run deploy_pipeline_files without saving the files
     result = deploy_pipeline_files(app=mock_app, pipeline_name="test_pipeline", files=files, save_files=False)

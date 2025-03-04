@@ -219,3 +219,46 @@ def test_deploy_files_overwrite_without_saving(status_pipeline, client, deploy_f
     status = status_pipeline(client, "test_pipeline")
     assert status.status_code == 200
     assert status.json()["pipeline"] == "test_pipeline"
+
+
+def test_deploy_files_overwrite_should_update_code(client, deploy_files):
+    # First deploy with chat completion and save files
+    response = deploy_files(
+        client,
+        pipeline_name="test_pipeline",
+        pipeline_files=SAMPLE_PIPELINE_FILES,
+        overwrite=True,
+        save_files=False,
+    )
+    assert response.status_code == 200
+
+    # Check route response
+    response = client.post(
+        "/test_pipeline/run",
+        json={"urls": ["https://www.redis.io"], "question": "What is Redis?"},  # Dummy values
+    )
+    assert response.status_code == 200
+    assert response.json() == {"result": "This is a mock response from the pipeline"}
+
+    # Now let's update the code
+    UPDATED_PIPELINE_FILES = SAMPLE_PIPELINE_FILES.copy()
+    UPDATED_PIPELINE_FILES["pipeline_wrapper.py"] = UPDATED_PIPELINE_FILES["pipeline_wrapper.py"].replace(
+        "This is a mock response from the pipeline", "This is an updated mock response from the pipeline"
+    )
+
+    response = deploy_files(
+        client,
+        pipeline_name="test_pipeline",
+        pipeline_files=UPDATED_PIPELINE_FILES,
+        overwrite=True,
+        save_files=False,
+    )
+    assert response.status_code == 200
+
+    # Check route response after update
+    response = client.post(
+        "/test_pipeline/run",
+        json={"urls": ["https://www.redis.io"], "question": "What is Redis?"},  # Dummy values
+    )
+    assert response.status_code == 200
+    assert response.json() == {"result": "This is an updated mock response from the pipeline"}
