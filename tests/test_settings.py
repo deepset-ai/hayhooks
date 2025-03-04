@@ -1,6 +1,9 @@
+import importlib
+import sys
 import warnings
 import pytest
 import shutil
+from hayhooks.server.app import create_app
 from hayhooks.settings import AppSettings, check_cors_settings
 
 
@@ -100,3 +103,56 @@ def test_cors_warning():
             cors_allow_headers=["X-Custom-Header"],
         )
         assert len(recorded_warnings) == 0
+
+
+def test_additional_python_path():
+    custom_path = "/custom/python/path"
+    settings = AppSettings(additional_python_path=custom_path)
+    assert settings.additional_python_path == custom_path
+
+
+def test_additional_python_path_env_var(monkeypatch):
+    custom_path = "/env/var/path"
+    monkeypatch.setenv("HAYHOOKS_ADDITIONAL_PYTHON_PATH", custom_path)
+    settings = AppSettings()
+    assert settings.additional_python_path == custom_path
+
+
+def test_additional_python_path_in_sys_path(monkeypatch, test_settings):
+
+    original_sys_path = sys.path.copy()
+
+    try:
+        # Add a test path directly to the settings object
+        test_path = "/test/python/path"
+        test_settings.additional_python_path = test_path
+
+        # Create the app which should add the path to sys.path
+        # And verify the path was added
+        create_app()
+        assert test_path in sys.path
+
+    finally:
+        # Restore original sys.path
+        sys.path = original_sys_path
+
+
+def test_additional_python_path_in_sys_path_via_env(monkeypatch, test_settings):
+    original_sys_path = sys.path.copy()
+
+    try:
+        # Set a test path via environment variable
+        test_path = "/test/python/path"
+        monkeypatch.setenv("HAYHOOKS_ADDITIONAL_PYTHON_PATH", test_path)
+
+        # Reimport create_app after monkeypatch.setenv
+        from hayhooks.server.app import create_app
+
+        # Create the app which should add the path to sys.path
+        # And verify the path was added
+        create_app()
+        assert test_path in sys.path
+
+    finally:
+        # Restore original sys.path
+        sys.path = original_sys_path

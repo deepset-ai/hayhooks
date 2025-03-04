@@ -1,3 +1,4 @@
+import sys
 from os import PathLike
 from typing import Union
 from fastapi import FastAPI
@@ -142,6 +143,10 @@ def create_app() -> FastAPI:
     Returns:
         FastAPI: Configured FastAPI application instance
     """
+    if additional_path := settings.additional_python_path:
+        sys.path.append(additional_path)
+        log.trace(f"Added {additional_path} to sys.path")
+
     if root_path := settings.root_path:
         app = FastAPI(root_path=root_path, lifespan=lifespan)
     else:
