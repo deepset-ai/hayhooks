@@ -1,4 +1,3 @@
-from pandas import DataFrame
 from pydantic import BaseModel, ConfigDict, create_model
 from hayhooks.server.utils.create_valid_type import handle_unsupported_types
 from haystack import Document
@@ -10,7 +9,6 @@ class PipelineDefinition(BaseModel):
 
 
 DEFAULT_TYPES_MAPPING = {
-    DataFrame: dict,
     Document: dict,
 }
 
