@@ -11,7 +11,8 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 
 **Table of Contents**
 
-- [Quick Start](#quick-start)
+- [Quick Start with Docker Compose](#quick-start-with-docker-compose-🐳)
+- [Quick Start](#quick-start-🚀)
 - [Install the package](#install-the-package)
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
@@ -26,17 +27,23 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
 - [OpenAI Compatibility](#openai-compatible-endpoints-generation)
   - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
-  - [Chat Completion Method](#run_chat_completion)
+  - [Run Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
-- [Advanced Usage](#advanced-usage)
+- [Advanced Usage](#advanced-usage-🔧)
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
-- [Deployment Guidelines](#deployment)
+- [Deployment Guidelines](#deployment-guidelines-📦)
 - [Legacy Features](#legacy-features)
   - [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
 - [License](#license)
 
-## Quick start
+## Quick start with Docker Compose 🐳
+
+To quickly get started with Hayhooks, we provide a ready-to-use Docker Compose setup with pre-configured integration with [open-webui](https://openwebui.com/).
+
+It's available [here](https://github.com/deepset-ai/hayhooks-open-webui-docker-compose).
+
+## Quick start 🚀
 
 ### Install the package
 
@@ -151,11 +158,18 @@ You can initialize the pipeline in many ways:
 - Define it inline as a Haystack pipeline code.
 - Load it from a [Haystack pipeline template](https://docs.haystack.deepset.ai/docs/pipeline-templates).
 
-#### run_api(Pydantic-compatible arguments) -> (Pydantic-compatible type)
+#### run_api(...)
 
 This method will be used to run the pipeline in API mode, when you call the `{pipeline_name}/run` endpoint.
 
-**You can define the input arguments of the method according to your needs**. The input arguments will be used to generate a Pydantic model that will be used to validate the request body. The same will be done for the response type.
+**You can define the input arguments of the method according to your needs**.
+
+```python
+def run_api(self, urls: List[str], question: str, any_other_user_defined_argument: Any) -> str:
+    ...
+```
+
+The input arguments will be used to generate a Pydantic model that will be used to validate the request body. The same will be done for the response type.
 
 **NOTE**: Since Hayhooks will _dynamically_ create the Pydantic models, you need to make sure that the input arguments are JSON-serializable.
 
@@ -244,9 +258,14 @@ Alternatively, you can add an additional **OpenAI API Connections** from `Admin 
 
 Even in this case, remember to **Fill a random value as API key**.
 
-#### run_chat_completion(model: str, messages: List[dict], body: dict) -> Union[str, Generator]
+#### run_chat_completion(...)
 
 To enable the automatic generation of OpenAI-compatible endpoints, you need only to implement the `run_chat_completion` method in your pipeline wrapper.
+
+```python
+def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+    ...
+```
 
 Let's update the previous example to add a streaming response:
 
@@ -371,6 +390,8 @@ client.run([ChatMessage.from_user("Where are the offices or SSI?")])
 # > {'replies': [ChatMessage(_role=<ChatRole.ASSISTANT: 'assistant'>, _content=[TextContent(text='The offices of Safe >Superintelligence Inc. (SSI) are located in Palo Alto, California, and Tel Aviv, Israel.')], _name=None, _meta={'model': >'chat_with_website_streaming', 'index': 0, 'finish_reason': 'stop', 'completion_start_time': '2025-02-11T15:31:44.599726', >'usage': {}})]}
 ```
 
+## Advanced usage 🔧
+
 ### Run Hayhooks programmatically
 
 A Hayhooks app instance can be run programmatically created by using the `create_app` function. This is useful if you want to add custom routes or middleware to Hayhooks.
@@ -405,7 +426,7 @@ if __name__ == "__main__":
     uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
 ```
 
-### Deployment
+### Deployment guidelines 📦
 
 For detailed deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
 
