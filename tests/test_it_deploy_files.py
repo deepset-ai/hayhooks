@@ -1,3 +1,4 @@
+from fastapi.testclient import TestClient
 import pytest
 import shutil
 from pathlib import Path
@@ -20,7 +21,7 @@ TEST_FILES_DIR = Path(__file__).parent / "test_files/files"
 MISSING_METHODS_DIR = TEST_FILES_DIR / "missing_methods"
 SETUP_ERROR_DIR = TEST_FILES_DIR / "setup_error"
 RUN_API_ERROR_DIR = TEST_FILES_DIR / "run_api_error"
-
+UPLOAD_FILES_DIR = TEST_FILES_DIR / "upload_files"
 SAMPLE_PIPELINE_FILES = {
     "pipeline_wrapper.py": (TEST_FILES_DIR / "chat_with_website" / "pipeline_wrapper.py").read_text(),
     "chat_with_website.yml": (TEST_FILES_DIR / "chat_with_website" / "chat_with_website.yml").read_text(),
@@ -57,6 +58,7 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
             f"/{pipeline_data['name']}/run",
             json={"urls": ["https://www.redis.io"], "question": "What is Redis?"},
         )
+        print(response.json())
         assert response.status_code == 200
         assert response.json() == {"result": "This is a mock response from the pipeline"}
 
@@ -65,6 +67,7 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
             f"/{pipeline_data['name']}/run",
             json={"test_param": "test_value"},
         )
+        print(response.json())
         assert response.status_code == 200
         assert response.json() == {"result": "Dummy result with test_value"}
 
@@ -262,3 +265,40 @@ def test_deploy_files_overwrite_should_update_code(client, deploy_files):
     )
     assert response.status_code == 200
     assert response.json() == {"result": "This is an updated mock response from the pipeline"}
+
+
+def test_deploy_files_with_file_upload(client, deploy_files, tmp_path):
+    # Deploy the pipeline
+    response = deploy_files(
+        client,
+        pipeline_name="file_upload_pipeline",
+        pipeline_files={
+            "pipeline_wrapper.py": (UPLOAD_FILES_DIR / "pipeline_wrapper.py").read_text(),
+        },
+    )
+    assert response.status_code == 200
+
+    # Call the endpoint with a param but WITHOUT a file
+    response = client.post(
+        "/file_upload_pipeline/run",
+        data={"test_param": "test_value"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"result": "No files received, param: test_value"}
+
+    # Create a test file
+    test_file_path = tmp_path / "test_file.txt"
+    test_file_path.write_text("This is a test file")
+
+    # Call the endpoint with a param AND a file
+    # NOTE: This is a multipart/form-data request
+    with open(test_file_path, "rb") as f:
+        response = client.post(
+            "/file_upload_pipeline/run",
+            data={"test_param": "test_value"},
+            files={"files": ("test_file.txt", f, "text/plain")},
+        )
+
+    assert response.status_code == 200
+    assert "Received files: test_file.txt" in response.json()["result"]
+    assert "with param test_value" in response.json()["result"]

@@ -5,20 +5,21 @@ import tempfile
 import traceback
 import sys
 from functools import wraps
+from pathlib import Path
 from types import ModuleType
 from typing import Callable, Union
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pathlib import Path
-
 from fastapi.routing import APIRoute
+from pydantic import create_model
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
     PipelineModuleLoadError,
     PipelineWrapperError,
 )
+from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.models import (
     PipelineDefinition,
@@ -26,13 +27,21 @@ from hayhooks.server.pipelines.models import (
     get_request_model,
     get_response_model,
 )
-from hayhooks.server.logger import log
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.settings import settings
-from pydantic import create_model
 
 
 def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
+    """
+    Deploy a pipeline definition to the FastAPI application.
+
+    NOTE: This is a legacy method which is used in YAML-only based deployments.
+          It's not maintained anymore and will be removed in a future version.
+
+    Args:
+        app: FastAPI application instance
+        pipeline_def: PipelineDefinition instance
+    """
     try:
         pipe = registry.add(pipeline_def.name, pipeline_def.source_code)
     except ValueError as e:
@@ -227,6 +236,35 @@ def handle_pipeline_exceptions():
     return decorator
 
 
+def create_run_endpoint_handler(pipeline_wrapper: BasePipelineWrapper, RunRequest, RunResponse, requires_files: bool):
+    """
+    Factory method to create the appropriate run endpoint handler based on whether file uploads are supported.
+
+    Note:
+        There's no way in FastAPI to define the type of the request body other than annotating
+        the endpoint handler. We have to **ignore the type here** to make FastAPI happy while
+        silencing static type checkers (that would have good reasons to trigger!).
+
+    Args:
+        pipeline_wrapper: The pipeline wrapper instance
+        RunRequest: The request model
+        RunResponse: The response model
+        requires_files: Whether the pipeline requires file uploads
+    """
+
+    @handle_pipeline_exceptions()
+    async def run_endpoint_with_files(run_req: RunRequest = Form(...)) -> RunResponse:  # type: ignore
+        result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
+        return RunResponse(result=result)
+
+    @handle_pipeline_exceptions()
+    async def run_endpoint_without_files(run_req: RunRequest) -> RunResponse:  # type: ignore
+        result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
+        return RunResponse(result=result)
+
+    return run_endpoint_with_files if requires_files else run_endpoint_without_files
+
+
 def deploy_pipeline_files(
     app: FastAPI, pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
 ):
@@ -288,13 +326,11 @@ def deploy_pipeline_files(
         RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
         RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
 
-        # There's no way in FastAPI to define the type of the request body other than annotating
-        # the endpoint handler. We have to ignore the type here to make FastAPI happy while
-        # silencing static type checkers (that would have good reasons to trigger!).
-        @handle_pipeline_exceptions()
-        async def run_endpoint(run_req: RunRequest) -> RunResponse:  # type: ignore
-            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
-            return RunResponse(result=result)
+        run_api_params = inspect.signature(pipeline_wrapper.run_api).parameters
+        requires_files = "files" in run_api_params
+        clog.debug(f"Pipeline requires files: {requires_files}")
+
+        run_endpoint = create_run_endpoint_handler(pipeline_wrapper, RunRequest, RunResponse, requires_files)
 
         # Clear existing pipeline run route if it exists
         for route in app.routes:
