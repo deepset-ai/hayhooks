@@ -106,3 +106,33 @@ def test_deploy_files_command_name_options(monkeypatch, tmp_path):
     )
     assert result.exit_code == 0
     assert calls[1]["name"] == "test-short"
+
+
+def test_cli_undeploy_command(monkeypatch):
+    from typer.testing import CliRunner
+    from hayhooks.cli.base import hayhooks_cli
+    import hayhooks.cli.pipeline as pipeline_module
+
+    runner = CliRunner()
+
+    # Mock the make_request function to return a successful response
+    def mock_make_request(*args, **kwargs):
+        return {"success": True, "name": "test_pipeline"}
+
+    monkeypatch.setattr(pipeline_module, "make_request", mock_make_request)
+
+    # Test the undeploy command
+    result = runner.invoke(hayhooks_cli, ["pipeline", "undeploy", "test_pipeline"])
+    assert result.exit_code == 0
+    assert "successfully undeployed" in result.stdout.lower()
+
+    # Mock the make_request function to return an error response
+    def mock_make_request_error(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(pipeline_module, "make_request", mock_make_request_error)
+
+    # Test the undeploy command with an error
+    result = runner.invoke(hayhooks_cli, ["pipeline", "undeploy", "nonexistent_pipeline"])
+    assert result.exit_code != 0
+    assert "error" in result.stdout.lower()

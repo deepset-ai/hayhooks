@@ -101,19 +101,33 @@ def deploy_files(
 @pipeline.command()
 def undeploy(
     ctx: typer.Context,
-    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
+    name: Annotated[str, typer.Argument(help="The name of the pipeline to undeploy.")],
 ):
     """Undeploy a pipeline from the Hayhooks server."""
-    response = make_request(
-        host=ctx.obj["host"],
-        port=ctx.obj["port"],
-        endpoint=f"undeploy/{name}",
-        method="POST",
-        disable_ssl=ctx.obj["disable_ssl"],
-    )
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        progress.add_task(description=f"Undeploying pipeline '{name}'...", total=None)
 
-    if response.get("name") == name:
-        console.print(f"[green][bold]Pipeline '{name}' successfully undeployed[/bold][/green]")
+        response = make_request(
+            host=ctx.obj["host"],
+            port=ctx.obj["port"],
+            endpoint=f"undeploy/{name}",
+            method="POST",
+            disable_ssl=ctx.obj["disable_ssl"],
+        )
+
+    # Check if the response indicates success
+    if response and response.get("success"):
+        console.print(
+            Panel.fit(
+                f"Pipeline '[bold]{name}[/bold]' successfully undeployed! 🚀",
+                border_style="green",
+                title="Success"
+            )
+        )
     else:
-        console.print(f"[red][bold]Pipeline '{name}' not found[/bold][/red]")
-        raise typer.Abort()
+        error_message = response.get("detail", f"Failed to undeploy pipeline '{name}'") if response else f"Pipeline '{name}' not found"
+        _show_error_and_abort(error_message)
