@@ -1,4 +1,3 @@
-from typing import cast
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.routing import APIRoute
 from hayhooks.server.pipelines import registry
