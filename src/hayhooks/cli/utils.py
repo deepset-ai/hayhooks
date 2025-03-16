@@ -1,8 +1,10 @@
 import requests
 import typer
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from rich.console import Console
 from urllib.parse import urljoin
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 console = Console()
 
@@ -49,3 +51,41 @@ def make_request(
     except Exception as e:
         console.print(f"[red][bold]Unexpected error[/bold]\n{str(e)}[/red]")
         raise typer.Abort()
+
+
+def show_error_and_abort(message: str, highlight: str = "") -> None:
+    """Display error message in a panel and abort."""
+    if highlight:
+        message = message.replace(highlight, f"[red]{highlight}[/red]")
+    console.print(Panel.fit(message, border_style="red", title="Error"))
+    raise typer.Abort()
+
+
+def show_success_panel(message: str, title: str = "Success") -> None:
+    """Display success message in a panel."""
+    console.print(Panel.fit(message, border_style="green", title=title))
+
+
+def show_warning_panel(message: str, title: str = "Warning") -> None:
+    """Display warning message in a panel."""
+    console.print(Panel.fit(message, border_style="yellow", title=title))
+
+
+def with_progress_spinner(description: str, operation: Callable, *args, **kwargs):
+    """Execute an operation with a progress spinner.
+
+    Args:
+        description: Description to show in the spinner
+        operation: Function to call
+        *args, **kwargs: Arguments to pass to the operation
+
+    Returns:
+        The result of the operation
+    """
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        progress.add_task(description=description, total=None)
+        return operation(*args, **kwargs)

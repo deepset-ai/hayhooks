@@ -1,51 +1,35 @@
 import typer
 from typing import Optional, Annotated
 from pathlib import Path
-from hayhooks.cli.utils import make_request
+from hayhooks.cli.utils import (
+    make_request,
+    show_error_and_abort,
+    show_success_panel,
+    show_warning_panel,
+    with_progress_spinner,
+)
 from hayhooks.server.utils.deploy_utils import read_pipeline_files_from_dir
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.panel import Panel
-
-console = Console()
 
 pipeline = typer.Typer()
 
 
-def _show_error_and_abort(message: str, highlight: str = "") -> None:
-    """Display error message in a panel and abort."""
-    if highlight:
-        message = message.replace(highlight, f"[red]{highlight}[/red]")
-    console.print(Panel.fit(message, border_style="red", title="Error"))
-    raise typer.Abort()
-
-
 def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload: dict) -> None:
     """Handle deployment with progress spinner and response handling."""
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        progress.add_task(description=f"Deploying pipeline '{name}'...", total=None)
-
-        response = make_request(
-            host=ctx.obj["host"],
-            port=ctx.obj["port"],
-            endpoint=endpoint,
-            method="POST",
-            json=payload,
-            disable_ssl=ctx.obj["disable_ssl"],
-        )
+    response = with_progress_spinner(
+        f"Deploying pipeline '{name}'...",
+        make_request,
+        host=ctx.obj["host"],
+        port=ctx.obj["port"],
+        endpoint=endpoint,
+        method="POST",
+        json=payload,
+        disable_ssl=ctx.obj["disable_ssl"],
+    )
 
     if response.get("name") == name:
-        console.print(
-            Panel.fit(
-                f"Pipeline '[bold]{name}[/bold]' successfully deployed! 🚀", border_style="green", title="Success"
-            )
-        )
+        show_success_panel(f"Pipeline '[bold]{name}[/bold]' successfully deployed! 🚀")
     else:
-        _show_error_and_abort(f"Pipeline '[bold]{name}[/bold]' already exists! ⚠️")
+        show_error_and_abort(f"Pipeline '[bold]{name}[/bold]' already exists! ⚠️")
 
 
 @pipeline.command()
@@ -56,7 +40,7 @@ def deploy(
 ):
     """Deploy a pipeline to the Hayhooks server."""
     if not pipeline_file.exists():
-        _show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
+        show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
 
     if name is None:
         name = pipeline_file.stem
@@ -79,16 +63,12 @@ def deploy_files(
 ):
     """Deploy all pipeline files from a directory to the Hayhooks server."""
     if not pipeline_dir.exists():
-        _show_error_and_abort("Directory does not exist.", str(pipeline_dir))
+        show_error_and_abort("Directory does not exist.", str(pipeline_dir))
 
     files_dict = read_pipeline_files_from_dir(pipeline_dir)
 
     if not files_dict:
-        console.print(
-            Panel.fit(
-                "No valid pipeline files found in the specified directory.", border_style="yellow", title="Warning"
-            )
-        )
+        show_warning_panel("No valid pipeline files found in the specified directory.")
         raise typer.Abort()
 
     if name is None:
@@ -104,30 +84,19 @@ def undeploy(
     name: Annotated[str, typer.Argument(help="The name of the pipeline to undeploy.")],
 ):
     """Undeploy a pipeline from the Hayhooks server."""
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        progress.add_task(description=f"Undeploying pipeline '{name}'...", total=None)
-
-        response = make_request(
-            host=ctx.obj["host"],
-            port=ctx.obj["port"],
-            endpoint=f"undeploy/{name}",
-            method="POST",
-            disable_ssl=ctx.obj["disable_ssl"],
-        )
+    response = with_progress_spinner(
+        f"Undeploying pipeline '{name}'...",
+        make_request,
+        host=ctx.obj["host"],
+        port=ctx.obj["port"],
+        endpoint=f"undeploy/{name}",
+        method="POST",
+        disable_ssl=ctx.obj["disable_ssl"],
+    )
 
     # Check if the response indicates success
     if response and response.get("success"):
-        console.print(
-            Panel.fit(
-                f"Pipeline '[bold]{name}[/bold]' successfully undeployed! 🚀",
-                border_style="green",
-                title="Success"
-            )
-        )
+        show_success_panel(f"Pipeline '[bold]{name}[/bold]' successfully undeployed! 🚀")
     else:
         error_message = response.get("detail", f"Failed to undeploy pipeline '{name}'") if response else f"Pipeline '{name}' not found"
-        _show_error_and_abort(error_message)
+        show_error_and_abort(error_message)
