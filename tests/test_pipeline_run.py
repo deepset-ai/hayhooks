@@ -53,7 +53,17 @@ def test_run_with_json_params(runner, monkeypatch):
 
     result = runner.invoke(
         hayhooks_cli,
-        ["pipeline", "run", "test_pipeline", "--param", "list=[1,2,3]", "--param", "dict={\"a\":1,\"b\":2}", "--param", "list_of_strings=[\"a\",\"b\",\"c\"]"],
+        [
+            "pipeline",
+            "run",
+            "test_pipeline",
+            "--param",
+            "list=[1,2,3]",
+            "--param",
+            "dict={\"a\":1,\"b\":2}",
+            "--param",
+            "list_of_strings=[\"a\",\"b\",\"c\"]",
+        ],
     )
 
     assert result.exit_code == 0
