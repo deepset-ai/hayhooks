@@ -30,11 +30,17 @@ def get_app():
 def run(
     host: Annotated[str, typer.Option("--host", "-h", help="Host to run the server on")] = settings.host,
     port: Annotated[int, typer.Option("--port", "-p", help="Port to run the server on")] = settings.port,
-    pipelines_dir: Annotated[str, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")] = settings.pipelines_dir,
+    pipelines_dir: Annotated[
+        str, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
+    ] = settings.pipelines_dir,
     root_path: Annotated[str, typer.Option(help="Root path of the server")] = settings.root_path,
-    additional_python_path: Annotated[Optional[str], typer.Option(help="Additional Python path to add to sys.path")] = settings.additional_python_path,
+    additional_python_path: Annotated[
+        Optional[str], typer.Option(help="Additional Python path to add to sys.path")
+    ] = settings.additional_python_path,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Number of workers to run the server with")] = 1,
-    reload: Annotated[bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")] = False,
+    reload: Annotated[
+        bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")
+    ] = False,
 ):
     """
     Run the Hayhooks server.
@@ -61,7 +67,7 @@ def status(ctx: typer.Context):
 
     show_success_panel(
         f"[bold]Hayhooks server is up and running at: {get_server_url(ctx.obj['host'], ctx.obj['port'])}[/bold]",
-        title=""
+        title="",
     )
 
     if pipes := response.get("pipelines"):
