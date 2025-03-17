@@ -1,7 +1,7 @@
 import pytest
 from typer.testing import CliRunner
 from hayhooks.cli.base import hayhooks_cli
-from unittest.mock import patch, Mock
+from unittest.mock import Mock
 
 
 @pytest.fixture
