@@ -17,8 +17,8 @@ async def undeploy(pipeline_name: str, request: Request):
     registry.remove(pipeline_name)
 
     # Remove API routes for the pipeline
-    # YAML based pipelines have a run endpoint at /<pipeline_name>
-    # Wrapper based pipelines have a run endpoint at /<pipeline_name>/run
+    # YAML based pipelines have a run endpoint at /<pipeline_name>
+    # Wrapper based pipelines have a run endpoint at /<pipeline_name>/run
     for route in request.app.routes:
         if isinstance(route, APIRoute) and (route.path == f"/{pipeline_name}/run" or route.path == f"/{pipeline_name}"):
             request.app.routes.remove(route)
