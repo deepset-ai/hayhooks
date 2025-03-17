@@ -53,14 +53,14 @@ def test_run_with_json_params(runner, monkeypatch):
 
     result = runner.invoke(
         hayhooks_cli,
-        ["pipeline", "run", "test_pipeline", "--param", "list=[1,2,3]", "--param", "dict={\"a\":1,\"b\":2}"],
+        ["pipeline", "run", "test_pipeline", "--param", "list=[1,2,3]", "--param", "dict={\"a\":1,\"b\":2}", "--param", "list_of_strings=[\"a\",\"b\",\"c\"]"],
     )
 
     assert result.exit_code == 0
     mock_run.assert_called_once()
     _, kwargs = mock_run.call_args
     assert kwargs["pipeline_name"] == "test_pipeline"
-    assert kwargs["params"] == {"list": [1, 2, 3], "dict": {"a": 1, "b": 2}}
+    assert kwargs["params"] == {"list": [1, 2, 3], "dict": {"a": 1, "b": 2}, "list_of_strings": ["a", "b", "c"]}
 
 
 def test_run_with_invalid_param_format(runner):
