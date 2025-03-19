@@ -276,7 +276,7 @@ hayhooks pipeline run <pipeline_name> --param 'question="is this recipe vegan?"'
 
 This is useful when you want to run a pipeline that requires a file as input. In that case, the request will be a `multipart/form-data` request. You can pass both files and parameters in the same request.
 
-**NOTE**: To use this feature, you need to deploy a pipeline
+**NOTE**: To use this feature, you need to deploy a pipeline which is handling files (see [Support file uploads](#support-file-uploads) and [examples/rag_indexing_query](examples/rag_indexing_query) for more details).
 
 ```shell
 # Upload a whole directory
