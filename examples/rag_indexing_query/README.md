@@ -23,7 +23,7 @@ We'll need to install the Hayhooks package and the other dependencies needed for
 pip install -r requirements.txt
 ```
 
-## 3. Launch Hayhooks
+## 3a. Launch Hayhooks
 
 For simplicity, we'll use the Hayhooks CLI to launch the Hayhooks server.
 
@@ -32,6 +32,14 @@ hayhooks run
 ```
 
 You can achieve the same result by running [a Docker image with Hayhooks already installed](https://github.com/deepset-ai/hayhooks-open-webui-docker-compose).
+
+## 3b. Launch Elasticsearch
+
+```bash
+docker compose up
+```
+
+This will start an [Elasticsearch](https://www.elastic.co/elasticsearch) instance on port 9200.
 
 ## 4. Deploy the pipelines
 
