@@ -25,6 +25,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Run API Method](#run_api)
   - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
   - [Additional Dependencies](#additional-dependencies)
+- [Support file uploads](#support-file-uploads)
 - [Run pipelines from the CLI](#run-pipelines-from-the-cli)
   - [Run a pipeline from the CLI JSON-compatible parameters](#run-a-pipeline-from-the-cli-json-compatible-parameters)
   - [Run a pipeline from the CLI uploading files](#run-a-pipeline-from-the-cli-uploading-files)
@@ -229,6 +230,35 @@ Then, assuming you've installed the Hayhooks package in a virtual environment, y
 pip install trafilatura
 ```
 
+## Support file uploads
+
+Hayhooks can easily handle uploaded files in your pipeline wrapper `run_api` method by adding `files: Optional[List[UploadFile]] = None` as an argument.
+
+Here's a simple example:
+
+```python
+def run_api(self, files: Optional[List[UploadFile]] = None) -> str:
+    if files and len(files) > 0:
+        filenames = [f.filename for f in files if f.filename is not None]
+        file_contents = [f.file.read() for f in files]
+
+        return f"Received files: {', '.join(filenames)}"
+
+    return "No files received"
+```
+
+This will make Hayhooks handle automatically the file uploads (if they are present) and pass them to the `run_api` method.
+This also means that the HTTP request **needs to be a `multipart/form-data` request**.
+
+Note also that you can handle **both files and parameters in the same request**, simply adding them as arguments to the `run_api` method.
+
+```python
+def run_api(self, files: Optional[List[UploadFile]] = None, additional_param: str = "default") -> str:
+    ...
+```
+
+You can find a full example in the [examples/rag_indexing_query](examples/rag_indexing_query) folder.
+
 ## Run pipelines from the CLI
 
 ### Run a pipeline from the CLI JSON-compatible parameters
@@ -245,6 +275,8 @@ hayhooks pipeline run <pipeline_name> --param 'question="is this recipe vegan?"'
 ### Run a pipeline from the CLI uploading files
 
 This is useful when you want to run a pipeline that requires a file as input. In that case, the request will be a `multipart/form-data` request. You can pass both files and parameters in the same request.
+
+**NOTE**: To use this feature, you need to deploy a pipeline
 
 ```shell
 # Upload a whole directory
