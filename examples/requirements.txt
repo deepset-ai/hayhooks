@@ -1,0 +1,6 @@
+hayhooks
+elasticsearch-haystack
+sentence-transformers
+pypdf
+markdown-it-py
+mdit_plain

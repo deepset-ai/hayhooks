@@ -4,18 +4,19 @@ import uvicorn
 import rich
 from typing import Annotated, Optional
 from hayhooks.cli.pipeline import pipeline
-from hayhooks.cli.utils import get_server_url, make_request
+from hayhooks.cli.utils import (
+    get_server_url,
+    make_request,
+    show_success_panel,
+    console,
+)
 from hayhooks.server.app import create_app
 from hayhooks.settings import settings
 from hayhooks.server.logger import log
-from rich.console import Console
-from rich.panel import Panel
 from rich import box
 
 hayhooks_cli = typer.Typer(name="hayhooks")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
-
-console = Console()
 
 
 def get_app():
@@ -29,11 +30,17 @@ def get_app():
 def run(
     host: Annotated[str, typer.Option("--host", "-h", help="Host to run the server on")] = settings.host,
     port: Annotated[int, typer.Option("--port", "-p", help="Port to run the server on")] = settings.port,
-    pipelines_dir: Annotated[str, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")] = settings.pipelines_dir,
+    pipelines_dir: Annotated[
+        str, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
+    ] = settings.pipelines_dir,
     root_path: Annotated[str, typer.Option(help="Root path of the server")] = settings.root_path,
-    additional_python_path: Annotated[Optional[str], typer.Option(help="Additional Python path to add to sys.path")] = settings.additional_python_path,
+    additional_python_path: Annotated[
+        Optional[str], typer.Option(help="Additional Python path to add to sys.path")
+    ] = settings.additional_python_path,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Number of workers to run the server with")] = 1,
-    reload: Annotated[bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")] = False,
+    reload: Annotated[
+        bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")
+    ] = False,
 ):
     """
     Run the Hayhooks server.
@@ -58,11 +65,9 @@ def status(ctx: typer.Context):
         host=ctx.obj["host"], port=ctx.obj["port"], endpoint="status", disable_ssl=ctx.obj["disable_ssl"]
     )
 
-    console.print(
-        Panel.fit(
-            f"[green]✓[/green] [bold]Hayhooks server is up and running at: {get_server_url(ctx.obj['host'], ctx.obj['port'])}[/bold]",
-            border_style="green",
-        )
+    show_success_panel(
+        f"[bold]Hayhooks server is up and running at: {get_server_url(ctx.obj['host'], ctx.obj['port'])}[/bold]",
+        title="",
     )
 
     if pipes := response.get("pipelines"):

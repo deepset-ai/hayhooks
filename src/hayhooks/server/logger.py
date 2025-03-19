@@ -11,8 +11,4 @@ def formatter(record):
 
 
 log.remove()
-log.add(
-    sys.stderr,
-    level=os.getenv("LOG", "INFO").upper(),
-    format=formatter
-)
+log.add(sys.stderr, level=os.getenv("LOG", "INFO").upper(), format=formatter)

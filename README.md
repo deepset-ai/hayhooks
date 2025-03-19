@@ -11,8 +11,8 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 
 **Table of Contents**
 
-- [Quick Start with Docker Compose](#quick-start-with-docker-compose-🐳)
-- [Quick Start](#quick-start-🚀)
+- [Quick Start with Docker Compose](#quick-start-with-docker-compose)
+- [Quick Start](#quick-start)
 - [Install the package](#install-the-package)
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
@@ -23,27 +23,31 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Pipeline Wrapper](#why-a-pipeline-wrapper)
   - [Setup Method](#setup)
   - [Run API Method](#run_api)
-  - [Additional Dependencies](#additional-dependencies)
   - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
+  - [Additional Dependencies](#additional-dependencies)
+- [Support file uploads](#support-file-uploads)
+- [Run pipelines from the CLI](#run-pipelines-from-the-cli)
+  - [Run a pipeline from the CLI JSON-compatible parameters](#run-a-pipeline-from-the-cli-json-compatible-parameters)
+  - [Run a pipeline from the CLI uploading files](#run-a-pipeline-from-the-cli-uploading-files)
 - [OpenAI Compatibility](#openai-compatible-endpoints-generation)
   - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
   - [Run Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
-- [Advanced Usage](#advanced-usage-🔧)
+- [Advanced Usage](#advanced-usage)
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
-- [Deployment Guidelines](#deployment-guidelines-📦)
+- [Deployment Guidelines](#deployment-guidelines)
 - [Legacy Features](#legacy-features)
   - [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
 - [License](#license)
 
-## Quick start with Docker Compose 🐳
+## Quick start with Docker Compose
 
-To quickly get started with Hayhooks, we provide a ready-to-use Docker Compose setup with pre-configured integration with [open-webui](https://openwebui.com/).
+To quickly get started with Hayhooks, we provide a ready-to-use Docker Compose 🐳 setup with pre-configured integration with [open-webui](https://openwebui.com/).
 
 It's available [here](https://github.com/deepset-ai/hayhooks-open-webui-docker-compose).
 
-## Quick start 🚀
+## Quick start
 
 ### Install the package
 
@@ -97,6 +101,7 @@ hayhooks status  # Check the status of the server and show deployed pipelines
 hayhooks pipeline deploy-files <path_to_dir>   # Deploy a pipeline using PipelineWrapper
 hayhooks pipeline deploy <pipeline_name>       # Deploy a pipeline from a YAML file
 hayhooks pipeline undeploy <pipeline_name>     # Undeploy a pipeline
+hayhooks pipeline run <pipeline_name>          # Run a pipeline
 ```
 
 ### Start Hayhooks
@@ -181,7 +186,7 @@ hayhooks pipeline deploy-files -n chat_with_website examples/chat_with_website
 
 This will deploy the pipeline with the name `chat_with_website`. Any error encountered during development will be printed to the console and show in the server logs.
 
-#### PipelineWrapper development with overwrite option
+#### PipelineWrapper development with `overwrite` option
 
 During development, you can use the `--overwrite` flag to redeploy your pipeline without restarting the Hayhooks server:
 
@@ -223,6 +228,68 @@ Then, assuming you've installed the Hayhooks package in a virtual environment, y
 
 ```shell
 pip install trafilatura
+```
+
+## Support file uploads
+
+Hayhooks can easily handle uploaded files in your pipeline wrapper `run_api` method by adding `files: Optional[List[UploadFile]] = None` as an argument.
+
+Here's a simple example:
+
+```python
+def run_api(self, files: Optional[List[UploadFile]] = None) -> str:
+    if files and len(files) > 0:
+        filenames = [f.filename for f in files if f.filename is not None]
+        file_contents = [f.file.read() for f in files]
+
+        return f"Received files: {', '.join(filenames)}"
+
+    return "No files received"
+```
+
+This will make Hayhooks handle automatically the file uploads (if they are present) and pass them to the `run_api` method.
+This also means that the HTTP request **needs to be a `multipart/form-data` request**.
+
+Note also that you can handle **both files and parameters in the same request**, simply adding them as arguments to the `run_api` method.
+
+```python
+def run_api(self, files: Optional[List[UploadFile]] = None, additional_param: str = "default") -> str:
+    ...
+```
+
+You can find a full example in the [examples/rag_indexing_query](examples/rag_indexing_query) folder.
+
+## Run pipelines from the CLI
+
+### Run a pipeline from the CLI JSON-compatible parameters
+
+You can run a pipeline by using the `hayhooks pipeline run` command. Under the hood, this will call the `run_api` method of the pipeline wrapper, passing parameters as the JSON body of the request.
+This is convenient when you want to do a test run of the deployed pipeline from the CLI without having to write any code.
+
+To run a pipeline from the CLI, you can use the following command:
+
+```shell
+hayhooks pipeline run <pipeline_name> --param 'question="is this recipe vegan?"'
+```
+
+### Run a pipeline from the CLI uploading files
+
+This is useful when you want to run a pipeline that requires a file as input. In that case, the request will be a `multipart/form-data` request. You can pass both files and parameters in the same request.
+
+**NOTE**: To use this feature, you need to deploy a pipeline which is handling files (see [Support file uploads](#support-file-uploads) and [examples/rag_indexing_query](examples/rag_indexing_query) for more details).
+
+```shell
+# Upload a whole directory
+hayhooks pipeline run <pipeline_name> --dir files_to_index
+
+# Upload a single file
+hayhooks pipeline run <pipeline_name> --file file.pdf
+
+# Upload multiple files
+hayhooks pipeline run <pipeline_name> --dir files_to_index --file file1.pdf --file file2.pdf
+
+# Upload a single file passing also a parameter
+hayhooks pipeline run <pipeline_name> --file file.pdf --param 'question="is this recipe vegan?"'
 ```
 
 ### OpenAI-compatible endpoints generation
@@ -390,7 +457,7 @@ client.run([ChatMessage.from_user("Where are the offices or SSI?")])
 # > {'replies': [ChatMessage(_role=<ChatRole.ASSISTANT: 'assistant'>, _content=[TextContent(text='The offices of Safe >Superintelligence Inc. (SSI) are located in Palo Alto, California, and Tel Aviv, Israel.')], _name=None, _meta={'model': >'chat_with_website_streaming', 'index': 0, 'finish_reason': 'stop', 'completion_start_time': '2025-02-11T15:31:44.599726', >'usage': {}})]}
 ```
 
-## Advanced usage 🔧
+## Advanced usage
 
 ### Run Hayhooks programmatically
 
@@ -426,9 +493,9 @@ if __name__ == "__main__":
     uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
 ```
 
-### Deployment guidelines 📦
+### Deployment guidelines
 
-For detailed deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
+📦 For detailed deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
 
 ### Legacy Features
 

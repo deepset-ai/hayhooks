@@ -56,4 +56,4 @@ def check_cors_settings():
         and settings.cors_allow_methods == ["*"]
         and settings.cors_allow_headers == ["*"]
     ):
-        warn("Using default CORS settings - All origins, methods, and headers are allowed.")
+        warn("Using default CORS settings - All origins, methods, and headers are allowed.", UserWarning)
