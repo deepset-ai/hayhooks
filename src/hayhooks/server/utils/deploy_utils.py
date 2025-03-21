@@ -236,7 +236,9 @@ def handle_pipeline_exceptions():
     return decorator
 
 
-def create_run_endpoint_handler(pipeline_wrapper: BasePipelineWrapper, RunRequest, RunResponse, requires_files: bool):
+def create_run_endpoint_handler(
+    pipeline_wrapper: BasePipelineWrapper, request_model, response_model, requires_files: bool
+):
     """
     Factory method to create the appropriate run endpoint handler based on whether file uploads are supported.
 
@@ -247,39 +249,91 @@ def create_run_endpoint_handler(pipeline_wrapper: BasePipelineWrapper, RunReques
 
     Args:
         pipeline_wrapper: The pipeline wrapper instance
-        RunRequest: The request model
-        RunResponse: The response model
+        request_model: The request model
+        response_model: The response model
         requires_files: Whether the pipeline requires file uploads
     """
 
     @handle_pipeline_exceptions()
-    async def run_endpoint_with_files(run_req: RunRequest = Form(...)) -> RunResponse:  # type: ignore
+    async def run_endpoint_with_files(run_req: request_model = Form(...)) -> response_model:  # type: ignore
         result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
-        return RunResponse(result=result)
+        return response_model(result=result)
 
     @handle_pipeline_exceptions()
-    async def run_endpoint_without_files(run_req: RunRequest) -> RunResponse:  # type: ignore
+    async def run_endpoint_without_files(run_req: request_model) -> response_model:  # type: ignore
         result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
-        return RunResponse(result=result)
+        return response_model(result=result)
 
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
 
 
+def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
+    clog = log.bind(pipeline_name=pipeline_name)
+
+    RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
+    RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
+
+    run_api_params = inspect.signature(pipeline_wrapper.run_api).parameters
+    requires_files = "files" in run_api_params
+    clog.debug(f"Pipeline requires files: {requires_files}")
+
+    run_endpoint = create_run_endpoint_handler(
+        pipeline_wrapper=pipeline_wrapper,
+        request_model=RunRequest,
+        response_model=RunResponse,
+        requires_files=requires_files,
+    )
+
+    # Clear existing pipeline run route if it exists
+    for route in app.routes:
+        if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run":
+            app.routes.remove(route)
+
+    app.add_api_route(
+        path=f"/{pipeline_name}/run",
+        endpoint=run_endpoint,
+        methods=["POST"],
+        name=f"{pipeline_name}_run",
+        response_model=RunResponse,
+        tags=["pipelines"],
+    )
+
+    clog.debug("Setting up FastAPI app")
+    app.openapi_schema = None
+    app.setup()
+
+
 def deploy_pipeline_files(
     app: FastAPI, pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
-):
-    """Deploy pipeline files to the FastAPI application and set up endpoints.
+) -> dict[str, str]:
+    """Deploy a pipeline.
+
+    This will add the pipeline to the registry and set up the API route.
 
     Args:
         app: FastAPI application instance
         pipeline_name: Name of the pipeline to deploy
         files: Dictionary mapping filenames to their contents
+    """
+    pipeline_wrapper = add_pipeline_to_registry(pipeline_name, files, save_files, overwrite)
+    add_pipeline_api_route(app, pipeline_name, pipeline_wrapper)
+
+    return {"name": pipeline_name}
+
+
+def add_pipeline_to_registry(
+    pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
+) -> BasePipelineWrapper:
+    """Add a pipeline to the registry.
+
+    Args:
+
+    Args:
+        pipeline_name: Name of the pipeline to deploy
+        files: Dictionary mapping filenames to their contents
 
     Returns:
         dict: Dictionary containing the deployed pipeline name
-
-    Raises:
-        PipelineFilesError: If there are issues saving or loading pipeline files
     """
 
     log.debug(f"Checking if pipeline '{pipeline_name}' already exists: {registry.get(pipeline_name)}")
@@ -320,43 +374,13 @@ def deploy_pipeline_files(
     clog.debug("Adding pipeline to registry")
     registry.add(pipeline_name, pipeline_wrapper)
 
-    if pipeline_wrapper._is_run_api_implemented:
-        clog.debug("Creating dynamic Pydantic models for run_api")
-
-        RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
-        RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
-
-        run_api_params = inspect.signature(pipeline_wrapper.run_api).parameters
-        requires_files = "files" in run_api_params
-        clog.debug(f"Pipeline requires files: {requires_files}")
-
-        run_endpoint = create_run_endpoint_handler(pipeline_wrapper, RunRequest, RunResponse, requires_files)
-
-        # Clear existing pipeline run route if it exists
-        for route in app.routes:
-            if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run":
-                app.routes.remove(route)
-
-        app.add_api_route(
-            path=f"/{pipeline_name}/run",
-            endpoint=run_endpoint,
-            methods=["POST"],
-            name=f"{pipeline_name}_run",
-            response_model=RunResponse,
-            tags=["pipelines"],
-        )
-
-    clog.debug("Setting up FastAPI app")
-    app.openapi_schema = None
-    app.setup()
-
-    clog.success("Pipeline deployment complete")
+    clog.success("Pipeline successfully added to registry")
 
     if tmp_dir is not None:
         log.debug(f"Removing temporary pipeline files for '{pipeline_name}'")
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    return {"name": pipeline_name}
+    return pipeline_wrapper
 
 
 def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelineWrapper:
