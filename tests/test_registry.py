@@ -128,3 +128,52 @@ def test_remove_pipeline_preserves_others(pipeline_registry, sample_pipeline_yam
     pipeline_registry.remove("pipeline1")
     assert "pipeline1" not in pipeline_registry.get_names()
     assert pipeline_registry.get("wrapper1") == wrapper
+
+
+def test_add_pipeline_with_metadata(pipeline_registry, sample_pipeline_yaml):
+    metadata = {"description": "Test RAG pipeline"}
+    result = pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=metadata)
+
+    pipeline = Pipeline.loads(sample_pipeline_yaml)
+    assert result == pipeline
+    assert pipeline_registry.get("test_pipeline") == pipeline
+    assert pipeline_registry.get_metadata("test_pipeline") == metadata
+
+
+def test_add_pipeline_wrapper_with_metadata(pipeline_registry, test_pipeline_wrapper_class):
+    metadata = {"description": "Test pipeline wrapper"}
+    wrapper = test_pipeline_wrapper_class()
+    result = pipeline_registry.add("test_wrapper", wrapper, metadata=metadata)
+
+    assert result == wrapper
+    assert pipeline_registry.get("test_wrapper") == wrapper
+    assert pipeline_registry.get_metadata("test_wrapper") == metadata
+
+
+def test_get_metadata_for_nonexistent_pipeline(pipeline_registry):
+    assert pipeline_registry.get_metadata("nonexistent_pipeline") is None
+
+
+def test_get_pipeline_with_metadata(pipeline_registry, sample_pipeline_yaml):
+    metadata = {"description": "Test pipeline"}
+    pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=metadata)
+
+    pipeline, meta = pipeline_registry.get("test_pipeline", with_metadata=True)
+    assert isinstance(pipeline, Pipeline)
+    assert meta == metadata
+
+
+def test_remove_pipeline_removes_metadata(pipeline_registry, sample_pipeline_yaml):
+    metadata = {"description": "Test pipeline"}
+    pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=metadata)
+
+    pipeline_registry.remove("test_pipeline")
+    assert pipeline_registry.get_metadata("test_pipeline") is None
+
+
+def test_clear_registry_removes_metadata(pipeline_registry, sample_pipeline_yaml):
+    metadata = {"description": "Test pipeline"}
+    pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=metadata)
+
+    pipeline_registry.clear()
+    assert pipeline_registry.get_metadata("test_pipeline") is None
