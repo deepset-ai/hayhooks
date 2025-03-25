@@ -24,25 +24,17 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 
         document_store = ElasticsearchDocumentStore(hosts="http://localhost:9200")
-        file_type_router = FileTypeRouter(
-            mime_types=["text/plain", "application/pdf", "text/markdown"]
-        )
+        file_type_router = FileTypeRouter(mime_types=["text/plain", "application/pdf", "text/markdown"])
         text_file_converter = TextFileToDocument()
         markdown_converter = MarkdownToDocument()
         pdf_converter = PyPDFToDocument()
         document_joiner = DocumentJoiner()
 
         document_cleaner = DocumentCleaner()
-        document_splitter = DocumentSplitter(
-            split_by="word", split_length=150, split_overlap=50
-        )
+        document_splitter = DocumentSplitter(split_by="word", split_length=150, split_overlap=50)
 
-        document_embedder = SentenceTransformersDocumentEmbedder(
-            model="sentence-transformers/all-MiniLM-L6-v2"
-        )
-        document_writer = DocumentWriter(
-            document_store, policy=DuplicatePolicy.OVERWRITE
-        )
+        document_embedder = SentenceTransformersDocumentEmbedder(model="sentence-transformers/all-MiniLM-L6-v2")
+        document_writer = DocumentWriter(document_store, policy=DuplicatePolicy.OVERWRITE)
 
         pipe = Pipeline()
         pipe.add_component(instance=file_type_router, name="file_type_router")
@@ -75,13 +67,9 @@ class PipelineWrapper(BasePipelineWrapper):
                     for file in files:
                         file_path = Path(temp_dir) / file.filename
                         file_path.write_bytes(file.file.read())
-                        self.pipeline.run(
-                            {"file_type_router": {"sources": [file_path]}}
-                        )
+                        self.pipeline.run({"file_type_router": {"sources": [file_path]}})
 
-                return {
-                    "message": f"Files indexed successfully: {[file.filename for file in files]}"
-                }
+                return {"message": f"Files indexed successfully: {[file.filename for file in files]}"}
             else:
                 return {"message": "No files provided"}
         except Exception as e:
