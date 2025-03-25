@@ -289,6 +289,8 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
         if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run":
             app.routes.remove(route)
 
+    docstring = inspect.getdoc(pipeline_wrapper.run_api)
+
     app.add_api_route(
         path=f"/{pipeline_name}/run",
         endpoint=run_endpoint,
@@ -296,6 +298,16 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
         name=f"{pipeline_name}_run",
         response_model=RunResponse,
         tags=["pipelines"],
+        description=docstring or None,
+    )
+
+    registry.update_metadata(
+        pipeline_name,
+        {
+            "request_model": RunRequest,
+            "response_model": RunResponse,
+            "requires_files": requires_files,
+        },
     )
 
     clog.debug("Setting up FastAPI app")
@@ -371,8 +383,22 @@ def add_pipeline_to_registry(
     clog.debug("Running setup()")
     pipeline_wrapper.setup()
 
-    clog.debug("Adding pipeline to registry")
-    registry.add(pipeline_name, pipeline_wrapper)
+    docstring = inspect.getdoc(pipeline_wrapper.run_api)
+    if docstring:
+        metadata = {
+            "description": docstring,
+            "request_model": create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run'),
+        }
+
+        clog.debug(f"Adding pipeline to registry with metadata: {metadata}")
+        registry.add(
+            pipeline_name,
+            pipeline_wrapper,
+            metadata=metadata,
+        )
+    else:
+        clog.debug("Adding pipeline to registry")
+        registry.add(pipeline_name, pipeline_wrapper)
 
     clog.success("Pipeline successfully added to registry")
 

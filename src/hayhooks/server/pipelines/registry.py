@@ -1,7 +1,8 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
 from haystack import Pipeline
 from haystack.core.errors import PipelineError
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.exceptions import PipelineNotFoundError
 
 PipelineType = Union[Pipeline, BasePipelineWrapper]
 
@@ -37,14 +38,16 @@ class _PipelineRegistry:
             del self._pipelines[name]
             del self._metadata[name]
 
-    def get(self, name: str, with_metadata: bool = False) -> Optional[PipelineType]:
-        if with_metadata:
-            return self._pipelines.get(name), self._metadata.get(name)
-        else:
-            return self._pipelines.get(name)
+    def get(self, name: str) -> Union[PipelineType, None]:
+        return self._pipelines.get(name)
 
     def get_metadata(self, name: str) -> Optional[Dict[str, Any]]:
         return self._metadata.get(name)
+
+    def update_metadata(self, name: str, metadata: Dict[str, Any]) -> None:
+        if name not in self._metadata:
+            raise PipelineNotFoundError(f"Pipeline {name} not found in registry.")
+        self._metadata[name].update(metadata)
 
     def get_names(self) -> list[str]:
         return list(self._pipelines.keys())
