@@ -57,7 +57,7 @@ def test_cors():
         cors_allow_methods=["GET", "POST"],
         cors_allow_headers=["X-Custom-Header"],
         cors_allow_credentials=True,
-        cors_allow_origin_regex="https://.*\.example\.com",
+        cors_allow_origin_regex="https://.*\\.example\\.com",
         cors_expose_headers=["X-Custom-Expose"],
         cors_max_age=3600,
     )
@@ -65,7 +65,7 @@ def test_cors():
     assert custom_settings.cors_allow_methods == ["GET", "POST"]
     assert custom_settings.cors_allow_headers == ["X-Custom-Header"]
     assert custom_settings.cors_allow_credentials is True
-    assert custom_settings.cors_allow_origin_regex == "https://.*\.example\.com"
+    assert custom_settings.cors_allow_origin_regex == "https://.*\\.example\\.com"
     assert custom_settings.cors_expose_headers == ["X-Custom-Expose"]
     assert custom_settings.cors_max_age == 3600
 
