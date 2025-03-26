@@ -65,6 +65,8 @@ async def list_pipelines_as_tools() -> List[Any]:
         else:
             log.warning(f"Skipping pipeline '{pipeline_name}' as it has no description")
 
+    log.debug(f"Pipelines listed as MCP tools: {[tool.name for tool in tools]}")
+
     return tools
 
 
