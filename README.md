@@ -314,7 +314,7 @@ It will automatically expose the deployed pipelines as [MCP Tools](https://model
 
 ### Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool
 
-A [MCP Tools](https://modelcontextprotocol.io/docs/concepts/tools) requires the following properties:
+A [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools) requires the following properties:
 
 - `name`: The name of the tool.
 - `description`: The description of the tool.
