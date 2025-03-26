@@ -70,7 +70,8 @@ async def list_pipelines_as_tools() -> List[Any]:
 
 @requires_mcp
 async def run_pipeline_as_tool(name: str, arguments: dict) -> MCP_RETURN_TYPES:
-    """Run a pipeline as an MCP tool"""
+    from mcp.types import TextContent
+
     log.debug(f"Calling pipeline as tool '{name}' with arguments: {arguments}")
     pipeline_wrapper: Union[BasePipelineWrapper, None] = registry.get(name)
 
@@ -78,6 +79,6 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> MCP_RETURN_TYPES:
         raise ValueError(f"Pipeline '{name}' not found")
 
     result = await asyncio.to_thread(pipeline_wrapper.run_api, **arguments)
-
     log.trace(f"Pipeline '{name}' returned result: {result}")
-    return result
+
+    return [TextContent(text=result, type="text")]
