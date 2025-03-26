@@ -1,20 +1,17 @@
 import typer
 import uvicorn
 import sys
-from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
-from mcp.server import Server
 from typing import Annotated, List, Optional
 from hayhooks.settings import settings
 from hayhooks.server.utils.mcp_utils import deploy_pipelines, list_pipelines_as_tools, run_pipeline_as_tool
-from mcp.server.sse import SseServerTransport
-from starlette.applications import Starlette
-from starlette.routing import Mount, Route
+from hayhooks.server.utils.mcp_availability import requires_mcp
 from hayhooks.server.logger import log
 
 mcp = typer.Typer()
 
 
 @mcp.command()
+@requires_mcp
 def run(
     host: Annotated[str, typer.Option("--host", "-h", help="Host to run the MCP server on")] = settings.mcp_host,
     port: Annotated[int, typer.Option("--port", "-p", help="Port to run the MCP server on")] = settings.mcp_port,
@@ -28,6 +25,12 @@ def run(
     """
     Run the MCP server.
     """
+    from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
+    from mcp.server import Server
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+
     settings.mcp_host = host
     settings.mcp_port = port
     settings.pipelines_dir = pipelines_dir

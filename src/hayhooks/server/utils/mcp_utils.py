@@ -1,16 +1,26 @@
 import asyncio
 from pathlib import Path
-from typing import List, Union
-from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
+from typing import List, Union, Any, TYPE_CHECKING
 from hayhooks import log
 from hayhooks.server.app import init_pipeline_dir
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry, read_pipeline_files_from_dir
+from hayhooks.server.utils.mcp_availability import requires_mcp
 from hayhooks.settings import settings
 from hayhooks.server.pipelines import registry
 
+# For type checking purposes only
+if TYPE_CHECKING:
+    from mcp.types import TextContent, ImageContent, EmbeddedResource
 
+    MCP_RETURN_TYPES = List[Union['TextContent', 'ImageContent', 'EmbeddedResource']]
+else:
+    MCP_RETURN_TYPES = List[Any]
+
+
+@requires_mcp
 def deploy_pipelines() -> None:
+    """Deploy pipelines from the configured directory"""
     pipelines_dir = init_pipeline_dir(settings.pipelines_dir)
 
     log.info(f"Pipelines dir set to: {pipelines_dir}")
@@ -29,7 +39,11 @@ def deploy_pipelines() -> None:
             continue
 
 
-async def list_pipelines_as_tools() -> List[Tool]:
+@requires_mcp
+async def list_pipelines_as_tools() -> List[Any]:
+    """List available pipelines as MCP tools"""
+    from mcp.types import Tool
+
     tools = []
 
     for pipeline_name in registry.get_names():
@@ -54,7 +68,9 @@ async def list_pipelines_as_tools() -> List[Tool]:
     return tools
 
 
-async def run_pipeline_as_tool(name: str, arguments: dict) -> List[TextContent | ImageContent | EmbeddedResource]:
+@requires_mcp
+async def run_pipeline_as_tool(name: str, arguments: dict) -> MCP_RETURN_TYPES:
+    """Run a pipeline as an MCP tool"""
     log.debug(f"Calling pipeline as tool '{name}' with arguments: {arguments}")
     pipeline_wrapper: Union[BasePipelineWrapper, None] = registry.get(name)
 

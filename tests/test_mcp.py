@@ -3,6 +3,13 @@ from hayhooks.server.pipelines import registry
 from pathlib import Path
 from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
 from hayhooks.server.utils.mcp_utils import list_pipelines_as_tools, run_pipeline_as_tool
+from hayhooks.server.utils.mcp_availability import MCP_AVAILABLE
+
+# NOTE: Skip all tests in this file if MCP is not available
+pytestmark = [
+    pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP package not installed"),
+    pytest.mark.mcp,
+]
 
 
 @pytest.fixture(autouse=True)
