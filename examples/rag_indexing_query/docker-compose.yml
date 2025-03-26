@@ -12,4 +12,4 @@ services:
       test: curl --fail http://localhost:9200/_cat/health || exit 1
       interval: 10s
       timeout: 1s
-      retries: 10%
+      retries: 10
