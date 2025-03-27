@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import List, Union
+from typing import TYPE_CHECKING, List, Union
 from hayhooks import log
 from hayhooks.server.app import init_pipeline_dir
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
@@ -8,6 +8,10 @@ from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry, read_pi
 from hayhooks.settings import settings
 from hayhooks.server.pipelines import registry
 from haystack.lazy_imports import LazyImport
+
+
+if TYPE_CHECKING:
+    from mcp.types import TextContent, ImageContent, EmbeddedResource, Tool
 
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
     from mcp.types import TextContent, ImageContent, EmbeddedResource, Tool
@@ -33,7 +37,7 @@ def deploy_pipelines() -> None:
             continue
 
 
-async def list_pipelines_as_tools() -> List[Tool]:
+async def list_pipelines_as_tools() -> List["Tool"]:
     """List available pipelines as MCP tools"""
     mcp_import.check()
 
@@ -63,7 +67,9 @@ async def list_pipelines_as_tools() -> List[Tool]:
     return tools
 
 
-async def run_pipeline_as_tool(name: str, arguments: dict) -> List[TextContent]:
+async def run_pipeline_as_tool(
+    name: str, arguments: dict
+) -> List[Union["TextContent", "ImageContent", "EmbeddedResource"]]:
     mcp_import.check()
 
     log.debug(f"Calling pipeline as tool '{name}' with arguments: {arguments}")
