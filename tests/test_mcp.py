@@ -1,13 +1,16 @@
 import pytest
+import importlib.util
 from hayhooks.server.pipelines import registry
 from pathlib import Path
 from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
 from hayhooks.server.utils.mcp_utils import list_pipelines_as_tools, run_pipeline_as_tool
-from hayhooks.server.utils.mcp_availability import MCP_AVAILABLE
+
+
+MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
 # NOTE: Skip all tests in this file if MCP is not available
 pytestmark = [
-    pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP package not installed"),
+    pytest.mark.skipif(not MCP_AVAILABLE, reason="'mcp' package not installed"),
     pytest.mark.mcp,
 ]
 
@@ -81,7 +84,9 @@ async def test_fail_to_run_pipeline_as_tool():
 async def test_run_pipeline_as_tool_returns_text_content(deploy_chat_with_website_mcp):
     from mcp.types import TextContent
 
-    result = await run_pipeline_as_tool("chat_with_website", {"urls": ["https://www.google.com"], "question": "What is the capital of France?"})
+    result = await run_pipeline_as_tool(
+        "chat_with_website", {"urls": ["https://www.google.com"], "question": "What is the capital of France?"}
+    )
 
     assert isinstance(result, list)
     assert len(result) == 1
