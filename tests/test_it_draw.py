@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 from typing import List
 from haystack import Pipeline
@@ -5,6 +6,7 @@ from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.pipelines import registry
 
 
+@pytest.mark.skip(reason="Requests to https://mermaid.ink seem to be failing")
 def test_draw_pipeline(client, deploy_pipeline, draw_pipeline):
     pipeline_file = Path(__file__).parent / "test_files/yaml" / "working_pipelines/test_pipeline_01.yml"
     pipeline_data = {"name": pipeline_file.stem, "source_code": pipeline_file.read_text()}
@@ -23,6 +25,7 @@ def test_draw_non_existent_pipeline(client, draw_pipeline):
     assert draw_response.status_code == 404
 
 
+@pytest.mark.skip(reason="Requests to https://mermaid.ink seem to be failing")
 def test_draw_pipeline_wrapper(client, deploy_pipeline, draw_pipeline):
     class TestPipelineWrapper(BasePipelineWrapper):
         def setup(self) -> None:
