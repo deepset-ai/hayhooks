@@ -31,7 +31,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Run a pipeline from the CLI uploading files](#run-a-pipeline-from-the-cli-uploading-files)
 - [MCP support](#mcp-support)
   - [MCP Server](#mcp-server)
-  - [Create a PipelineWrapper implementation for exposing a pipeline as an MCP Tool](#create-a-pipelinewrapper-implementation-for-exposing-a-pipeline-as-an-mcp-tool)
+  - [Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool](#create-a-pipelinewrapper-for-exposing-a-haystack-pipeline-as-a-mcp-tool)
 - [OpenAI Compatibility](#openai-compatibility)
   - [OpenAI-compatible endpoints generation](#openai-compatible-endpoints-generation)
   - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
@@ -66,6 +66,8 @@ If you want to use the [MCP server](#mcp-server), you need to install the `hayho
 ```shell
 pip install hayhooks[mcp]
 ```
+
+**NOTE: You'll need to run at least Python 3.10+ to use the MCP server.**
 
 ### Configuration
 
@@ -305,6 +307,8 @@ hayhooks pipeline run <pipeline_name> --file file.pdf --param 'question="is this
 ```
 
 ## MCP support
+
+**NOTE: You'll need to run at least Python 3.10+ to use the MCP server.**
 
 ### MCP Server
 
