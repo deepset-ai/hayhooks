@@ -32,6 +32,15 @@ def deploy_chat_with_website_mcp():
     add_pipeline_to_registry(pipeline_name="chat_with_website", files=files)
 
 
+@pytest.fixture
+def deploy_chat_with_website_mcp_skip():
+    pipeline_wrapper_path = Path("tests/test_files/files/chat_with_website_mcp_skip/pipeline_wrapper.py")
+    files = {
+        "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
+    }
+    add_pipeline_to_registry(pipeline_name="chat_with_website_mcp_skip", files=files)
+
+
 @pytest.mark.asyncio
 async def test_list_pipelines_as_tools_no_pipelines():
     tools = await list_pipelines_as_tools()
@@ -58,20 +67,18 @@ async def test_list_pipelines_as_tools(deploy_chat_with_website_mcp):
 
 
 @pytest.mark.asyncio
-async def test_skip_pipeline_without_description():
-    # Add a pipeline without a docstring for run_api method
-    pipeline_wrapper_path = Path("tests/test_files/files/chat_with_website/pipeline_wrapper.py")
-    pipeline_yml_path = Path("tests/test_files/files/chat_with_website/chat_with_website.yml")
-
+async def test_list_pipeline_without_description():
     files = {
-        "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
-        "chat_with_website.yml": pipeline_yml_path.read_text(),
+        "pipeline_wrapper.py": Path("tests/test_files/files/chat_with_website/pipeline_wrapper.py").read_text(),
+        "chat_with_website.yml": Path("tests/test_files/files/chat_with_website/chat_with_website.yml").read_text(),
     }
-
     add_pipeline_to_registry(pipeline_name="chat_with_website", files=files)
 
     tools = await list_pipelines_as_tools()
-    assert len(tools) == 0
+
+    assert len(tools) == 1
+    assert tools[0].name == "chat_with_website"
+    assert tools[0].description == ""
 
 
 @pytest.mark.asyncio
@@ -92,3 +99,9 @@ async def test_run_pipeline_as_tool_returns_text_content(deploy_chat_with_websit
     assert len(result) == 1
     assert isinstance(result[0], TextContent)
     assert result[0].text == "This is a mock response from the pipeline"
+
+
+@pytest.mark.asyncio
+async def test_skip_pipeline_from_mcp_listing(deploy_chat_with_website_mcp_skip):
+    tools = await list_pipelines_as_tools()
+    assert len(tools) == 0

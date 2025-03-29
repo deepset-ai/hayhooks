@@ -383,22 +383,18 @@ def add_pipeline_to_registry(
     clog.debug("Running setup()")
     pipeline_wrapper.setup()
 
-    docstring = inspect.getdoc(pipeline_wrapper.run_api)
-    if docstring:
-        metadata = {
-            "description": docstring,
-            "request_model": create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run'),
-        }
+    metadata = {
+        "description": inspect.getdoc(pipeline_wrapper.run_api) or "",
+        "request_model": create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run'),
+        "skip_mcp": pipeline_wrapper.skip_mcp,
+    }
 
-        clog.debug(f"Adding pipeline to registry with metadata: {metadata}")
-        registry.add(
-            pipeline_name,
-            pipeline_wrapper,
-            metadata=metadata,
-        )
-    else:
-        clog.debug("Adding pipeline to registry")
-        registry.add(pipeline_name, pipeline_wrapper)
+    clog.debug(f"Adding pipeline to registry with metadata: {metadata}")
+    registry.add(
+        pipeline_name,
+        pipeline_wrapper,
+        metadata=metadata,
+    )
 
     clog.success("Pipeline successfully added to registry")
 

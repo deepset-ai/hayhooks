@@ -44,23 +44,25 @@ async def list_pipelines_as_tools() -> List["Tool"]:
     tools = []
 
     for pipeline_name in registry.get_names():
-        metadata = registry.get_metadata(name=pipeline_name)
+        metadata = registry.get_metadata(name=pipeline_name) or {}
+        log.trace(f"Metadata for pipeline '{pipeline_name}': {metadata}")
 
-        if not metadata:
-            log.warning(f"Skipping pipeline '{pipeline_name}' as it has no metadata")
+        if not metadata.get("request_model"):
+            log.warning(f"Skipping pipeline '{pipeline_name}' as it has no request model")
             continue
 
-        if metadata.get("description"):
-            tools.append(
-                Tool(
-                    name=pipeline_name,
-                    description=metadata["description"],
-                    inputSchema=metadata["request_model"].model_json_schema(),
-                )
+        if metadata.get("skip_mcp"):
+            log.debug(f"Skipping pipeline '{pipeline_name}' as it has skip_mcp set to True")
+            continue
+
+        tools.append(
+            Tool(
+                name=pipeline_name,
+                description=metadata.get("description", ""),
+                inputSchema=metadata["request_model"].model_json_schema(),
             )
-            log.debug(f"Added pipeline as MCP tool '{pipeline_name}' with description: '{metadata['description']}'")
-        else:
-            log.warning(f"Skipping pipeline '{pipeline_name}' as it has no description")
+        )
+        log.debug(f"Added pipeline as MCP tool '{pipeline_name}' with description: '{metadata['description']}'")
 
     log.debug(f"Pipelines listed as MCP tools: {[tool.name for tool in tools]}")
 

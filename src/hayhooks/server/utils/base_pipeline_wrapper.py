@@ -3,6 +3,11 @@ from typing import Generator, List, Union
 
 
 class BasePipelineWrapper(ABC):
+    # Class attribute to skip MCP listing of the pipeline
+    # If True, the pipeline will not be listed as an MCP tool
+    # Even if it has a description and a request model
+    skip_mcp: bool = False
+
     def __init__(self):
         self.pipeline = None
         self._is_run_api_implemented = False
