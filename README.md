@@ -314,7 +314,15 @@ hayhooks pipeline run <pipeline_name> --file file.pdf --param 'question="is this
 
 Hayhooks now supports the [Model Context Protocol](https://modelcontextprotocol.io/) and can act as a [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture).
 
-It will automatically expose the deployed pipelines as [MCP Tools](https://modelcontextprotocol.io/docs/concepts/tools), using [Server-Sent Events (SSE)](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) as MCP Transport.
+It will automatically list the deployed pipelines as [MCP Tools](https://modelcontextprotocol.io/docs/concepts/tools), using [Server-Sent Events (SSE)](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) as **MCP Transport**.
+
+To run the Hayhooks MCP server, you can use the following command:
+
+```shell
+hayhooks mcp run
+```
+
+This will start the Hayhooks MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT`.
 
 ### Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool
 
@@ -326,8 +334,8 @@ A [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools) requires the f
 
 For each deployed pipeline, Hayhooks will:
 
-- Use the pipeline wrapper `name` as MCP Tool `name`.
-- Use the pipeline wrapper **`run_api` method docstring** as MCP Tool `description`.
+- Use the pipeline wrapper `name` as MCP Tool `name` (always present).
+- Use the pipeline wrapper **`run_api` method docstring** as MCP Tool `description` (if present).
 - Generate a Pydantic model from the `inputSchema` using the **`run_api` method arguments as fields**.
 
 Here's an example of a PipelineWrapper implementation for the `chat_with_website` pipeline which can be used as a MCP Tool:
@@ -355,7 +363,22 @@ class PipelineWrapper(BasePipelineWrapper):
         return result["llm"]["replies"][0]
 ```
 
-Note that if you omit the docstring, the pipeline will be deployed but **will not be listed as a MCP Tool** (you will see a warning in the Hayhooks logs).
+### Skip MCP Tool listing
+
+You can skip the MCP Tool listing by setting the `skip_mcp` class attribute to `True` in your PipelineWrapper class.
+This way, the pipeline will be deployed on Hayhooks but **will not be listed as a MCP Tool** when you run the `hayhooks mcp run` command.
+
+```python
+class PipelineWrapper(BasePipelineWrapper):
+    # This will skip the MCP Tool listing
+    skip_mcp = True
+
+    def setup(self) -> None:
+        ...
+
+    def run_api(self, urls: List[str], question: str) -> str:
+        ...
+```
 
 ## OpenAI compatibility
 
