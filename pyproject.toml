@@ -36,6 +36,11 @@ dependencies = [
   "python-dotenv",
 ]
 
+[project.optional-dependencies]
+mcp = [
+  "mcp ; python_version >= '3.10'",
+]
+
 [project.urls]
 Documentation = "https://github.com/unknown/hayhooks#readme"
 Issues = "https://github.com/unknown/hayhooks/issues"
@@ -49,6 +54,9 @@ source = "vcs"
 
 [tool.hatch.envs.default]
 installer = "uv"
+
+[tool.hatch.envs.mcp]
+features = ["mcp"]
 
 [tool.hatch.envs.test.scripts]
 all = "pytest -vv {args:tests}"
@@ -69,6 +77,8 @@ extra-dependencies = [
   "pytest-mock",
   "qdrant-haystack",
   "trafilatura",
+  "pytest-asyncio",
+  "mcp ; python_version >= '3.10'",
 ]
 
 [[tool.hatch.envs.all.matrix]]
@@ -178,3 +188,4 @@ exclude_lines = [
 filterwarnings = [
   "ignore::UserWarning",
 ]
+asyncio_mode = "auto"

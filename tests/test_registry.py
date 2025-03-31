@@ -1,9 +1,9 @@
 import pytest
+from hayhooks.server.exceptions import PipelineNotFoundError
 from pathlib import Path
 from haystack import Pipeline
 from haystack.core.errors import PipelineError
 from typing import List
-
 from hayhooks.server.pipelines.registry import _PipelineRegistry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
@@ -33,7 +33,7 @@ def test_pipeline_wrapper_class():
     return TestPipelineWrapper
 
 
-def test_add_pipeline(pipeline_registry, sample_pipeline_yaml):
+def test_add_yaml_pipeline(pipeline_registry, sample_pipeline_yaml):
     result = pipeline_registry.add("test_pipeline", sample_pipeline_yaml)
 
     pipeline = Pipeline.loads(sample_pipeline_yaml)
@@ -48,10 +48,14 @@ def test_add_invalid_pipeline(pipeline_registry, mocker):
         pipeline_registry.add("test_pipeline", "invalid yaml")
 
 
+def test_get_non_existent_pipeline(pipeline_registry):
+    pipeline = pipeline_registry.get("test_pipeline")
+    assert pipeline is None
+
+
 def test_remove_pipeline(pipeline_registry, sample_pipeline_yaml):
     pipeline_registry.add("test_pipeline", sample_pipeline_yaml)
     pipeline_registry.remove("test_pipeline")
-
     assert pipeline_registry.get("test_pipeline") is None
 
 
@@ -60,7 +64,8 @@ def test_remove_nonexistent_pipeline(pipeline_registry):
 
 
 def test_get_nonexistent_pipeline(pipeline_registry):
-    assert pipeline_registry.get("nonexistent_pipeline") is None
+    result = pipeline_registry.get("nonexistent_pipeline")
+    assert result is None
 
 
 def test_get_names(pipeline_registry, sample_pipeline_yaml, mocker):
@@ -128,3 +133,69 @@ def test_remove_pipeline_preserves_others(pipeline_registry, sample_pipeline_yam
     pipeline_registry.remove("pipeline1")
     assert "pipeline1" not in pipeline_registry.get_names()
     assert pipeline_registry.get("wrapper1") == wrapper
+
+
+def test_add_pipeline_with_metadata(pipeline_registry, sample_pipeline_yaml):
+    metadata = {"description": "Test RAG pipeline"}
+    result = pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=metadata)
+
+    pipeline = Pipeline.loads(sample_pipeline_yaml)
+    assert result == pipeline
+    assert pipeline_registry.get("test_pipeline") == pipeline
+    assert pipeline_registry.get_metadata("test_pipeline") == metadata
+
+
+def test_add_pipeline_wrapper_with_metadata(pipeline_registry, test_pipeline_wrapper_class):
+    metadata = {"description": "Test pipeline wrapper"}
+    wrapper = test_pipeline_wrapper_class()
+    result = pipeline_registry.add("test_wrapper", wrapper, metadata=metadata)
+
+    assert result == wrapper
+    assert pipeline_registry.get("test_wrapper") == wrapper
+    assert pipeline_registry.get_metadata("test_wrapper") == metadata
+
+
+def test_get_pipeline_with_metadata(pipeline_registry, sample_pipeline_yaml):
+    metadata = {"description": "Test pipeline"}
+    pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=metadata)
+
+    pipeline = pipeline_registry.get("test_pipeline")
+    meta = pipeline_registry.get_metadata("test_pipeline")
+    assert isinstance(pipeline, Pipeline)
+    assert meta == metadata
+
+
+def test_get_metadata_for_nonexistent_pipeline(pipeline_registry):
+    assert pipeline_registry.get_metadata("nonexistent_pipeline") is None
+
+
+def test_remove_pipeline_removes_metadata(pipeline_registry, sample_pipeline_yaml):
+    metadata = {"description": "Test pipeline"}
+    pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=metadata)
+
+    pipeline_registry.remove("test_pipeline")
+    assert pipeline_registry.get_metadata("test_pipeline") is None
+
+
+def test_clear_registry_removes_metadata(pipeline_registry, sample_pipeline_yaml):
+    metadata = {"description": "Test pipeline"}
+    pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=metadata)
+
+    pipeline_registry.clear()
+    assert pipeline_registry.get_metadata("test_pipeline") is None
+
+
+def test_update_metadata(pipeline_registry, sample_pipeline_yaml):
+    initial_metadata = {"description": "Initial description"}
+    pipeline_registry.add("test_pipeline", sample_pipeline_yaml, metadata=initial_metadata)
+
+    new_metadata = {"version": "1.0.0"}
+    pipeline_registry.update_metadata("test_pipeline", new_metadata)
+
+    updated_metadata = pipeline_registry.get_metadata("test_pipeline")
+    assert updated_metadata == {"description": "Initial description", "version": "1.0.0"}
+
+
+def test_update_metadata_nonexistent_pipeline(pipeline_registry):
+    with pytest.raises(PipelineNotFoundError, match="Pipeline nonexistent_pipeline not found in registry"):
+        pipeline_registry.update_metadata("nonexistent_pipeline", {"version": "1.0.0"})

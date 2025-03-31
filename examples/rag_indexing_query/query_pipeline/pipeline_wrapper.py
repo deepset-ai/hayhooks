@@ -39,13 +39,9 @@ class PipelineWrapper(BasePipelineWrapper):
         pipe = Pipeline()
         pipe.add_component(
             "embedder",
-            SentenceTransformersTextEmbedder(
-                model="sentence-transformers/all-MiniLM-L6-v2"
-            ),
+            SentenceTransformersTextEmbedder(model="sentence-transformers/all-MiniLM-L6-v2"),
         )
-        pipe.add_component(
-            "retriever", ElasticsearchEmbeddingRetriever(document_store=document_store)
-        )
+        pipe.add_component("retriever", ElasticsearchEmbeddingRetriever(document_store=document_store))
         pipe.add_component("chat_prompt_builder", ChatPromptBuilder(template=template))
         pipe.add_component(
             "llm",

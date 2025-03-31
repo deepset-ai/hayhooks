@@ -18,3 +18,9 @@ class PipelineAlreadyExistsError(Exception):
     """Exception for errors when a pipeline already exists."""
 
     pass
+
+
+class PipelineNotFoundError(Exception):
+    """Exception for errors when a pipeline is not found."""
+
+    pass

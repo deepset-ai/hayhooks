@@ -4,6 +4,7 @@ import uvicorn
 import rich
 from typing import Annotated, Optional
 from hayhooks.cli.pipeline import pipeline
+from hayhooks.cli.mcp import mcp
 from hayhooks.cli.utils import (
     get_server_url,
     make_request,
@@ -17,6 +18,7 @@ from rich import box
 
 hayhooks_cli = typer.Typer(name="hayhooks")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
+hayhooks_cli.add_typer(mcp, name="mcp")
 
 
 def get_app():

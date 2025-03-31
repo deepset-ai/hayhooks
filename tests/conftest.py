@@ -8,6 +8,10 @@ from hayhooks.settings import settings
 from hayhooks.server.pipelines.registry import registry
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "mcp: mark tests that require the MCP package")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def test_settings():
     settings.pipelines_dir = Path(__file__).parent / "pipelines"

@@ -3,6 +3,11 @@ from typing import Generator, List, Union
 
 
 class BasePipelineWrapper(ABC):
+    # Class attribute to skip MCP listing of the pipeline
+    # If True, the pipeline will not be listed as an MCP tool
+    # Even if it has a description and a request model
+    skip_mcp: bool = False
+
     def __init__(self):
         self.pipeline = None
         self._is_run_api_implemented = False
@@ -20,18 +25,21 @@ class BasePipelineWrapper(ABC):
         """
         pass
 
+    # Execute the pipeline in API mode.
+    #
+    # This method provides a generic interface for running the pipeline
+    # with implementation-specific parameters.
+    #
+    # This method will be used as the handler for the `/run` API endpoint.
+    #
+    # Pydantic models will be automatically generated based on this method's
+    # signature and return type for request validation and response serialization.
+    #
+    # NOTE: we don't provide a default docstring for this method as it will be
+    #       used in MCP as a tool description, so by default it will be empty.
+    #       If you want to provide a custom description, you can override the
+    #       docstring in the subclass.
     def run_api(self):
-        """
-        Execute the pipeline in API mode.
-
-        This method provides a generic interface for running the pipeline
-        with implementation-specific parameters.
-
-        This method will be used as the handler for the `/run` API endpoint.
-
-        Pydantic models will be automatically generated based on this method's
-        signature and return type for request validation and response serialization.
-        """
         raise NotImplementedError("run_api not implemented")
 
     def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:

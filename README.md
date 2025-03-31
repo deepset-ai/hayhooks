@@ -20,7 +20,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 - [CLI Commands](#cli-commands)
 - [Start hayhooks](#start-hayhooks)
 - [Deploy a pipeline](#deploy-a-pipeline)
-  - [Pipeline Wrapper](#why-a-pipeline-wrapper)
+  - [PipelineWrapper](#why-a-pipeline-wrapper)
   - [Setup Method](#setup)
   - [Run API Method](#run_api)
   - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
@@ -29,7 +29,11 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 - [Run pipelines from the CLI](#run-pipelines-from-the-cli)
   - [Run a pipeline from the CLI JSON-compatible parameters](#run-a-pipeline-from-the-cli-json-compatible-parameters)
   - [Run a pipeline from the CLI uploading files](#run-a-pipeline-from-the-cli-uploading-files)
-- [OpenAI Compatibility](#openai-compatible-endpoints-generation)
+- [MCP support](#mcp-support)
+  - [MCP Server](#mcp-server)
+  - [Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool](#create-a-pipelinewrapper-for-exposing-a-haystack-pipeline-as-a-mcp-tool)
+- [OpenAI Compatibility](#openai-compatibility)
+  - [OpenAI-compatible endpoints generation](#openai-compatible-endpoints-generation)
   - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
   - [Run Chat Completion Method](#run_chat_completion)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
@@ -57,6 +61,14 @@ Start by installing the package:
 pip install hayhooks
 ```
 
+If you want to use the [MCP server](#mcp-server), you need to install the `hayhooks[mcp]` package:
+
+```shell
+pip install hayhooks[mcp]
+```
+
+**NOTE: You'll need to run at least Python 3.10+ to use the MCP server.**
+
 ### Configuration
 
 Currently, you can configure Hayhooks by:
@@ -71,6 +83,8 @@ The following environment variables are supported:
 
 - `HAYHOOKS_HOST`: The host on which the server will listen.
 - `HAYHOOKS_PORT`: The port on which the server will listen.
+- `HAYHOOKS_MCP_PORT`: The port on which the MCP server will listen.
+- `HAYHOOKS_MCP_HOST`: The host on which the MCP server will listen.
 - `HAYHOOKS_PIPELINES_DIR`: The path to the directory containing the pipelines.
 - `HAYHOOKS_ROOT_PATH`: The root path of the server.
 - `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path.
@@ -291,6 +305,82 @@ hayhooks pipeline run <pipeline_name> --dir files_to_index --file file1.pdf --fi
 # Upload a single file passing also a parameter
 hayhooks pipeline run <pipeline_name> --file file.pdf --param 'question="is this recipe vegan?"'
 ```
+
+## MCP support
+
+**NOTE: You'll need to run at least Python 3.10+ to use the MCP server.**
+
+### MCP Server
+
+Hayhooks now supports the [Model Context Protocol](https://modelcontextprotocol.io/) and can act as a [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture).
+
+It will automatically list the deployed pipelines as [MCP Tools](https://modelcontextprotocol.io/docs/concepts/tools), using [Server-Sent Events (SSE)](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) as **MCP Transport**.
+
+To run the Hayhooks MCP server, you can use the following command:
+
+```shell
+hayhooks mcp run
+```
+
+This will start the Hayhooks MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT`.
+
+### Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool
+
+A [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools) requires the following properties:
+
+- `name`: The name of the tool.
+- `description`: The description of the tool.
+- `inputSchema`: A JSON Schema object describing the tool's input parameters.
+
+For each deployed pipeline, Hayhooks will:
+
+- Use the pipeline wrapper `name` as MCP Tool `name` (always present).
+- Use the pipeline wrapper **`run_api` method docstring** as MCP Tool `description` (if present).
+- Generate a Pydantic model from the `inputSchema` using the **`run_api` method arguments as fields**.
+
+Here's an example of a PipelineWrapper implementation for the `chat_with_website` pipeline which can be used as a MCP Tool:
+
+```python
+from pathlib import Path
+from typing import List
+from haystack import Pipeline
+from hayhooks import BasePipelineWrapper
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
+        self.pipeline = Pipeline.loads(pipeline_yaml)
+
+    def run_api(self, urls: List[str], question: str) -> str:
+        #
+        # NOTE: The following docstring will be used as MCP Tool description
+        #
+        """
+        Ask a question about one or more websites using a Haystack pipeline.
+        """
+        result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]
+```
+
+### Skip MCP Tool listing
+
+You can skip the MCP Tool listing by setting the `skip_mcp` class attribute to `True` in your PipelineWrapper class.
+This way, the pipeline will be deployed on Hayhooks but **will not be listed as a MCP Tool** when you run the `hayhooks mcp run` command.
+
+```python
+class PipelineWrapper(BasePipelineWrapper):
+    # This will skip the MCP Tool listing
+    skip_mcp = True
+
+    def setup(self) -> None:
+        ...
+
+    def run_api(self, urls: List[str], question: str) -> str:
+        ...
+```
+
+## OpenAI compatibility
 
 ### OpenAI-compatible endpoints generation
 

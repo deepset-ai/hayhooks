@@ -24,6 +24,12 @@ class AppSettings(BaseSettings):
     # Port for the FastAPI app
     port: int = 1416
 
+    # Host for the MCP app
+    mcp_host: str = "localhost"
+
+    # Port for the MCP app
+    mcp_port: int = 1417
+
     # Disable SSL verification when making requests from the CLI
     disable_ssl: bool = False
 

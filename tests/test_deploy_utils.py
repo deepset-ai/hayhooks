@@ -1,4 +1,5 @@
 from fastapi.routing import APIRoute
+from hayhooks.server.pipelines import registry
 import pytest
 import shutil
 from haystack import Pipeline
@@ -24,6 +25,7 @@ from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 def cleanup_test_pipelines(test_settings):
     yield
 
+    registry.clear()
     if Path(test_settings.pipelines_dir).exists():
         shutil.rmtree(test_settings.pipelines_dir)
 
@@ -212,3 +214,17 @@ def test_deploy_pipeline_files_without_saving(test_settings, mocker):
     # Verify FastAPI routes were set up
     assert mock_app.add_api_route.called
     assert mock_app.setup.called
+
+
+def test_deploy_pipeline_files_skip_mcp(mocker):
+    mock_app = mocker.Mock()
+    mock_app.routes = []
+
+    # This pipeline wrapper has skip_mcp class attribute set to True
+    test_file_path = Path("tests/test_files/files/chat_with_website_mcp_skip/pipeline_wrapper.py")
+    files = {"pipeline_wrapper.py": test_file_path.read_text()}
+
+    result = deploy_pipeline_files(app=mock_app, pipeline_name="chat_with_website_mcp_skip", files=files, save_files=False)
+    assert result == {"name": "chat_with_website_mcp_skip"}
+
+    assert registry.get_metadata("chat_with_website_mcp_skip").get("skip_mcp") is True
