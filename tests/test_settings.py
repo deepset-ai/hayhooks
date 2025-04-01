@@ -1,10 +1,10 @@
-import importlib
 import sys
 import warnings
 import pytest
 import shutil
 from hayhooks.server.app import create_app
 from hayhooks.settings import AppSettings, check_cors_settings
+from unittest.mock import patch
 
 
 @pytest.fixture
@@ -90,19 +90,19 @@ def test_cors_env_vars(monkeypatch):
 
 
 def test_cors_warning():
-    with pytest.warns(
-        UserWarning, match="Using default CORS settings - All origins, methods, and headers are allowed."
-    ):
+    with patch("hayhooks.settings.log.warning") as mock_log_warning:
         check_cors_settings()
+        mock_log_warning.assert_called_once_with(
+            "Using default CORS settings - All origins, methods, and headers are allowed."
+        )
 
-    with warnings.catch_warnings(record=True) as recorded_warnings:
-        warnings.simplefilter("always")
+    with patch("hayhooks.settings.log.warning") as mock_log_warning:
         AppSettings(
             cors_allow_origins=["https://example.com"],
             cors_allow_methods=["GET", "POST"],
             cors_allow_headers=["X-Custom-Header"],
         )
-        assert len(recorded_warnings) == 0
+        mock_log_warning.assert_not_called()
 
 
 def test_additional_python_path():

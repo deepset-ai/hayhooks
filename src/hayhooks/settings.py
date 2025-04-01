@@ -1,8 +1,8 @@
 from typing import Union
-from warnings import warn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, find_dotenv
 from pathlib import Path
+from hayhooks.server.logger import log
 
 load_dotenv(dotenv_path=find_dotenv(usecwd=True))
 
@@ -62,4 +62,4 @@ def check_cors_settings():
         and settings.cors_allow_methods == ["*"]
         and settings.cors_allow_headers == ["*"]
     ):
-        warn("Using default CORS settings - All origins, methods, and headers are allowed.", UserWarning)
+        log.warning("Using default CORS settings - All origins, methods, and headers are allowed.")
