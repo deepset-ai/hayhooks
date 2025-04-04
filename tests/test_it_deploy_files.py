@@ -78,7 +78,7 @@ def test_deploy_files_missing_wrapper(client, deploy_files):
 
     response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
     assert response.status_code == 422
-    assert "Required file" in response.json()["detail"]
+    assert "Missing required file" in response.json()["detail"][0]["msg"]
 
 
 def test_deploy_files_invalid_wrapper(client, deploy_files):
