@@ -1,5 +1,6 @@
 import sys
 import requests
+from functools import lru_cache
 from os import PathLike
 from typing import Union
 from fastapi import FastAPI
@@ -132,6 +133,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
+@lru_cache(maxsize=1)
 def get_package_version_from_pypi(package_name: str) -> str:
     """
     Get the version of the package from PyPI.
