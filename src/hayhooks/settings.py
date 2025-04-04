@@ -7,6 +7,10 @@ from hayhooks.server.logger import log
 load_dotenv(dotenv_path=find_dotenv(usecwd=True))
 
 
+APP_TITLE = "Hayhooks"
+APP_DESCRIPTION = "Hayhooks makes it easy to deploy and serve Haystack pipelines as REST APIs or MCP Tools"
+
+
 class AppSettings(BaseSettings):
     # Root path for the FastAPI app
     root_path: str = ""

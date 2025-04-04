@@ -1,9 +1,9 @@
 import sys
+import requests
 from os import PathLike
 from typing import Union
 from fastapi import FastAPI
 from pathlib import Path
-
 from fastapi.concurrency import asynccontextmanager
 from hayhooks.server.utils.deploy_utils import (
     deploy_pipeline_def,
@@ -12,7 +12,7 @@ from hayhooks.server.utils.deploy_utils import (
     read_pipeline_files_from_dir,
 )
 from hayhooks.server.routers import status_router, draw_router, deploy_router, undeploy_router, openai_router
-from hayhooks.settings import settings, check_cors_settings
+from hayhooks.settings import settings, check_cors_settings, APP_TITLE, APP_DESCRIPTION
 from hayhooks.server.logger import log
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -132,6 +132,21 @@ async def lifespan(app: FastAPI):
     yield
 
 
+def get_package_version_from_pypi(package_name: str) -> str:
+    """
+    Get the version of the package from PyPI.
+    """
+    try:
+        url = f"https://pypi.org/pypi/{package_name}/json"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return data["info"]["version"]
+    except Exception as e:
+        log.warning(f"Failed to get package version for {package_name}: {str(e)}")
+        return "unknown"
+
+
 def create_app() -> FastAPI:
     """
     Create and configure a FastAPI application.
@@ -147,10 +162,17 @@ def create_app() -> FastAPI:
         sys.path.append(additional_path)
         log.trace(f"Added {additional_path} to sys.path")
 
+    app_params: dict = {
+        "lifespan": lifespan,
+        "title": APP_TITLE,
+        "description": APP_DESCRIPTION,
+        "version": get_package_version_from_pypi("hayhooks"),
+    }
+
     if root_path := settings.root_path:
-        app = FastAPI(root_path=root_path, lifespan=lifespan)
-    else:
-        app = FastAPI(lifespan=lifespan)
+        app_params["root_path"] = root_path
+
+    app = FastAPI(**app_params)
 
     # Check CORS settings before adding middleware
     check_cors_settings()
