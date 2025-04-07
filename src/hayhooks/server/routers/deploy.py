@@ -14,16 +14,19 @@ from hayhooks.server.utils.deploy_utils import (
 router = APIRouter()
 
 
+SAMPLE_PIPELINE_FILES = {
+    "pipeline_wrapper.py": (
+        "from typing import Dict, Any\n\ndef process(data: Dict[str, Any]) -> Dict[str, Any]:\n    # Your processing logic here\n    return data"
+    ),
+    "requirements.txt": "pandas==1.3.5\nnumpy==1.21.0",
+}
+
+
 class PipelineFilesRequest(BaseModel):
     name: str = Field(description="Name of the pipeline to deploy")
     files: Dict[str, str] = Field(
         description="Dictionary of files required for the pipeline, must include pipeline_wrapper.py",
-        examples=[
-            {
-                "pipeline_wrapper.py": "from typing import Dict, Any\n\ndef process(data: Dict[str, Any]) -> Dict[str, Any]:\n    # Your processing logic here\n    return data",
-                "requirements.txt": "pandas==1.3.5\nnumpy==1.21.0",
-            }
-        ],
+        examples=[SAMPLE_PIPELINE_FILES],
     )
     overwrite: bool = Field(default=False, description="Whether to overwrite an existing pipeline with the same name")
     save_files: bool = Field(default=True, description="Whether to save the pipeline files to disk")
@@ -64,8 +67,14 @@ class DeployResponse(BaseModel):
     "/deploy",
     tags=["config"],
     response_model=DeployResponse,
-    summary="Deploy a pipeline from YAML definition",
-    description="Deploys a pipeline from a PipelineDefinition object. Returns 409 if the pipeline already exists and overwrite is false.",
+    summary="Deploy a pipeline from YAML definition (Not Maintained)",
+    description=(
+        "[DEPRECATED] This route is no longer maintained and will be removed in a future version. "
+        "Please use /deploy_files endpoint instead. "
+        "Deploys a pipeline from a PipelineDefinition object. "
+        "Returns 409 if the pipeline already exists and overwrite is false."
+    ),
+    deprecated=True,
 )
 async def deploy(pipeline_def: PipelineDefinition, request: Request):
     result = deploy_pipeline_def(request.app, pipeline_def)
@@ -77,7 +86,10 @@ async def deploy(pipeline_def: PipelineDefinition, request: Request):
     tags=["config"],
     response_model=DeployResponse,
     summary="Deploy a pipeline from files (`pipeline_wrapper.py` and other files)",
-    description="Deploys a pipeline from a dictionary of file contents. Returns 409 if the pipeline already exists and overwrite is false.",
+    description=(
+        "Deploys a pipeline from a dictionary of file contents. "
+        "Returns 409 if the pipeline already exists and overwrite is false."
+    ),
 )
 async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Request):
     try:
