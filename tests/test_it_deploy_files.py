@@ -1,6 +1,6 @@
-from fastapi.testclient import TestClient
 import pytest
 import shutil
+from hayhooks.server.routers.deploy import DeployResponse
 from pathlib import Path
 from hayhooks.server.pipelines.registry import registry
 
@@ -41,7 +41,10 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
 
     response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
     assert response.status_code == 200
-    assert response.json() == {"name": pipeline_files[0]}
+    assert (
+        response.json()
+        == DeployResponse(name=pipeline_files[0], success=True, endpoint=f"/{pipeline_files[0]}/run").model_dump()
+    )
 
     status_response = status_pipeline(client, pipeline_files[0])
     assert pipeline_files[0] in status_response.json()["pipeline"]

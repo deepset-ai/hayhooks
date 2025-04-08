@@ -59,6 +59,8 @@ class PipelineFilesRequest(BaseModel):
 
 class DeployResponse(BaseModel):
     name: str = Field(description="Name of the deployed pipeline")
+    success: bool = Field(default=True, description="Whether the deployment was successful")
+    endpoint: str = Field(description="Endpoint of the deployed pipeline")
 
     model_config = {"json_schema_extra": {"description": "Response model for pipeline deployment operations"}}
 
@@ -78,7 +80,7 @@ class DeployResponse(BaseModel):
 )
 async def deploy(pipeline_def: PipelineDefinition, request: Request):
     result = deploy_pipeline_def(request.app, pipeline_def)
-    return DeployResponse(name=result["name"])
+    return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
 
 
 @router.post(
@@ -100,7 +102,7 @@ async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Re
             save_files=pipeline_files_request.save_files,
             overwrite=pipeline_files_request.overwrite,
         )
-        return DeployResponse(name=result["name"])
+        return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
     except PipelineFilesError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     except PipelineModuleLoadError as e:
