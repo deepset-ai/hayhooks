@@ -61,7 +61,6 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
             f"/{pipeline_data['name']}/run",
             json={"urls": ["https://www.redis.io"], "question": "What is Redis?"},
         )
-        print(response.json())
         assert response.status_code == 200
         assert response.json() == {"result": "This is a mock response from the pipeline"}
 
@@ -70,7 +69,6 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
             f"/{pipeline_data['name']}/run",
             json={"test_param": "test_value"},
         )
-        print(response.json())
         assert response.status_code == 200
         assert response.json() == {"result": "Dummy result with test_value"}
 

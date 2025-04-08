@@ -34,7 +34,6 @@ def test_undeploy_standard_pipeline(client: TestClient, deploy_pipeline, undeplo
 
     # Verify pipeline endpoint no longer exists
     response = client.post(f"/test_undeploy_pipeline", json={})
-    print(response.json())
     assert response.status_code == 404
 
 
