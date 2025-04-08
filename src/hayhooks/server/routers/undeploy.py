@@ -18,6 +18,7 @@ class UndeployResponse(BaseModel):
 @router.post(
     "/undeploy/{pipeline_name}",
     tags=["config"],
+    operation_id="pipeline_undeploy",
     response_model=UndeployResponse,
     summary="Undeploy a pipeline",
     description="Removes a pipeline from the registry, removes its API routes and deletes its files from disk.",

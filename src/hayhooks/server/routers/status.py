@@ -26,6 +26,7 @@ class PipelineStatusResponse(BaseModel):
     "/status",
     tags=["status"],
     response_model=StatusResponse,
+    operation_id="status_all",
     summary="Get status of all pipelines",
     description="Returns the system status and a list of all available pipelines.",
 )
@@ -38,6 +39,7 @@ async def status_all():
     "/status/{pipeline_name}",
     tags=["status"],
     response_model=PipelineStatusResponse,
+    operation_id="status_pipeline",
     summary="Get status of a specific pipeline",
     description="Returns the status of a specific pipeline. Returns 404 if the pipeline doesn't exist.",
 )

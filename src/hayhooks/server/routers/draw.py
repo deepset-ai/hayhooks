@@ -11,6 +11,7 @@ router = APIRouter()
 @router.get(
     "/draw/{pipeline_name}",
     tags=["config"],
+    operation_id="pipeline_draw",
     summary="Generate a pipeline diagram",
     description="Returns a PNG image visualization of the specified pipeline. Returns 404 if the pipeline doesn't exist.",
     response_class=FileResponse,

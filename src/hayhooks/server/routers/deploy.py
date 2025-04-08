@@ -69,6 +69,7 @@ class DeployResponse(BaseModel):
     "/deploy",
     tags=["config"],
     response_model=DeployResponse,
+    operation_id="legacy_yaml_deploy",
     summary="Deploy a pipeline from YAML definition (Not Maintained)",
     description=(
         "[DEPRECATED] This route is no longer maintained and will be removed in a future version. "
@@ -86,6 +87,7 @@ async def deploy(pipeline_def: PipelineDefinition, request: Request):
 @router.post(
     "/deploy_files",
     tags=["config"],
+    operation_id="pipeline_deploy",
     response_model=DeployResponse,
     summary="Deploy a pipeline from files (`pipeline_wrapper.py` and other files)",
     description=(
