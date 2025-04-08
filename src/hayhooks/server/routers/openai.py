@@ -59,12 +59,11 @@ class ChatCompletion(OpenAIBaseModel):
 MODELS_PARAMS: dict = {
     "response_model": ModelsResponse,
     "tags": ["openai"],
-    "operation_id": "openai_models",
 }
 
 
-@router.get("/v1/models", **MODELS_PARAMS)
-@router.get("/models", **MODELS_PARAMS)
+@router.get("/v1/models", **MODELS_PARAMS, operation_id="openai_models")
+@router.get("/models", **MODELS_PARAMS, operation_id="openai_models_alias")
 async def get_models():
     """
     Implementation of OpenAI /models endpoint.
@@ -96,13 +95,12 @@ async def get_models():
 CHAT_COMPLETION_PARAMS: dict = {
     "response_model": ChatCompletion,
     "tags": ["openai"],
-    "operation_id": "openai_chat_completions",
 }
 
 
-@router.post("/v1/chat/completions", **CHAT_COMPLETION_PARAMS)
-@router.post("/chat/completions", **CHAT_COMPLETION_PARAMS)
-@router.post("/{pipeline_name}/chat", **CHAT_COMPLETION_PARAMS)
+@router.post("/chat/completions", **CHAT_COMPLETION_PARAMS, operation_id="openai_chat_completions")
+@router.post("/v1/chat/completions", **CHAT_COMPLETION_PARAMS, operation_id="openai_chat_completions_alias")
+@router.post("/{pipeline_name}/chat", **CHAT_COMPLETION_PARAMS, operation_id="chat_completions")
 @handle_pipeline_exceptions()
 async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, StreamingResponse]:
     pipeline_wrapper = registry.get(chat_req.model)
