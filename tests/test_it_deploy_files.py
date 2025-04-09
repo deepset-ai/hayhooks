@@ -1,6 +1,6 @@
-from fastapi.testclient import TestClient
 import pytest
 import shutil
+from hayhooks.server.routers.deploy import DeployResponse
 from pathlib import Path
 from hayhooks.server.pipelines.registry import registry
 
@@ -41,7 +41,10 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
 
     response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
     assert response.status_code == 200
-    assert response.json() == {"name": pipeline_files[0]}
+    assert (
+        response.json()
+        == DeployResponse(name=pipeline_files[0], success=True, endpoint=f"/{pipeline_files[0]}/run").model_dump()
+    )
 
     status_response = status_pipeline(client, pipeline_files[0])
     assert pipeline_files[0] in status_response.json()["pipeline"]
@@ -58,7 +61,6 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
             f"/{pipeline_data['name']}/run",
             json={"urls": ["https://www.redis.io"], "question": "What is Redis?"},
         )
-        print(response.json())
         assert response.status_code == 200
         assert response.json() == {"result": "This is a mock response from the pipeline"}
 
@@ -67,7 +69,6 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
             f"/{pipeline_data['name']}/run",
             json={"test_param": "test_value"},
         )
-        print(response.json())
         assert response.status_code == 200
         assert response.json() == {"result": "Dummy result with test_value"}
 
@@ -78,7 +79,7 @@ def test_deploy_files_missing_wrapper(client, deploy_files):
 
     response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
     assert response.status_code == 422
-    assert "Required file" in response.json()["detail"]
+    assert "Missing required file" in response.json()["detail"][0]["msg"]
 
 
 def test_deploy_files_invalid_wrapper(client, deploy_files):

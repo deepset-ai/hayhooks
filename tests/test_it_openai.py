@@ -1,5 +1,6 @@
 import json
 import shutil
+from hayhooks.server.routers.deploy import DeployResponse
 import pytest
 from concurrent.futures import ThreadPoolExecutor
 from hayhooks.settings import settings
@@ -58,7 +59,10 @@ def test_get_models(client):
 
     response = client.post("/deploy_files", json=pipeline_data)
     assert response.status_code == 200
-    assert response.json() == {"name": "test_pipeline"}
+    assert (
+        response.json()
+        == DeployResponse(name="test_pipeline", success=True, endpoint=f"/{pipeline_data['name']}/run").model_dump()
+    )
 
     response = client.get("/models")
     response_data = response.json()
@@ -85,7 +89,10 @@ def test_chat_completion_success(client, deploy_files):
 
     response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
     assert response.status_code == 200
-    assert response.json() == {"name": "test_pipeline"}
+    assert (
+        response.json()
+        == DeployResponse(name="test_pipeline", success=True, endpoint=f"/{pipeline_data['name']}/run").model_dump()
+    )
 
     # This is a sample request coming from openai-webui
     request = ChatRequest(
@@ -125,7 +132,12 @@ def test_chat_completion_not_implemented(client, deploy_files):
 
     response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
     assert response.status_code == 200
-    assert response.json() == {"name": "test_pipeline_no_chat"}
+    assert (
+        response.json()
+        == DeployResponse(
+            name="test_pipeline_no_chat", success=True, endpoint=f"/{pipeline_data['name']}/run"
+        ).model_dump()
+    )
 
     request = ChatRequest(model="test_pipeline_no_chat", messages=[{"role": "user", "content": "Hello"}])
 
@@ -139,7 +151,12 @@ def test_chat_completion_streaming(client, deploy_files):
 
     response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
     assert response.status_code == 200
-    assert response.json() == {"name": "test_pipeline_streaming"}
+    assert (
+        response.json()
+        == DeployResponse(
+            name="test_pipeline_streaming", success=True, endpoint=f"/{pipeline_data['name']}/run"
+        ).model_dump()
+    )
 
     request = ChatRequest(
         model="test_pipeline_streaming",
@@ -184,7 +201,12 @@ def test_chat_completion_concurrent_requests(client, deploy_files):
 
     response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
     assert response.status_code == 200
-    assert response.json() == {"name": "test_pipeline_streaming"}
+    assert (
+        response.json()
+        == DeployResponse(
+            name="test_pipeline_streaming", success=True, endpoint=f"/{pipeline_data['name']}/run"
+        ).model_dump()
+    )
 
     request_1 = ChatRequest(model="test_pipeline_streaming", messages=[{"role": "user", "content": "what is Redis?"}])
     request_2 = ChatRequest(model="test_pipeline_streaming", messages=[{"role": "user", "content": "what is MongoDB?"}])
