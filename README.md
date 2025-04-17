@@ -17,6 +17,9 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
   - [CORS Settings](#cors-settings)
+- [Logging](#logging)
+  - [Using the logger](#using-the-logger)
+  - [Changing the log level](#changing-the-log-level)
 - [CLI Commands](#cli-commands)
 - [Start hayhooks](#start-hayhooks)
 - [Deploy a pipeline](#deploy-a-pipeline)
@@ -90,6 +93,7 @@ The following environment variables are supported:
 - `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path.
 - `HAYHOOKS_DISABLE_SSL`: Boolean flag to disable SSL verification when making requests from the CLI.
 - `HAYHOOKS_SHOW_TRACEBACKS`: Boolean flag to show tracebacks on errors during pipeline execution and deployment.
+- `LOG`: The log level to use (default: `INFO`).
 
 ##### CORS Settings
 
@@ -100,6 +104,34 @@ The following environment variables are supported:
 - `HAYHOOKS_CORS_ALLOW_ORIGIN_REGEX`: Regex pattern for allowed origins (default: null)
 - `HAYHOOKS_CORS_EXPOSE_HEADERS`: Headers to expose in response (default: [])
 - `HAYHOOKS_CORS_MAX_AGE`: Maxium age for CORS preflight responses in seconds (default: 600)
+
+### Logging
+
+#### Using the logger
+
+Hayooks comes with a default logger based on [loguru](https://loguru.readthedocs.io/en/stable/).
+
+To use it, you can import the `log` object from the `hayhooks` package:
+
+```python
+from hayhooks import log
+```
+
+#### Changing the log level
+
+To change the log level, you can set the `LOG` environment variable [to one of the levels supported by loguru](https://loguru.readthedocs.io/en/stable/api/logger.html).
+
+For example, to use the `DEBUG` level, you can set:
+
+```shell
+LOG=DEBUG hayhooks run
+
+# or
+LOG=debug hayhooks run
+
+# or in an .env file
+LOG=debug
+```
 
 ### CLI commands
 
