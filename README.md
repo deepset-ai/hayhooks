@@ -35,6 +35,9 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 - [MCP support](#mcp-support)
   - [MCP Server](#mcp-server)
   - [Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool](#create-a-pipelinewrapper-for-exposing-a-haystack-pipeline-as-a-mcp-tool)
+  - [Skip MCP Tool listing](#skip-mcp-tool-listing)
+- [Hayhooks as an OpenAPI Tool Server in `open-webui`](#hayhooks-as-an-openapi-tool-server-in-open-webui)
+  - [Example: Deploy a Haystack pipeline from `open-webui` chat interface](#example-deploy-a-haystack-pipeline-from-open-webui-chat-interface)
 - [OpenAI Compatibility](#openai-compatibility)
   - [OpenAI-compatible endpoints generation](#openai-compatible-endpoints-generation)
   - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
@@ -411,6 +414,22 @@ class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, urls: List[str], question: str) -> str:
         ...
 ```
+
+## Hayhooks as an OpenAPI Tool Server in `open-webui`
+
+Since Hayhooks expose openapi-schema at `/openapi.json`, it can be used as an OpenAPI Tool Server.
+
+[open-webui](https://openwebui.com) has recently added support for [OpenAPI Tool Servers](https://docs.openwebui.com/openapi-servers), meaning that you can use the API endpoints of Hayhooks as tools in your chat interface.
+
+You simply need to configure the OpenAPI Tool Server in the `Settings -> Tools` section, adding the URL of the Hayhooks server and the path to the `openapi.json` file:
+
+![open-webui-settings](./docs/assets/open-webui-openapi-tools.png)
+
+### Example: Deploy a Haystack pipeline from `open-webui` chat interface
+
+Here's a video example of how to deploy a Haystack pipeline from the `open-webui` chat interface:
+
+![open-webui-deploy-pipeline-from-chat-example](./docs/assets/open-webui-deploy-pipeline-from-chat.gif)
 
 ## OpenAI compatibility
 
