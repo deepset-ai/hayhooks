@@ -17,6 +17,9 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
   - [CORS Settings](#cors-settings)
+- [Logging](#logging)
+  - [Using the logger](#using-the-logger)
+  - [Changing the log level](#changing-the-log-level)
 - [CLI Commands](#cli-commands)
 - [Start hayhooks](#start-hayhooks)
 - [Deploy a pipeline](#deploy-a-pipeline)
@@ -32,6 +35,9 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
 - [MCP support](#mcp-support)
   - [MCP Server](#mcp-server)
   - [Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool](#create-a-pipelinewrapper-for-exposing-a-haystack-pipeline-as-a-mcp-tool)
+  - [Skip MCP Tool listing](#skip-mcp-tool-listing)
+- [Hayhooks as an OpenAPI Tool Server in `open-webui`](#hayhooks-as-an-openapi-tool-server-in-open-webui)
+  - [Example: Deploy a Haystack pipeline from `open-webui` chat interface](#example-deploy-a-haystack-pipeline-from-open-webui-chat-interface)
 - [OpenAI Compatibility](#openai-compatibility)
   - [OpenAI-compatible endpoints generation](#openai-compatible-endpoints-generation)
   - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
@@ -40,6 +46,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
 - [Advanced Usage](#advanced-usage)
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
+  - [Sharing code between pipeline wrappers](#sharing-code-between-pipeline-wrappers)
 - [Deployment Guidelines](#deployment-guidelines)
 - [Legacy Features](#legacy-features)
   - [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
@@ -90,6 +97,7 @@ The following environment variables are supported:
 - `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path.
 - `HAYHOOKS_DISABLE_SSL`: Boolean flag to disable SSL verification when making requests from the CLI.
 - `HAYHOOKS_SHOW_TRACEBACKS`: Boolean flag to show tracebacks on errors during pipeline execution and deployment.
+- `LOG`: The log level to use (default: `INFO`).
 
 ##### CORS Settings
 
@@ -100,6 +108,34 @@ The following environment variables are supported:
 - `HAYHOOKS_CORS_ALLOW_ORIGIN_REGEX`: Regex pattern for allowed origins (default: null)
 - `HAYHOOKS_CORS_EXPOSE_HEADERS`: Headers to expose in response (default: [])
 - `HAYHOOKS_CORS_MAX_AGE`: Maxium age for CORS preflight responses in seconds (default: 600)
+
+### Logging
+
+#### Using the logger
+
+Hayooks comes with a default logger based on [loguru](https://loguru.readthedocs.io/en/stable/).
+
+To use it, you can import the `log` object from the `hayhooks` package:
+
+```python
+from hayhooks import log
+```
+
+#### Changing the log level
+
+To change the log level, you can set the `LOG` environment variable [to one of the levels supported by loguru](https://loguru.readthedocs.io/en/stable/api/logger.html).
+
+For example, to use the `DEBUG` level, you can set:
+
+```shell
+LOG=DEBUG hayhooks run
+
+# or
+LOG=debug hayhooks run
+
+# or in an .env file
+LOG=debug
+```
 
 ### CLI commands
 
@@ -380,6 +416,22 @@ class PipelineWrapper(BasePipelineWrapper):
         ...
 ```
 
+## Hayhooks as an OpenAPI Tool Server in `open-webui`
+
+Since Hayhooks expose openapi-schema at `/openapi.json`, it can be used as an OpenAPI Tool Server.
+
+[open-webui](https://openwebui.com) has recently added support for [OpenAPI Tool Servers](https://docs.openwebui.com/openapi-servers), meaning that you can use the API endpoints of Hayhooks as tools in your chat interface.
+
+You simply need to configure the OpenAPI Tool Server in the `Settings -> Tools` section, adding the URL of the Hayhooks server and the path to the `openapi.json` file:
+
+![open-webui-settings](./docs/assets/open-webui-openapi-tools.png)
+
+### Example: Deploy a Haystack pipeline from `open-webui` chat interface
+
+Here's a video example of how to deploy a Haystack pipeline from the `open-webui` chat interface:
+
+![open-webui-deploy-pipeline-from-chat-example](./docs/assets/open-webui-deploy-pipeline-from-chat.gif)
+
 ## OpenAI compatibility
 
 ### OpenAI-compatible endpoints generation
@@ -582,6 +634,33 @@ async def custom_middleware(request: Request, call_next):
 if __name__ == "__main__":
     uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
 ```
+
+### Sharing code between pipeline wrappers
+
+Hayhooks allows you to use your custom code in your pipeline wrappers adding a specific path to the Hayhooks Python Path.
+
+You can do this in three ways:
+
+1. Set the `HAYHOOKS_ADDITIONAL_PYTHONPATH` environment variable to the path of the folder containing your custom code.
+2. Add `HAYHOOKS_ADDITIONAL_PYTHONPATH` to the `.env` file.
+3. Use the `--additional-python-path` flag when launching Hayhooks.
+
+For example, if you have a folder called `common` with a `my_custom_lib.py` module which contains the `my_function` function, you can deploy your pipelines by using the following command:
+
+```bash
+export HAYHOOKS_ADDITIONAL_PYTHONPATH='./common'
+hayhooks run
+```
+
+Then you can use the custom code in your pipeline wrappers by importing it like this:
+
+```python
+from my_custom_lib import my_function
+```
+
+Note that you can use both absolute and relative paths (relative to the current working directory).
+
+You can check out a complete example in the [examples/shared_code_between_wrappers](examples/shared_code_between_wrappers) folder.
 
 ### Deployment guidelines
 
