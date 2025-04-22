@@ -46,6 +46,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
 - [Advanced Usage](#advanced-usage)
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
+  - [Sharing code between pipeline wrappers](#sharing-code-between-pipeline-wrappers)
 - [Deployment Guidelines](#deployment-guidelines)
 - [Legacy Features](#legacy-features)
   - [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
@@ -633,6 +634,33 @@ async def custom_middleware(request: Request, call_next):
 if __name__ == "__main__":
     uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
 ```
+
+### Sharing code between pipeline wrappers
+
+Hayhooks allows you to use your custom code in your pipeline wrappers adding a specific path to the Hayhooks Python Path.
+
+You can do this in three ways:
+
+1. Set the `HAYHOOKS_ADDITIONAL_PYTHONPATH` environment variable to the path of the folder containing your custom code.
+2. Add `HAYHOOKS_ADDITIONAL_PYTHONPATH` to the `.env` file.
+3. Use the `--additional-python-path` flag when launching Hayhooks.
+
+For example, if you have a folder called `common` with a `my_custom_lib.py` module which contains the `my_function` function, you can deploy your pipelines by using the following command:
+
+```bash
+export HAYHOOKS_ADDITIONAL_PYTHONPATH='./common'
+hayhooks run
+```
+
+Then you can use the custom code in your pipeline wrappers by importing it like this:
+
+```python
+from my_custom_lib import my_function
+```
+
+Note that you can use both absolute and relative paths (relative to the current working directory).
+
+You can check out a complete example in the [examples/shared_code_between_wrappers](examples/shared_code_between_wrappers) folder.
 
 ### Deployment guidelines
 

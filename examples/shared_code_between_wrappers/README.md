@@ -20,7 +20,7 @@ pip install hayhooks
 ## 3. Create the common code
 
 In this example, we'll add the code from `common` folder to the Hayhooks [Python Path](https://docs.python.org/3/library/sys_path_init.html).
-You have two ways to do this:
+You have three ways to do this:
 
 ### Option 1: Set the environment variable `HAYHOOKS_ADDITIONAL_PYTHONPATH` to the path of the `common` folder
 
@@ -36,7 +36,19 @@ And then launch Hayhooks as usual:
 hayhooks run
 ```
 
-### Option 2: Launch Hayhooks with the `--additional-python-path` flag
+### Option 2: Add `HAYHOOKS_ADDITIONAL_PYTHONPATH` to the `.env` file
+
+```bash
+echo "HAYHOOKS_ADDITIONAL_PYTHONPATH='./common'" >> .env
+```
+
+And then Launch Hayhooks as usual:
+
+```bash
+hayhooks run
+```
+
+### Option 3: Launch Hayhooks with the `--additional-python-path` flag
 
 ```bash
 hayhooks run --additional-python-path ./common
