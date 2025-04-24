@@ -68,7 +68,7 @@ def streaming_generator(
         pipeline_run_args[streaming_component_name] = {}
 
     pipeline_run_args[streaming_component_name]["streaming_callback"] = streaming_callback
-    log.trace(f"Streaming pipeline run args: {pipeline_run_args}")
+    log.trace(f"Streaming pipeline run args: {pipeline_run_args} include_outputs_from: {include_outputs_from}")
 
     def run_pipeline():
         try:
