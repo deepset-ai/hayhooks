@@ -664,7 +664,12 @@ You can check out a complete example in the [examples/shared_code_between_wrappe
 
 ### Deployment guidelines
 
-📦 For detailed deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
+We have some dedicated documentation for deployment:
+
+- Docker-based deployments: <https://docs.haystack.deepset.ai/docs/docker>
+- Kubernetes-based deployments: <https://docs.haystack.deepset.ai/docs/kubernetes>
+
+We also have some additional deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
 
 ### Legacy Features
 
