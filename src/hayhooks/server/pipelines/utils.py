@@ -1,6 +1,6 @@
 import threading
 from queue import Queue
-from typing import Generator, List, Union, Dict, Tuple
+from typing import Generator, List, Union, Dict, Tuple, Optional, Set
 from haystack import Pipeline
 from haystack.core.component import Component
 from hayhooks.server.logger import log
@@ -49,7 +49,9 @@ def find_streaming_component(pipeline: Pipeline) -> Tuple[Component, str]:
     return streaming_component, streaming_component_name
 
 
-def streaming_generator(pipeline: Pipeline, pipeline_run_args: Dict) -> Generator:
+def streaming_generator(
+    pipeline: Pipeline, pipeline_run_args: Dict, include_outputs_from: Optional[Set[str]] = None
+) -> Generator:
     """
     Creates a generator that yields streaming chunks from a pipeline execution.
     Automatically finds the streaming-capable component in the pipeline.
@@ -70,7 +72,7 @@ def streaming_generator(pipeline: Pipeline, pipeline_run_args: Dict) -> Generato
 
     def run_pipeline():
         try:
-            pipeline.run(pipeline_run_args)
+            pipeline.run(pipeline_run_args, include_outputs_from)
         finally:
             queue.put(None)
 
