@@ -1,5 +1,7 @@
 import pytest
 import shutil
+import docstring_parser
+import inspect
 from fastapi.routing import APIRoute
 from hayhooks.server.pipelines import registry
 from haystack import Pipeline
@@ -115,7 +117,8 @@ def test_create_request_model_from_callable():
         """
         pass
 
-    model = create_request_model_from_callable(sample_func, "Test")
+    docstring = docstring_parser.parse(inspect.getdoc(sample_func) or "")
+    model = create_request_model_from_callable(sample_func, "Test", docstring)
     schema = model.model_json_schema()
 
     assert model.__name__ == "TestRequest"
@@ -139,7 +142,8 @@ def test_create_request_model_no_docstring():
     def sample_func_no_doc(name: str, age: int = 30):
         pass
 
-    model = create_request_model_from_callable(sample_func_no_doc, "NoDoc")
+    docstring = docstring_parser.parse(inspect.getdoc(sample_func_no_doc) or "")
+    model = create_request_model_from_callable(sample_func_no_doc, "NoDoc", docstring)
     schema = model.model_json_schema()
 
     assert model.__name__ == "NoDocRequest"
@@ -161,7 +165,8 @@ def test_create_response_model_from_callable():
         """
         return {"result": "test"}
 
-    model = create_response_model_from_callable(sample_func, "Test")
+    docstring = docstring_parser.parse(inspect.getdoc(sample_func) or "")
+    model = create_response_model_from_callable(sample_func, "Test", docstring)
     schema = model.model_json_schema()
 
     assert model.__name__ == "TestResponse"
@@ -175,7 +180,8 @@ def test_create_response_model_no_docstring():
     def sample_func_no_doc() -> int:
         return 1
 
-    model = create_response_model_from_callable(sample_func_no_doc, "NoDoc")
+    docstring = docstring_parser.parse(inspect.getdoc(sample_func_no_doc) or "")
+    model = create_response_model_from_callable(sample_func_no_doc, "NoDoc", docstring)
     schema = model.model_json_schema()
 
     assert model.__name__ == "NoDocResponse"
