@@ -4,15 +4,16 @@ import shutil
 import tempfile
 import traceback
 import sys
+import docstring_parser
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Union
+from typing import Callable, Union, Any, Dict
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import create_model
+from pydantic import create_model, Field
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
@@ -190,10 +191,16 @@ def create_request_model_from_callable(func: Callable, model_name: str):
     """
 
     params = inspect.signature(func).parameters
-    fields = {
-        name: (param.annotation, ... if param.default == param.empty else param.default)
-        for name, param in params.items()
-    }
+    docstring = docstring_parser.parse(inspect.getdoc(func) or "")
+    param_docs = {p.arg_name: p.description for p in docstring.params}
+
+    fields: Dict[str, Any] = {}
+    for name, param in params.items():
+        default_value = ... if param.default == param.empty else param.default
+        description = param_docs.get(name)
+        field_info = Field(default=default_value, description=description)
+        fields[name] = (param.annotation, field_info)
+
     return create_model(f'{model_name}Request', **fields)
 
 
@@ -209,7 +216,10 @@ def create_response_model_from_callable(func: Callable, model_name: str):
     """
 
     return_type = inspect.signature(func).return_annotation
-    return create_model(f'{model_name}Response', result=(return_type, ...))
+    docstring = docstring_parser.parse(inspect.getdoc(func) or "")
+    return_description = docstring.returns.description if docstring.returns else None
+
+    return create_model(f'{model_name}Response', result=(return_type, Field(..., description=return_description)))
 
 
 def handle_pipeline_exceptions():

@@ -1,7 +1,7 @@
-from fastapi.routing import APIRoute
-from hayhooks.server.pipelines import registry
 import pytest
 import shutil
+from fastapi.routing import APIRoute
+from hayhooks.server.pipelines import registry
 from haystack import Pipeline
 from pathlib import Path
 from typing import Callable
@@ -106,28 +106,82 @@ def test_save_pipeline_files_raises_error(tmp_path):
 
 def test_create_request_model_from_callable():
     def sample_func(name: str, age: int = 25, optional: str = ""):
+        """Sample function with docstring.
+
+        Args:
+            name: The name of the person.
+            age: The age of the person.
+            optional: An optional string.
+        """
         pass
 
     model = create_request_model_from_callable(sample_func, "Test")
+    schema = model.model_json_schema()
 
     assert model.__name__ == "TestRequest"
-    assert model.model_fields["name"].annotation == str
-    assert model.model_fields["name"].is_required
-    assert model.model_fields["age"].annotation == int
-    assert model.model_fields["age"].default == 25
-    assert model.model_fields["optional"].annotation == str
-    assert model.model_fields["optional"].default == ""
+    assert schema["properties"]["name"]["type"] == "string"
+    assert "default" not in schema["properties"]["name"]
+    assert schema["properties"]["name"]["description"] == "The name of the person."
+    assert "name" in schema["required"]
+
+    assert schema["properties"]["age"]["type"] == "integer"
+    assert schema["properties"]["age"]["default"] == 25
+    assert schema["properties"]["age"]["description"] == "The age of the person."
+    assert "age" not in schema.get("required", [])
+
+    assert schema["properties"]["optional"]["type"] == "string"
+    assert schema["properties"]["optional"]["default"] == ""
+    assert schema["properties"]["optional"]["description"] == "An optional string."
+    assert "optional" not in schema.get("required", [])
+
+
+def test_create_request_model_no_docstring():
+    def sample_func_no_doc(name: str, age: int = 30):
+        pass
+
+    model = create_request_model_from_callable(sample_func_no_doc, "NoDoc")
+    schema = model.model_json_schema()
+
+    assert model.__name__ == "NoDocRequest"
+    assert schema["properties"]["name"]["type"] == "string"
+    assert schema["properties"]["name"].get("description") is None
+    assert "name" in schema["required"]
+    assert schema["properties"]["age"]["type"] == "integer"
+    assert schema["properties"]["age"]["default"] == 30
+    assert schema["properties"]["age"].get("description") is None
+    assert "age" not in schema.get("required", [])
 
 
 def test_create_response_model_from_callable():
     def sample_func() -> dict:
+        """Sample function with return description.
+
+        Returns:
+            A dictionary result.
+        """
         return {"result": "test"}
 
     model = create_response_model_from_callable(sample_func, "Test")
+    schema = model.model_json_schema()
 
     assert model.__name__ == "TestResponse"
-    assert model.model_fields["result"].annotation == dict
-    assert model.model_fields["result"].is_required
+    assert schema["properties"]["result"]["type"] == "object"
+    assert "default" not in schema["properties"]["result"]
+    assert schema["properties"]["result"]["description"] == "A dictionary result."
+    assert "result" in schema["required"]
+
+
+def test_create_response_model_no_docstring():
+    def sample_func_no_doc() -> int:
+        return 1
+
+    model = create_response_model_from_callable(sample_func_no_doc, "NoDoc")
+    schema = model.model_json_schema()
+
+    assert model.__name__ == "NoDocResponse"
+    assert schema["properties"]["result"]["type"] == "integer"
+    assert schema["properties"]["result"].get("description") is None
+    assert "result" in schema["required"]
 
 
 def test_create_pipeline_wrapper_instance_success():
@@ -220,11 +274,13 @@ def test_deploy_pipeline_files_skip_mcp(mocker):
     mock_app = mocker.Mock()
     mock_app.routes = []
 
-    # This pipeline wrapper has skip_mcp class attribute set to True
+    # This pipeline wrapper has skip_mcp class attribute set to True
     test_file_path = Path("tests/test_files/files/chat_with_website_mcp_skip/pipeline_wrapper.py")
     files = {"pipeline_wrapper.py": test_file_path.read_text()}
 
-    result = deploy_pipeline_files(app=mock_app, pipeline_name="chat_with_website_mcp_skip", files=files, save_files=False)
+    result = deploy_pipeline_files(
+        app=mock_app, pipeline_name="chat_with_website_mcp_skip", files=files, save_files=False
+    )
     assert result == {"name": "chat_with_website_mcp_skip"}
 
     assert registry.get_metadata("chat_with_website_mcp_skip").get("skip_mcp") is True
