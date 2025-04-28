@@ -34,6 +34,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Run a pipeline from the CLI uploading files](#run-a-pipeline-from-the-cli-uploading-files)
 - [MCP support](#mcp-support)
   - [MCP Server](#mcp-server)
+  - [Using Hayhooks MCP Server with Claude Desktop](#using-hayhooks-mcp-server-with-claude-desktop)
   - [Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool](#create-a-pipelinewrapper-for-exposing-a-haystack-pipeline-as-a-mcp-tool)
   - [Skip MCP Tool listing](#skip-mcp-tool-listing)
 - [Hayhooks as an OpenAPI Tool Server in `open-webui`](#hayhooks-as-an-openapi-tool-server-in-open-webui)
@@ -359,6 +360,26 @@ hayhooks mcp run
 ```
 
 This will start the Hayhooks MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT`.
+
+### Using Hayhooks MCP Server with Claude Desktop
+Claude Desktop doesn’t yet support SSE transport for MCP servers, so you’ll need to use [supergateway](https://github.com/supercorp-ai/supergateway).
+After starting the Hayhooks MCP server, open **Settngs → Developer** in Claude Desktop and update the config file like this:
+```json
+{
+  "mcpServers": {
+    "hayhooks": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "supergateway",
+        "--sse",
+        "http://HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT/sse"
+      ]
+    }
+  }
+}
+```
+Make sure [Node.js](https://nodejs.org/) is installed, as the `npx` command depends on it.
 
 ### Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool
 
