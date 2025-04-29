@@ -148,12 +148,39 @@ def test_create_request_model_no_docstring():
 
     assert model.__name__ == "NoDocRequest"
     assert schema["properties"]["name"]["type"] == "string"
-    assert schema["properties"]["name"].get("description") is None
+    assert schema["properties"]["name"]["description"] == "Parameter 'name'"
     assert "name" in schema["required"]
+
     assert schema["properties"]["age"]["type"] == "integer"
     assert schema["properties"]["age"]["default"] == 30
-    assert schema["properties"]["age"].get("description") is None
+    assert schema["properties"]["age"]["description"] == "Parameter 'age'"
     assert "age" not in schema.get("required", [])
+
+
+def test_create_request_model_partial_docstring():
+    def sample_func_partial_doc(documented_param: str, undocumented_param: int = 42):
+        """Sample function with partial docstring.
+
+        Args:
+            documented_param: This parameter is documented.
+        """
+        pass
+
+    docstring = docstring_parser.parse(inspect.getdoc(sample_func_partial_doc) or "")
+    model = create_request_model_from_callable(sample_func_partial_doc, "PartialDoc", docstring)
+    schema = model.model_json_schema()
+
+    assert model.__name__ == "PartialDocRequest"
+
+    assert schema["properties"]["documented_param"]["type"] == "string"
+    assert "default" not in schema["properties"]["documented_param"]
+    assert schema["properties"]["documented_param"]["description"] == "This parameter is documented."
+    assert "documented_param" in schema["required"]
+
+    assert schema["properties"]["undocumented_param"]["type"] == "integer"
+    assert schema["properties"]["undocumented_param"]["default"] == 42
+    assert schema["properties"]["undocumented_param"]["description"] == "Parameter 'undocumented_param'"
+    assert "undocumented_param" not in schema.get("required", [])
 
 
 def test_create_response_model_from_callable():

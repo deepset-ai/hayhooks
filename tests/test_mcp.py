@@ -57,8 +57,8 @@ async def test_list_pipelines_as_tools(deploy_chat_with_website_mcp):
     assert tools[0].description == "Ask a question about one or more websites using a Haystack pipeline."
     assert tools[0].inputSchema == {
         'properties': {
-            'urls': {'items': {'type': 'string'}, 'title': 'Urls', 'type': 'array'},
-            'question': {'title': 'Question', 'type': 'string'},
+            'urls': {'items': {'type': 'string'}, 'title': 'Urls', 'type': 'array', 'description': "Parameter 'urls'"},
+            'question': {'title': 'Question', 'type': 'string', 'description': "Parameter 'question'"},
         },
         'required': ['urls', 'question'],
         'title': 'chat_with_websiteRunRequest',

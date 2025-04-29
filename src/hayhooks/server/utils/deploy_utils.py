@@ -197,7 +197,7 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
     fields: Dict[str, Any] = {}
     for name, param in params.items():
         default_value = ... if param.default == param.empty else param.default
-        description = param_docs.get(name)
+        description = param_docs.get(name) or f"Parameter '{name}'"
         field_info = Field(default=default_value, description=description)
         fields[name] = (param.annotation, field_info)
 
