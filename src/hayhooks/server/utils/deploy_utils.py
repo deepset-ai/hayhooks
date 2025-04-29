@@ -4,15 +4,17 @@ import shutil
 import tempfile
 import traceback
 import sys
+import docstring_parser
+from docstring_parser.common import Docstring
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Union
+from typing import Callable, Union, Any, Dict
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import create_model
+from pydantic import create_model, Field
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
@@ -178,7 +180,7 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         raise PipelineModuleLoadError(error_msg) from e
 
 
-def create_request_model_from_callable(func: Callable, model_name: str):
+def create_request_model_from_callable(func: Callable, model_name: str, docstring: Docstring):
     """Create a dynamic Pydantic model based on callable's signature.
 
     Args:
@@ -190,14 +192,19 @@ def create_request_model_from_callable(func: Callable, model_name: str):
     """
 
     params = inspect.signature(func).parameters
-    fields = {
-        name: (param.annotation, ... if param.default == param.empty else param.default)
-        for name, param in params.items()
-    }
+    param_docs = {p.arg_name: p.description for p in docstring.params}
+
+    fields: Dict[str, Any] = {}
+    for name, param in params.items():
+        default_value = ... if param.default == param.empty else param.default
+        description = param_docs.get(name) or f"Parameter '{name}'"
+        field_info = Field(default=default_value, description=description)
+        fields[name] = (param.annotation, field_info)
+
     return create_model(f'{model_name}Request', **fields)
 
 
-def create_response_model_from_callable(func: Callable, model_name: str):
+def create_response_model_from_callable(func: Callable, model_name: str, docstring: Docstring):
     """Create a dynamic Pydantic model based on callable's return type.
 
     Args:
@@ -209,7 +216,9 @@ def create_response_model_from_callable(func: Callable, model_name: str):
     """
 
     return_type = inspect.signature(func).return_annotation
-    return create_model(f'{model_name}Response', result=(return_type, ...))
+    return_description = docstring.returns.description if docstring.returns else None
+
+    return create_model(f'{model_name}Response', result=(return_type, Field(..., description=return_description)))
 
 
 def handle_pipeline_exceptions():
@@ -270,8 +279,9 @@ def create_run_endpoint_handler(
 def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
     clog = log.bind(pipeline_name=pipeline_name)
 
-    RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
-    RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run')
+    docstring = docstring_parser.parse(inspect.getdoc(pipeline_wrapper.run_api) or "")
+    RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run', docstring)
+    RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run', docstring)
 
     run_api_params = inspect.signature(pipeline_wrapper.run_api).parameters
     requires_files = "files" in run_api_params
@@ -289,8 +299,6 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
         if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run":
             app.routes.remove(route)
 
-    docstring = inspect.getdoc(pipeline_wrapper.run_api)
-
     app.add_api_route(
         path=f"/{pipeline_name}/run",
         endpoint=run_endpoint,
@@ -298,7 +306,7 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
         name=f"{pipeline_name}_run",
         response_model=RunResponse,
         tags=["pipelines"],
-        description=docstring or None,
+        description=docstring.short_description or None,
     )
 
     registry.update_metadata(
@@ -383,9 +391,10 @@ def add_pipeline_to_registry(
     clog.debug("Running setup()")
     pipeline_wrapper.setup()
 
+    docstring = docstring_parser.parse(inspect.getdoc(pipeline_wrapper.run_api) or "")
     metadata = {
-        "description": inspect.getdoc(pipeline_wrapper.run_api) or "",
-        "request_model": create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run'),
+        "description": docstring.short_description or "",
+        "request_model": create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run', docstring),
         "skip_mcp": pipeline_wrapper.skip_mcp,
     }
 

@@ -392,7 +392,9 @@ A [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools) requires the f
 For each deployed pipeline, Hayhooks will:
 
 - Use the pipeline wrapper `name` as MCP Tool `name` (always present).
-- Use the pipeline wrapper **`run_api` method docstring** as MCP Tool `description` (if present).
+- Parse **`run_api` method docstring**:
+  - If you use Google-style or reStructuredText-style docstrings, use the first line as MCP Tool `description` and the rest as `parameters` (if present).
+  - Each parameter description will be used as the `description` of the corresponding Pydantic model field (if present).
 - Generate a Pydantic model from the `inputSchema` using the **`run_api` method arguments as fields**.
 
 Here's an example of a PipelineWrapper implementation for the `chat_with_website` pipeline which can be used as a MCP Tool:
