@@ -28,6 +28,7 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
         endpoint=endpoint,
         method="POST",
         json=payload,
+        use_https=ctx.obj["use_https"],
         disable_ssl=ctx.obj["disable_ssl"],
     )
 
@@ -96,6 +97,7 @@ def undeploy(
         port=ctx.obj["port"],
         endpoint=f"undeploy/{name}",
         method="POST",
+        use_https=ctx.obj["use_https"],
         disable_ssl=ctx.obj["disable_ssl"],
     )
 
@@ -188,7 +190,7 @@ def run_pipeline_with_files(
     ctx: typer.Context, pipeline_name: str, files: Dict[str, Path], params: Dict[str, Any]
 ) -> None:
     """Run a pipeline with files and parameters."""
-    server_url = get_server_url(ctx.obj["host"], ctx.obj["port"], ctx.obj["disable_ssl"])
+    server_url = get_server_url(host=ctx.obj["host"], port=ctx.obj["port"], https=ctx.obj["use_https"])
     endpoint = f"{server_url}/{pipeline_name}/run"
 
     # For files or no files, handle differently
@@ -217,6 +219,7 @@ def run_pipeline_with_files(
             method="POST",
             json=params,
             disable_ssl=ctx.obj["disable_ssl"],
+            use_https=ctx.obj["use_https"],
         )
         result = response
 

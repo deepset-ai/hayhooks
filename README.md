@@ -97,6 +97,7 @@ The following environment variables are supported:
 - `HAYHOOKS_ROOT_PATH`: The root path of the server.
 - `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path.
 - `HAYHOOKS_DISABLE_SSL`: Boolean flag to disable SSL verification when making requests from the CLI.
+- `HAYHOOKS_USE_HTTPS`: Boolean flag to use HTTPS when using CLI commands to interact with the server (e.g. `hayhooks status` will call `https://HAYHOOKS_HOST:HAYHOOKS_PORT/status`).
 - `HAYHOOKS_SHOW_TRACEBACKS`: Boolean flag to show tracebacks on errors during pipeline execution and deployment.
 - `LOG`: The log level to use (default: `INFO`).
 
@@ -362,8 +363,10 @@ hayhooks mcp run
 This will start the Hayhooks MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT`.
 
 ### Using Hayhooks MCP Server with Claude Desktop
+
 Claude Desktop doesn’t yet support SSE transport for MCP servers, so you’ll need to use [supergateway](https://github.com/supercorp-ai/supergateway).
 After starting the Hayhooks MCP server, open **Settngs → Developer** in Claude Desktop and update the config file like this:
+
 ```json
 {
   "mcpServers": {
@@ -379,6 +382,7 @@ After starting the Hayhooks MCP server, open **Settngs → Developer** in Claude
   }
 }
 ```
+
 Make sure [Node.js](https://nodejs.org/) is installed, as the `npx` command depends on it.
 
 ### Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool

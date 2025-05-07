@@ -64,11 +64,17 @@ def run(
 def status(ctx: typer.Context):
     """Get the status of the Hayhooks server."""
     response = make_request(
-        host=ctx.obj["host"], port=ctx.obj["port"], endpoint="status", disable_ssl=ctx.obj["disable_ssl"]
+        host=ctx.obj["host"],
+        port=ctx.obj["port"],
+        endpoint="status",
+        use_https=ctx.obj["use_https"],
+        disable_ssl=ctx.obj["disable_ssl"],
     )
 
+    server_url = get_server_url(host=ctx.obj["host"], port=ctx.obj["port"], https=ctx.obj["use_https"])
+
     show_success_panel(
-        f"[bold]Hayhooks server is up and running at: {get_server_url(ctx.obj['host'], ctx.obj['port'])}[/bold]",
+        f"[bold]Hayhooks server is up and running at: {server_url}[/bold]",
         title="",
     )
 
@@ -91,7 +97,8 @@ def status(ctx: typer.Context):
 @hayhooks_cli.callback()
 def callback(ctx: typer.Context):
     ctx.obj = {
-        "disable_ssl": settings.disable_ssl,
         "host": settings.host,
         "port": settings.port,
+        "disable_ssl": settings.disable_ssl,
+        "use_https": settings.use_https,
     }

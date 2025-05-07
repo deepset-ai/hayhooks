@@ -34,6 +34,7 @@ def make_request(
     endpoint: str,
     method: str = "GET",
     json: Optional[Dict[str, Any]] = None,
+    use_https: bool = False,
     disable_ssl: bool = False,
 ) -> Dict[str, Any]:
     """Make HTTP request to Hayhooks server with error handling.
@@ -44,9 +45,10 @@ def make_request(
         endpoint: API endpoint path
         method: HTTP method (GET, POST, etc)
         json: Optional JSON payload
-        disable_ssl: Whether to disable SSL verification
+        use_https: Whether to use HTTPS for the connection.
+        disable_ssl: Whether to disable SSL certificate verification.
     """
-    server_url = get_server_url(host, port, disable_ssl)
+    server_url = get_server_url(host=host, port=port, https=use_https)
     url = urljoin(server_url, endpoint)
 
     try:
