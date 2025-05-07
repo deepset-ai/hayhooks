@@ -190,7 +190,7 @@ def run_pipeline_with_files(
     ctx: typer.Context, pipeline_name: str, files: Dict[str, Path], params: Dict[str, Any]
 ) -> None:
     """Run a pipeline with files and parameters."""
-    server_url = get_server_url(ctx.obj["host"], ctx.obj["port"], ctx.obj["disable_ssl"])
+    server_url = get_server_url(host=ctx.obj["host"], port=ctx.obj["port"], https=ctx.obj["use_https"])
     endpoint = f"{server_url}/{pipeline_name}/run"
 
     # For files or no files, handle differently

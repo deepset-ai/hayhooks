@@ -28,15 +28,15 @@ def configure_mock_response(
 
 
 def test_get_server_url():
-    assert get_server_url("localhost", 8000) == "http://localhost:8000"
-    assert get_server_url("localhost", 8000, https=False) == "http://localhost:8000"
-    assert get_server_url("localhost", 8000, https=True) == "https://localhost:8000"
+    assert get_server_url(host="localhost", port=8000) == "http://localhost:8000"
+    assert get_server_url(host="localhost", port=8000, https=False) == "http://localhost:8000"
+    assert get_server_url(host="localhost", port=8000, https=True) == "https://localhost:8000"
 
 
 def test_make_request_http_get_success(mock_requests):
     configure_mock_response(mock_requests, json_return_value={"status": "ok"})
 
-    response = make_request("localhost", 8000, "/test_endpoint")
+    response = make_request(host="localhost", port=8000, endpoint="/test_endpoint")
 
     mock_requests.assert_called_once_with(
         method="GET",
@@ -50,7 +50,7 @@ def test_make_request_http_get_success(mock_requests):
 def test_make_request_https_success(mock_requests):
     configure_mock_response(mock_requests, json_return_value={"status": "ok_https"})
 
-    response = make_request("localhost", 8000, "/secure_endpoint", use_https=True)
+    response = make_request(host="localhost", port=8000, endpoint="/secure_endpoint", use_https=True)
 
     mock_requests.assert_called_once_with(
         method="GET",
@@ -64,7 +64,9 @@ def test_make_request_https_success(mock_requests):
 def test_make_request_https_disable_ssl_verification(mock_requests):
     configure_mock_response(mock_requests, json_return_value={"status": "ok_https_noverify"})
 
-    response = make_request("localhost", 8000, "/secure_endpoint_noverify", use_https=True, disable_ssl=True)
+    response = make_request(
+        host="localhost", port=8000, endpoint="/secure_endpoint_noverify", use_https=True, disable_ssl=True
+    )
 
     mock_requests.assert_called_once_with(
         method="GET",
@@ -79,7 +81,7 @@ def test_make_request_connection_error(mock_requests, capsys):
     mock_requests.side_effect = ConnectionError("Test connection error")
 
     with pytest.raises(Exception):
-        make_request("localhost", 8000, "/test_endpoint")
+        make_request(host="localhost", port=8000, endpoint="/test_endpoint")
 
     mock_requests.assert_called_once_with(
         method="GET", url="http://localhost:8000/test_endpoint", json=None, verify=True
@@ -97,7 +99,7 @@ def test_make_request_http_error_with_detail(mock_requests, capsys):
     http_error.response = mock_response
 
     with pytest.raises(Exception):
-        make_request("localhost", 8000, "/notfound")
+        make_request(host="localhost", port=8000, endpoint="/notfound")
 
     mock_requests.assert_called_once_with(method="GET", url="http://localhost:8000/notfound", json=None, verify=True)
     captured = capsys.readouterr()
@@ -111,7 +113,7 @@ def test_make_request_http_error_no_detail(mock_requests, capsys):
     http_error.response = mock_response
 
     with pytest.raises(Exception):
-        make_request("localhost", 8000, "/servererror")
+        make_request(host="localhost", port=8000, endpoint="/servererror")
 
     mock_requests.assert_called_once_with(method="GET", url="http://localhost:8000/servererror", json=None, verify=True)
     captured = capsys.readouterr()
@@ -123,7 +125,7 @@ def test_make_request_unexpected_error(mock_requests, capsys):
     mock_requests.side_effect = Exception("Something totally unexpected")
 
     with pytest.raises(Exception):
-        make_request("localhost", 8000, "/test_endpoint")
+        make_request(host="localhost", port=8000, endpoint="/test_endpoint")
 
     mock_requests.assert_called_once_with(
         method="GET", url="http://localhost:8000/test_endpoint", json=None, verify=True
