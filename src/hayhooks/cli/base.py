@@ -72,7 +72,7 @@ def status(ctx: typer.Context):
     )
 
     show_success_panel(
-        f"[bold]Hayhooks server is up and running at: {get_server_url(ctx.obj['host'], ctx.obj['port'], https=ctx.obj['use_https'])}",
+        f"[bold]Hayhooks server is up and running at: {get_server_url(ctx.obj['host'], ctx.obj['port'], https=ctx.obj['use_https'])}[/bold]",
         title="",
     )
 
