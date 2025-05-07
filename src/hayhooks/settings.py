@@ -28,6 +28,11 @@ class AppSettings(BaseSettings):
     # Port for the FastAPI app
     port: int = 1416
 
+    # Whether to use HTTPS when running CLI commands
+    # Example: `hayhooks status`
+    # NOTE: This is NOT used to specify the protocol for the uvicorn server
+    use_https: bool = False
+
     # Host for the MCP app
     mcp_host: str = "localhost"
 
