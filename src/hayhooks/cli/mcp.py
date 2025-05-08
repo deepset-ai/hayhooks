@@ -87,7 +87,8 @@ def run(
 
             elif name == CoreTools.GET_ALL_PIPELINE_STATUSES:
                 pipelines = registry.get_names()
-                return [TextContent(type="text", text=f"Available pipelines:\\n{'\n'.join(pipelines)}")]
+                pipelines_str = "\n".join(pipelines)
+                return [TextContent(type="text", text=f"Available pipelines:\n{pipelines_str}")]
 
             elif name == CoreTools.GET_PIPELINE_STATUS:
                 pipeline_name = arguments["pipeline_name"]
