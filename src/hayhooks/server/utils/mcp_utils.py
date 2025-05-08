@@ -1,4 +1,5 @@
 import asyncio
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Union
 from hayhooks import log
@@ -8,6 +9,25 @@ from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry, read_pi
 from hayhooks.settings import settings
 from hayhooks.server.pipelines import registry
 from haystack.lazy_imports import LazyImport
+from hayhooks.server.routers.deploy import PipelineFilesRequest
+
+
+PIPELINE_NAME_SCHEMA = {
+    "type": "object",
+    "properties": {"pipeline_name": {"type": "string", "description": "Name of the pipeline"}},
+    "required": ["pipeline_name"],
+}
+
+
+class CoreTools(str, Enum):
+    GET_ALL_PIPELINE_STATUSES = "get_all_pipeline_statuses"
+    GET_PIPELINE_STATUS = "get_pipeline_status"
+    UNDEPLOY_PIPELINE = "undeploy_pipeline"
+    DEPLOY_PIPELINE = "deploy_pipeline"
+
+    @classmethod
+    def has_value(cls, value):
+        return value in cls._value2member_map_
 
 
 if TYPE_CHECKING:
@@ -35,6 +55,38 @@ def deploy_pipelines() -> None:
         except Exception as e:
             log.warning(f"Skipping pipeline directory {pipeline_dir}: {str(e)}")
             continue
+
+
+async def list_core_tools() -> List["Tool"]:
+    """List available Hayhooks core tools"""
+    mcp_import.check()
+
+    tools = [
+        Tool(
+            name=CoreTools.GET_ALL_PIPELINE_STATUSES,
+            description="Get the status of all pipelines and list available pipeline names.",
+            inputSchema={
+                "type": "object",
+            },
+        ),
+        Tool(
+            name=CoreTools.GET_PIPELINE_STATUS,
+            description="Get status of a specific pipeline.",
+            inputSchema=PIPELINE_NAME_SCHEMA,
+        ),
+        Tool(
+            name=CoreTools.UNDEPLOY_PIPELINE,
+            description="Undeploy a pipeline. Removes a pipeline from the registry, its API routes, and deletes its files.",
+            inputSchema=PIPELINE_NAME_SCHEMA,
+        ),
+        Tool(
+            name=CoreTools.DEPLOY_PIPELINE,
+            description="Deploy a pipeline from files (pipeline_wrapper.py and other files).",
+            inputSchema=PipelineFilesRequest.model_json_schema(),
+        ),
+    ]
+
+    return tools
 
 
 async def list_pipelines_as_tools() -> List["Tool"]:
