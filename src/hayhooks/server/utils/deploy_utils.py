@@ -9,7 +9,7 @@ from docstring_parser.common import Docstring
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Union, Any, Dict
+from typing import Callable, Union, Any, Dict, Optional
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
@@ -324,19 +324,27 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
 
 
 def deploy_pipeline_files(
-    app: FastAPI, pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
+    pipeline_name: str,
+    files: dict[str, str],
+    app: Optional[FastAPI] = None,
+    save_files: bool = True,
+    overwrite: bool = False,
 ) -> dict[str, str]:
     """Deploy a pipeline.
 
-    This will add the pipeline to the registry and set up the API route.
+    This will add the pipeline to the registry and optionally set up the API route if `app` is provided.
 
     Args:
-        app: FastAPI application instance
         pipeline_name: Name of the pipeline to deploy
         files: Dictionary mapping filenames to their contents
+        app: Optional FastAPI application instance. If provided, the API route will be added.
+        save_files: Whether to save the pipeline files to disk
+        overwrite: Whether to overwrite an existing pipeline
     """
     pipeline_wrapper = add_pipeline_to_registry(pipeline_name, files, save_files, overwrite)
-    add_pipeline_api_route(app, pipeline_name, pipeline_wrapper)
+
+    if app:
+        add_pipeline_api_route(app, pipeline_name, pipeline_wrapper)
 
     return {"name": pipeline_name}
 

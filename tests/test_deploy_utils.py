@@ -303,6 +303,26 @@ def test_deploy_pipeline_files_without_saving(test_settings, mocker):
     assert mock_app.setup.called
 
 
+def test_deploy_pipeline_files_without_adding_api_route(test_settings, mocker):
+    mock_app = mocker.Mock()
+
+    # We're saving the pipeline wrapper file in the test_files directory
+    test_file_path = Path("tests/test_files/files/no_chat/pipeline_wrapper.py")
+    files = {"pipeline_wrapper.py": test_file_path.read_text()}
+
+    # Run deploy_pipeline_files without adding the API route
+    result = deploy_pipeline_files(pipeline_name="test_pipeline_no_route", files=files, app=None, save_files=False)
+    assert result == {"name": "test_pipeline_no_route"}
+
+    # Verify the pipeline was deployed successfully
+    assert result == {"name": "test_pipeline_no_route"}
+    assert registry.get("test_pipeline_no_route") is not None
+
+    # Verify FastAPI routes were NOT set up
+    assert not mock_app.add_api_route.called
+    assert not mock_app.setup.called
+
+
 def test_deploy_pipeline_files_skip_mcp(mocker):
     mock_app = mocker.Mock()
     mock_app.routes = []
