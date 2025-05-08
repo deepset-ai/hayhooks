@@ -481,3 +481,41 @@ def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
             continue
 
     return files
+
+
+def undeploy_pipeline(pipeline_name: str, app: Optional[FastAPI] = None) -> None:
+    """Undeploy a pipeline.
+
+    Removes a pipeline from the registry, removes its API routes and deletes its files from disk.
+
+    Args:
+        pipeline_name: Name of the pipeline to undeploy.
+        app: Optional FastAPI application instance. If provided, API routes will be removed.
+    """
+    # Check if pipeline exists in registry
+    if pipeline_name not in registry.get_names():
+        raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
+
+    # Remove pipeline from registry
+    registry.remove(pipeline_name)
+
+    if app:
+        # Remove API routes for the pipeline
+        # YAML based pipelines have a run endpoint at /<pipeline_name>
+        # Wrapper based pipelines have a run endpoint at /<pipeline_name>/run
+        routes_to_remove = []
+        for route in app.routes:
+            if isinstance(route, APIRoute) and (
+                route.path == f"/{pipeline_name}/run" or route.path == f"/{pipeline_name}"
+            ):
+                routes_to_remove.append(route)
+
+        for route in routes_to_remove:
+            app.routes.remove(route)
+
+        # Invalidate OpenAPI cache
+        app.openapi_schema = None
+        app.setup()
+
+    # Remove pipeline files if they exist
+    remove_pipeline_files(pipeline_name, settings.pipelines_dir)

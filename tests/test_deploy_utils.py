@@ -14,6 +14,8 @@ from hayhooks.server.utils.deploy_utils import (
     create_response_model_from_callable,
     create_pipeline_wrapper_instance,
     deploy_pipeline_files,
+    undeploy_pipeline,
+    remove_pipeline_files,
 )
 from hayhooks.server.exceptions import (
     PipelineFilesError,
@@ -311,6 +313,7 @@ def test_deploy_pipeline_files_without_adding_api_route(test_settings, mocker):
     files = {"pipeline_wrapper.py": test_file_path.read_text()}
 
     # Run deploy_pipeline_files without adding the API route
+    # NOTE: we can also simply omit the `app` argument
     result = deploy_pipeline_files(pipeline_name="test_pipeline_no_route", files=files, app=None, save_files=False)
     assert result == {"name": "test_pipeline_no_route"}
 
@@ -337,3 +340,28 @@ def test_deploy_pipeline_files_skip_mcp(mocker):
     assert result == {"name": "chat_with_website_mcp_skip"}
 
     assert registry.get_metadata("chat_with_website_mcp_skip").get("skip_mcp") is True
+
+
+def test_undeploy_pipeline_without_app(test_settings, mocker):
+    pipeline_name = "test_undeploy_no_app"
+    test_file_path = Path("tests/test_files/files/no_chat/pipeline_wrapper.py")
+    files = {"pipeline_wrapper.py": test_file_path.read_text()}
+
+    # 1. Deploy a dummy pipeline without passing an Hayhooks app instance
+    deploy_pipeline_files(pipeline_name=pipeline_name, files=files)
+
+    # Assert initial state: pipeline in registry and files exist
+    assert registry.get(pipeline_name) is not None
+
+    pipeline_dir = Path(test_settings.pipelines_dir) / pipeline_name
+    assert pipeline_dir.exists()
+    assert (pipeline_dir / "pipeline_wrapper.py").exists()
+
+    # 2. Call undeploy_pipeline without passing an Hayhooks app instance
+    undeploy_pipeline(pipeline_name=pipeline_name)
+
+    # 3. Assert pipeline is removed from registry
+    assert registry.get(pipeline_name) is None
+
+    # 4. Assert pipeline files are deleted
+    assert not pipeline_dir.exists()
