@@ -108,17 +108,21 @@ def run(
                     log.error(f"Error calling pipeline tool '{name}': {e_pipeline}")
                     return []
 
-        except KeyError as e_args:
-            log.error(f"Missing argument for tool '{name}': {e_args}")
-            return [TextContent(type="text", text=f"Error calling tool '{name}': Missing argument {e_args}.")]
+        except KeyError as exc_args:
+            log.error(f"Missing argument for tool '{name}': {exc_args}")
+            return [TextContent(type="text", text=f"Error calling tool '{name}': Missing argument {exc_args}.")]
 
-        except Exception as e_general:
-            log.error(f"General unhandled error in call_tool for tool '{name}': {e_general}")
+        except Exception as exc:
+            log.error(f"General unhandled error in call_tool for tool '{name}': {exc}")
             return [
                 TextContent(
-                    type="text", text=f"An unexpected error occurred while processing tool '{name}': {e_general}."
+                    type="text", text=f"An unexpected error occurred while processing tool '{name}': {exc}."
                 )
             ]
+        finally:
+            if name in [CoreTools.DEPLOY_PIPELINE, CoreTools.UNDEPLOY_PIPELINE]:
+                log.debug(f"Sending 'tools/list_changed' notification after deploy/undeploy")
+                await server.request_context.session.send_tool_list_changed()
 
     # Setup the SSE server
     sse = SseServerTransport("/messages/")
