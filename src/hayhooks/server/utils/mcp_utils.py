@@ -144,11 +144,11 @@ async def run_pipeline_as_tool(
     return [TextContent(text=result, type="text")]
 
 
-async def notify_client(server: Server) -> None:
+async def notify_client(server: "Server") -> None:
     await server.request_context.session.send_tool_list_changed()
 
 
-async def create_mcp_server(name: str = "hayhooks-mcp-server") -> Server:
+async def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
     server: Server = Server(name)
 
     @server.list_tools()

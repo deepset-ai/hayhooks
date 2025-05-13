@@ -6,7 +6,6 @@ from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
 from hayhooks.server.utils.mcp_utils import list_pipelines_as_tools, run_pipeline_as_tool
 from hayhooks.server.utils.mcp_utils import list_core_tools, CoreTools, PIPELINE_NAME_SCHEMA
 from hayhooks.server.routers.deploy import PipelineFilesRequest
-from hayhooks.server.utils.deploy_utils import deploy_pipeline_files
 
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -16,10 +15,6 @@ pytestmark = [
     pytest.mark.skipif(not MCP_AVAILABLE, reason="'mcp' package not installed"),
     pytest.mark.mcp,
 ]
-
-# Conditional import for mcp.types.Tool if needed, though skipif should guard tests
-if MCP_AVAILABLE:
-    from mcp.types import Tool  # Required for type assertions in new tests
 
 
 @pytest.fixture(autouse=True)

@@ -82,7 +82,7 @@ extra-dependencies = [
   "mcp ; python_version >= '3.10'",
 ]
 
-[[tool.hatch.envs.all.matrix]]
+[[tool.hatch.envs.test.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.lint]

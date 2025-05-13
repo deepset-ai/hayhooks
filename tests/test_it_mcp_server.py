@@ -5,9 +5,6 @@ from pathlib import Path
 from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, CoreTools
-from mcp.shared.memory import (
-    create_connected_server_and_client_session as client_session,
-)
 
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -23,6 +20,9 @@ pytestmark = [
 if MCP_AVAILABLE:
     from mcp.server import Server
     from mcp.types import TextContent
+    from mcp.shared.memory import (
+        create_connected_server_and_client_session as client_session,
+    )
 
 
 @pytest.fixture(autouse=True)
