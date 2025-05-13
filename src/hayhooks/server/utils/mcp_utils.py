@@ -5,11 +5,21 @@ from typing import TYPE_CHECKING, List, Union
 from hayhooks import log
 from hayhooks.server.app import init_pipeline_dir
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry, read_pipeline_files_from_dir
+from hayhooks.server.utils.deploy_utils import (
+    add_pipeline_to_registry,
+    deploy_pipeline_files,
+    read_pipeline_files_from_dir,
+    undeploy_pipeline,
+)
 from hayhooks.settings import settings
 from hayhooks.server.pipelines import registry
 from haystack.lazy_imports import LazyImport
 from hayhooks.server.routers.deploy import PipelineFilesRequest
+
+
+with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
+    from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
+    from mcp.server import Server
 
 
 PIPELINE_NAME_SCHEMA = {
@@ -24,10 +34,6 @@ class CoreTools(str, Enum):
     GET_PIPELINE_STATUS = "get_pipeline_status"
     UNDEPLOY_PIPELINE = "undeploy_pipeline"
     DEPLOY_PIPELINE = "deploy_pipeline"
-
-    @classmethod
-    def has_value(cls, value):
-        return value in cls._value2member_map_
 
 
 if TYPE_CHECKING:
@@ -136,3 +142,76 @@ async def run_pipeline_as_tool(
     log.trace(f"Pipeline '{name}' returned result: {result}")
 
     return [TextContent(text=result, type="text")]
+
+
+async def notify_client(server: Server) -> None:
+    await server.request_context.session.send_tool_list_changed()
+
+
+async def create_mcp_server(name: str = "hayhooks-mcp-server") -> Server:
+    server: Server = Server(name)
+
+    @server.list_tools()
+    async def list_tools() -> List[Tool]:
+        try:
+            core_tools = await list_core_tools()
+            log.debug(f"Listing {len(core_tools)} core tools")
+
+            pipelines_tools = await list_pipelines_as_tools()
+            log.debug(f"Listing {len(pipelines_tools)} pipelines as tools")
+
+            return core_tools + pipelines_tools
+        except Exception as e:
+            log.error(f"Error listing tools: {e}")
+            return []
+
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict) -> List[TextContent | ImageContent | EmbeddedResource]:
+        try:
+            if name == CoreTools.DEPLOY_PIPELINE:
+                result = await asyncio.to_thread(
+                    deploy_pipeline_files,
+                    pipeline_name=arguments["name"],
+                    files=arguments["files"],
+                    app=None,
+                    save_files=arguments["save_files"],
+                    overwrite=arguments["overwrite"],
+                )
+                return [TextContent(type="text", text=f"Pipeline '{result['name']}' deployed successfully")]
+
+            elif name == CoreTools.GET_ALL_PIPELINE_STATUSES:
+                pipelines = registry.get_names()
+                pipelines_str = "\n".join(pipelines)
+                return [TextContent(type="text", text=f"Available pipelines:\n{pipelines_str}")]
+
+            elif name == CoreTools.GET_PIPELINE_STATUS:
+                pipeline_name = arguments["pipeline_name"]
+                is_deployed = pipeline_name in registry.get_names()
+                return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' is deployed: {is_deployed}")]
+
+            elif name == CoreTools.UNDEPLOY_PIPELINE:
+                pipeline_name = arguments["pipeline_name"]
+                undeploy_pipeline(pipeline_name=pipeline_name)
+                return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' undeployed")]
+
+            else:
+                log.debug(f"Attempting to run pipeline '{name}' as MCP Tool with arguments: {arguments}")
+
+                try:
+                    return await run_pipeline_as_tool(name, arguments)
+                except Exception as e_pipeline:
+                    log.error(f"Error calling pipeline as MCP Tool '{name}': {e_pipeline}")
+                    return [TextContent(type="text", text=f"Error calling tool '{name}': {e_pipeline}")]
+
+        except Exception as exc:
+            log.error(f"General unhandled error in call_tool for tool '{name}': {exc}")
+            return [
+                TextContent(type="text", text=f"An unexpected error occurred while processing tool '{name}': {exc}.")
+            ]
+
+        finally:
+            if name in [CoreTools.DEPLOY_PIPELINE, CoreTools.UNDEPLOY_PIPELINE]:
+                log.debug(f"Sending 'tools/list_changed' notification after deploy/undeploy")
+                await notify_client(server)
+
+    return server
