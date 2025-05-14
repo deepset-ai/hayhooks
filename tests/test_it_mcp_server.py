@@ -45,8 +45,8 @@ def deploy_chat_with_website_mcp_pipeline():
 
 
 @pytest.fixture
-async def mcp_server_instance() -> "Server":
-    return await create_mcp_server()
+def mcp_server_instance() -> "Server":
+    return create_mcp_server()
 
 
 @pytest.mark.asyncio
@@ -153,3 +153,17 @@ async def test_ensure_send_tool_list_changed_notification_after_deploy_or_undepl
             assert result.content[0].text == "Pipeline 'chat_with_website' deployed successfully"
 
         mock_notify_client.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_general_exception_handler(mcp_server_instance):
+    async with client_session(mcp_server_instance) as client:
+        result = await client.call_tool(
+            CoreTools.DEPLOY_PIPELINE,
+            {"name": "chat_with_website", "files": {}, "save_files": False, "overwrite": False},
+        )
+
+        assert len(result.content) == 1
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text.startswith("An unexpected error occurred while processing tool '")
+        assert "Failed to load pipeline module" in result.content[0].text
