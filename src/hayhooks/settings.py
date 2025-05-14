@@ -17,7 +17,7 @@ class AppSettings(BaseSettings):
 
     # Path to the directory containing the pipelines
     # Default to project root / pipelines
-    pipelines_dir: str = str(Path(__file__).parent.parent.parent / "pipelines")
+    pipelines_dir: str = str(Path.cwd() / "pipelines")
 
     # Additional Python path to be added to the Python path
     additional_python_path: str = ""
