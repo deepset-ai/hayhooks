@@ -1,7 +1,7 @@
 import sys
-import warnings
 import pytest
 import shutil
+from pathlib import Path
 from hayhooks.server.app import create_app
 from hayhooks.settings import AppSettings, check_cors_settings
 from unittest.mock import patch
@@ -19,6 +19,12 @@ def test_custom_pipelines_dir(temp_dir):
     custom_dir = temp_dir / "custom_pipelines"
     settings = AppSettings(pipelines_dir=str(custom_dir))
     assert settings.pipelines_dir == str(custom_dir)
+
+
+def test_default_pipelines_dir(monkeypatch):
+    monkeypatch.delenv("HAYHOOKS_PIPELINES_DIR", raising=False)
+    settings = AppSettings()
+    assert settings.pipelines_dir == str(Path.cwd() / "pipelines")
 
 
 def test_root_path():
