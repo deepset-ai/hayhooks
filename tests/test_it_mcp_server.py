@@ -19,7 +19,7 @@ pytestmark = [
 # Conditional import for mcp types if needed, though skipif should guard tests
 if MCP_AVAILABLE:
     from mcp.server import Server
-    from mcp.types import TextContent
+    from mcp.types import TextContent, CallToolResult
     from mcp.shared.memory import (
         create_connected_server_and_client_session as client_session,
     )
@@ -100,6 +100,8 @@ async def test_call_pipeline_as_tool(mcp_server_instance, deploy_chat_with_websi
             {"urls": ["https://www.google.com"], "question": "What is the capital of France?"},
         )
 
+        assert isinstance(result, CallToolResult)
+
         # In the deployed pipeline, the response is mocked
         assert result.content == [TextContent(type="text", text="This is a mock response from the pipeline")]
 
@@ -112,6 +114,9 @@ async def test_call_pipeline_as_tool_with_invalid_arguments(mcp_server_instance,
             {"urls": ["https://www.google.com"]},
         )
 
+        assert isinstance(result, CallToolResult)
+        assert result.isError is True
+
         text_response = result.content[0].text
         assert "missing 1 required positional argument: 'question'" in text_response
 
@@ -123,6 +128,9 @@ async def test_call_pipeline_as_tool_with_invalid_pipeline_name(mcp_server_insta
             "invalid_pipeline_name",
             {"urls": ["https://www.google.com"], "question": "What is the capital of France?"},
         )
+
+        assert isinstance(result, CallToolResult)
+        assert result.isError is True
 
         text_response = result.content[0].text
         assert "Pipeline 'invalid_pipeline_name' not found" in text_response
@@ -163,7 +171,8 @@ async def test_call_tool_general_exception_handler(mcp_server_instance):
             {"name": "chat_with_website", "files": {}, "save_files": False, "overwrite": False},
         )
 
-        assert len(result.content) == 1
-        assert isinstance(result.content[0], TextContent)
-        assert result.content[0].text.startswith("An unexpected error occurred while processing tool '")
+        assert isinstance(result, CallToolResult)
+        assert result.isError is True
+
+        assert result.content[0].text.startswith("General unhandled error in call_tool for tool '")
         assert "Failed to load pipeline module" in result.content[0].text

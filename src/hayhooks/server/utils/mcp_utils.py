@@ -200,14 +200,14 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
                 try:
                     return await run_pipeline_as_tool(name, arguments)
                 except Exception as e_pipeline:
-                    log.error(f"Error calling pipeline as MCP Tool '{name}': {e_pipeline}")
-                    return [TextContent(type="text", text=f"Error calling tool '{name}': {e_pipeline}")]
+                    msg = f"Error calling pipeline as MCP Tool '{name}': {e_pipeline}"
+                    log.error(msg)
+                    raise Exception(msg) from e_pipeline
 
         except Exception as exc:
-            log.error(f"General unhandled error in call_tool for tool '{name}': {exc}")
-            return [
-                TextContent(type="text", text=f"An unexpected error occurred while processing tool '{name}': {exc}.")
-            ]
+            msg = f"General unhandled error in call_tool for tool '{name}': {exc}"
+            log.error(msg)
+            raise Exception(msg) from exc
 
         finally:
             if name in [CoreTools.DEPLOY_PIPELINE, CoreTools.UNDEPLOY_PIPELINE]:
