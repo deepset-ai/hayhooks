@@ -134,13 +134,13 @@ async def lifespan(app: FastAPI):
 
 
 @lru_cache(maxsize=1)
-def get_package_version_from_pypi(package_name: str) -> str:
+def get_package_version_from_pypi(package_name: str, connect_timeout: int = 5, read_timeout: int = 5) -> str:
     """
     Get the version of the package from PyPI.
     """
     try:
         url = f"https://pypi.org/pypi/{package_name}/json"
-        response = requests.get(url)
+        response = requests.get(url, timeout=(connect_timeout, read_timeout))
         response.raise_for_status()
         data = response.json()
         return data["info"]["version"]
