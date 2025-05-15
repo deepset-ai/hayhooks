@@ -4,6 +4,8 @@ from hayhooks.server.pipelines import registry
 from pathlib import Path
 from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
 from hayhooks.server.utils.mcp_utils import list_pipelines_as_tools, run_pipeline_as_tool
+from hayhooks.server.utils.mcp_utils import list_core_tools, CoreTools, PIPELINE_NAME_SCHEMA
+from hayhooks.server.routers.deploy import PipelineFilesRequest
 
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -49,7 +51,6 @@ async def test_list_pipelines_as_tools_no_pipelines():
 
 @pytest.mark.asyncio
 async def test_list_pipelines_as_tools(deploy_chat_with_website_mcp):
-    # List the pipelines as tools
     tools = await list_pipelines_as_tools()
 
     assert len(tools) == 1
@@ -105,3 +106,34 @@ async def test_run_pipeline_as_tool_returns_text_content(deploy_chat_with_websit
 async def test_skip_pipeline_from_mcp_listing(deploy_chat_with_website_mcp_skip):
     tools = await list_pipelines_as_tools()
     assert len(tools) == 0
+
+
+@pytest.mark.asyncio
+async def test_list_core_tools():
+    tools = await list_core_tools()
+    assert len(tools) == len(CoreTools)
+
+    core_tools_map = {tool.name: tool for tool in tools}
+
+    tool_get_all_statuses = core_tools_map.get(CoreTools.GET_ALL_PIPELINE_STATUSES.value)
+    assert tool_get_all_statuses is not None
+    assert tool_get_all_statuses.description == "Get the status of all pipelines and list available pipeline names."
+    assert tool_get_all_statuses.inputSchema == {"type": "object"}
+
+    tool_get_status = core_tools_map.get(CoreTools.GET_PIPELINE_STATUS.value)
+    assert tool_get_status is not None
+    assert tool_get_status.description == "Get status of a specific pipeline."
+    assert tool_get_status.inputSchema == PIPELINE_NAME_SCHEMA
+
+    tool_undeploy = core_tools_map.get(CoreTools.UNDEPLOY_PIPELINE.value)
+    assert tool_undeploy is not None
+    assert (
+        tool_undeploy.description
+        == "Undeploy a pipeline. Removes a pipeline from the registry, its API routes, and deletes its files."
+    )
+    assert tool_undeploy.inputSchema == PIPELINE_NAME_SCHEMA
+
+    tool_deploy = core_tools_map.get(CoreTools.DEPLOY_PIPELINE.value)
+    assert tool_deploy is not None
+    assert tool_deploy.description == "Deploy a pipeline from files (pipeline_wrapper.py and other files)."
+    assert tool_deploy.inputSchema == PipelineFilesRequest.model_json_schema()

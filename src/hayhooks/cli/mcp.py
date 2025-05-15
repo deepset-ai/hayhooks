@@ -1,17 +1,19 @@
+import asyncio
 import typer
 import uvicorn
 import sys
-from typing import Annotated, List, Optional
+from typing import Annotated, Optional
 from hayhooks.settings import settings
-from hayhooks.server.utils.mcp_utils import deploy_pipelines, list_pipelines_as_tools, run_pipeline_as_tool
+from hayhooks.server.utils.mcp_utils import (
+    create_mcp_server,
+    deploy_pipelines,
+)
 from hayhooks.server.logger import log
 from haystack.lazy_imports import LazyImport
 
 mcp = typer.Typer()
 
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
-    from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
-    from mcp.server import Server
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
     from starlette.routing import Mount, Route
@@ -46,23 +48,7 @@ def run(
     deploy_pipelines()
 
     # Setup the MCP server
-    server: Server = Server("hayhooks-mcp-server")
-
-    @server.list_tools()
-    async def list_tools() -> List[Tool]:
-        try:
-            return await list_pipelines_as_tools()
-        except Exception as e:
-            log.error(f"Error listing tools: {e}")
-            return []
-
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> List[TextContent | ImageContent | EmbeddedResource]:
-        try:
-            return await run_pipeline_as_tool(name, arguments)
-        except Exception as e:
-            log.error(f"Error calling tool: {e}")
-            return []
+    server = create_mcp_server()
 
     # Setup the SSE server
     sse = SseServerTransport("/messages/")
