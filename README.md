@@ -34,8 +34,10 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [Run a pipeline from the CLI uploading files](#run-a-pipeline-from-the-cli-uploading-files)
 - [MCP support](#mcp-support)
   - [MCP Server](#mcp-server)
-  - [Using Hayhooks MCP Server with Claude Desktop](#using-hayhooks-mcp-server-with-claude-desktop)
   - [Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool](#create-a-pipelinewrapper-for-exposing-a-haystack-pipeline-as-a-mcp-tool)
+  - [Using Hayhooks MCP Server with Claude Desktop](#using-hayhooks-mcp-server-with-claude-desktop)
+  - [Using Hayhooks Core MCP Tools in IDEs like Cursor](#using-hayhooks-core-mcp-tools-in-ides-like-cursor)
+  - [Development and deployment of Haystack pipelines directly from Cursor](#development-and-deployment-of-haystack-pipelines-directly-from-cursor)
   - [Skip MCP Tool listing](#skip-mcp-tool-listing)
 - [Hayhooks as an OpenAPI Tool Server in `open-webui`](#hayhooks-as-an-openapi-tool-server-in-open-webui)
   - [Example: Deploy a Haystack pipeline from `open-webui` chat interface](#example-deploy-a-haystack-pipeline-from-open-webui-chat-interface)
@@ -362,27 +364,6 @@ hayhooks mcp run
 
 This will start the Hayhooks MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT`.
 
-### Using Hayhooks MCP Server with Claude Desktop
-
-Claude Desktop doesn’t yet support SSE transport for MCP servers, so you’ll need to use [supergateway](https://github.com/supercorp-ai/supergateway).
-After starting the Hayhooks MCP server, open **Settngs → Developer** in Claude Desktop and update the config file like this:
-
-```json
-{
-  "mcpServers": {
-    "hayhooks": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "supergateway",
-        "--sse",
-        "http://HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT/sse"
-      ]
-    }
-  }
-}
-```
-
 Make sure [Node.js](https://nodejs.org/) is installed, as the `npx` command depends on it.
 
 ### Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool
@@ -442,6 +423,62 @@ class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, urls: List[str], question: str) -> str:
         ...
 ```
+
+### Using Hayhooks MCP Server with Claude Desktop
+
+Claude Desktop doesn’t yet support SSE transport for MCP servers, so you’ll need to use [supergateway](https://github.com/supercorp-ai/supergateway).
+After starting the Hayhooks MCP server, open **Settings → Developer** in Claude Desktop and update the config file like this:
+
+```json
+{
+  "mcpServers": {
+    "hayhooks": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "supergateway",
+        "--sse",
+        "http://HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT/sse"
+      ]
+    }
+  }
+}
+```
+
+### Using Hayhooks Core MCP Tools in IDEs like Cursor
+
+Since Hayhooks MCP server provides by default a set of **Core MCP Tools**, you can use them in IDEs like [Cursor](https://www.cursor.com/) to interact with Hayhooks programmatically.
+
+The exposed tools are:
+
+- `get_all_pipeline_statuses`: Get the status of all pipelines and list available pipeline names.
+- `get_pipeline_status`: Get status of a specific pipeline. Requires `pipeline_name` as an argument.
+- `undeploy_pipeline`: Undeploy a pipeline. Removes a pipeline from the registry, its API routes, and deletes its files. Requires `pipeline_name` as an argument.
+- `deploy_pipeline`: Deploy a pipeline from files (`pipeline_wrapper.py` and other files). Requires `name` (pipeline name), `files` (list of file contents), `save_files` (boolean), and `overwrite` (boolean) as arguments.
+
+From `Cursor Settings -> MCP`, you can add a new **MCP Server** by specifying the following parameters (assuming you have Hayhooks running on `http://localhost:1417`):
+
+```json
+{
+  "mcpServers": {
+    "hayhooks": {
+      "url": "http://localhost:1417/sse"
+    }
+  }
+}
+```
+
+After adding the MCP Server, you should see the Hayhooks Core MCP Tools in the list of available tools:
+
+![cursor-mcp-settings](./docs/assets/cursor-mcp-settings.png)
+
+Now in the Cursor chat interface you can use the Hayhooks Core MCP Tools by mentioning them in your messages.
+
+### Development and deployment of Haystack pipelines directly from Cursor
+
+Here's a video example of how to develop and deploy a Haystack pipeline directly from Cursor:
+
+![hayhooks-cursor-dev-deploy-overwrite.gif](./docs/assets/hayhooks-cursor-dev-deploy-overwrite.gif)
 
 ## Hayhooks as an OpenAPI Tool Server in `open-webui`
 
