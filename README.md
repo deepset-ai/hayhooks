@@ -472,7 +472,7 @@ After adding the MCP Server, you should see the Hayhooks Core MCP Tools in the l
 
 ![cursor-mcp-settings](./docs/assets/cursor-mcp-settings.png)
 
-Now you in the Cursor chat interface you can use the Hayhooks Core MCP Tools by mentioning them in your messages.
+Now in the Cursor chat interface you can use the Hayhooks Core MCP Tools by mentioning them in your messages.
 
 ### Development and deployment of Haystack pipelines directly from Cursor
 
