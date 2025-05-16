@@ -427,7 +427,7 @@ class PipelineWrapper(BasePipelineWrapper):
 ### Using Hayhooks MCP Server with Claude Desktop
 
 Claude Desktop doesn’t yet support SSE transport for MCP servers, so you’ll need to use [supergateway](https://github.com/supercorp-ai/supergateway).
-After starting the Hayhooks MCP server, open **Settngs → Developer** in Claude Desktop and update the config file like this:
+After starting the Hayhooks MCP server, open **Settings → Developer** in Claude Desktop and update the config file like this:
 
 ```json
 {
