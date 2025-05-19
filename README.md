@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/deepset-ai-hayhooks-badge.png)](https://mseep.ai/app/deepset-ai-hayhooks)
+
 # Hayhooks
 
 **Hayhooks** makes it easy to deploy and serve [Haystack](https://haystack.deepset.ai/) pipelines as REST APIs.
