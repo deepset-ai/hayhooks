@@ -265,12 +265,18 @@ def create_run_endpoint_handler(
 
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(run_req: request_model = Form(...)) -> response_model:  # type: ignore
-        result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
+        if pipeline_wrapper._is_run_api_async_implemented:
+            result = await pipeline_wrapper.run_api_async(**run_req.model_dump())  # type: ignore
+        else:
+            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
         return response_model(result=result)
 
     @handle_pipeline_exceptions()
     async def run_endpoint_without_files(run_req: request_model) -> response_model:  # type: ignore
-        result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
+        if pipeline_wrapper._is_run_api_async_implemented:
+            result = await pipeline_wrapper.run_api_async(**run_req.model_dump())  # type: ignore
+        else:
+            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type: ignore
         return response_model(result=result)
 
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
@@ -279,11 +285,29 @@ def create_run_endpoint_handler(
 def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
     clog = log.bind(pipeline_name=pipeline_name)
 
-    docstring = docstring_parser.parse(inspect.getdoc(pipeline_wrapper.run_api) or "")
-    RunRequest = create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run', docstring)
-    RunResponse = create_response_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run', docstring)
+    # Determine which run_api method to use (prefer async if available)
+    if pipeline_wrapper._is_run_api_async_implemented:
+        run_method_to_inspect = pipeline_wrapper.run_api_async
+        clog.debug("Using run_api_async for API route inspection.")
+    elif pipeline_wrapper._is_run_api_implemented:
+        run_method_to_inspect = pipeline_wrapper.run_api
+        clog.debug("Using run_api (sync) for API route inspection.")
+    else:
+        # If neither run_api nor run_api_async is implemented,
+        # this pipeline will not have a generic /<pipeline_name>/run endpoint.
+        # This is a valid configuration (e.g., for chat-only pipelines).
+        clog.warning(
+            f"Pipeline '{pipeline_name}' does not implement run_api or run_api_async. "
+            f"Skipping /{pipeline_name}/run API route creation."
+        )
+        return
 
-    run_api_params = inspect.signature(pipeline_wrapper.run_api).parameters
+    docstring_content = inspect.getdoc(run_method_to_inspect) or ""
+    docstring = docstring_parser.parse(docstring_content)
+    RunRequest = create_request_model_from_callable(run_method_to_inspect, f'{pipeline_name}Run', docstring)
+    RunResponse = create_response_model_from_callable(run_method_to_inspect, f'{pipeline_name}Run', docstring)
+
+    run_api_params = inspect.signature(run_method_to_inspect).parameters
     requires_files = "files" in run_api_params
     clog.debug(f"Pipeline requires files: {requires_files}")
 
@@ -439,20 +463,52 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
             error_msg += f"\n{traceback.format_exc()}"
         raise PipelineWrapperError(error_msg) from e
 
-    pipeline_wrapper._is_run_api_implemented = pipeline_wrapper.run_api.__func__ is not BasePipelineWrapper.run_api
-    pipeline_wrapper._is_run_chat_completion_implemented = (
-        pipeline_wrapper.run_chat_completion.__func__ is not BasePipelineWrapper.run_chat_completion
+    # Determine if the run_api, run_chat_completion, and their async versions are implemented
+    _set_method_implementation_flag(pipeline_wrapper, "_is_run_api_implemented", "run_api")
+    _set_method_implementation_flag(pipeline_wrapper, "_is_run_chat_completion_implemented", "run_chat_completion")
+    _set_method_implementation_flag(pipeline_wrapper, "_is_run_api_async_implemented", "run_api_async")
+    _set_method_implementation_flag(
+        pipeline_wrapper, "_is_run_chat_completion_async_implemented", "run_chat_completion_async"
     )
 
     log.debug(f"pipeline_wrapper._is_run_api_implemented: {pipeline_wrapper._is_run_api_implemented}")
+    log.debug(f"pipeline_wrapper._is_run_api_async_implemented: {pipeline_wrapper._is_run_api_async_implemented}")
     log.debug(
         f"pipeline_wrapper._is_run_chat_completion_implemented: {pipeline_wrapper._is_run_chat_completion_implemented}"
     )
+    log.debug(
+        f"pipeline_wrapper._is_run_chat_completion_async_implemented: {pipeline_wrapper._is_run_chat_completion_async_implemented}"
+    )
 
-    if not (pipeline_wrapper._is_run_api_implemented or pipeline_wrapper._is_run_chat_completion_implemented):
-        raise PipelineWrapperError("At least one of run_api or run_chat_completion must be implemented")
+    if not (
+        pipeline_wrapper._is_run_api_implemented
+        or pipeline_wrapper._is_run_api_async_implemented
+        or pipeline_wrapper._is_run_chat_completion_implemented
+        or pipeline_wrapper._is_run_chat_completion_async_implemented
+    ):
+        raise PipelineWrapperError(
+            "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented"
+        )
 
     return pipeline_wrapper
+
+
+def _set_method_implementation_flag(pipeline_wrapper: BasePipelineWrapper, attr_name: str, method_name: str):
+    """Helper to check if a method is implemented on the wrapper compared to the base."""
+    wrapper_method = getattr(pipeline_wrapper, method_name, None)
+    base_method = getattr(BasePipelineWrapper, method_name, None)
+    if wrapper_method and base_method:
+        # Ensure we are comparing the function itself, not the bound method if one is already bound.
+        # For unbound methods (like on the class itself), __func__ is the function.
+        # For bound methods (on an instance), __func__ gives the original function.
+        setattr(
+            pipeline_wrapper,
+            attr_name,
+            getattr(wrapper_method, '__func__', wrapper_method) is not getattr(base_method, '__func__', base_method),
+        )
+    else:
+        # Fallback or error handling if methods are not found
+        setattr(pipeline_wrapper, attr_name, False)
 
 
 def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:

@@ -274,7 +274,7 @@ def test_create_pipeline_wrapper_instance_missing_methods():
     module = type('Module', (), {'PipelineWrapper': IncompleteWrapper})
 
     with pytest.raises(
-        PipelineWrapperError, match="At least one of run_api or run_chat_completion must be implemented"
+        PipelineWrapperError, match="At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented"
     ):
         create_pipeline_wrapper_instance(module)
 

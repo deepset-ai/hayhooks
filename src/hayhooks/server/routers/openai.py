@@ -108,15 +108,29 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
     if not pipeline_wrapper:
         raise HTTPException(status_code=404, detail=f"Pipeline '{chat_req.model}' not found")
 
-    if not pipeline_wrapper._is_run_chat_completion_implemented:
+    # Check if either sync or async chat completion is implemented
+    sync_implemented = pipeline_wrapper._is_run_chat_completion_implemented
+    async_implemented = pipeline_wrapper._is_run_chat_completion_async_implemented
+
+    if not sync_implemented and not async_implemented:
         raise HTTPException(status_code=501, detail="Chat endpoint not implemented for this model")
 
-    result = await run_in_threadpool(
-        pipeline_wrapper.run_chat_completion,
-        model=chat_req.model,
-        messages=chat_req.messages,
-        body=chat_req.model_dump(),
-    )
+    if async_implemented:
+        log.debug(f"Using run_chat_completion_async for model: {chat_req.model}")
+        result = await pipeline_wrapper.run_chat_completion_async(
+            model=chat_req.model,
+            messages=chat_req.messages,
+            body=chat_req.model_dump(),
+        )
+    elif sync_implemented:  # Must be sync_implemented if we reached here
+        log.debug(f"Using run_chat_completion (sync) for model: {chat_req.model}")
+        result = await run_in_threadpool(
+            pipeline_wrapper.run_chat_completion,
+            model=chat_req.model,
+            messages=chat_req.messages,
+            body=chat_req.model_dump(),
+        )
+    # else case is covered by the check at the beginning of the function
 
     resp_id = f"{chat_req.model}-{uuid.uuid4()}"
 

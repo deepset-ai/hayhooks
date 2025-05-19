@@ -127,7 +127,7 @@ def test_deploy_files_missing_required_methods(client, deploy_files):
 
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
-    assert "At least one of run_api or run_chat_completion must be implemented" in response.json()["detail"]
+    assert "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented" in response.json()["detail"]
 
 
 def test_deploy_files_setup_error(client, deploy_files):

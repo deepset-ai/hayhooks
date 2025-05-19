@@ -12,6 +12,8 @@ class BasePipelineWrapper(ABC):
         self.pipeline = None
         self._is_run_api_implemented = False
         self._is_run_chat_completion_implemented = False
+        self._is_run_api_async_implemented = False
+        self._is_run_chat_completion_async_implemented = False
 
     @abstractmethod
     def setup(self) -> None:
@@ -42,6 +44,13 @@ class BasePipelineWrapper(ABC):
     def run_api(self):
         raise NotImplementedError("run_api not implemented")
 
+    # Asynchronous version of run_api.
+    async def run_api_async(self):
+        """
+        Asynchronous version of run_api.
+        """
+        raise NotImplementedError("run_api_async not implemented")
+
     def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
         """
         This method is called when a user sends an OpenAI-compatible chat completion request.
@@ -57,3 +66,9 @@ class BasePipelineWrapper(ABC):
             body: Additional parameters and configuration options
         """
         raise NotImplementedError("run_chat_completion not implemented")
+
+    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+        """
+        Asynchronous version of run_chat_completion.
+        """
+        raise NotImplementedError("run_chat_completion_async not implemented")
