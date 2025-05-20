@@ -1,30 +1,21 @@
 import json
 import shutil
-from hayhooks.server.routers.deploy import DeployResponse
 import pytest
+from typing import Any, Dict
 from concurrent.futures import ThreadPoolExecutor
 from hayhooks.settings import settings
 from pathlib import Path
 from hayhooks.server.pipelines import registry
+from hayhooks.server.routers.deploy import DeployResponse
 from hayhooks.server.routers.openai import ChatRequest, ChatCompletion, ModelObject, ModelsResponse
-
-
-def cleanup():
-    registry.clear()
-    if Path(settings.pipelines_dir).exists():
-        shutil.rmtree(settings.pipelines_dir)
 
 
 @pytest.fixture(autouse=True)
 def clear_registry():
-    cleanup()
+    registry.clear()
+    if Path(settings.pipelines_dir).exists():
+        shutil.rmtree(settings.pipelines_dir)
     yield
-
-
-@pytest.fixture(scope="session", autouse=True)
-def final_cleanup():
-    yield
-    cleanup()
 
 
 def collect_chunks(response):
@@ -126,7 +117,7 @@ def test_chat_completion_invalid_model(client):
     assert response.status_code == 404
 
 
-def test_chat_completion_not_implemented(client, deploy_files):
+def test_chat_completion_not_implemented(client, deploy_files) -> None:
     pipeline_file = Path(__file__).parent / "test_files/files/no_chat/pipeline_wrapper.py"
     pipeline_data = {"name": "test_pipeline_no_chat", "files": {"pipeline_wrapper.py": pipeline_file.read_text()}}
 
@@ -143,10 +134,12 @@ def test_chat_completion_not_implemented(client, deploy_files):
 
     response = client.post("/chat/completions", json=request.model_dump())
     assert response.status_code == 501
-    assert response.json()["detail"] == "Chat endpoint not implemented for this model"
+
+    err_body: Dict[str, Any] = response.json()
+    assert err_body["detail"] == "Chat endpoint not implemented for this model"
 
 
-def test_chat_completion_streaming(client, deploy_files):
+def test_chat_completion_streaming(client, deploy_files) -> None:
     pipeline_data = {"name": "test_pipeline_streaming", "files": SAMPLE_PIPELINE_FILES_STREAMING}
 
     response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
@@ -167,7 +160,9 @@ def test_chat_completion_streaming(client, deploy_files):
 
     # response is a stream of SSE events
     assert response.status_code == 200
-    assert response.headers["Content-Type"] == "text/event-stream; charset=utf-8"
+
+    headers: Dict[str, Any] = response.headers
+    assert headers["Content-Type"] == "text/event-stream; charset=utf-8"
 
     # collect the chunks
     chunks = collect_chunks(response)
