@@ -465,8 +465,8 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
 
     # Determine if the run_api, run_chat_completion, and their async versions are implemented
     _set_method_implementation_flag(pipeline_wrapper, "_is_run_api_implemented", "run_api")
-    _set_method_implementation_flag(pipeline_wrapper, "_is_run_chat_completion_implemented", "run_chat_completion")
     _set_method_implementation_flag(pipeline_wrapper, "_is_run_api_async_implemented", "run_api_async")
+    _set_method_implementation_flag(pipeline_wrapper, "_is_run_chat_completion_implemented", "run_chat_completion")
     _set_method_implementation_flag(
         pipeline_wrapper, "_is_run_chat_completion_async_implemented", "run_chat_completion_async"
     )
