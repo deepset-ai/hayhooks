@@ -45,7 +45,7 @@ def test_get_models_empty(client):
     assert response.json() == {"data": [], "object": "list"}
 
 
-def test_get_models(client):
+def test_get_models(client) -> None:
     pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES}
 
     response = client.post("/deploy_files", json=pipeline_data)
@@ -65,7 +65,7 @@ def test_get_models(client):
                 id="test_pipeline",
                 name="test_pipeline",
                 object="model",
-                created=response_data["data"][0]["created"],
+                created=response_data["data"][0]["created"],  # type: ignore
                 owned_by="hayhooks",
             )
         ],
@@ -174,7 +174,7 @@ def test_chat_completion_streaming(client, deploy_files) -> None:
 
     # check if the chunks are valid ChatCompletion objects
     sample_chunk = chunks[1]
-    chat_completion = ChatCompletion(**json.loads(sample_chunk.split("data:")[1]))
+    chat_completion = ChatCompletion(**json.loads(sample_chunk.split("data:")[1]))  # type: ignore
     assert chat_completion.object == "chat.completion.chunk"
     assert chat_completion.model == "test_pipeline_streaming"
     assert chat_completion.choices[0].delta.content
@@ -184,7 +184,7 @@ def test_chat_completion_streaming(client, deploy_files) -> None:
 
     # check if last chunk contains a delta with empty content
     last_chunk = chunks[-1]
-    last_chat_completion = ChatCompletion(**json.loads(last_chunk.split("data:")[1]))
+    last_chat_completion = ChatCompletion(**json.loads(last_chunk.split("data:")[1]))  # type: ignore
     assert last_chat_completion.choices[0].delta.content == ""
     assert last_chat_completion.choices[0].delta.role == "assistant"
     assert last_chat_completion.choices[0].index == 0
