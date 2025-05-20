@@ -34,6 +34,7 @@ def cleanup_pipelines(test_settings):
     This fixture is used to cleanup the pipelines directory
     and the registry after each test module.
     """
+    yield
     registry.clear()
     if Path(test_settings.pipelines_dir).exists():
         shutil.rmtree(test_settings.pipelines_dir)
