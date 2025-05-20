@@ -1,8 +1,10 @@
 import pytest
 import shutil
 from hayhooks.server.routers.deploy import DeployResponse
+from hayhooks.server.routers.status import PipelineStatusResponse
 from pathlib import Path
 from hayhooks.server.pipelines.registry import registry
+from typing import Dict, Any
 
 
 def clear_registry_and_files(pipelines_dir: str):
@@ -36,7 +38,7 @@ SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION = {
     "pipeline_files",
     [("test_pipeline_1", SAMPLE_PIPELINE_FILES), ("test_pipeline_2", SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION)],
 )
-def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
+def test_deploy_files_ok(status_pipeline, pipeline_files: tuple[str, dict], client, deploy_files):
     pipeline_data = {"name": pipeline_files[0], "files": pipeline_files[1]}
 
     response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
@@ -47,13 +49,19 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
     )
 
     status_response = status_pipeline(client, pipeline_files[0])
-    assert pipeline_files[0] in status_response.json()["pipeline"]
+    assert status_response.status_code == 200
+
+    status_body = PipelineStatusResponse(**status_response.json())
+    assert status_body.pipeline == pipeline_files[0]
 
     docs_response = client.get("/docs")
     assert docs_response.status_code == 200
 
     status_response = status_pipeline(client, pipeline_files[0])
-    assert pipeline_files[0] in status_response.json()["pipeline"]
+    assert status_response.status_code == 200
+
+    status_body = PipelineStatusResponse(**status_response.json())
+    assert status_body.pipeline == pipeline_files[0]
 
     # Test if /{pipeline_name}/run endpoint accepts the expected parameters
     if pipeline_data["name"] == "test_pipeline_1":
@@ -73,37 +81,43 @@ def test_deploy_files_ok(status_pipeline, pipeline_files, client, deploy_files):
         assert response.json() == {"result": "Dummy result with test_value"}
 
 
-def test_deploy_files_missing_wrapper(client, deploy_files):
-    pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES.copy()}
+def test_deploy_files_missing_wrapper(client, deploy_files) -> None:
+    pipeline_data: Dict[str, Any] = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES.copy()}
     pipeline_data["files"].pop("pipeline_wrapper.py")
 
     response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
     assert response.status_code == 422
-    assert "Missing required file" in response.json()["detail"][0]["msg"]
+
+    err_body: Dict[str, Any] = response.json()
+    assert "Missing required file" in err_body["detail"][0]["msg"]
 
 
-def test_deploy_files_invalid_wrapper(client, deploy_files):
-    invalid_files = {
+def test_deploy_files_invalid_wrapper(client, deploy_files) -> None:
+    invalid_files: Dict[str, Any] = {
         "pipeline_wrapper.py": "invalid python code",
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
 
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
-    assert "Failed to load pipeline module" in response.json()["detail"]
+
+    err_body: Dict[str, Any] = response.json()
+    assert "Failed to load pipeline module" in err_body["detail"]
 
 
-def test_deploy_files_duplicate_pipeline(client, deploy_files):
+def test_deploy_files_duplicate_pipeline(client, deploy_files) -> None:
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=SAMPLE_PIPELINE_FILES)
     assert response.status_code == 200
 
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=SAMPLE_PIPELINE_FILES)
     assert response.status_code == 409
-    assert "Pipeline 'test_pipeline' already exists" in response.json()["detail"]
+
+    err_body: Dict[str, Any] = response.json()
+    assert "Pipeline 'test_pipeline' already exists" in err_body["detail"]
 
 
-def test_pipeline_endpoint_error_handling(client, deploy_files):
-    pipeline_files = {
+def test_pipeline_endpoint_error_handling(client, deploy_files) -> None:
+    pipeline_files: Dict[str, Any] = {
         "pipeline_wrapper.py": (RUN_API_ERROR_DIR / "pipeline_wrapper.py").read_text(),
     }  # This pipeline wrapper will raise an error in run_api
 
@@ -115,33 +129,42 @@ def test_pipeline_endpoint_error_handling(client, deploy_files):
         json={"test_param": "test_value"},
     )
     assert run_response.status_code == 500
-    assert "Pipeline execution failed" in run_response.json()["detail"]
-    assert "This is a test error" in run_response.json()["detail"]
+
+    err_body: Dict[str, Any] = run_response.json()
+    assert "Pipeline execution failed" in err_body["detail"]
+    assert "This is a test error" in err_body["detail"]
 
 
-def test_deploy_files_missing_required_methods(client, deploy_files):
-    invalid_files = {
+def test_deploy_files_missing_required_methods(client, deploy_files) -> None:
+    invalid_files: Dict[str, Any] = {
         "pipeline_wrapper.py": (MISSING_METHODS_DIR / "pipeline_wrapper.py").read_text(),
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
 
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
-    assert "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented" in response.json()["detail"]
+
+    err_body: Dict[str, Any] = response.json()
+    assert (
+        "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented"
+        in err_body["detail"]
+    )
 
 
-def test_deploy_files_setup_error(client, deploy_files):
-    invalid_files = {
+def test_deploy_files_setup_error(client, deploy_files) -> None:
+    invalid_files: Dict[str, Any] = {
         "pipeline_wrapper.py": (SETUP_ERROR_DIR / "pipeline_wrapper.py").read_text(),
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
 
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
-    assert "Failed to call setup() on pipeline wrapper instance: Setup failed!" in response.json()["detail"]
+
+    err_body: Dict[str, Any] = response.json()
+    assert "Failed to call setup() on pipeline wrapper instance: Setup failed!" in err_body["detail"]
 
 
-def test_deploy_files_using_overwrite(status_pipeline, client, deploy_files, chat_completion):
+def test_deploy_files_using_overwrite(status_pipeline, client, deploy_files, chat_completion) -> None:
     # Deploy the pipeline with the chat completion method
     response = deploy_files(
         client,
@@ -154,7 +177,9 @@ def test_deploy_files_using_overwrite(status_pipeline, client, deploy_files, cha
     # Check status
     status = status_pipeline(client, "test_pipeline")
     assert status.status_code == 200
-    assert status.json()["pipeline"] == "test_pipeline"
+
+    status_body = PipelineStatusResponse(**status.json())
+    assert status_body.pipeline == "test_pipeline"
 
     # Call chat endpoint (which is implemented)
     response = chat_completion(
@@ -175,7 +200,9 @@ def test_deploy_files_using_overwrite(status_pipeline, client, deploy_files, cha
 
     status = status_pipeline(client, "test_pipeline")
     assert status.status_code == 200
-    assert status.json()["pipeline"] == "test_pipeline"
+
+    status_body = PipelineStatusResponse(**status.json())
+    assert status_body.pipeline == "test_pipeline"
 
     # Call chat completion (which is NOT implemented after the overwrite)
     response = chat_completion(
@@ -186,7 +213,7 @@ def test_deploy_files_using_overwrite(status_pipeline, client, deploy_files, cha
     assert response.status_code == 501
 
 
-def test_deploy_files_overwrite_without_saving(status_pipeline, client, deploy_files, test_settings):
+def test_deploy_files_overwrite_without_saving(status_pipeline, client, deploy_files, test_settings) -> None:
     # First deploy with chat completion and save files
     response = deploy_files(
         client,
@@ -204,7 +231,9 @@ def test_deploy_files_overwrite_without_saving(status_pipeline, client, deploy_f
     # Check that the pipeline is available
     status = status_pipeline(client, "test_pipeline")
     assert status.status_code == 200
-    assert status.json()["pipeline"] == "test_pipeline"
+
+    status_body = PipelineStatusResponse(**status.json())
+    assert status_body.pipeline == "test_pipeline"
 
     # Deploy again without saving files
     response = deploy_files(
@@ -222,10 +251,12 @@ def test_deploy_files_overwrite_without_saving(status_pipeline, client, deploy_f
     # Check that the pipeline is available
     status = status_pipeline(client, "test_pipeline")
     assert status.status_code == 200
-    assert status.json()["pipeline"] == "test_pipeline"
+
+    status_body = PipelineStatusResponse(**status.json())
+    assert status_body.pipeline == "test_pipeline"
 
 
-def test_deploy_files_overwrite_should_update_code(client, deploy_files):
+def test_deploy_files_overwrite_should_update_code(client, deploy_files) -> None:
     # First deploy with chat completion and save files
     response = deploy_files(
         client,
@@ -268,7 +299,7 @@ def test_deploy_files_overwrite_should_update_code(client, deploy_files):
     assert response.json() == {"result": "This is an updated mock response from the pipeline"}
 
 
-def test_deploy_files_with_file_upload(client, deploy_files, tmp_path):
+def test_deploy_files_with_file_upload(client, deploy_files, tmp_path) -> None:
     # Deploy the pipeline
     response = deploy_files(
         client,
@@ -301,5 +332,7 @@ def test_deploy_files_with_file_upload(client, deploy_files, tmp_path):
         )
 
     assert response.status_code == 200
-    assert "Received files: test_file.txt" in response.json()["result"]
-    assert "with param test_value" in response.json()["result"]
+
+    resp_body = response.json()
+    assert "Received files: test_file.txt" in resp_body.get("result", "")
+    assert "with param test_value" in resp_body.get("result", "")
