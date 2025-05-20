@@ -24,6 +24,12 @@ MISSING_METHODS_DIR = TEST_FILES_DIR / "missing_methods"
 SETUP_ERROR_DIR = TEST_FILES_DIR / "setup_error"
 RUN_API_ERROR_DIR = TEST_FILES_DIR / "run_api_error"
 UPLOAD_FILES_DIR = TEST_FILES_DIR / "upload_files"
+ASYNC_TEST_FILES_DIR = TEST_FILES_DIR / "async_chat_with_website"
+
+ASYNC_SAMPLE_PIPELINE_FILES = {
+    "pipeline_wrapper.py": (ASYNC_TEST_FILES_DIR / "pipeline_wrapper.py").read_text(),
+    "chat_with_website.yml": (ASYNC_TEST_FILES_DIR / "chat_with_website.yml").read_text(),
+}
 SAMPLE_PIPELINE_FILES = {
     "pipeline_wrapper.py": (TEST_FILES_DIR / "chat_with_website" / "pipeline_wrapper.py").read_text(),
     "chat_with_website.yml": (TEST_FILES_DIR / "chat_with_website" / "chat_with_website.yml").read_text(),
@@ -336,3 +342,25 @@ def test_deploy_files_with_file_upload(client, deploy_files, tmp_path) -> None:
     resp_body = response.json()
     assert "Received files: test_file.txt" in resp_body.get("result", "")
     assert "with param test_value" in resp_body.get("result", "")
+
+
+def test_deploy_async_pipeline_wrapper(status_pipeline, client, deploy_files) -> None:
+    response = deploy_files(
+        client,
+        pipeline_name="async_pipeline",
+        pipeline_files=ASYNC_SAMPLE_PIPELINE_FILES,
+    )
+    assert response.status_code == 200
+
+    status_response = status_pipeline(client, "async_pipeline")
+    assert status_response.status_code == 200
+
+    status_body = PipelineStatusResponse(**status_response.json())
+    assert status_body.pipeline == "async_pipeline"
+
+    response = client.post(
+        "/async_pipeline/run",
+        json={"urls": ["https://www.redis.io"], "question": "What is Redis?"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"result": "This is a mock response from the pipeline"}
