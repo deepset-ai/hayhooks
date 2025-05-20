@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Generator, List, Union
+from typing import AsyncGenerator, Generator, List, Union
 
 
 class BasePipelineWrapper(ABC):
@@ -46,9 +46,6 @@ class BasePipelineWrapper(ABC):
 
     # Asynchronous version of run_api.
     async def run_api_async(self):
-        """
-        Asynchronous version of run_api.
-        """
         raise NotImplementedError("run_api_async not implemented")
 
     def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
@@ -67,7 +64,9 @@ class BasePipelineWrapper(ABC):
         """
         raise NotImplementedError("run_chat_completion not implemented")
 
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+    async def run_chat_completion_async(
+        self, model: str, messages: List[dict], body: dict
+    ) -> Union[str, AsyncGenerator]:
         """
         Asynchronous version of run_chat_completion.
         """
