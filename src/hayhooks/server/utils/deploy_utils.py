@@ -288,16 +288,16 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
     # Determine which run_api method to use (prefer async if available)
     if pipeline_wrapper._is_run_api_async_implemented:
         run_method_to_inspect = pipeline_wrapper.run_api_async
-        clog.debug("Using run_api_async for API route inspection.")
+        clog.debug("Using `run_api_async` as API route handler.")
     elif pipeline_wrapper._is_run_api_implemented:
         run_method_to_inspect = pipeline_wrapper.run_api
-        clog.debug("Using run_api (sync) for API route inspection.")
+        clog.debug("Using `run_api` as API route handler.")
     else:
         # If neither run_api nor run_api_async is implemented,
         # this pipeline will not have a generic /<pipeline_name>/run endpoint.
         # This is a valid configuration (e.g., for chat-only pipelines).
         clog.warning(
-            f"Pipeline '{pipeline_name}' does not implement run_api or run_api_async. "
+            f"Pipeline '{pipeline_name}' does not implement `run_api` or `run_api_async`. "
             f"Skipping /{pipeline_name}/run API route creation."
         )
         return
