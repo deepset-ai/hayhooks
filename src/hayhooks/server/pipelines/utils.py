@@ -1,7 +1,8 @@
+import asyncio
 import threading
 from queue import Queue
-from typing import Generator, List, Union, Dict, Tuple
-from haystack import Pipeline
+from typing import AsyncGenerator, Generator, List, Union, Dict, Tuple
+from haystack import AsyncPipeline, Pipeline
 from haystack.core.component import Component
 from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
@@ -54,7 +55,7 @@ def streaming_generator(pipeline: Pipeline, pipeline_run_args: Dict) -> Generato
     Creates a generator that yields streaming chunks from a pipeline execution.
     Automatically finds the streaming-capable component in the pipeline.
     """
-    queue: Queue[str] = Queue()
+    queue: Queue[Union[str, None, Exception]] = Queue()
 
     def streaming_callback(chunk):
         queue.put(chunk.content)
@@ -72,16 +73,73 @@ def streaming_generator(pipeline: Pipeline, pipeline_run_args: Dict) -> Generato
     def run_pipeline():
         try:
             pipeline.run(data=pipeline_run_args)
-        finally:
             queue.put(None)
+        except Exception as e:
+            log.error(f"Error in pipeline execution thread for streaming_generator: {e}", exc_info=True)
+            queue.put(e)
 
     thread = threading.Thread(target=run_pipeline)
     thread.start()
 
-    while True:
-        chunk = queue.get()
-        if chunk is None:
-            break
-        yield chunk
+    try:
+        while True:
+            item = queue.get()
+            if isinstance(item, Exception):
+                raise item
+            if item is None:
+                break
+            yield item
+    finally:
+        thread.join()
 
-    thread.join()
+
+async def async_streaming_generator(
+    pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: Dict
+) -> AsyncGenerator:
+    """
+    Creates an async generator that yields streaming chunks from a pipeline execution.
+    Automatically finds the streaming-capable component in the pipeline.
+    """
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def streaming_callback(chunk):
+        await queue.put(chunk.content)
+
+    _, streaming_component_name = find_streaming_component(pipeline)
+    pipeline_run_args = pipeline_run_args.copy()
+
+    if streaming_component_name not in pipeline_run_args:
+        pipeline_run_args[streaming_component_name] = {}
+
+    streaming_component = pipeline.get_component(streaming_component_name)
+    streaming_component.streaming_callback = streaming_callback
+
+    pipeline_task = asyncio.create_task(pipeline.run_async(data=pipeline_run_args))
+
+    try:
+        while not pipeline_task.done() or not queue.empty():
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+                yield chunk
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                log.warning("Async streaming generator was cancelled")
+                break
+            except Exception as e:
+                log.error(f"Unexpected error in async streaming generator: {e}")
+                raise e
+    except Exception as e:
+        log.error(f"Unexpected error in async streaming generator: {e}")
+        raise e
+    finally:
+        if not pipeline_task.done():
+            pipeline_task.cancel()
+            try:
+                await asyncio.wait_for(pipeline_task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception as e:
+                log.warning(f"Error during pipeline task cleanup: {e}")
+                raise e
