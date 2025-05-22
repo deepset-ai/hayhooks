@@ -73,10 +73,10 @@ def streaming_generator(pipeline: Pipeline, pipeline_run_args: Dict) -> Generato
     def run_pipeline():
         try:
             pipeline.run(data=pipeline_run_args)
-            queue.put(None)
+            queue.put(None)  # Signal normal completion
         except Exception as e:
             log.error(f"Error in pipeline execution thread for streaming_generator: {e}", exc_info=True)
-            queue.put(e)
+            queue.put(e)  # Signal error
 
     thread = threading.Thread(target=run_pipeline)
     thread.start()
