@@ -1,6 +1,6 @@
 import time
 import uuid
-from typing import Generator, List, Literal, Union
+from typing import Generator, List, Literal, Union, AsyncGenerator
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
@@ -10,6 +10,20 @@ from hayhooks.server.utils.deploy_utils import handle_pipeline_exceptions
 from hayhooks.server.logger import log
 
 router = APIRouter()
+
+
+def _create_sse_data_msg(
+    resp_id: str, model_name: str, chunk_content: str = "", finish_reason: Union[Literal["stop"], None] = None
+) -> str:
+    """Helper function to create a ChatCompletion chunk and format it as an SSE string."""
+    response = ChatCompletion(
+        id=resp_id,
+        object="chat.completion.chunk",
+        created=int(time.time()),
+        model=model_name,
+        choices=[Choice(index=0, delta=Message(role="assistant", content=chunk_content), finish_reason=finish_reason)],
+    )
+    return f"data: {response.model_dump_json()}\n\n"
 
 
 class ModelObject(BaseModel):
@@ -122,7 +136,7 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
             messages=chat_req.messages,
             body=chat_req.model_dump(),
         )
-    elif sync_implemented:  # Must be sync_implemented if we reached here
+    elif sync_implemented:
         log.debug(f"Using run_chat_completion (sync) for model: {chat_req.model}")
         result = await run_in_threadpool(
             pipeline_wrapper.run_chat_completion,
@@ -130,7 +144,6 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
             messages=chat_req.messages,
             body=chat_req.model_dump(),
         )
-    # else case is covered by the check at the beginning of the function
 
     resp_id = f"{chat_req.model}-{uuid.uuid4()}"
 
@@ -150,33 +163,25 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
 
     elif isinstance(result, Generator):
         # If the pipeline returns a generator, we need to stream the chunks as SSE events
-
-        def stream_chunks() -> Generator:
+        def stream_chunks() -> Generator[str, None, None]:
             # Consume the input generator sending chunks as SSE events
             for chunk in result:
-                resp = ChatCompletion(
-                    id=resp_id,
-                    object="chat.completion.chunk",
-                    created=int(time.time()),
-                    model=chat_req.model,
-                    choices=[Choice(index=0, delta=Message(role="assistant", content=chunk), finish_reason=None)],
-                )
-
-                # This is the format for SSE
-                # Ref: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
-                yield f"data: {resp.model_dump_json()}\n\n"
+                yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, chunk_content=chunk)
 
             # After consuming the generator, send a final event with finish_reason "stop"
-            final_resp = ChatCompletion(
-                id=resp_id,
-                object="chat.completion.chunk",
-                created=int(time.time()),
-                model=chat_req.model,
-                choices=[Choice(index=0, delta=Message(role="assistant", content=""), finish_reason="stop")],
-            )
-            yield f"data: {final_resp.model_dump_json()}\n\n"
+            yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, finish_reason="stop")
 
         return StreamingResponse(stream_chunks(), media_type="text/event-stream")
+
+    elif isinstance(result, AsyncGenerator):
+        # If the pipeline returns an async generator, we need to stream the chunks as SSE events
+        async def stream_chunks_async() -> AsyncGenerator[str, None]:
+            async for chunk in result:
+                yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, chunk_content=chunk)
+
+            yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, finish_reason="stop")
+
+        return StreamingResponse(stream_chunks_async(), media_type="text/event-stream")
 
     else:
         raise HTTPException(status_code=500, detail="Unsupported response type from pipeline")

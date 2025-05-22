@@ -65,12 +65,13 @@ def streaming_generator(pipeline: Pipeline, pipeline_run_args: Dict) -> Generato
     if streaming_component_name not in pipeline_run_args:
         pipeline_run_args[streaming_component_name] = {}
 
-    pipeline_run_args[streaming_component_name]["streaming_callback"] = streaming_callback
+    streaming_component = pipeline.get_component(streaming_component_name)
+    streaming_component.streaming_callback = streaming_callback
     log.trace(f"Streaming pipeline run args: {pipeline_run_args}")
 
     def run_pipeline():
         try:
-            pipeline.run(pipeline_run_args)
+            pipeline.run(data=pipeline_run_args)
         finally:
             queue.put(None)
 
