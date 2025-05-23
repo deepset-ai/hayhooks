@@ -119,6 +119,12 @@ async def async_streaming_generator(
 
     try:
         while not pipeline_task.done() or not queue.empty():
+            # Check if the pipeline task has completed with an exception
+            if pipeline_task.done():
+                exception = pipeline_task.exception()
+                if exception is not None:
+                    raise exception
+
             try:
                 chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
                 yield chunk
@@ -130,6 +136,10 @@ async def async_streaming_generator(
             except Exception as e:
                 log.error(f"Unexpected error in async streaming generator: {e}")
                 raise e
+
+        # Check for any final exception from the pipeline task
+        await pipeline_task
+
     except Exception as e:
         log.error(f"Unexpected error in async streaming generator: {e}")
         raise e
