@@ -1,8 +1,13 @@
 # Hayhooks
 
-**Hayhooks** makes it easy to deploy and serve [Haystack](https://haystack.deepset.ai/) pipelines as REST APIs.
+**Hayhooks** makes it easy to deploy and serve [Haystack](https://haystack.deepset.ai/) pipelines.
 
-It provides a simple way to wrap your Haystack pipelines with custom logic and expose them via HTTP endpoints, including OpenAI-compatible chat completion endpoints. With Hayhooks, you can quickly turn your Haystack pipelines into API services with minimal boilerplate code.
+With Hayhooks, you can:
+
+- **Deploy your Haystack pipelines as REST APIs** with maximum flexibility and minimal boilerplate code.
+- **Expose your Haystack pipelines as OpenAI-compatible chat completion backends** with streaming support (to be used with [open-webui](https://openwebui.com) or any other OpenAI compatible client).
+- **Expose your Haystack pipelines as MCP tools** for seamless integration with AI development environments and chat interfaces like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download).
+- **Control Hayhooks core APIs through chat** - deploy, undeploy, list, or run Haystack pipelines by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hayhooks.svg)](https://pypi.org/project/hayhooks)
@@ -26,6 +31,7 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [PipelineWrapper](#why-a-pipeline-wrapper)
   - [Setup Method](#setup)
   - [Run API Method](#run_api)
+  - [Async Run API Method](#run_api_async)
   - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
   - [Additional Dependencies](#additional-dependencies)
 - [Support file uploads](#support-file-uploads)
@@ -45,7 +51,9 @@ It provides a simple way to wrap your Haystack pipelines with custom logic and e
   - [OpenAI-compatible endpoints generation](#openai-compatible-endpoints-generation)
   - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
   - [Run Chat Completion Method](#run_chat_completion)
+  - [Async Run Chat Completion Method](#run_chat_completion_async)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
+    - [Async Streaming Generator](#async_streaming_generator)
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
 - [Advanced Usage](#advanced-usage)
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
@@ -231,6 +239,30 @@ def run_api(self, urls: List[str], question: str, any_other_user_defined_argumen
 The input arguments will be used to generate a Pydantic model that will be used to validate the request body. The same will be done for the response type.
 
 **NOTE**: Since Hayhooks will _dynamically_ create the Pydantic models, you need to make sure that the input arguments are JSON-serializable.
+
+#### run_api_async(...)
+
+This method is the asynchronous version of `run_api`. It will be used to run the pipeline in API mode when you call the `{pipeline_name}/run` endpoint, but handles requests asynchronously for better performance under high load.
+
+**You can define the input arguments of the method according to your needs**, just like with `run_api`.
+
+```python
+async def run_api_async(self, urls: List[str], question: str, any_other_user_defined_argument: Any) -> str:
+    # Use async/await with AsyncPipeline or async operations
+    result = await self.pipeline.run_async({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+    return result["llm"]["replies"][0]
+```
+
+This is particularly useful when:
+
+- Working with `AsyncPipeline` instances that support async execution
+- Integrating with async-compatible Haystack components (e.g., `OpenAIChatGenerator` with async support)
+- Handling I/O-bound operations more efficiently
+- Deploying pipelines that need to handle many concurrent requests
+
+**NOTE**: You can implement either `run_api`, `run_api_async`, or both. Hayhooks will automatically detect which methods are implemented and route requests accordingly.
+
+You can find complete working examples of async pipeline wrappers in the [test files](tests/test_files/files/async_question_answer) and [async streaming examples](tests/test_files/files/async_chat_with_website_streaming).
 
 To deploy the pipeline, run:
 
@@ -588,9 +620,38 @@ Here's a video example:
 
 ![chat-completion-example](./docs/assets/chat-completion.gif)
 
+#### run_chat_completion_async(...)
+
+This method is the asynchronous version of `run_chat_completion`. It handles OpenAI-compatible chat completion requests asynchronously, which is particularly useful for streaming responses and high-concurrency scenarios.
+
+```python
+async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> Union[str, AsyncGenerator]:
+    log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+
+    question = get_last_user_message(messages)
+    log.trace(f"Question: {question}")
+
+    # For async streaming responses
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"fetcher": {"urls": URLS}, "prompt": {"query": question}},
+    )
+```
+
+Like `run_chat_completion`, this method has a **fixed signature** and will be called with the same arguments. The key differences are:
+
+- It's declared as `async` and can use `await` for asynchronous operations
+- It can return an `AsyncGenerator` for streaming responses using `async_streaming_generator`
+- It provides better performance for concurrent chat requests
+- It's required when using async streaming with components that support async streaming callbacks
+
+**NOTE**: You can implement either `run_chat_completion`, `run_chat_completion_async`, or both. When both are implemented, Hayhooks will prefer the async version for better performance.
+
+You can find complete working examples combining async chat completion with streaming in the [async streaming test examples](tests/test_files/files/async_question_answer).
+
 ### Streaming responses in OpenAI-compatible endpoints
 
-Hayhooks now provides a `streaming_generator` utility function that can be used to stream the pipeline output to the client.
+Hayhooks provides `streaming_generator` and `async_streaming_generator` utility functions that can be used to stream the pipeline output to the client.
 
 Let's update the `run_chat_completion` method of the previous example:
 
@@ -634,9 +695,53 @@ You will see the pipeline output being streamed [in OpenAI-compatible format](ht
 
 Since output will be streamed to `open-webui` there's **no need to change `Stream Chat Response`** chat setting (leave it as `Default` or `On`).
 
+You can find a complete working example of `streaming_generator` usage in the [examples/pipeline_wrappers/chat_with_website_streaming](examples/pipeline_wrappers/chat_with_website_streaming) directory.
+
 Here's a video example:
 
 ![chat-completion-streaming-example](./docs/assets/chat-completion-streaming.gif)
+
+#### async_streaming_generator
+
+For asynchronous pipelines or when you need better concurrency handling, Hayhooks also provides an `async_streaming_generator` utility function:
+
+```python
+from pathlib import Path
+from typing import AsyncGenerator, List, Union
+from haystack import AsyncPipeline
+from hayhooks import get_last_user_message, BasePipelineWrapper, log, async_streaming_generator
+
+
+URLS = ["https://haystack.deepset.ai", "https://www.redis.io", "https://ssi.inc"]
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
+        self.pipeline = AsyncPipeline.loads(pipeline_yaml)  # Note: AsyncPipeline
+
+    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+        log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+
+        question = get_last_user_message(messages)
+        log.trace(f"Question: {question}")
+
+        # Async streaming pipeline run, will return an async generator
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"fetcher": {"urls": URLS}, "prompt": {"query": question}},
+        )
+```
+
+The `async_streaming_generator` function:
+
+- Works with both `Pipeline` and `AsyncPipeline` instances
+- Requires **components that support async streaming callbacks** (e.g., `OpenAIChatGenerator` instead of `OpenAIGenerator`)
+- Provides better performance for concurrent streaming requests
+- Returns an `AsyncGenerator` that yields chunks asynchronously
+- Automatically handles async pipeline execution and cleanup
+
+**NOTE**: The streaming component in your pipeline must support async streaming callbacks. If you get an error about async streaming support, either use the sync `streaming_generator` or switch to async-compatible components.
 
 ### Integration with haystack OpenAIChatGenerator
 
