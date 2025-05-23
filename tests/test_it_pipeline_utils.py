@@ -280,7 +280,7 @@ async def test_async_streaming_generator_cancellation(mocker, mocked_pipeline_wi
 
     async def run_and_cancel():
         generator = async_streaming_generator(pipeline, {})
-        task = asyncio.create_task(anext(generator))
+        task = asyncio.create_task(generator.__anext__())
         await asyncio.sleep(0.1)
         task.cancel()
         try:
