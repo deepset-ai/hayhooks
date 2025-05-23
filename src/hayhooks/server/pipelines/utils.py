@@ -29,7 +29,7 @@ def get_last_user_message(messages: List[Union[Message, Dict]]) -> Union[str, No
     return None
 
 
-def find_streaming_component(pipeline: Pipeline) -> Tuple[Component, str]:
+def find_streaming_component(pipeline: Union[Pipeline, AsyncPipeline]) -> Tuple[Component, str]:
     """
     Finds the component in the pipeline that supports streaming_callback
 
@@ -50,10 +50,13 @@ def find_streaming_component(pipeline: Pipeline) -> Tuple[Component, str]:
     return streaming_component, streaming_component_name
 
 
-def streaming_generator(pipeline: Pipeline, pipeline_run_args: Dict) -> Generator:
+def streaming_generator(pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: Dict) -> Generator:
     """
     Creates a generator that yields streaming chunks from a pipeline execution.
     Automatically finds the streaming-capable component in the pipeline.
+
+    NOTE: This generator works with both sync and async pipelines, but the component which supports streaming
+          must support a _sync_ `streaming_callback`.
     """
     queue: Queue[Union[str, None, Exception]] = Queue()
 
@@ -99,23 +102,41 @@ async def async_streaming_generator(
     """
     Creates an async generator that yields streaming chunks from a pipeline execution.
     Automatically finds the streaming-capable component in the pipeline.
+
+    NOTE: This generator works with both sync and async pipelines, but the last component
+          (which should accept a `streaming_callback` parameter) must support
+          an _async_ `streaming_callback` as well.
     """
+    streaming_component, streaming_component_name = find_streaming_component(pipeline)
+
+    # Here we check if the streaming component supports async streaming callbacks
+    # To do that, we check if the component has a run_async method,
+    # which typically indicates async support including async streaming callbacks.
+    # This is cheaper than actually do a deeper type inspection but still generally valid.
+    if not hasattr(streaming_component, "run_async"):
+        component_type = type(streaming_component).__name__
+        raise ValueError(
+            f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async streaming callbacks. "
+            f"Use the sync 'streaming_generator' function instead, or switch to a component that supports async streaming callbacks "
+            f"(e.g., OpenAIChatGenerator instead of OpenAIGenerator)."
+        )
 
     queue: asyncio.Queue = asyncio.Queue()
 
     async def streaming_callback(chunk):
         await queue.put(chunk.content)
 
-    _, streaming_component_name = find_streaming_component(pipeline)
     pipeline_run_args = pipeline_run_args.copy()
 
     if streaming_component_name not in pipeline_run_args:
         pipeline_run_args[streaming_component_name] = {}
 
-    streaming_component = pipeline.get_component(streaming_component_name)
     streaming_component.streaming_callback = streaming_callback
 
-    pipeline_task = asyncio.create_task(pipeline.run_async(data=pipeline_run_args))
+    if isinstance(pipeline, AsyncPipeline):
+        pipeline_task = asyncio.create_task(pipeline.run_async(data=pipeline_run_args))
+    else:
+        pipeline_task = asyncio.create_task(asyncio.to_thread(pipeline.run, data=pipeline_run_args))
 
     try:
         while not pipeline_task.done() or not queue.empty():
@@ -146,6 +167,7 @@ async def async_streaming_generator(
     finally:
         if not pipeline_task.done():
             pipeline_task.cancel()
+
             try:
                 await asyncio.wait_for(pipeline_task, timeout=1.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):

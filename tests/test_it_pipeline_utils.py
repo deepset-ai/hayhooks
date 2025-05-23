@@ -1,27 +1,51 @@
 import os
 import pytest
 import asyncio
-from pathlib import Path
 from haystack import Pipeline, AsyncPipeline
 from haystack.dataclasses import ChatMessage
 from typing import Generator, AsyncGenerator, Dict, Any
-from hayhooks.server.pipelines.registry import registry
-from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator, find_streaming_component
-
-TEST_FILES_DIR_STREAMING = Path(__file__).parent / "test_files/files/chat_with_website_streaming"
-SAMPLE_PIPELINE_FILES_STREAMING = {
-    "pipeline_wrapper.py": (TEST_FILES_DIR_STREAMING / "pipeline_wrapper.py").read_text(),
-    "chat_with_website.yml": (TEST_FILES_DIR_STREAMING / "chat_with_website.yml").read_text(),
-}
-
-TEST_FILES_DIR_ASYNC_STREAMING = Path(__file__).parent / "test_files/files/async_question_answer"
-SAMPLE_PIPELINE_FILES_ASYNC_STREAMING = {
-    "pipeline_wrapper.py": (TEST_FILES_DIR_ASYNC_STREAMING / "pipeline_wrapper.py").read_text(),
-    "question_answer.yml": (TEST_FILES_DIR_ASYNC_STREAMING / "question_answer.yml").read_text(),
-}
+from haystack.components.builders import ChatPromptBuilder, PromptBuilder
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.components.generators import OpenAIGenerator
+from haystack.dataclasses import ChatMessage
+from haystack.utils import Secret
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
+
+
+@pytest.fixture
+def sync_pipeline_with_sync_streaming_callback_support():
+    pipeline = Pipeline()
+    pipeline.add_component("prompt_builder", ChatPromptBuilder())
+    pipeline.add_component(
+        "llm", OpenAIChatGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini")
+    )
+    pipeline.connect("prompt_builder.prompt", "llm.messages")
+    return pipeline
+
+
+@pytest.fixture
+def async_pipeline_with_async_streaming_callback_support():
+    """
+    NOTE: `OpenAIChatGenerator` supports both _async_ and _sync_ `streaming_callback`.
+    """
+    pipeline = AsyncPipeline()
+    pipeline.add_component("prompt_builder", ChatPromptBuilder())
+    pipeline.add_component(
+        "llm", OpenAIChatGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini")
+    )
+    pipeline.connect("prompt_builder.prompt", "llm.messages")
+    return pipeline
+
+
+@pytest.fixture
+def async_pipeline_without_async_streaming_callback_support():
+    pipeline = AsyncPipeline()
+    pipeline.add_component("prompt_builder", PromptBuilder(template=QUESTION))
+    pipeline.add_component("llm", OpenAIGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
+    pipeline.connect("prompt_builder.prompt", "llm.prompt")
+    return pipeline
 
 
 @pytest.mark.skipif(
@@ -29,21 +53,13 @@ QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes o
     reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
 )
 @pytest.mark.integration
-def test_streaming_generator():
-    pipeline_name = "test_streaming_generator"
-    pipeline_files = SAMPLE_PIPELINE_FILES_STREAMING
-
-    add_pipeline_to_registry(pipeline_name, pipeline_files)
-
-    pipeline_wrapper = registry.get(pipeline_name)
-    assert pipeline_wrapper is not None
-    assert isinstance(pipeline_wrapper.pipeline, Pipeline)
+def test_sync_pipeline_sync_streaming_callback_streaming_generator(sync_pipeline_with_sync_streaming_callback_support):
+    pipeline = sync_pipeline_with_sync_streaming_callback_support
 
     generator = streaming_generator(
-        pipeline_wrapper.pipeline,
+        pipeline,
         {
-            "fetcher": {"urls": ["https://haystack.deepset.ai/"]},
-            "prompt": {"query": QUESTION},
+            "prompt_builder": {"template": [ChatMessage.from_user(QUESTION)]},
         },
     )
     assert isinstance(generator, Generator)
@@ -59,21 +75,18 @@ def test_streaming_generator():
     reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
 )
 @pytest.mark.integration
-async def test_async_streaming_generator():
-    pipeline_name = "test_async_streaming_generator"
-    pipeline_files = SAMPLE_PIPELINE_FILES_ASYNC_STREAMING
+async def test_async_pipeline_async_streaming_callback_async_streaming_generator(
+    async_pipeline_with_async_streaming_callback_support,
+):
+    pipeline = async_pipeline_with_async_streaming_callback_support
 
-    add_pipeline_to_registry(pipeline_name, pipeline_files)
-
-    pipeline_wrapper = registry.get(pipeline_name)
-    assert pipeline_wrapper is not None
-    assert isinstance(pipeline_wrapper.pipeline, AsyncPipeline)
-
-    messages = [ChatMessage.from_user(QUESTION)]
-
+    # Here streaming_generator will call the .run() method of the AsyncPipeline,
+    # which will wrap the call to .run_async() with asyncio.run().
     async_generator = async_streaming_generator(
-        pipeline_wrapper.pipeline,
-        {"prompt_builder": {"template": messages}},
+        pipeline,
+        {
+            "prompt_builder": {"template": [ChatMessage.from_user(QUESTION)]},
+        },
     )
     assert isinstance(async_generator, AsyncGenerator)
 
@@ -83,15 +96,26 @@ async def test_async_streaming_generator():
     assert "Yes" in chunks
 
 
-# Unit tests for error cases and edge scenarios
+async def test_async_pipeline_without_async_streaming_callback_support_should_raise_exception(
+    async_pipeline_without_async_streaming_callback_support,
+):
+    pipeline = async_pipeline_without_async_streaming_callback_support
+
+    with pytest.raises(ValueError, match="seems to not support async streaming callbacks"):
+        async_generator = async_streaming_generator(pipeline, {})
+
+        # Try to consume the generator to trigger the exception
+        _ = [chunk async for chunk in async_generator]
 
 
 class MockComponent:
     """Mock component for testing"""
 
-    def __init__(self, has_streaming=True):
+    def __init__(self, has_streaming=True, has_async_support=True):
         if has_streaming:
             self.streaming_callback = None
+        if has_async_support:
+            self.run_async = lambda: None
 
 
 class MockChunk:
