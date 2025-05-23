@@ -15,7 +15,6 @@ from hayhooks.server.utils.deploy_utils import (
     create_pipeline_wrapper_instance,
     deploy_pipeline_files,
     undeploy_pipeline,
-    remove_pipeline_files,
 )
 from hayhooks.server.exceptions import (
     PipelineFilesError,
@@ -44,6 +43,19 @@ def test_load_pipeline_module():
     assert hasattr(module, "PipelineWrapper")
     assert isinstance(getattr(module.PipelineWrapper, "run_api"), Callable)
     assert isinstance(getattr(module.PipelineWrapper, "run_chat_completion"), Callable)
+    assert isinstance(getattr(module.PipelineWrapper, "setup"), Callable)
+
+
+def test_load_pipeline_module_async():
+    pipeline_name = "async_chat_with_website"
+    pipeline_dir_path = Path("tests/test_files/files/async_chat_with_website")
+
+    module = load_pipeline_module(pipeline_name, pipeline_dir_path)
+
+    assert module is not None
+    assert hasattr(module, "PipelineWrapper")
+    assert isinstance(getattr(module.PipelineWrapper, "run_api_async"), Callable)
+    assert isinstance(getattr(module.PipelineWrapper, "run_chat_completion_async"), Callable)
     assert isinstance(getattr(module.PipelineWrapper, "setup"), Callable)
 
 
@@ -274,7 +286,8 @@ def test_create_pipeline_wrapper_instance_missing_methods():
     module = type('Module', (), {'PipelineWrapper': IncompleteWrapper})
 
     with pytest.raises(
-        PipelineWrapperError, match="At least one of run_api or run_chat_completion must be implemented"
+        PipelineWrapperError,
+        match="At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented",
     ):
         create_pipeline_wrapper_instance(module)
 
@@ -342,7 +355,7 @@ def test_deploy_pipeline_files_skip_mcp(mocker):
     assert registry.get_metadata("chat_with_website_mcp_skip").get("skip_mcp") is True
 
 
-def test_undeploy_pipeline_without_app(test_settings, mocker):
+def test_undeploy_pipeline_without_app(test_settings):
     pipeline_name = "test_undeploy_no_app"
     test_file_path = Path("tests/test_files/files/no_chat/pipeline_wrapper.py")
     files = {"pipeline_wrapper.py": test_file_path.read_text()}

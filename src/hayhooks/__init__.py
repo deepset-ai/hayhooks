@@ -5,6 +5,7 @@ from hayhooks.server.pipelines.utils import (
     is_user_message,
     get_last_user_message,
     streaming_generator,
+    async_streaming_generator
 )
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "is_user_message",
     "get_last_user_message",
     "streaming_generator",
+    "async_streaming_generator",
     "create_app",
 ]

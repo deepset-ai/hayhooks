@@ -60,6 +60,8 @@ installer = "uv"
 features = ["mcp"]
 
 [tool.hatch.envs.test.scripts]
+unit = "pytest -vv -m 'not integration' {args:tests}"
+integration = "pytest -vv -m integration {args:tests}"
 all = "pytest -vv {args:tests}"
 all-cov = "coverage run -m pytest {args:tests}"
 cov-report = [
@@ -187,3 +189,6 @@ filterwarnings = [
   "ignore::UserWarning",
 ]
 asyncio_mode = "auto"
+markers = [
+    "integration: marks tests as integration tests"
+]

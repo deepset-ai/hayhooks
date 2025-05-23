@@ -1,7 +1,7 @@
 import pytest
 from hayhooks.server.exceptions import PipelineNotFoundError
 from pathlib import Path
-from haystack import Pipeline
+from haystack import Pipeline, Document
 from haystack.core.errors import PipelineError
 from typing import List
 from hayhooks.server.pipelines.registry import _PipelineRegistry
@@ -39,13 +39,6 @@ def test_add_yaml_pipeline(pipeline_registry, sample_pipeline_yaml):
     pipeline = Pipeline.loads(sample_pipeline_yaml)
     assert result == pipeline
     assert pipeline_registry.get("test_pipeline") == pipeline
-
-
-def test_add_invalid_pipeline(pipeline_registry, mocker):
-    mocker.patch('haystack.Pipeline.loads', side_effect=PipelineError("Invalid pipeline"))
-
-    with pytest.raises(ValueError, match="Unable to parse Haystack Pipeline test_pipeline"):
-        pipeline_registry.add("test_pipeline", "invalid yaml")
 
 
 def test_get_non_existent_pipeline(pipeline_registry):
@@ -92,6 +85,12 @@ def test_add_pipeline_wrapper(pipeline_registry, test_pipeline_wrapper_class):
 
     assert result == wrapper
     assert pipeline_registry.get("test_wrapper") == wrapper
+
+
+def test_add_invalid_pipeline_or_wrapper(pipeline_registry):
+    not_a_pipeline_or_wrapper = Document()
+    with pytest.raises(ValueError, match="Unable to parse Haystack Pipeline test_wrapper"):
+        pipeline_registry.add("test_wrapper", not_a_pipeline_or_wrapper)
 
 
 def test_add_duplicate_pipeline_wrapper(pipeline_registry, test_pipeline_wrapper_class):
