@@ -13,7 +13,6 @@ MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 pytestmark = [
     pytest.mark.skipif(not MCP_AVAILABLE, reason="'mcp' package not installed"),
     pytest.mark.mcp,
-    pytest.mark.integration,
 ]
 
 # Conditional import for mcp types if needed, though skipif should guard tests

@@ -1,10 +1,10 @@
-from typing import Any, Dict, Optional, Tuple, Union
-from haystack import Pipeline
+from typing import Any, Dict, Optional, Union
+from haystack import DeserializationError, Pipeline, AsyncPipeline
 from haystack.core.errors import PipelineError
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.exceptions import PipelineNotFoundError
 
-PipelineType = Union[Pipeline, BasePipelineWrapper]
+PipelineType = Union[Pipeline, AsyncPipeline, BasePipelineWrapper]
 
 
 class _PipelineRegistry:
@@ -19,12 +19,12 @@ class _PipelineRegistry:
             msg = f"A pipeline with name {name} is already in the registry."
             raise ValueError(msg)
 
-        if isinstance(source_or_pipeline, (Pipeline, BasePipelineWrapper)):
+        if isinstance(source_or_pipeline, (Pipeline, AsyncPipeline, BasePipelineWrapper)):
             pipeline = source_or_pipeline
         else:
             try:
                 pipeline = Pipeline.loads(source_or_pipeline)
-            except PipelineError as e:
+            except (PipelineError, DeserializationError) as e:
                 msg = f"Unable to parse Haystack Pipeline {name}: {e}"
                 raise ValueError(msg) from e
 

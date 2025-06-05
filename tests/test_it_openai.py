@@ -1,30 +1,21 @@
 import json
 import shutil
-from hayhooks.server.routers.deploy import DeployResponse
 import pytest
+from typing import Any, Dict
 from concurrent.futures import ThreadPoolExecutor
 from hayhooks.settings import settings
 from pathlib import Path
 from hayhooks.server.pipelines import registry
+from hayhooks.server.routers.deploy import DeployResponse
 from hayhooks.server.routers.openai import ChatRequest, ChatCompletion, ModelObject, ModelsResponse
-
-
-def cleanup():
-    registry.clear()
-    if Path(settings.pipelines_dir).exists():
-        shutil.rmtree(settings.pipelines_dir)
 
 
 @pytest.fixture(autouse=True)
 def clear_registry():
-    cleanup()
+    registry.clear()
+    if Path(settings.pipelines_dir).exists():
+        shutil.rmtree(settings.pipelines_dir)
     yield
-
-
-@pytest.fixture(scope="session", autouse=True)
-def final_cleanup():
-    yield
-    cleanup()
 
 
 def collect_chunks(response):
@@ -47,6 +38,12 @@ SAMPLE_PIPELINE_FILES_STREAMING = {
     "chat_with_website.yml": (TEST_FILES_DIR_STREAMING / "chat_with_website.yml").read_text(),
 }
 
+TEST_FILES_DIR_ASYNC_STREAMING = Path(__file__).parent / "test_files/files/async_chat_with_website_streaming"
+SAMPLE_PIPELINE_FILES_ASYNC_STREAMING = {
+    "pipeline_wrapper.py": (TEST_FILES_DIR_ASYNC_STREAMING / "pipeline_wrapper.py").read_text(),
+    "chat_with_website.yml": (TEST_FILES_DIR_ASYNC_STREAMING / "chat_with_website.yml").read_text(),
+}
+
 
 def test_get_models_empty(client):
     response = client.get("/models")
@@ -54,7 +51,7 @@ def test_get_models_empty(client):
     assert response.json() == {"data": [], "object": "list"}
 
 
-def test_get_models(client):
+def test_get_models(client) -> None:
     pipeline_data = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES}
 
     response = client.post("/deploy_files", json=pipeline_data)
@@ -74,7 +71,7 @@ def test_get_models(client):
                 id="test_pipeline",
                 name="test_pipeline",
                 object="model",
-                created=response_data["data"][0]["created"],
+                created=response_data["data"][0]["created"],  # type: ignore
                 owned_by="hayhooks",
             )
         ],
@@ -126,7 +123,7 @@ def test_chat_completion_invalid_model(client):
     assert response.status_code == 404
 
 
-def test_chat_completion_not_implemented(client, deploy_files):
+def test_chat_completion_not_implemented(client, deploy_files) -> None:
     pipeline_file = Path(__file__).parent / "test_files/files/no_chat/pipeline_wrapper.py"
     pipeline_data = {"name": "test_pipeline_no_chat", "files": {"pipeline_wrapper.py": pipeline_file.read_text()}}
 
@@ -143,23 +140,25 @@ def test_chat_completion_not_implemented(client, deploy_files):
 
     response = client.post("/chat/completions", json=request.model_dump())
     assert response.status_code == 501
-    assert response.json()["detail"] == "Chat endpoint not implemented for this model"
+
+    err_body: Dict[str, Any] = response.json()
+    assert err_body["detail"] == "Chat endpoint not implemented for this model"
 
 
-def test_chat_completion_streaming(client, deploy_files):
-    pipeline_data = {"name": "test_pipeline_streaming", "files": SAMPLE_PIPELINE_FILES_STREAMING}
-
-    response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
+def _test_streaming_chat_completion(client, deploy_files, pipeline_name: str, pipeline_files: Dict[str, str]):
+    """
+    Helper function to test the streaming chat completion.
+    Used in tests for both sync and async streaming.
+    """
+    response = deploy_files(client, pipeline_name, pipeline_files)
     assert response.status_code == 200
     assert (
         response.json()
-        == DeployResponse(
-            name="test_pipeline_streaming", success=True, endpoint=f"/{pipeline_data['name']}/run"
-        ).model_dump()
+        == DeployResponse(name=pipeline_name, success=True, endpoint=f"/{pipeline_name}/run").model_dump()
     )
 
     request = ChatRequest(
-        model="test_pipeline_streaming",
+        model=pipeline_name,
         messages=[{"role": "user", "content": "what is Redis?"}],
     )
 
@@ -167,7 +166,9 @@ def test_chat_completion_streaming(client, deploy_files):
 
     # response is a stream of SSE events
     assert response.status_code == 200
-    assert response.headers["Content-Type"] == "text/event-stream; charset=utf-8"
+
+    headers: Dict[str, Any] = response.headers
+    assert headers["Content-Type"] == "text/event-stream; charset=utf-8"
 
     # collect the chunks
     chunks = collect_chunks(response)
@@ -176,12 +177,19 @@ def test_chat_completion_streaming(client, deploy_files):
     assert len(chunks) > 0
     assert chunks[0].startswith("data:")
     assert chunks[-1].startswith("data:")
+    return chunks
+
+
+def test_chat_completion_streaming(client, deploy_files) -> None:
+    pipeline_name = "test_pipeline_streaming"
+    pipeline_files = SAMPLE_PIPELINE_FILES_STREAMING
+    chunks = _test_streaming_chat_completion(client, deploy_files, pipeline_name, pipeline_files)
 
     # check if the chunks are valid ChatCompletion objects
     sample_chunk = chunks[1]
-    chat_completion = ChatCompletion(**json.loads(sample_chunk.split("data:")[1]))
+    chat_completion = ChatCompletion(**json.loads(sample_chunk.split("data:")[1]))  # type: ignore
     assert chat_completion.object == "chat.completion.chunk"
-    assert chat_completion.model == "test_pipeline_streaming"
+    assert chat_completion.model == pipeline_name
     assert chat_completion.choices[0].delta.content
     assert chat_completion.choices[0].delta.role == "assistant"
     assert chat_completion.choices[0].index == 0
@@ -189,7 +197,7 @@ def test_chat_completion_streaming(client, deploy_files):
 
     # check if last chunk contains a delta with empty content
     last_chunk = chunks[-1]
-    last_chat_completion = ChatCompletion(**json.loads(last_chunk.split("data:")[1]))
+    last_chat_completion = ChatCompletion(**json.loads(last_chunk.split("data:")[1]))  # type: ignore
     assert last_chat_completion.choices[0].delta.content == ""
     assert last_chat_completion.choices[0].delta.role == "assistant"
     assert last_chat_completion.choices[0].index == 0
@@ -228,3 +236,24 @@ def test_chat_completion_concurrent_requests(client, deploy_files):
     # check if the responses are valid
     assert "Redis" in chunks_1[0]  # "Redis" is the first chunk (see pipeline_wrapper.py)
     assert "This" in chunks_2[0]  # "This" is the first chunk (see pipeline_wrapper.py)
+
+
+def test_async_chat_completion_streaming(client, deploy_files) -> None:
+    pipeline_name = "test_pipeline_async_streaming"
+    pipeline_files = SAMPLE_PIPELINE_FILES_ASYNC_STREAMING
+    chunks = _test_streaming_chat_completion(client, deploy_files, pipeline_name, pipeline_files)
+
+    # check if the chunks are valid ChatCompletion objects
+    sample_chunk = chunks[1]
+    chat_completion = ChatCompletion(**json.loads(sample_chunk.split("data:")[1]))  # type: ignore
+    assert chat_completion.object == "chat.completion.chunk"
+    assert chat_completion.model == pipeline_name
+    assert chat_completion.choices[0].delta.content
+
+    # check if last chunk contains a delta with empty content
+    last_chunk = chunks[-1]
+    last_chat_completion = ChatCompletion(**json.loads(last_chunk.split("data:")[1]))  # type: ignore
+    assert last_chat_completion.choices[0].delta.content == ""
+    assert last_chat_completion.choices[0].delta.role == "assistant"
+    assert last_chat_completion.choices[0].index == 0
+    assert last_chat_completion.choices[0].logprobs is None
