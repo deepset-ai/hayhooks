@@ -5,8 +5,8 @@
 With Hayhooks, you can:
 
 - **Deploy your Haystack pipelines as REST APIs** with maximum flexibility and minimal boilerplate code.
+- **Expose your Haystack pipelines over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
 - **Expose your Haystack pipelines as OpenAI-compatible chat completion backends** with streaming support (to be used with [open-webui](https://openwebui.com) or any other OpenAI compatible client).
-- **Expose your Haystack pipelines as MCP tools** for seamless integration with AI development environments and chat interfaces like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download).
 - **Control Hayhooks core APIs through chat** - deploy, undeploy, list, or run Haystack pipelines by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
