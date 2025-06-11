@@ -44,6 +44,19 @@ def deploy_chat_with_website_mcp_pipeline():
 
 
 @pytest.fixture
+def deploy_async_question_answer_mcp_pipeline():
+    pipeline_name = "async_question_answer"
+    pipeline_wrapper_path = Path("tests/test_files/files/async_question_answer/pipeline_wrapper.py")
+    pipeline_yml_path = Path("tests/test_files/files/async_question_answer/question_answer.yml")
+    files = {
+        "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
+        "question_answer.yml": pipeline_yml_path.read_text(),
+    }
+    add_pipeline_to_registry(pipeline_name=pipeline_name, files=files)
+    return pipeline_name
+
+
+@pytest.fixture
 def mcp_server_instance() -> "Server":
     return create_mcp_server()
 
@@ -97,6 +110,19 @@ async def test_call_pipeline_as_tool(mcp_server_instance, deploy_chat_with_websi
         result = await client.call_tool(
             deploy_chat_with_website_mcp_pipeline,
             {"urls": ["https://www.google.com"], "question": "What is the capital of France?"},
+        )
+
+        assert isinstance(result, CallToolResult)
+
+        # In the deployed pipeline, the response is mocked
+        assert result.content == [TextContent(type="text", text="This is a mock response from the pipeline")]
+
+
+@pytest.mark.asyncio
+async def test_call_async_pipeline_as_tool(mcp_server_instance, deploy_async_question_answer_mcp_pipeline):
+    async with client_session(mcp_server_instance) as client:
+        result = await client.call_tool(
+            deploy_async_question_answer_mcp_pipeline, {"question": "What is the capital of France?"}
         )
 
         assert isinstance(result, CallToolResult)

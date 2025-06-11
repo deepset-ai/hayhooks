@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Union
@@ -13,8 +14,10 @@ from hayhooks.server.utils.deploy_utils import (
 )
 from hayhooks.settings import settings
 from hayhooks.server.pipelines import registry
+from hayhooks.server.pipelines.registry import PipelineType
 from haystack.lazy_imports import LazyImport
 from hayhooks.server.routers.deploy import PipelineFilesRequest
+from fastapi.concurrency import run_in_threadpool
 
 
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
@@ -133,12 +136,21 @@ async def run_pipeline_as_tool(
     mcp_import.check()
 
     log.debug(f"Calling pipeline as tool '{name}' with arguments: {arguments}")
-    pipeline_wrapper: Union[BasePipelineWrapper, None] = registry.get(name)
+    pipeline: Union[PipelineType, None] = registry.get(name)
 
-    if not pipeline_wrapper:
+    if not pipeline:
         raise ValueError(f"Pipeline '{name}' not found")
 
-    result = await asyncio.to_thread(pipeline_wrapper.run_api, **arguments)
+    # Only BasePipelineWrapper instances support run_api/run_api_async methods
+    if not isinstance(pipeline, BasePipelineWrapper):
+        raise ValueError(f"Pipeline '{name}' is not a BasePipelineWrapper and cannot be used as an MCP tool")
+
+    # Use the same async/sync pattern as in deploy_utils.py
+    if pipeline._is_run_api_async_implemented:
+        result = await pipeline.run_api_async(**arguments)
+    else:
+        result = await run_in_threadpool(pipeline.run_api, **arguments)
+
     log.trace(f"Pipeline '{name}' returned result: {result}")
 
     return [TextContent(text=result, type="text")]
@@ -206,6 +218,8 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
 
         except Exception as exc:
             msg = f"General unhandled error in call_tool for tool '{name}': {exc}"
+            if settings.show_tracebacks:
+                msg += f"\n{traceback.format_exc()}"
             log.error(msg)
             raise Exception(msg) from exc
 

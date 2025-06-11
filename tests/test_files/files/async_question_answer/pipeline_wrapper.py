@@ -21,32 +21,15 @@ class PipelineWrapper(BasePipelineWrapper):
     async def run_api_async(self, question: str) -> str:
         log.trace(f"Running pipeline with question: {question}")
 
-        result = await self.pipeline.run_async(
-            {
-                "prompt_builder": {
-                    "template": [
-                        ChatMessage.from_system(SYSTEM_MESSAGE),
-                        ChatMessage.from_user(question),
-                    ]
-                }
-            }
-        )
-        return result["llm"]["replies"][0].text
+        return "This is a mock response from the pipeline"
 
     async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
 
-        question = get_last_user_message(messages)
-        log.trace(f"Question: {question}")
+        mock_response = "This is a mock response from the pipeline"
 
-        return async_streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={
-                "prompt_builder": {
-                    "template": [
-                        ChatMessage.from_system(SYSTEM_MESSAGE),
-                        ChatMessage.from_user(question),
-                    ]
-                },
-            },
-        )
+        async def mock_generator():
+            for word in mock_response.split():
+                yield word + " "
+
+        return mock_generator()
