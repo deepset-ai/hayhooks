@@ -1,21 +1,22 @@
 import sys
-import requests
 from functools import lru_cache
 from os import PathLike
-from typing import Union
-from fastapi import FastAPI
 from pathlib import Path
+from typing import Union
+
+from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
+
+from hayhooks.server.logger import log
+from hayhooks.server.routers import deploy_router, draw_router, openai_router, status_router, undeploy_router
 from hayhooks.server.utils.deploy_utils import (
-    deploy_pipeline_def,
     PipelineDefinition,
+    deploy_pipeline_def,
     deploy_pipeline_files,
     read_pipeline_files_from_dir,
 )
-from hayhooks.server.routers import status_router, draw_router, deploy_router, undeploy_router, openai_router
-from hayhooks.settings import settings, check_cors_settings, APP_TITLE, APP_DESCRIPTION
-from hayhooks.server.logger import log
-from fastapi.middleware.cors import CORSMiddleware
+from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, check_cors_settings, settings
 
 
 def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
@@ -134,19 +135,60 @@ async def lifespan(app: FastAPI):
 
 
 @lru_cache(maxsize=1)
-def get_package_version_from_pypi(package_name: str, connect_timeout: int = 5, read_timeout: int = 5) -> str:
+def get_package_version() -> str:
     """
-    Get the version of the package from PyPI.
+    Get the version of the package using multiple fallback strategies.
+
+    Priority order (follows Python packaging best practices):
+    1. Package metadata - For properly installed packages (including development installs)
+    2. Git tags - For development environments or when package metadata unavailable
+    3. Static version file - For source-only deployments without package installation
+
+    This multi-strategy approach is recommended by the Python packaging community
+    and implemented by tools like setuptools-scm to handle diverse deployment scenarios.
     """
+    # Strategy 1: Try to get version from installed package metadata (recommended)
     try:
-        url = f"https://pypi.org/pypi/{package_name}/json"
-        response = requests.get(url, timeout=(connect_timeout, read_timeout))
-        response.raise_for_status()
-        data = response.json()
-        return data["info"]["version"]
+        from importlib.metadata import version
+        return version("hayhooks")
     except Exception as e:
-        log.warning(f"Failed to get package version for {package_name}: {str(e)}")
-        return "unknown"
+        log.debug(f"Could not get version from package metadata: {e!s}")
+
+    # Strategy 2: Try to get version from git tags (matches hatch-vcs behavior)
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=Path(__file__).parent.parent.parent.parent, check=False
+        )
+        if result.returncode == 0:
+            version_tag = result.stdout.strip()
+            # Remove 'v' prefix if present (e.g., v0.9.0 -> 0.9.0)
+            return version_tag.lstrip("v")
+    except Exception as e:
+        log.debug(f"Could not get version from git: {e!s}")
+
+    # Strategy 3: Fall back to version.txt file (source-only deployments)
+    try:
+        version_file = Path(__file__).parent.parent.parent.parent / "version.txt"
+        if version_file.exists():
+            content = version_file.read_text().strip()
+            # Find the first line that doesn't start with # (comment)
+            for line in content.split("\n"):
+                stripped_line = line.strip()
+                if stripped_line and not stripped_line.startswith("#"):
+                    return stripped_line
+            log.warning("No version line found in version.txt")
+        else:
+            log.debug(f"Version file not found at {version_file}")
+    except Exception as e:
+        log.debug(f"Failed to read version from file: {e!s}")
+
+    log.warning("Could not determine package version using any method")
+    return "unknown"
 
 
 def create_app() -> FastAPI:
@@ -168,7 +210,7 @@ def create_app() -> FastAPI:
         "lifespan": lifespan,
         "title": APP_TITLE,
         "description": APP_DESCRIPTION,
-        "version": get_package_version_from_pypi("hayhooks"),
+        "version": get_package_version(),
     }
 
     if root_path := settings.root_path:
