@@ -15,6 +15,7 @@ from hayhooks.server.utils.deploy_utils import (
     create_pipeline_wrapper_instance,
     deploy_pipeline_files,
     undeploy_pipeline,
+    add_pipeline_to_registry,
 )
 from hayhooks.server.exceptions import (
     PipelineFilesError,
@@ -378,3 +379,29 @@ def test_undeploy_pipeline_without_app(test_settings):
 
     # 4. Assert pipeline files are deleted
     assert not pipeline_dir.exists()
+
+
+def test_add_pipeline_to_registry_with_async_run_api():
+    pipeline_name = "async_question_answer"
+    pipeline_wrapper_path = Path("tests/test_files/files/async_question_answer/pipeline_wrapper.py")
+    pipeline_yml_path = Path("tests/test_files/files/async_question_answer/question_answer.yml")
+    files = {
+        "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
+        "question_answer.yml": pipeline_yml_path.read_text(),
+    }
+
+    pipeline_wrapper = add_pipeline_to_registry(pipeline_name=pipeline_name, files=files, save_files=False)
+    assert registry.get(pipeline_name) == pipeline_wrapper
+
+    metadata = registry.get_metadata(pipeline_name)
+    assert metadata is not None
+    assert "request_model" in metadata
+    assert metadata["request_model"] is not None
+
+    assert pipeline_wrapper._is_run_api_async_implemented is True
+    assert pipeline_wrapper._is_run_api_implemented is False
+
+    request_model = metadata["request_model"]
+    schema = request_model.model_json_schema()
+    assert "question" in schema["properties"]
+    assert schema["properties"]["question"]["type"] == "string"
