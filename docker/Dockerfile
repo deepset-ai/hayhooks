@@ -32,7 +32,7 @@ ENV HAYHOOKS_PIPELINES_DIR=$pipelines_dir
 
 ARG additional_python_path
 RUN mkdir -p $additional_python_path
-ENV HAYHOOKS_ADDITIONAL_PYTHONPATH=$additional_python_path
+ENV HAYHOOKS_ADDITIONAL_PYTHON_PATH=$additional_python_path
 
 EXPOSE 1416
 

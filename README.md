@@ -105,7 +105,7 @@ The following environment variables are supported:
 - `HAYHOOKS_MCP_HOST`: The host on which the MCP server will listen.
 - `HAYHOOKS_PIPELINES_DIR`: The path to the directory containing the pipelines.
 - `HAYHOOKS_ROOT_PATH`: The root path of the server.
-- `HAYHOOKS_ADDITIONAL_PYTHONPATH`: Additional Python path to be added to the Python path.
+- `HAYHOOKS_ADDITIONAL_PYTHON_PATH`: Additional Python path to be added to the Python path.
 - `HAYHOOKS_DISABLE_SSL`: Boolean flag to disable SSL verification when making requests from the CLI.
 - `HAYHOOKS_USE_HTTPS`: Boolean flag to use HTTPS when using CLI commands to interact with the server (e.g. `hayhooks status` will call `https://HAYHOOKS_HOST:HAYHOOKS_PORT/status`).
 - `HAYHOOKS_SHOW_TRACEBACKS`: Boolean flag to show tracebacks on errors during pipeline execution and deployment.
@@ -810,14 +810,14 @@ Hayhooks allows you to use your custom code in your pipeline wrappers adding a s
 
 You can do this in three ways:
 
-1. Set the `HAYHOOKS_ADDITIONAL_PYTHONPATH` environment variable to the path of the folder containing your custom code.
-2. Add `HAYHOOKS_ADDITIONAL_PYTHONPATH` to the `.env` file.
+1. Set the `HAYHOOKS_ADDITIONAL_PYTHON_PATH` environment variable to the path of the folder containing your custom code.
+2. Add `HAYHOOKS_ADDITIONAL_PYTHON_PATH` to the `.env` file.
 3. Use the `--additional-python-path` flag when launching Hayhooks.
 
 For example, if you have a folder called `common` with a `my_custom_lib.py` module which contains the `my_function` function, you can deploy your pipelines by using the following command:
 
 ```bash
-export HAYHOOKS_ADDITIONAL_PYTHONPATH='./common'
+export HAYHOOKS_ADDITIONAL_PYTHON_PATH='./common'
 hayhooks run
 ```
 

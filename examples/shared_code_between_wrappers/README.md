@@ -1,6 +1,6 @@
 # Sharing code between pipeline wrappers
 
-This example shows how to share code between pipeline wrappers using `HAYHOOKS_ADDITIONAL_PYTHONPATH`.
+This example shows how to share code between pipeline wrappers using `HAYHOOKS_ADDITIONAL_PYTHON_PATH`.
 
 **NOTE**: We will run all the commands from the example directory, so `./examples/shared_code_between_wrappers`.
 
@@ -22,12 +22,12 @@ pip install hayhooks
 In this example, we'll add the code from `common` folder to the Hayhooks [Python Path](https://docs.python.org/3/library/sys_path_init.html).
 You have three ways to do this:
 
-### Option 1: Set the environment variable `HAYHOOKS_ADDITIONAL_PYTHONPATH` to the path of the `common` folder
+### Option 1: Set the environment variable `HAYHOOKS_ADDITIONAL_PYTHON_PATH` to the path of the `common` folder
 
 You can use both absolute and relative paths. Since we are running all the commands from the example directory, we'll use a relative path.
 
 ```bash
-export HAYHOOKS_ADDITIONAL_PYTHONPATH='./common'
+export HAYHOOKS_ADDITIONAL_PYTHON_PATH='./common'
 ```
 
 And then launch Hayhooks as usual:
@@ -36,10 +36,10 @@ And then launch Hayhooks as usual:
 hayhooks run
 ```
 
-### Option 2: Add `HAYHOOKS_ADDITIONAL_PYTHONPATH` to the `.env` file
+### Option 2: Add `HAYHOOKS_ADDITIONAL_PYTHON_PATH` to the `.env` file
 
 ```bash
-echo "HAYHOOKS_ADDITIONAL_PYTHONPATH='./common'" >> .env
+echo "HAYHOOKS_ADDITIONAL_PYTHON_PATH='./common'" >> .env
 ```
 
 And then Launch Hayhooks as usual:
