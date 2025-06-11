@@ -1,4 +1,3 @@
-import asyncio
 import typer
 import uvicorn
 import sys

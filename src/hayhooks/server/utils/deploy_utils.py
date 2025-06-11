@@ -423,10 +423,28 @@ def add_pipeline_to_registry(
     clog.debug("Running setup()")
     pipeline_wrapper.setup()
 
-    docstring = docstring_parser.parse(inspect.getdoc(pipeline_wrapper.run_api) or "")
+    # Determine which run_api method to use for creating request model (prefer async if available)
+    if pipeline_wrapper._is_run_api_async_implemented:
+        run_method_to_inspect = pipeline_wrapper.run_api_async
+        clog.debug("Using `run_api_async` for metadata creation.")
+    elif pipeline_wrapper._is_run_api_implemented:
+        run_method_to_inspect = pipeline_wrapper.run_api
+        clog.debug("Using `run_api` for metadata creation.")
+    else:
+        # If neither run_api nor run_api_async is implemented, skip creating request model
+        run_method_to_inspect = None
+        clog.debug("No run_api method implemented, skipping request model creation.")
+
+    if run_method_to_inspect:
+        docstring = docstring_parser.parse(inspect.getdoc(run_method_to_inspect) or "")
+        request_model = create_request_model_from_callable(run_method_to_inspect, f'{pipeline_name}Run', docstring)
+    else:
+        docstring = docstring_parser.Docstring()
+        request_model = None
+
     metadata = {
         "description": docstring.short_description or "",
-        "request_model": create_request_model_from_callable(pipeline_wrapper.run_api, f'{pipeline_name}Run', docstring),
+        "request_model": request_model,
         "skip_mcp": pipeline_wrapper.skip_mcp,
     }
 
