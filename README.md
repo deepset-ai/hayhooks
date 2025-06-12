@@ -79,13 +79,13 @@ Start by installing the package:
 pip install hayhooks
 ```
 
-If you want to use the [MCP server](#mcp-server), you need to install the `hayhooks[mcp]` package:
+If you want to use the [MCP Server](#mcp-server), you need to install the `hayhooks[mcp]` package:
 
 ```shell
 pip install hayhooks[mcp]
 ```
 
-**NOTE: You'll need to run at least Python 3.10+ to use the MCP server.**
+**NOTE: You'll need to run at least Python 3.10+ to use the MCP Server.**
 
 ### Configuration
 
@@ -101,8 +101,8 @@ The following environment variables are supported:
 
 - `HAYHOOKS_HOST`: The host on which the server will listen.
 - `HAYHOOKS_PORT`: The port on which the server will listen.
-- `HAYHOOKS_MCP_PORT`: The port on which the MCP server will listen.
-- `HAYHOOKS_MCP_HOST`: The host on which the MCP server will listen.
+- `HAYHOOKS_MCP_PORT`: The port on which the MCP Server will listen.
+- `HAYHOOKS_MCP_HOST`: The host on which the MCP Server will listen.
 - `HAYHOOKS_PIPELINES_DIR`: The path to the directory containing the pipelines.
 - `HAYHOOKS_ROOT_PATH`: The root path of the server.
 - `HAYHOOKS_ADDITIONAL_PYTHON_PATH`: Additional Python path to be added to the Python path.
@@ -380,23 +380,28 @@ hayhooks pipeline run <pipeline_name> --file file.pdf --param 'question="is this
 
 ## MCP support
 
-**NOTE: You'll need to run at least Python 3.10+ to use the MCP server.**
+**NOTE: You'll need to run at least Python 3.10+ to use the MCP Server.**
 
 ### MCP Server
 
 Hayhooks now supports the [Model Context Protocol](https://modelcontextprotocol.io/) and can act as a [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture).
 
-It will automatically list the deployed pipelines as [MCP Tools](https://modelcontextprotocol.io/docs/concepts/tools), using [Server-Sent Events (SSE)](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) as **MCP Transport**.
+It will:
 
-To run the Hayhooks MCP server, you can use the following command:
+- Expose [Core Tools](#using-hayhooks-core-mcp-tools-in-ides-like-cursor) to make able to control Hayhooks directly from an IDE like [Cursor](https://www.cursor.com/) or any other MCP client.
+- Expose the deployed Haystack pipelines as usable [MCP Tools](https://modelcontextprotocol.io/docs/concepts/tools), using both [Server-Sent Events (SSE)](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) and (stateless) [Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports#streamable-http) MCP transports.
+
+(Note that **SSE transport is deprecated** and it's maintained only for backward compatibility).
+
+To run the Hayhooks MCP Server, you can use the following command:
 
 ```shell
 hayhooks mcp run
+
+# Hint: check --help to see all the available options
 ```
 
-This will start the Hayhooks MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT`.
-
-Make sure [Node.js](https://nodejs.org/) is installed, as the `npx` command depends on it.
+This will start the Hayhooks MCP Server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT`.
 
 ### Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool
 
@@ -441,7 +446,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
 ### Skip MCP Tool listing
 
-You can skip the MCP Tool listing by setting the `skip_mcp` class attribute to `True` in your PipelineWrapper class.
+You can skip the MCP Tool listing by setting the `skip_mcp` class attribute to `True` in your `PipelineWrapper` class.
 This way, the pipeline will be deployed on Hayhooks but **will not be listed as a MCP Tool** when you run the `hayhooks mcp run` command.
 
 ```python
@@ -458,8 +463,31 @@ class PipelineWrapper(BasePipelineWrapper):
 
 ### Using Hayhooks MCP Server with Claude Desktop
 
-Claude Desktop doesn’t yet support SSE transport for MCP servers, so you’ll need to use [supergateway](https://github.com/supercorp-ai/supergateway).
-After starting the Hayhooks MCP server, open **Settings → Developer** in Claude Desktop and update the config file like this:
+As stated in [Anthropic's documentation](https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers), Claude Desktop supports SSE and Streamable HTTP as MCP Transports only on "Claude.ai & Claude for Desktop for the Pro, Max, Teams, and Enterprise tiers".
+
+If you are using the _free_ tier, only STDIO transport is supported, so you need to use [supergateway](https://github.com/supercorp-ai/supergateway) to connect to the Hayhooks MCP Server via **SSE or Streamable HTTP**.
+
+After starting the Hayhooks MCP Server, open **Settings → Developer** in Claude Desktop and update the config file with the following examples:
+
+#### Using supergateway to bridge Streamable HTTP transport
+
+```json
+{
+  "mcpServers": {
+    "hayhooks": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "supergateway",
+        "--streamableHttp",
+        "http://HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT/mcp"
+      ]
+    }
+  }
+}
+```
+
+#### Using supergateway to bridge SSE transport
 
 ```json
 {
@@ -477,9 +505,11 @@ After starting the Hayhooks MCP server, open **Settings → Developer** in Claud
 }
 ```
 
+Make sure [Node.js](https://nodejs.org/) is installed, as the `npx` command depends on it.
+
 ### Using Hayhooks Core MCP Tools in IDEs like Cursor
 
-Since Hayhooks MCP server provides by default a set of **Core MCP Tools**, you can use them in IDEs like [Cursor](https://www.cursor.com/) to interact with Hayhooks programmatically.
+Since Hayhooks MCP Server provides by default a set of **Core MCP Tools**, you can use them in IDEs like [Cursor](https://www.cursor.com/) to interact with Hayhooks programmatically.
 
 The exposed tools are:
 
@@ -488,7 +518,19 @@ The exposed tools are:
 - `undeploy_pipeline`: Undeploy a pipeline. Removes a pipeline from the registry, its API routes, and deletes its files. Requires `pipeline_name` as an argument.
 - `deploy_pipeline`: Deploy a pipeline from files (`pipeline_wrapper.py` and other files). Requires `name` (pipeline name), `files` (list of file contents), `save_files` (boolean), and `overwrite` (boolean) as arguments.
 
-From `Cursor Settings -> MCP`, you can add a new **MCP Server** by specifying the following parameters (assuming you have Hayhooks running on `http://localhost:1417`):
+From `Cursor Settings -> MCP`, you can add a new **MCP Server** by specifying the following parameters (assuming you have Hayhooks MCP Server running on `http://localhost:1417` with Streamable HTTP transport):
+
+```json
+{
+  "mcpServers": {
+    "hayhooks": {
+      "url": "http://localhost:1417/mcp"
+    }
+  }
+}
+```
+
+Or if you need to use the SSE transport:
 
 ```json
 {
@@ -816,7 +858,7 @@ You can do this in three ways:
 
 For example, if you have a folder called `common` with a `my_custom_lib.py` module which contains the `my_function` function, you can deploy your pipelines by using the following command:
 
-```bash
+```shell
 export HAYHOOKS_ADDITIONAL_PYTHON_PATH='./common'
 hayhooks run
 ```
