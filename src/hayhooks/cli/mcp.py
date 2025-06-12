@@ -5,6 +5,7 @@ from typing import Annotated, Optional
 from hayhooks.settings import settings
 from hayhooks.server.utils.mcp_utils import (
     create_mcp_server,
+    create_starlette_app,
     deploy_pipelines,
 )
 from hayhooks.server.logger import log
@@ -13,13 +14,7 @@ from haystack.lazy_imports import LazyImport
 mcp = typer.Typer()
 
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
-    from mcp.server.sse import SseServerTransport
-    from starlette.applications import Starlette
-    from starlette.routing import Mount, Route
-    from starlette.types import Receive, Scope, Send
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-    from contextlib import asynccontextmanager
-    from typing import AsyncIterator
+    from mcp.server import Server
 
 
 @mcp.command()
@@ -57,44 +52,10 @@ def run(
     deploy_pipelines()
 
     # Setup the MCP server
-    server = create_mcp_server()
+    server: Server = create_mcp_server()
 
-    # Setup the Streamable HTTP session manager
-    session_manager = StreamableHTTPSessionManager(
-        app=server,
-        event_store=None,
-        json_response=json_response,
-        stateless=True,
-    )
-
-    # Setup the SSE server
-    sse = SseServerTransport("/messages/")
-
-    async def handle_streamable_http(scope: Scope, receive: Receive, send: Send) -> None:
-        await session_manager.handle_request(scope, receive, send)
-
-    @asynccontextmanager
-    async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        async with session_manager.run():
-            log.info("MCP server with Streamable HTTP session manager started")
-            try:
-                yield
-            finally:
-                log.info("MCP server with Streamable HTTP session manager shutting down...")
-
-    async def handle_sse(request):
-        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-            await server.run(streams[0], streams[1], server.create_initialization_options())
-
-    app = Starlette(
-        debug=debug,
-        routes=[
-            Route("/sse", endpoint=handle_sse),
-            Mount("/messages/", app=sse.handle_post_message),
-            Mount("/mcp", app=handle_streamable_http),
-        ],
-        lifespan=lifespan,
-    )
+    # Setup the Starlette app
+    app = create_starlette_app(server, debug=debug, json_response=json_response)
 
     # Run the MCP server
     # NOTE: reload and workers options are not supported in this context

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from hayhooks.server.app import create_app
 from hayhooks.settings import settings
 from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
 
 
 def pytest_configure(config):
@@ -14,13 +15,23 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session", autouse=True)
 def test_settings():
-    settings.pipelines_dir = Path(__file__).parent / "pipelines"
+    settings.pipelines_dir = str(Path(__file__).parent / "pipelines")
     return settings
 
 
-@pytest.fixture
+@pytest.fixture(scope="session", autouse=True)
 def test_app():
     return create_app()
+
+
+@pytest.fixture
+def test_mcp_server():
+    return create_starlette_app(create_mcp_server(), debug=True, json_response=True)
+
+
+@pytest.fixture
+def test_mcp_client(test_mcp_server):
+    return TestClient(test_mcp_server)
 
 
 @pytest.fixture

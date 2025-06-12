@@ -18,12 +18,18 @@ from hayhooks.server.pipelines.registry import PipelineType
 from haystack.lazy_imports import LazyImport
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from fastapi.concurrency import run_in_threadpool
+from contextlib import asynccontextmanager
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
+from starlette.types import Receive, Scope, Send
+from typing import AsyncIterator
 
 
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
     from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
     from mcp.server import Server
-
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from mcp.server.sse import SseServerTransport
 
 PIPELINE_NAME_SCHEMA = {
     "type": "object",
@@ -229,3 +235,44 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
                 await notify_client(server)
 
     return server
+
+
+def create_starlette_app(server: "Server", *, debug: bool = False, json_response: bool = False) -> "Starlette":
+    mcp_import.check()
+
+    # Setup the Streamable HTTP session manager
+    session_manager = StreamableHTTPSessionManager(
+        app=server,
+        event_store=None,
+        json_response=json_response,
+        stateless=True,
+    )
+
+    # Setup the SSE server
+    sse = SseServerTransport("/messages/")
+
+    async def handle_streamable_http(scope: Scope, receive: Receive, send: Send) -> None:
+        await session_manager.handle_request(scope, receive, send)
+
+    @asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        async with session_manager.run():
+            log.info("Hayhooks MCP server started")
+            try:
+                yield
+            finally:
+                log.info("Hayhooks MCP server shutting down...")
+
+    async def handle_sse(request):
+        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+            await server.run(streams[0], streams[1], server.create_initialization_options())
+
+    return Starlette(
+        debug=debug,
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+            Mount("/mcp", app=handle_streamable_http),
+        ],
+        lifespan=lifespan,
+    )
