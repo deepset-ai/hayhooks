@@ -16,6 +16,10 @@ with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
     from starlette.routing import Mount, Route
+    from starlette.types import Receive, Scope, Send
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from contextlib import asynccontextmanager
+    from typing import AsyncIterator
 
 
 @mcp.command()
@@ -28,6 +32,12 @@ def run(
     additional_python_path: Annotated[
         Optional[str], typer.Option(help="Additional Python path to add to sys.path")
     ] = settings.additional_python_path,
+    json_response: Annotated[
+        bool, typer.Option("--json-response", "-j", help="Enable JSON responses instead of SSE streams")
+    ] = False,
+    debug: Annotated[
+        bool, typer.Option("--debug", "-d", help="If true, tracebacks should be returned on errors")
+    ] = False,
 ):
     """
     Run the MCP server.
@@ -49,19 +59,41 @@ def run(
     # Setup the MCP server
     server = create_mcp_server()
 
+    # Setup the Streamable HTTP session manager
+    session_manager = StreamableHTTPSessionManager(
+        app=server,
+        event_store=None,
+        json_response=json_response,
+        stateless=True,
+    )
+
     # Setup the SSE server
     sse = SseServerTransport("/messages/")
+
+    async def handle_streamable_http(scope: Scope, receive: Receive, send: Send) -> None:
+        await session_manager.handle_request(scope, receive, send)
+
+    @asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        async with session_manager.run():
+            log.info("MCP server with Streamable HTTP session manager started")
+            try:
+                yield
+            finally:
+                log.info("MCP server with Streamable HTTP session manager shutting down...")
 
     async def handle_sse(request):
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
             await server.run(streams[0], streams[1], server.create_initialization_options())
 
     app = Starlette(
-        debug=True,
+        debug=debug,
         routes=[
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse.handle_post_message),
+            Mount("/mcp", app=handle_streamable_http),
         ],
+        lifespan=lifespan,
     )
 
     # Run the MCP server
