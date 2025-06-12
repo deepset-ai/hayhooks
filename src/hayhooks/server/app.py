@@ -139,13 +139,9 @@ def get_package_version() -> str:
     """
     Get the version of the package using multiple fallback strategies.
 
-    Priority order (follows Python packaging best practices):
     1. Package metadata - For properly installed packages (including development installs)
-    2. Git tags - For development environments or when package metadata unavailable
-    3. Static version file - For source-only deployments without package installation
+    2. Static version file - For source-only deployments without package installation
 
-    This multi-strategy approach is recommended by the Python packaging community
-    and implemented by tools like setuptools-scm to handle diverse deployment scenarios.
     """
     # Strategy 1: Try to get version from installed package metadata (recommended)
     try:
@@ -154,24 +150,7 @@ def get_package_version() -> str:
     except Exception as e:
         log.debug(f"Could not get version from package metadata: {e!s}")
 
-    # Strategy 2: Try to get version from git tags (matches hatch-vcs behavior)
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["git", "describe", "--tags", "--abbrev=0"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            cwd=Path(__file__).parent.parent.parent.parent, check=False
-        )
-        if result.returncode == 0:
-            version_tag = result.stdout.strip()
-            # Remove 'v' prefix if present (e.g., v0.9.0 -> 0.9.0)
-            return version_tag.lstrip("v")
-    except Exception as e:
-        log.debug(f"Could not get version from git: {e!s}")
-
-    # Strategy 3: Fall back to version.txt file (source-only deployments)
+    # Strategy 2: Fall back to version.txt file (source-only deployments)
     try:
         version_file = Path(__file__).parent.parent.parent.parent / "version.txt"
         if version_file.exists():

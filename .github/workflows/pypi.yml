@@ -13,38 +13,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Extract version from tag
-        id: extract_version
-        run: |
-          # Extract version from tag (remove 'v' prefix)
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
-
-      - name: Update version.txt
-        run: |
-          # Update version.txt with the release version
-          cat > version.txt << EOF
-          # This file contains the current version of hayhooks as a fallback
-          # It is used when both package metadata and git are unavailable (e.g., source-only deployments)
-          # This file is automatically updated on every new release
-          ${{ steps.extract_version.outputs.version }}
-          EOF
-          echo "Updated version.txt to: ${{ steps.extract_version.outputs.version }}"
-
-      - name: Commit updated version.txt (optional)
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add version.txt
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Auto-update version.txt to ${{ steps.extract_version.outputs.version }}"
-            git push origin HEAD:main
-          fi
-        continue-on-error: true
-
       - name: Install Hatch
         run: pip install hatch
 
