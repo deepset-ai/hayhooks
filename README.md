@@ -509,7 +509,7 @@ Make sure [Node.js](https://nodejs.org/) is installed, as the `npx` command depe
 
 ### Using Hayhooks Core MCP Tools in IDEs like Cursor
 
-Since Hayhooks MCP Server provides by default a set of **Core MCP Tools**, you can use them in IDEs like [Cursor](https://www.cursor.com/) to interact with Hayhooks programmatically.
+Since Hayhooks MCP Server provides by default a set of **Core MCP Tools**, the MCP server will enable one to interact with Hayhooks in an agentic manner using IDEs like [Cursor](https://www.cursor.com/).
 
 The exposed tools are:
 
