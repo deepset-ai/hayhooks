@@ -5,6 +5,7 @@ from typing import Annotated, Optional
 from hayhooks.settings import settings
 from hayhooks.server.utils.mcp_utils import (
     create_mcp_server,
+    create_starlette_app,
     deploy_pipelines,
 )
 from hayhooks.server.logger import log
@@ -13,9 +14,7 @@ from haystack.lazy_imports import LazyImport
 mcp = typer.Typer()
 
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
-    from mcp.server.sse import SseServerTransport
-    from starlette.applications import Starlette
-    from starlette.routing import Mount, Route
+    from mcp.server import Server
 
 
 @mcp.command()
@@ -28,6 +27,12 @@ def run(
     additional_python_path: Annotated[
         Optional[str], typer.Option(help="Additional Python path to add to sys.path")
     ] = settings.additional_python_path,
+    json_response: Annotated[
+        bool, typer.Option("--json-response", "-j", help="Enable JSON responses instead of SSE streams")
+    ] = False,
+    debug: Annotated[
+        bool, typer.Option("--debug", "-d", help="If true, tracebacks should be returned on errors")
+    ] = False,
 ):
     """
     Run the MCP server.
@@ -47,22 +52,10 @@ def run(
     deploy_pipelines()
 
     # Setup the MCP server
-    server = create_mcp_server()
+    server: Server = create_mcp_server()
 
-    # Setup the SSE server
-    sse = SseServerTransport("/messages/")
-
-    async def handle_sse(request):
-        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-            await server.run(streams[0], streams[1], server.create_initialization_options())
-
-    app = Starlette(
-        debug=True,
-        routes=[
-            Route("/sse", endpoint=handle_sse),
-            Mount("/messages/", app=sse.handle_post_message),
-        ],
-    )
+    # Setup the Starlette app
+    app = create_starlette_app(server, debug=debug, json_response=json_response)
 
     # Run the MCP server
     # NOTE: reload and workers options are not supported in this context

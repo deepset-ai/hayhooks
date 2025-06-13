@@ -5,6 +5,7 @@ from pathlib import Path
 from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, CoreTools
+from starlette.testclient import TestClient
 
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -201,3 +202,49 @@ async def test_call_tool_general_exception_handler(mcp_server_instance):
 
         assert result.content[0].text.startswith("General unhandled error in call_tool for tool '")
         assert "Failed to load pipeline module" in result.content[0].text
+
+
+def test_mcp_http_transport_initialize(test_mcp_client):
+    with test_mcp_client as client:
+        init_response = client.post(
+            "/mcp/",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0.0"},
+                },
+            },
+            headers={"Content-Type": "application/json", "Accept": "application/json,text/event-stream"},
+        )
+
+        assert init_response.status_code == 200
+        init_data = init_response.json()
+
+        # Verify JSON-RPC 2.0 response format
+        assert init_data["jsonrpc"] == "2.0"
+        assert init_data["id"] == 1
+        assert "result" in init_data
+
+        # Verify server info in response
+        result = init_data["result"]
+        assert "serverInfo" in result and result["serverInfo"]["name"] == "hayhooks-mcp-server"
+        assert "capabilities" in result and result["capabilities"]["tools"]["listChanged"] is False
+
+
+def test_sse_transport(test_mcp_client):
+    with test_mcp_client as client:
+        # Test that the SSE endpoints exist and don't return 404
+        # We're not testing full SSE functionality since it's deprecated and can hang
+
+        # Test the SSE connection endpoint exists
+        sse_response = client.post("/sse/")
+        assert sse_response.status_code != 404
+
+        # Test the messages endpoint with a simple request (not SSE)
+        # This verifies the endpoint exists and can handle requests
+        messages_response = client.get("/messages/")
+        assert messages_response.status_code != 404
