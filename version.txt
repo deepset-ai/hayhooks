@@ -1,0 +1,5 @@
+# This file contains the current version of hayhooks as a fallback
+# It is used when both package metadata and git are unavailable (e.g., air-gapped environments)
+# It should be updated on every new release
+0.9.0
+

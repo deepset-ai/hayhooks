@@ -1,5 +1,4 @@
 import sys
-import requests
 from functools import lru_cache
 from os import PathLike
 from typing import Union
@@ -134,19 +133,39 @@ async def lifespan(app: FastAPI):
 
 
 @lru_cache(maxsize=1)
-def get_package_version_from_pypi(package_name: str, connect_timeout: int = 5, read_timeout: int = 5) -> str:
+def get_package_version() -> str:
     """
-    Get the version of the package from PyPI.
+    Get the version of the package using multiple fallback strategies.
+
+    1. Package metadata - For properly installed packages (including development installs)
+    2. Static version file - For source-only deployments without package installation
+
     """
+    # Strategy 1: Try to get version from installed package metadata (recommended)
     try:
-        url = f"https://pypi.org/pypi/{package_name}/json"
-        response = requests.get(url, timeout=(connect_timeout, read_timeout))
-        response.raise_for_status()
-        data = response.json()
-        return data["info"]["version"]
+        from importlib.metadata import version
+        return version("hayhooks")
     except Exception as e:
-        log.warning(f"Failed to get package version for {package_name}: {str(e)}")
-        return "unknown"
+        log.debug(f"Could not get version from package metadata: {e!s}")
+
+    # Strategy 2: Fall back to version.txt file (source-only deployments)
+    try:
+        version_file = Path(__file__).parent.parent.parent.parent / "version.txt"
+        if version_file.exists():
+            content = version_file.read_text().strip()
+            # Find the first line that doesn't start with # (comment)
+            for line in content.split("\n"):
+                stripped_line = line.strip()
+                if stripped_line and not stripped_line.startswith("#"):
+                    return stripped_line
+            log.warning("No version line found in version.txt")
+        else:
+            log.debug(f"Version file not found at {version_file}")
+    except Exception as e:
+        log.debug(f"Failed to read version from file: {e!s}")
+
+    log.warning("Could not determine package version using any method")
+    return "unknown"
 
 
 def create_app() -> FastAPI:
@@ -168,7 +187,7 @@ def create_app() -> FastAPI:
         "lifespan": lifespan,
         "title": APP_TITLE,
         "description": APP_DESCRIPTION,
-        "version": get_package_version_from_pypi("hayhooks"),
+        "version": get_package_version(),
     }
 
     if root_path := settings.root_path:
