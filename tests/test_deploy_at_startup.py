@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
+from packaging.version import Version, InvalidVersion
 
 
 @pytest.fixture(autouse=True)
@@ -95,3 +96,13 @@ def test_app_loads_pipeline_from_mixed_directory(test_client_mixed, test_mixed_p
 
     pipelines = response.json()["pipelines"]
     assert len(pipelines) == 2  # 1 file, 1 yaml
+
+
+def test_app_version_is_pep440_compliant():
+    app = create_app()
+    assert hasattr(app, "version"), "App should have a 'version' attribute"
+    assert app.version not in (None, "", "unknown"), "App version should be defined and not 'unknown'"
+    try:
+        Version(app.version)
+    except InvalidVersion:
+        assert False, f"App version '{app.version}' is not a valid PEP 440 version"
