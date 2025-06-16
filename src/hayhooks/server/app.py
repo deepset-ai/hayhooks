@@ -144,40 +144,35 @@ def get_package_version() -> str:
     This multi-strategy approach is recommended by the Python packaging community
     and implemented by tools like setuptools-scm to handle diverse deployment scenarios.
     """
-    version_str = "unknown"
-
     # Strategy 1: Try to get version from installed package metadata (recommended)
     try:
         from importlib.metadata import version
 
         version_str = version("hayhooks")
         log.debug(f"Version from package metadata: {version_str}")
+        return version_str
     except Exception as e:
         log.debug(f"Could not get version from package metadata: {e!s}")
 
     # Strategy 2: Fall back to version.txt file (source-only deployments)
-    if version_str == "unknown":
-        try:
-            version_file = Path(__file__).parent.parent.parent.parent / "version.txt"
-            if version_file.exists():
-                content = version_file.read_text().strip()
-                # Find the first line that doesn't start with # (comment)
-                for line in content.split("\n"):
-                    stripped_line = line.strip()
-                    if stripped_line and not stripped_line.startswith("#"):
-                        version_str = stripped_line
-                        log.debug(f"Version from version.txt: {version_str}")
-                        break
-                else:
-                    log.warning("No version line found in version.txt")
-            else:
-                log.debug(f"Version file not found at {version_file}")
-        except Exception as e:
-            log.debug(f"Failed to read version from file: {e!s}")
+    try:
+        version_file = Path(__file__).parent.parent.parent.parent / "version.txt"
+        if version_file.exists():
+            content = version_file.read_text().strip()
+            # Find the first line that doesn't start with # (comment)
+            for line in content.split("\n"):
+                stripped_line = line.strip()
+                if stripped_line and not stripped_line.startswith("#"):
+                    log.debug(f"Version from version.txt: {stripped_line}")
+                    return stripped_line
+            log.warning("No version line found in version.txt")
+        else:
+            log.debug(f"Version file not found at {version_file}")
+    except Exception as e:
+        log.debug(f"Failed to read version from file: {e!s}")
 
-    if version_str == "unknown":
-        log.warning("Could not determine package version")
-    return version_str
+    log.warning("Could not determine package version")
+    return "unknown"
 
 
 def create_app() -> FastAPI:
