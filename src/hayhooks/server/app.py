@@ -135,16 +135,8 @@ async def lifespan(app: FastAPI):
 @lru_cache(maxsize=1)
 def get_package_version() -> str:
     """
-    Get the version of the package using multiple fallback strategies.
-
-    Priority order (follows Python packaging best practices):
-    1. Package metadata - For properly installed packages (including development installs)
-    2. Static version file - For source-only deployments without package installation
-
-    This multi-strategy approach is recommended by the Python packaging community
-    and implemented by tools like setuptools-scm to handle diverse deployment scenarios.
+    Get the version of the package using package metadata.
     """
-    # Strategy 1: Try to get version from installed package metadata (recommended)
     try:
         from importlib.metadata import version
 
@@ -153,25 +145,7 @@ def get_package_version() -> str:
         return version_str
     except Exception as e:
         log.debug(f"Could not get version from package metadata: {e!s}")
-
-    # Strategy 2: Fall back to version.txt file (source-only deployments)
-    try:
-        version_file = Path(__file__).parent.parent.parent.parent / "version.txt"
-        if version_file.exists():
-            content = version_file.read_text().strip()
-            # Find the first line that doesn't start with # (comment)
-            for line in content.split("\n"):
-                stripped_line = line.strip()
-                if stripped_line and not stripped_line.startswith("#"):
-                    log.debug(f"Version from version.txt: {stripped_line}")
-                    return stripped_line
-            log.warning("No version line found in version.txt")
-        else:
-            log.debug(f"Version file not found at {version_file}")
-    except Exception as e:
-        log.debug(f"Failed to read version from file: {e!s}")
-
-    log.warning("Could not determine package version")
+    
     return "unknown"
 
 
