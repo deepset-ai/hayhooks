@@ -1,5 +1,4 @@
 import sys
-import requests
 from functools import lru_cache
 from os import PathLike
 from typing import Union
@@ -134,19 +133,20 @@ async def lifespan(app: FastAPI):
 
 
 @lru_cache(maxsize=1)
-def get_package_version_from_pypi(package_name: str, connect_timeout: int = 5, read_timeout: int = 5) -> str:
+def get_package_version() -> str:
     """
-    Get the version of the package from PyPI.
+    Get the version of the package using package metadata.
     """
     try:
-        url = f"https://pypi.org/pypi/{package_name}/json"
-        response = requests.get(url, timeout=(connect_timeout, read_timeout))
-        response.raise_for_status()
-        data = response.json()
-        return data["info"]["version"]
+        from importlib.metadata import version
+
+        version_str = version("hayhooks")
+        log.debug(f"Version from package metadata: {version_str}")
+        return version_str
     except Exception as e:
-        log.warning(f"Failed to get package version for {package_name}: {str(e)}")
-        return "unknown"
+        log.debug(f"Could not get version from package metadata: {e!s}")
+    
+    return "unknown"
 
 
 def create_app() -> FastAPI:
@@ -168,7 +168,7 @@ def create_app() -> FastAPI:
         "lifespan": lifespan,
         "title": APP_TITLE,
         "description": APP_DESCRIPTION,
-        "version": get_package_version_from_pypi("hayhooks"),
+        "version": get_package_version(),
     }
 
     if root_path := settings.root_path:
