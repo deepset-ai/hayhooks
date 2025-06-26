@@ -70,7 +70,10 @@ def streaming_generator(pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_a
         pipeline_run_args[streaming_component_name] = {}
 
     streaming_component = pipeline.get_component(streaming_component_name)
+
+    assert hasattr(streaming_component, "streaming_callback")
     streaming_component.streaming_callback = streaming_callback
+
     log.trace(f"Streaming pipeline run args: {pipeline_run_args}")
 
     def run_pipeline():
@@ -131,6 +134,7 @@ async def async_streaming_generator(
     if streaming_component_name not in pipeline_run_args:
         pipeline_run_args[streaming_component_name] = {}
 
+    assert hasattr(streaming_component, "streaming_callback")
     streaming_component.streaming_callback = streaming_callback
 
     if isinstance(pipeline, AsyncPipeline):
