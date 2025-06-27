@@ -8,6 +8,7 @@ from pathlib import Path
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import DeployResponse
 from hayhooks.server.routers.openai import ChatRequest, ChatCompletion, ModelObject, ModelsResponse
+from haystack import Pipeline
 
 
 @pytest.fixture(autouse=True)

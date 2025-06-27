@@ -144,7 +144,7 @@ async def test_call_pipeline_as_tool_with_invalid_arguments(mcp_server_instance,
         assert result.isError is True
 
         text_response = result.content[0].text
-        assert "missing 1 required positional argument: 'question'" in text_response
+        assert "Input validation error: 'question' is a required property" in text_response
 
 
 @pytest.mark.asyncio
