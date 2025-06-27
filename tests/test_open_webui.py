@@ -9,9 +9,7 @@ from hayhooks.server.utils.open_webui import (
     OpenWebUIEvent,
     create_status_event,
     create_chat_completion_event,
-    create_message_delta_event,
     create_message_event,
-    create_message_replace_event,
     create_replace_event,
     create_chat_title_event,
     create_chat_tags_event,
@@ -162,23 +160,11 @@ class TestFactoryFunctions:
         assert event.type == "chat:completion"
         assert event.data == completion_data
 
-    def test_create_message_delta_event(self):
-        event = create_message_delta_event("Hello")
-        assert event.type == "chat:message:delta"
-        assert isinstance(event.data, MessageEventData)
-        assert event.data.content == "Hello"
-
     def test_create_message_event(self):
         event = create_message_event("Message content")
         assert event.type == "message"
         assert isinstance(event.data, MessageEventData)
         assert event.data.content == "Message content"
-
-    def test_create_message_replace_event(self):
-        event = create_message_replace_event("Replacement content")
-        assert event.type == "chat:message"
-        assert isinstance(event.data, MessageEventData)
-        assert event.data.content == "Replacement content"
 
     def test_create_replace_event(self):
         event = create_replace_event("Replace with this")

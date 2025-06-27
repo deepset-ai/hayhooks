@@ -61,19 +61,9 @@ def create_chat_completion_event(data: Dict[str, Any]) -> OpenWebUIEvent:
     return OpenWebUIEvent(type="chat:completion", data=data)
 
 
-def create_message_delta_event(content: str) -> OpenWebUIEvent:
-    """Create a message delta event to stream/append content to the current message."""
-    return OpenWebUIEvent(type="chat:message:delta", data=MessageEventData(content=content))
-
-
 def create_message_event(content: str) -> OpenWebUIEvent:
     """Create a message event to append content to the current message."""
     return OpenWebUIEvent(type="message", data=MessageEventData(content=content))
-
-
-def create_message_replace_event(content: str) -> OpenWebUIEvent:
-    """Create a message replace event to completely replace the current message content."""
-    return OpenWebUIEvent(type="chat:message", data=MessageEventData(content=content))
 
 
 def create_replace_event(content: str) -> OpenWebUIEvent:
