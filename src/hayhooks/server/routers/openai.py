@@ -70,7 +70,8 @@ MODELS_PARAMS: dict = {
 def _event_to_sse_msg(
     data: dict,
 ) -> str:
-    return f"data: {json.dumps({"event": data})}\n\n"
+    event_payload = {"event": data}
+    return f"data: {json.dumps(event_payload)}\n\n"
 
 
 def _create_sse_data_msg(
