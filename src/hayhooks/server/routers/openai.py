@@ -1,15 +1,25 @@
 import time
 import uuid
+import json
 from typing import Generator, List, Literal, Union, AsyncGenerator
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from hayhooks.server.pipelines import registry
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import handle_pipeline_exceptions
 from hayhooks.server.logger import log
+from haystack.dataclasses import ToolCallDelta, ToolCallResult
+from hayhooks.server.utils.open_webui import create_status_event
 
 router = APIRouter()
+
+
+def _event_to_sse_msg(
+    data: dict,
+) -> str:
+    return f"data: {json.dumps({"event": data})}\n\n"
 
 
 def _create_sse_data_msg(
@@ -119,8 +129,8 @@ CHAT_COMPLETION_PARAMS: dict = {
 async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, StreamingResponse]:
     pipeline_wrapper = registry.get(chat_req.model)
 
-    if not pipeline_wrapper:
-        raise HTTPException(status_code=404, detail=f"Pipeline '{chat_req.model}' not found")
+    if not isinstance(pipeline_wrapper, BasePipelineWrapper):
+        raise HTTPException(status_code=404, detail=f"Pipeline '{chat_req.model}' not found or not a pipeline wrapper")
 
     # Check if either sync or async chat completion is implemented
     sync_implemented = pipeline_wrapper._is_run_chat_completion_implemented
@@ -130,6 +140,7 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
         raise HTTPException(status_code=501, detail="Chat endpoint not implemented for this model")
 
     # Determine which run_chat_completion method to use (prefer async if available)
+    result: Union[str, Generator, AsyncGenerator]
     if async_implemented:
         log.debug(f"Using run_chat_completion_async for model: {chat_req.model}")
         result = await pipeline_wrapper.run_chat_completion_async(
@@ -145,6 +156,8 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
             messages=chat_req.messages,
             body=chat_req.model_dump(),
         )
+    else:
+        raise HTTPException(status_code=501, detail="Chat endpoint not implemented for this model")
 
     resp_id = f"{chat_req.model}-{uuid.uuid4()}"
 
@@ -159,7 +172,6 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
             choices=[Choice(index=0, message=Message(role="assistant", content=result), finish_reason="stop")],
         )
 
-        log.debug(f"resp: {resp.model_dump_json()}")
         return resp
 
     elif isinstance(result, Generator):
@@ -167,7 +179,29 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
         def stream_chunks() -> Generator[str, None, None]:
             # Consume the input generator sending chunks as SSE events
             for chunk in result:
-                yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, chunk_content=chunk)
+                # Handling tool calls: the idea here is to send a status event to open-webui for each tool call
+                if chunk.tool_calls is not None:
+                    for tool_call in chunk.tool_calls:
+                        if isinstance(tool_call, ToolCallDelta):
+                            # Tool call start
+                            if tool_call.tool_name is not None:
+                                status_update = create_status_event(
+                                    description=f"Calling '{tool_call.tool_name}' tool...",
+                                    done=False,
+                                )
+                                yield _event_to_sse_msg(status_update.model_dump())
+
+                        if isinstance(tool_call, ToolCallResult):
+                            # Tool call result
+                            if tool_call.result is not None:
+                                status_update = create_status_event(
+                                    description=f"Called tool: {tool_call.origin.tool_name}",
+                                    done=True,
+                                )
+                                yield _event_to_sse_msg(status_update.model_dump())
+
+                else:
+                    yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, chunk_content=chunk.content)
 
             # After consuming the generator, send a final event with finish_reason "stop"
             yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, finish_reason="stop")
@@ -178,7 +212,29 @@ async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, Streamin
         # If the pipeline returns an async generator, we need to stream the chunks as SSE events
         async def stream_chunks_async() -> AsyncGenerator[str, None]:
             async for chunk in result:
-                yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, chunk_content=chunk)
+                if chunk.tool_calls is not None:
+                    for tool_call in chunk.tool_calls:
+                        if isinstance(tool_call, ToolCallDelta):
+                            # Tool call start
+                            if tool_call.tool_name is not None:
+                                status_update = create_status_event(
+                                    description=f"Calling '{tool_call.tool_name}' tool...",
+                                    done=False,
+                                )
+                                yield _event_to_sse_msg(status_update.model_dump())
+
+                else:
+                    # Tool call result
+                    if chunk.tool_call_result is not None:
+                        status_update = create_status_event(
+                            description=f"Called '{chunk.tool_call_result.origin.tool_name}' tool",
+                            done=True,
+                        )
+                        yield _event_to_sse_msg(status_update.model_dump())
+                    else:
+                        yield _create_sse_data_msg(
+                            resp_id=resp_id, model_name=chat_req.model, chunk_content=chunk.content
+                        )
 
             yield _create_sse_data_msg(resp_id=resp_id, model_name=chat_req.model, finish_reason="stop")
 

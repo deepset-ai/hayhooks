@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import List, AsyncGenerator
 from haystack import Pipeline
 from hayhooks import get_last_user_message, BasePipelineWrapper, log
+from haystack.dataclasses import StreamingChunk
 
 
 URLS = ["https://haystack.deepset.ai", "https://www.redis.io", "https://ssi.inc"]
@@ -14,7 +15,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
     async def run_chat_completion_async(
         self, model: str, messages: List[dict], body: dict
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[StreamingChunk, None]:
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
 
         question = get_last_user_message(messages)
@@ -29,6 +30,6 @@ class PipelineWrapper(BasePipelineWrapper):
 
         async def mock_generator():
             for word in mock_response.split():
-                yield word + " "
+                yield StreamingChunk(content=word + " ")
 
         return mock_generator()
