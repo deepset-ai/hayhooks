@@ -6,6 +6,8 @@ from haystack import AsyncPipeline, Pipeline
 from haystack.core.component import Component
 from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
+from haystack.dataclasses import StreamingChunk
+from haystack.components.agents import Agent
 
 
 def is_user_message(msg: Union[Message, Dict]) -> bool:
@@ -50,7 +52,9 @@ def find_streaming_component(pipeline: Union[Pipeline, AsyncPipeline]) -> Tuple[
     return streaming_component, streaming_component_name
 
 
-def streaming_generator(pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: Dict) -> Generator:
+def streaming_generator(
+    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict
+) -> Generator[StreamingChunk, None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline execution.
     Automatically finds the streaming-capable component in the pipeline.
@@ -58,27 +62,35 @@ def streaming_generator(pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_a
     NOTE: This generator works with both sync and async pipelines, but the component which supports streaming
           must support a _sync_ `streaming_callback`.
     """
-    queue: Queue[Union[str, None, Exception]] = Queue()
+    queue: Queue[Union[StreamingChunk, None, Exception]] = Queue()
 
-    def streaming_callback(chunk):
-        queue.put(chunk.content)
+    def streaming_callback(chunk: StreamingChunk):
+        queue.put(chunk)
 
-    _, streaming_component_name = find_streaming_component(pipeline)
     pipeline_run_args = pipeline_run_args.copy()
 
-    if streaming_component_name not in pipeline_run_args:
-        pipeline_run_args[streaming_component_name] = {}
+    # Set the streaming callback
+    if isinstance(pipeline, (Pipeline, AsyncPipeline)):
+        _, streaming_component_name = find_streaming_component(pipeline)
 
-    streaming_component = pipeline.get_component(streaming_component_name)
+        if streaming_component_name not in pipeline_run_args:
+            pipeline_run_args[streaming_component_name] = {}
 
-    assert hasattr(streaming_component, "streaming_callback")
-    streaming_component.streaming_callback = streaming_callback
+        streaming_component = pipeline.get_component(streaming_component_name)
+
+        assert hasattr(streaming_component, "streaming_callback")
+        streaming_component.streaming_callback = streaming_callback
+    elif isinstance(pipeline, Agent):
+        pipeline_run_args["streaming_callback"] = streaming_callback
 
     log.trace(f"Streaming pipeline run args: {pipeline_run_args}")
 
     def run_pipeline():
         try:
-            pipeline.run(data=pipeline_run_args)
+            if isinstance(pipeline, Agent):
+                pipeline.run(**pipeline_run_args)
+            else:
+                pipeline.run(data=pipeline_run_args)
             queue.put(None)  # Signal normal completion
         except Exception as e:
             log.error(f"Error in pipeline execution thread for streaming_generator: {e}", exc_info=True)
@@ -100,8 +112,8 @@ def streaming_generator(pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_a
 
 
 async def async_streaming_generator(
-    pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: Dict
-) -> AsyncGenerator:
+    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict
+) -> AsyncGenerator[StreamingChunk, None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline execution.
     Automatically finds the streaming-capable component in the pipeline.
@@ -110,35 +122,46 @@ async def async_streaming_generator(
           (which should accept a `streaming_callback` parameter) must support
           an _async_ `streaming_callback` as well.
     """
-    streaming_component, streaming_component_name = find_streaming_component(pipeline)
 
-    # Here we check if the streaming component supports async streaming callbacks
-    # To do that, we check if the component has a run_async method,
-    # which typically indicates async support including async streaming callbacks.
-    # This is cheaper than actually do a deeper type inspection but still generally valid.
-    if not hasattr(streaming_component, "run_async"):
-        component_type = type(streaming_component).__name__
-        raise ValueError(
-            f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async streaming callbacks. "
-            f"Use the sync 'streaming_generator' function instead, or switch to a component that supports async streaming callbacks "
-            f"(e.g., OpenAIChatGenerator instead of OpenAIGenerator)."
-        )
+    # Find the streaming component
+    if isinstance(pipeline, (AsyncPipeline, Pipeline)):
+        streaming_component, streaming_component_name = find_streaming_component(pipeline)
 
-    queue: asyncio.Queue = asyncio.Queue()
+        # Here we check if the streaming component supports async streaming callbacks
+        # To do that, we check if the component has a run_async method,
+        # which typically indicates async support including async streaming callbacks.
+        # This is cheaper than actually do a deeper type inspection but still generally valid.
+        if not hasattr(streaming_component, "run_async"):
+            component_type = type(streaming_component).__name__
+            raise ValueError(
+                f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async streaming callbacks. "
+                f"Use the sync 'streaming_generator' function instead, or switch to a component that supports async streaming callbacks "
+                f"(e.g., OpenAIChatGenerator instead of OpenAIGenerator)."
+            )
 
-    async def streaming_callback(chunk):
-        await queue.put(chunk.content)
+    # Define the streaming callback
+    async def streaming_callback(chunk: StreamingChunk):
+        await queue.put(chunk)
 
+    # Create the queue
+    queue: asyncio.Queue[StreamingChunk] = asyncio.Queue()
     pipeline_run_args = pipeline_run_args.copy()
 
-    if streaming_component_name not in pipeline_run_args:
-        pipeline_run_args[streaming_component_name] = {}
+    # Set the streaming callback
+    if isinstance(pipeline, (AsyncPipeline, Pipeline)):
+        if streaming_component_name not in pipeline_run_args:
+            pipeline_run_args[streaming_component_name] = {}
 
-    assert hasattr(streaming_component, "streaming_callback")
-    streaming_component.streaming_callback = streaming_callback
+        assert hasattr(streaming_component, "streaming_callback")
+        streaming_component.streaming_callback = streaming_callback
+    elif isinstance(pipeline, Agent):
+        pipeline_run_args["streaming_callback"] = streaming_callback
 
+    # Run the Pipeline / AsyncPipeline / Agent
     if isinstance(pipeline, AsyncPipeline):
         pipeline_task = asyncio.create_task(pipeline.run_async(data=pipeline_run_args))
+    elif isinstance(pipeline, Agent):
+        pipeline_task = asyncio.create_task(pipeline.run_async(**pipeline_run_args))
     else:
         pipeline_task = asyncio.create_task(asyncio.to_thread(pipeline.run, data=pipeline_run_args))
 
