@@ -175,3 +175,39 @@ async def async_streaming_generator(
             except Exception as e:
                 log.warning(f"Error during pipeline task cleanup: {e}")
                 raise e
+
+
+
+# by HS: register streaming for all components
+def streaming_generator_all(pipeline: Pipeline, pipeline_run_args: Dict) -> Generator:
+    queue: Queue[str] = Queue()
+
+    def streaming_callback(chunk):
+        queue.put(chunk.content)
+
+    pipeline_run_args = pipeline_run_args.copy()
+
+    # NEU: Alle Komponenten mit streaming_callback erfassen
+    for name, component in pipeline.walk():
+        if hasattr(component, "streaming_callback"):
+            if name not in pipeline_run_args:
+                pipeline_run_args[name] = {}
+            pipeline_run_args[name]["streaming_callback"] = streaming_callback
+
+    def run_pipeline():
+        try:
+            pipeline.run(pipeline_run_args)
+        finally:
+            queue.put(None)
+
+    thread = threading.Thread(target=run_pipeline)
+    thread.start()
+
+    while True:
+        chunk = queue.get()
+        if chunk is None:
+            break
+        yield chunk
+
+    thread.join()
+
