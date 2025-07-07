@@ -141,16 +141,36 @@ def _create_async_streaming_response(result: AsyncGenerator, resp_id: str, model
             if chunk.tool_calls is not None:
                 async for status_msg in _handle_tool_calls_async(chunk.tool_calls):
                     yield status_msg
-            else:
-                # Handle tool call result
-                if chunk.tool_call_result is not None:
-                    status_update = create_status_event(
-                        description=f"Called '{chunk.tool_call_result.origin.tool_name}' tool",
-                        done=True,
-                    )
-                    yield _event_to_sse_msg(status_update.model_dump())
-                else:
-                    yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, chunk_content=chunk.content)
+
+            # Handle tool call result
+            if chunk.tool_call_result is not None:
+                status_update = create_status_event(
+                    description=f"Called '{chunk.tool_call_result.origin.tool_name}' tool",
+                    done=True,
+                )
+                yield _event_to_sse_msg(status_update.model_dump())
+
+                log.debug(f"Tool call result: {chunk.tool_call_result.result}")
+
+                yield _create_sse_data_msg(
+                    resp_id=resp_id,
+                    model_name=model_name,
+                    chunk_content=(
+                        f'<details type="{chunk.tool_call_result.origin.tool_name}" done="true">\n'
+                        f"<summary>"
+                        f"Tool call result for '{chunk.tool_call_result.origin.tool_name}'"
+                        f"</summary>\n\n"
+                        f"```\n"
+                        f"Arguments:\n"
+                        f"{chunk.tool_call_result.origin.arguments}\n"
+                        f"\nResponse:\n"
+                        f"{chunk.tool_call_result.result}\n"
+                        "```\n"
+                        "</details>\n\n"
+                    ),
+                )
+
+            yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, chunk_content=chunk.content)
 
         yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, finish_reason="stop")
 
