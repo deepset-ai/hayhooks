@@ -96,13 +96,13 @@ def test_cors_env_vars(monkeypatch):
 
 
 def test_cors_warning():
-    with patch("hayhooks.settings.log.warning") as mock_log_warning:
+    with patch("hayhooks.server.logger.log.warning") as mock_log_warning:
         check_cors_settings()
         mock_log_warning.assert_called_once_with(
             "Using default CORS settings - All origins, methods, and headers are allowed."
         )
 
-    with patch("hayhooks.settings.log.warning") as mock_log_warning:
+    with patch("hayhooks.server.logger.log.warning") as mock_log_warning:
         AppSettings(
             cors_allow_origins=["https://example.com"],
             cors_allow_methods=["GET", "POST"],
