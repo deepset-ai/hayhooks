@@ -3,14 +3,14 @@ import pytest
 import asyncio
 from haystack import Pipeline, AsyncPipeline
 from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall, ToolCallDelta, ToolCallResult
-from typing import Generator, AsyncGenerator, Dict, Any, Union
+from typing import Generator, AsyncGenerator, Dict, Any
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator, find_streaming_component
 from hayhooks.server.utils.open_webui import OpenWebUIEvent
 from haystack.components.builders import ChatPromptBuilder, PromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.components.generators import OpenAIGenerator
-from haystack.dataclasses import ChatMessage, StreamingChunk
 from haystack.utils import Secret
+from hayhooks.server.utils.open_webui import create_notification_event, NotificationEventData
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
@@ -414,13 +414,18 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
 
     pipeline.run.side_effect = mock_run
 
-    on_tool_call_start = mocker.Mock(return_value="start")
-    on_tool_call_end = mocker.Mock(return_value="end")
+    on_tool_call_start = mocker.Mock(return_value=create_notification_event(content="Calling 'test_tool' tool...", notification_type="info"))
+    on_tool_call_end = mocker.Mock(return_value=create_notification_event(content="Called 'test_tool' tool", notification_type="success"))
 
     generator = streaming_generator(pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end)
     chunks = list(generator)
 
-    assert chunks == ["start", mock_chunks_from_pipeline[0], "end", mock_chunks_from_pipeline[1]]
+    assert chunks == [
+        OpenWebUIEvent(type='notification', data=NotificationEventData(type='info', content="Calling 'test_tool' tool...")),
+        mock_chunks_from_pipeline[0],
+        OpenWebUIEvent(type='notification', data=NotificationEventData(type='success', content="Called 'test_tool' tool")),
+        mock_chunks_from_pipeline[1],
+    ]
     on_tool_call_start.assert_called_once_with(tool_call_start)
     on_tool_call_end.assert_called_once_with(tool_call_end)
 
@@ -485,14 +490,27 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
 
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
-    on_tool_call_start = mocker.Mock(return_value="start")
-    on_tool_call_end = mocker.Mock(return_value="end")
+    on_tool_call_start = mocker.Mock(
+        return_value=create_notification_event(content="Calling 'test_tool' tool...", notification_type="info")
+    )
+    on_tool_call_end = mocker.Mock(
+        return_value=create_notification_event(content="Called 'test_tool' tool", notification_type="success")
+    )
 
     generator = async_streaming_generator(
         pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end
     )
     chunks = [chunk async for chunk in generator]
 
-    assert chunks == ["start", mock_chunks_from_pipeline[0], "end", mock_chunks_from_pipeline[1]]
+    assert chunks == [
+        OpenWebUIEvent(
+            type='notification', data=NotificationEventData(type='info', content="Calling 'test_tool' tool...")
+        ),
+        mock_chunks_from_pipeline[0],
+        OpenWebUIEvent(
+            type="notification", data=NotificationEventData(type="success", content="Called 'test_tool' tool")
+        ),
+        mock_chunks_from_pipeline[1],
+    ]
     on_tool_call_start.assert_called_once_with(tool_call_start)
     on_tool_call_end.assert_called_once_with(tool_call_end)
