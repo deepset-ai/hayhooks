@@ -6,14 +6,14 @@ from haystack import AsyncPipeline, Pipeline
 from haystack.core.component import Component
 from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
-from haystack.dataclasses import StreamingChunk, ToolCallDelta, ToolCallResult
+from haystack.dataclasses import StreamingChunk
 from haystack.components.agents import Agent
 from hayhooks.open_webui import OpenWebUIEvent
 
 
 ToolCallbackReturn = Union[OpenWebUIEvent, str, None, List[Union[OpenWebUIEvent, str]]]
-OnToolCallStart = Optional[Callable[[ToolCallDelta], ToolCallbackReturn]]
-OnToolCallEnd = Optional[Callable[[ToolCallResult], ToolCallbackReturn]]
+OnToolCallStart = Optional[Callable[[str, Optional[str], Optional[str]], ToolCallbackReturn]]
+OnToolCallEnd = Optional[Callable[[str, Dict[str, Any], str, bool], ToolCallbackReturn]]
 
 
 def is_user_message(msg: Union[Message, Dict]) -> bool:
@@ -196,7 +196,7 @@ def streaming_generator(
             if on_tool_call_start and hasattr(item, "tool_calls") and item.tool_calls:
                 for tool_call in item.tool_calls:
                     if tool_call.tool_name:
-                        res = on_tool_call_start(tool_call)
+                        res = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
                         if res:
                             if isinstance(res, list):
                                 for r in res:
@@ -205,7 +205,12 @@ def streaming_generator(
                                 yield res
 
             if on_tool_call_end and hasattr(item, "tool_call_result") and item.tool_call_result:
-                res = on_tool_call_end(item.tool_call_result)
+                res = on_tool_call_end(
+                    item.tool_call_result.origin.tool_name,
+                    item.tool_call_result.origin.arguments,
+                    item.tool_call_result.result,
+                    bool(item.tool_call_result.error),
+                )
                 if res:
                     if isinstance(res, list):
                         for r in res:
@@ -359,7 +364,7 @@ async def async_streaming_generator(
             if on_tool_call_start and hasattr(chunk, "tool_calls") and chunk.tool_calls:
                 for tool_call in chunk.tool_calls:
                     if tool_call.tool_name:
-                        res = on_tool_call_start(tool_call)
+                        res = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
                         if res:
                             if isinstance(res, list):
                                 for r in res:
@@ -368,7 +373,12 @@ async def async_streaming_generator(
                                 yield res
 
             if on_tool_call_end and hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
-                res = on_tool_call_end(chunk.tool_call_result)
+                res = on_tool_call_end(
+                    chunk.tool_call_result.origin.tool_name,
+                    chunk.tool_call_result.origin.arguments,
+                    chunk.tool_call_result.result,
+                    bool(chunk.tool_call_result.error),
+                )
                 if res:
                     if isinstance(res, list):
                         for r in res:

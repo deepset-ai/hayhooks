@@ -10,8 +10,8 @@ from haystack.components.builders import ChatPromptBuilder, PromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.components.generators import OpenAIGenerator
 from haystack.utils import Secret
-from hayhooks.open_webui import create_notification_event, NotificationEventData
-from hayhooks.callbacks import default_on_tool_call_start, default_on_tool_call_end
+from hayhooks.open_webui import create_notification_event
+from hayhooks import callbacks
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
@@ -381,7 +381,9 @@ def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeli
     pipeline.run.side_effect = mock_run
 
     generator = streaming_generator(
-        pipeline, on_tool_call_start=default_on_tool_call_start, on_tool_call_end=default_on_tool_call_end
+        pipeline,
+        on_tool_call_start=callbacks.default_on_tool_call_start,
+        on_tool_call_end=callbacks.default_on_tool_call_end,
     )
     chunks = list(generator)
 
@@ -417,28 +419,36 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
 
     pipeline.run.side_effect = mock_run
 
-    on_tool_call_start = mocker.Mock(
-        return_value=create_notification_event(content="Calling 'test_tool' tool...", notification_type="info")
-    )
-    on_tool_call_end = mocker.Mock(
-        return_value=create_notification_event(content="Called 'test_tool' tool", notification_type="success")
-    )
+    # Use real functions and spy on them
+    on_tool_call_start_spy = mocker.spy(callbacks, 'default_on_tool_call_start')
+    on_tool_call_end_spy = mocker.spy(callbacks, 'default_on_tool_call_end')
 
-    generator = streaming_generator(pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end)
+    generator = streaming_generator(
+        pipeline, on_tool_call_start=on_tool_call_start_spy, on_tool_call_end=on_tool_call_end_spy
+    )
     chunks = list(generator)
 
-    assert chunks == [
-        OpenWebUIEvent(
-            type='notification', data=NotificationEventData(type='info', content="Calling 'test_tool' tool...")
-        ),
-        mock_chunks_from_pipeline[0],
-        OpenWebUIEvent(
-            type='notification', data=NotificationEventData(type='success', content="Called 'test_tool' tool")
-        ),
-        mock_chunks_from_pipeline[1],
-    ]
-    on_tool_call_start.assert_called_once_with(tool_call_start)
-    on_tool_call_end.assert_called_once_with(tool_call_end)
+    # Verify the chunks contain the expected results from the real callbacks
+    assert len(chunks) == 4
+
+    # First chunk should be the result from default_on_tool_call_start
+    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert chunks[0].type == "status"
+    assert "Calling 'test_tool' tool..." in chunks[0].data.description
+
+    # Second chunk is the original streaming chunk
+    assert chunks[1] == mock_chunks_from_pipeline[0]
+
+    # Third chunk should be the result from default_on_tool_call_end
+    assert isinstance(chunks[2], str)
+    assert "Tool call result for 'test_tool'" in chunks[2]
+
+    # Fourth chunk is the original streaming chunk
+    assert chunks[3] == mock_chunks_from_pipeline[1]
+
+    # Verify the spies were called correctly
+    on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
+    on_tool_call_end_spy.assert_called_once_with("test_tool", {"city": "Berlin"}, "sunny", False)
 
 
 @pytest.mark.asyncio
@@ -465,7 +475,9 @@ async def test_async_streaming_generator_with_tool_calls_and_default_callbacks(
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
     generator = async_streaming_generator(
-        pipeline, on_tool_call_start=default_on_tool_call_start, on_tool_call_end=default_on_tool_call_end
+        pipeline,
+        on_tool_call_start=callbacks.default_on_tool_call_start,
+        on_tool_call_end=callbacks.default_on_tool_call_end,
     )
     chunks = [chunk async for chunk in generator]
 
@@ -503,30 +515,36 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
 
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
-    on_tool_call_start = mocker.Mock(
-        return_value=create_notification_event(content="Calling 'test_tool' tool...", notification_type="info")
-    )
-    on_tool_call_end = mocker.Mock(
-        return_value=create_notification_event(content="Called 'test_tool' tool", notification_type="success")
-    )
+    # Use real functions and spy on them
+    on_tool_call_start_spy = mocker.spy(callbacks, 'default_on_tool_call_start')
+    on_tool_call_end_spy = mocker.spy(callbacks, 'default_on_tool_call_end')
 
     generator = async_streaming_generator(
-        pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end
+        pipeline, on_tool_call_start=on_tool_call_start_spy, on_tool_call_end=on_tool_call_end_spy
     )
     chunks = [chunk async for chunk in generator]
 
-    assert chunks == [
-        OpenWebUIEvent(
-            type='notification', data=NotificationEventData(type='info', content="Calling 'test_tool' tool...")
-        ),
-        mock_chunks_from_pipeline[0],
-        OpenWebUIEvent(
-            type="notification", data=NotificationEventData(type="success", content="Called 'test_tool' tool")
-        ),
-        mock_chunks_from_pipeline[1],
-    ]
-    on_tool_call_start.assert_called_once_with(tool_call_start)
-    on_tool_call_end.assert_called_once_with(tool_call_end)
+    # Verify the chunks contain the expected results from the real callbacks
+    assert len(chunks) == 4
+
+    # First chunk should be the result from default_on_tool_call_start
+    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert chunks[0].type == "status"
+    assert "Calling 'test_tool' tool..." in chunks[0].data.description
+
+    # Second chunk is the original streaming chunk
+    assert chunks[1] == mock_chunks_from_pipeline[0]
+
+    # Third chunk should be the result from default_on_tool_call_end
+    assert isinstance(chunks[2], str)
+    assert "Tool call result for 'test_tool'" in chunks[2]
+
+    # Fourth chunk is the original streaming chunk
+    assert chunks[3] == mock_chunks_from_pipeline[1]
+
+    # Verify the spies were called correctly
+    on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
+    on_tool_call_end_spy.assert_called_once_with("test_tool", {"city": "Berlin"}, "sunny", False)
 
 
 def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked_pipeline_with_streaming_component):
@@ -548,29 +566,58 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
 
     pipeline.run.side_effect = mock_run
 
-    on_tool_call_start_events = [
-        create_notification_event(content="Calling 'test_tool' tool... (1/2)", notification_type="info"),
-        create_notification_event(content="Calling 'test_tool' tool... (2/2)", notification_type="info"),
-    ]
-    on_tool_call_end_events = [
-        create_notification_event(content="Called 'test_tool' tool (1/2)", notification_type="success"),
-        create_notification_event(content="Called 'test_tool' tool (2/2)", notification_type="success"),
-    ]
+    # Create custom callbacks that return lists
+    def custom_on_tool_call_start(tool_name, arguments, tool_call_id):
+        return [
+            create_notification_event(content=f"Calling '{tool_name}' tool... (1/2)", notification_type="info"),
+            create_notification_event(content=f"Calling '{tool_name}' tool... (2/2)", notification_type="info"),
+        ]
 
-    on_tool_call_start = mocker.Mock(return_value=on_tool_call_start_events)
-    on_tool_call_end = mocker.Mock(return_value=on_tool_call_end_events)
+    def custom_on_tool_call_end(tool_name, arguments, result, error):
+        return [
+            create_notification_event(content=f"Called '{tool_name}' tool (1/2)", notification_type="success"),
+            create_notification_event(content=f"Called '{tool_name}' tool (2/2)", notification_type="success"),
+        ]
 
-    generator = streaming_generator(pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end)
+    # Use real functions and spy on them
+    on_tool_call_start_spy = mocker.Mock(side_effect=custom_on_tool_call_start)
+    on_tool_call_end_spy = mocker.Mock(side_effect=custom_on_tool_call_end)
+
+    generator = streaming_generator(
+        pipeline, on_tool_call_start=on_tool_call_start_spy, on_tool_call_end=on_tool_call_end_spy
+    )
     chunks = list(generator)
 
-    assert chunks == [
-        *on_tool_call_start_events,
-        mock_chunks_from_pipeline[0],
-        *on_tool_call_end_events,
-        mock_chunks_from_pipeline[1],
-    ]
-    on_tool_call_start.assert_called_once_with(tool_call_start)
-    on_tool_call_end.assert_called_once_with(tool_call_end)
+    # Verify the chunks contain the expected results from the real callbacks
+    assert len(chunks) == 6
+
+    # First two chunks should be the results from custom_on_tool_call_start
+    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert chunks[0].type == "notification"
+    assert "Calling 'test_tool' tool... (1/2)" in chunks[0].data.content
+
+    assert isinstance(chunks[1], OpenWebUIEvent)
+    assert chunks[1].type == "notification"
+    assert "Calling 'test_tool' tool... (2/2)" in chunks[1].data.content
+
+    # Third chunk is the original streaming chunk
+    assert chunks[2] == mock_chunks_from_pipeline[0]
+
+    # Fourth and fifth chunks should be the results from custom_on_tool_call_end
+    assert isinstance(chunks[3], OpenWebUIEvent)
+    assert chunks[3].type == "notification"
+    assert "Called 'test_tool' tool (1/2)" in chunks[3].data.content
+
+    assert isinstance(chunks[4], OpenWebUIEvent)
+    assert chunks[4].type == "notification"
+    assert "Called 'test_tool' tool (2/2)" in chunks[4].data.content
+
+    # Sixth chunk is the original streaming chunk
+    assert chunks[5] == mock_chunks_from_pipeline[1]
+
+    # Verify the spies were called correctly
+    on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
+    on_tool_call_end_spy.assert_called_once_with("test_tool", {"city": "Berlin"}, "sunny", False)
 
 
 @pytest.mark.asyncio
@@ -595,31 +642,58 @@ async def test_async_streaming_generator_with_custom_callbacks_returning_list(
 
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
-    on_tool_call_start_events = [
-        create_notification_event(content="Calling 'test_tool' tool... (1/2)", notification_type="info"),
-        create_notification_event(content="Calling 'test_tool' tool... (2/2)", notification_type="info"),
-    ]
-    on_tool_call_end_events = [
-        create_notification_event(content="Called 'test_tool' tool (1/2)", notification_type="success"),
-        create_notification_event(content="Called 'test_tool' tool (2/2)", notification_type="success"),
-    ]
+    # Create custom callbacks that return lists
+    def custom_on_tool_call_start(tool_name, arguments, tool_call_id):
+        return [
+            create_notification_event(content=f"Calling '{tool_name}' tool... (1/2)", notification_type="info"),
+            create_notification_event(content=f"Calling '{tool_name}' tool... (2/2)", notification_type="info"),
+        ]
 
-    on_tool_call_start = mocker.Mock(return_value=on_tool_call_start_events)
-    on_tool_call_end = mocker.Mock(return_value=on_tool_call_end_events)
+    def custom_on_tool_call_end(tool_name, arguments, result, error):
+        return [
+            create_notification_event(content=f"Called '{tool_name}' tool (1/2)", notification_type="success"),
+            create_notification_event(content=f"Called '{tool_name}' tool (2/2)", notification_type="success"),
+        ]
+
+    # Use real functions and spy on them
+    on_tool_call_start_spy = mocker.Mock(side_effect=custom_on_tool_call_start)
+    on_tool_call_end_spy = mocker.Mock(side_effect=custom_on_tool_call_end)
 
     generator = async_streaming_generator(
-        pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end
+        pipeline, on_tool_call_start=on_tool_call_start_spy, on_tool_call_end=on_tool_call_end_spy
     )
     chunks = [chunk async for chunk in generator]
 
-    assert chunks == [
-        *on_tool_call_start_events,
-        mock_chunks_from_pipeline[0],
-        *on_tool_call_end_events,
-        mock_chunks_from_pipeline[1],
-    ]
-    on_tool_call_start.assert_called_once_with(tool_call_start)
-    on_tool_call_end.assert_called_once_with(tool_call_end)
+    # Verify the chunks contain the expected results from the real callbacks
+    assert len(chunks) == 6
+
+    # First two chunks should be the results from custom_on_tool_call_start
+    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert chunks[0].type == "notification"
+    assert "Calling 'test_tool' tool... (1/2)" in chunks[0].data.content
+
+    assert isinstance(chunks[1], OpenWebUIEvent)
+    assert chunks[1].type == "notification"
+    assert "Calling 'test_tool' tool... (2/2)" in chunks[1].data.content
+
+    # Third chunk is the original streaming chunk
+    assert chunks[2] == mock_chunks_from_pipeline[0]
+
+    # Fourth and fifth chunks should be the results from custom_on_tool_call_end
+    assert isinstance(chunks[3], OpenWebUIEvent)
+    assert chunks[3].type == "notification"
+    assert "Called 'test_tool' tool (1/2)" in chunks[3].data.content
+
+    assert isinstance(chunks[4], OpenWebUIEvent)
+    assert chunks[4].type == "notification"
+    assert "Called 'test_tool' tool (2/2)" in chunks[4].data.content
+
+    # Sixth chunk is the original streaming chunk
+    assert chunks[5] == mock_chunks_from_pipeline[1]
+
+    # Verify the spies were called correctly
+    on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
+    on_tool_call_end_spy.assert_called_once_with("test_tool", {"city": "Berlin"}, "sunny", False)
 
 
 def test_streaming_generator_with_tool_calls_and_no_callbacks(mocked_pipeline_with_streaming_component):
