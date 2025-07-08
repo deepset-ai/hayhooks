@@ -8,8 +8,8 @@ from hayhooks.server.pipelines.utils import (
     async_streaming_generator
 )
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_def
-from .settings import settings
-from .callbacks import (
+from hayhooks.settings import settings
+from hayhooks.callbacks import (
     default_on_tool_call_start,
     default_on_tool_call_end,
 )
