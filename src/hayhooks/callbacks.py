@@ -40,14 +40,6 @@ def default_on_tool_call_end(tool_call: ToolCallResult) -> str:
     )
 
 
-def default_on_tool_call_stream(chunk: ToolCallDelta) -> Union[OpenWebUIEvent, None]:
-    """
-    Default callback for tool call stream.
-    This is called when a tool call streams back a chunk of its output.
-    """
-    return None  # By default, do nothing with streaming tool output
-
-
 def default_on_tool_exception(tool_call: ToolCallResult) -> OpenWebUIEvent:
     """
     Default callback when a tool call raises an exception.

@@ -12,7 +12,6 @@ from .settings import settings
 from .callbacks import (
     default_on_tool_call_start,
     default_on_tool_call_end,
-    default_on_tool_call_stream,
 )
 
 __all__ = [
@@ -27,5 +26,4 @@ __all__ = [
     "deploy_pipeline_def",
     "default_on_tool_call_start",
     "default_on_tool_call_end",
-    "default_on_tool_call_stream",
 ]
