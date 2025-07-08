@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from hayhooks.server.utils.open_webui import (
+from hayhooks.open_webui import (
     StatusEventData,
     MessageEventData,
     ChatTitleEventData,

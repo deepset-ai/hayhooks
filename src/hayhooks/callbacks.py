@@ -1,6 +1,6 @@
 from typing import Union
 from haystack.dataclasses import ToolCallDelta, ToolCallResult
-from hayhooks.server.utils.open_webui import (
+from hayhooks.open_webui import (
     create_status_event,
     OpenWebUIEvent,
     create_notification_event,

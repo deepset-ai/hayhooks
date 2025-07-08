@@ -5,12 +5,12 @@ from haystack import Pipeline, AsyncPipeline
 from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall, ToolCallDelta, ToolCallResult
 from typing import Generator, AsyncGenerator, Dict, Any
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator, find_streaming_component
-from hayhooks.server.utils.open_webui import OpenWebUIEvent
+from hayhooks.open_webui import OpenWebUIEvent
 from haystack.components.builders import ChatPromptBuilder, PromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.components.generators import OpenAIGenerator
 from haystack.utils import Secret
-from hayhooks.server.utils.open_webui import create_notification_event, NotificationEventData
+from hayhooks.open_webui import create_notification_event, NotificationEventData
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 

@@ -11,7 +11,7 @@ from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import handle_pipeline_exceptions
 from hayhooks.server.logger import log
 from haystack.dataclasses import StreamingChunk
-from hayhooks.server.utils.open_webui import OpenWebUIEvent
+from hayhooks.open_webui import OpenWebUIEvent
 
 
 router = APIRouter()

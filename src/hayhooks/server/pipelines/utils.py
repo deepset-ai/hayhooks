@@ -12,7 +12,7 @@ from hayhooks.callbacks import (
     default_on_tool_call_end,
     default_on_tool_call_start,
 )
-from hayhooks.server.utils.open_webui import OpenWebUIEvent
+from hayhooks.open_webui import OpenWebUIEvent
 
 
 def is_user_message(msg: Union[Message, Dict]) -> bool:
