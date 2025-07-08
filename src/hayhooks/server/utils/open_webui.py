@@ -24,7 +24,6 @@ class NotificationEventData(BaseModel):
     type: Literal["info", "success", "warning", "error"] = "info"
     content: str
 
-
 class OpenWebUIEvent(BaseModel):
     """
     OpenWebUIEvent is a Pydantic model that represents an event that can be sent to the Open WebUI.
@@ -102,3 +101,22 @@ def create_notification_event(
         notification_type: Type of notification ("info", "success", "warning", "error")
     """
     return OpenWebUIEvent(type="notification", data=NotificationEventData(type=notification_type, content=content))
+
+
+def create_details_tag(
+    tool_name: str,
+    summary: str,
+    content: str,
+) -> str:
+    """
+    Create a details event to show tool call results.
+
+    This is not an OpenWebUIEvent, but a string that can be rendered
+    by Open WebUI as a details block.
+    """
+    return (
+        f'<details type="{tool_name}" done="true">\n'
+        f"<summary>{summary}</summary>\n\n"
+        f"{content}\n"
+        "</details>\n\n"
+    )

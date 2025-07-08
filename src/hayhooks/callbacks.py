@@ -1,6 +1,11 @@
 from typing import Union
 from haystack.dataclasses import ToolCallDelta, ToolCallResult
-from hayhooks.server.utils.open_webui import create_status_event, OpenWebUIEvent, create_notification_event
+from hayhooks.server.utils.open_webui import (
+    create_status_event,
+    OpenWebUIEvent,
+    create_notification_event,
+    create_details_tag,
+)
 
 
 def default_on_tool_call_start(tool_call: ToolCallDelta) -> Union[OpenWebUIEvent, None]:
@@ -25,16 +30,17 @@ def default_on_tool_call_end(tool_call: ToolCallResult) -> str:
     Returns a detailed HTML block with the tool call's arguments and response.
     This is designed to be rendered by Open WebUI.
     """
-    return (
-        f'<details type="{tool_call.origin.tool_name}" done="true">\n'
-        f"<summary>"
-        f"Tool call result for '{tool_call.origin.tool_name}'"
-        f"</summary>\n\n"
+    summary = f"Tool call result for '{tool_call.origin.tool_name}'"
+    content = (
         f"```\n"
         f"Arguments:\n"
         f"{tool_call.origin.arguments}\n"
         f"\nResponse:\n"
         f"{tool_call.result}\n"
-        "```\n"
-        "</details>\n\n"
+        "```"
+    )
+    return create_details_tag(
+        tool_name=tool_call.origin.tool_name,
+        summary=summary,
+        content=content,
     )

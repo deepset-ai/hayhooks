@@ -16,6 +16,7 @@ from hayhooks.server.utils.open_webui import (
     create_source_event,
     create_citation_event,
     create_notification_event,
+    create_details_tag,
 )
 
 
@@ -218,6 +219,14 @@ class TestFactoryFunctions:
             assert isinstance(event.data, NotificationEventData)
             assert event.data.content == content
             assert event.data.type == notification_type
+
+    def test_create_details_tag(self):
+        assert create_details_tag(tool_name="test_tool", summary="Test Summary", content="Test Content") == (
+            f'<details type="test_tool" done="true">\n'
+            f"<summary>Test Summary</summary>\n\n"
+            f"Test Content\n"
+            "</details>\n\n"
+        )
 
 
 class TestEdgeCases:
