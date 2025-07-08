@@ -38,12 +38,3 @@ def default_on_tool_call_end(tool_call: ToolCallResult) -> str:
         "```\n"
         "</details>\n\n"
     )
-
-
-def default_on_tool_exception(tool_call: ToolCallResult) -> OpenWebUIEvent:
-    """
-    Default callback when a tool call raises an exception.
-    """
-    return create_notification_event(
-        notification_type="error", content=f"Tool '{tool_call.origin.tool_name}' failed with error: {tool_call.result}"
-    )
