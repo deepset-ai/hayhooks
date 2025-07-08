@@ -3,7 +3,6 @@ from haystack.dataclasses import ToolCallDelta, ToolCallResult
 from hayhooks.open_webui import (
     create_status_event,
     OpenWebUIEvent,
-    create_notification_event,
     create_details_tag,
 )
 

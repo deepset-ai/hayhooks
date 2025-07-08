@@ -11,6 +11,7 @@ from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.components.generators import OpenAIGenerator
 from haystack.utils import Secret
 from hayhooks.open_webui import create_notification_event, NotificationEventData
+from hayhooks.callbacks import default_on_tool_call_start, default_on_tool_call_end
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
@@ -379,7 +380,9 @@ def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeli
 
     pipeline.run.side_effect = mock_run
 
-    generator = streaming_generator(pipeline)
+    generator = streaming_generator(
+        pipeline, on_tool_call_start=default_on_tool_call_start, on_tool_call_end=default_on_tool_call_end
+    )
     chunks = list(generator)
 
     assert len(chunks) == 5
@@ -414,16 +417,24 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
 
     pipeline.run.side_effect = mock_run
 
-    on_tool_call_start = mocker.Mock(return_value=create_notification_event(content="Calling 'test_tool' tool...", notification_type="info"))
-    on_tool_call_end = mocker.Mock(return_value=create_notification_event(content="Called 'test_tool' tool", notification_type="success"))
+    on_tool_call_start = mocker.Mock(
+        return_value=create_notification_event(content="Calling 'test_tool' tool...", notification_type="info")
+    )
+    on_tool_call_end = mocker.Mock(
+        return_value=create_notification_event(content="Called 'test_tool' tool", notification_type="success")
+    )
 
     generator = streaming_generator(pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end)
     chunks = list(generator)
 
     assert chunks == [
-        OpenWebUIEvent(type='notification', data=NotificationEventData(type='info', content="Calling 'test_tool' tool...")),
+        OpenWebUIEvent(
+            type='notification', data=NotificationEventData(type='info', content="Calling 'test_tool' tool...")
+        ),
         mock_chunks_from_pipeline[0],
-        OpenWebUIEvent(type='notification', data=NotificationEventData(type='success', content="Called 'test_tool' tool")),
+        OpenWebUIEvent(
+            type='notification', data=NotificationEventData(type='success', content="Called 'test_tool' tool")
+        ),
         mock_chunks_from_pipeline[1],
     ]
     on_tool_call_start.assert_called_once_with(tool_call_start)
@@ -453,7 +464,9 @@ async def test_async_streaming_generator_with_tool_calls_and_default_callbacks(
 
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
-    generator = async_streaming_generator(pipeline)
+    generator = async_streaming_generator(
+        pipeline, on_tool_call_start=default_on_tool_call_start, on_tool_call_end=default_on_tool_call_end
+    )
     chunks = [chunk async for chunk in generator]
 
     assert len(chunks) == 5
@@ -514,3 +527,151 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
     ]
     on_tool_call_start.assert_called_once_with(tool_call_start)
     on_tool_call_end.assert_called_once_with(tool_call_end)
+
+
+def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    tool_call_start = ToolCallDelta(index=0, tool_name="test_tool", arguments="")
+    tool_call_end = ToolCallResult(
+        origin=ToolCall(tool_name="test_tool", arguments={"city": "Berlin"}), result="sunny", error=None
+    )
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="", index=0, tool_calls=[tool_call_start]),
+        StreamingChunk(content="", index=0, tool_call_result=tool_call_end),
+    ]
+
+    def mock_run(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                streaming_component.streaming_callback(chunk)
+
+    pipeline.run.side_effect = mock_run
+
+    on_tool_call_start_events = [
+        create_notification_event(content="Calling 'test_tool' tool... (1/2)", notification_type="info"),
+        create_notification_event(content="Calling 'test_tool' tool... (2/2)", notification_type="info"),
+    ]
+    on_tool_call_end_events = [
+        create_notification_event(content="Called 'test_tool' tool (1/2)", notification_type="success"),
+        create_notification_event(content="Called 'test_tool' tool (2/2)", notification_type="success"),
+    ]
+
+    on_tool_call_start = mocker.Mock(return_value=on_tool_call_start_events)
+    on_tool_call_end = mocker.Mock(return_value=on_tool_call_end_events)
+
+    generator = streaming_generator(pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end)
+    chunks = list(generator)
+
+    assert chunks == [
+        *on_tool_call_start_events,
+        mock_chunks_from_pipeline[0],
+        *on_tool_call_end_events,
+        mock_chunks_from_pipeline[1],
+    ]
+    on_tool_call_start.assert_called_once_with(tool_call_start)
+    on_tool_call_end.assert_called_once_with(tool_call_end)
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_with_custom_callbacks_returning_list(
+    mocker, mocked_pipeline_with_streaming_component
+):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    tool_call_start = ToolCallDelta(index=0, tool_name="test_tool", arguments="")
+    tool_call_end = ToolCallResult(
+        origin=ToolCall(tool_name="test_tool", arguments={"city": "Berlin"}), result="sunny", error=None
+    )
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="", index=0, tool_calls=[tool_call_start]),
+        StreamingChunk(content="", index=0, tool_call_result=tool_call_end),
+    ]
+
+    async def mock_run_async(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                await streaming_component.streaming_callback(chunk)
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    on_tool_call_start_events = [
+        create_notification_event(content="Calling 'test_tool' tool... (1/2)", notification_type="info"),
+        create_notification_event(content="Calling 'test_tool' tool... (2/2)", notification_type="info"),
+    ]
+    on_tool_call_end_events = [
+        create_notification_event(content="Called 'test_tool' tool (1/2)", notification_type="success"),
+        create_notification_event(content="Called 'test_tool' tool (2/2)", notification_type="success"),
+    ]
+
+    on_tool_call_start = mocker.Mock(return_value=on_tool_call_start_events)
+    on_tool_call_end = mocker.Mock(return_value=on_tool_call_end_events)
+
+    generator = async_streaming_generator(
+        pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end
+    )
+    chunks = [chunk async for chunk in generator]
+
+    assert chunks == [
+        *on_tool_call_start_events,
+        mock_chunks_from_pipeline[0],
+        *on_tool_call_end_events,
+        mock_chunks_from_pipeline[1],
+    ]
+    on_tool_call_start.assert_called_once_with(tool_call_start)
+    on_tool_call_end.assert_called_once_with(tool_call_end)
+
+
+def test_streaming_generator_with_tool_calls_and_no_callbacks(mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    tool_call_start = ToolCallDelta(index=0, tool_name="test_tool", arguments="")
+    tool_call_end = ToolCallResult(
+        origin=ToolCall(tool_name="test_tool", arguments={"city": "Berlin"}), result="sunny", error=None
+    )
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="", index=0, tool_calls=[tool_call_start]),
+        StreamingChunk(content=" some content "),
+        StreamingChunk(content="", index=0, tool_call_result=tool_call_end),
+    ]
+
+    def mock_run(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                streaming_component.streaming_callback(chunk)
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline)
+    chunks = list(generator)
+
+    assert chunks == mock_chunks_from_pipeline
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_with_tool_calls_and_no_callbacks(
+    mocker, mocked_pipeline_with_streaming_component
+):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    tool_call_start = ToolCallDelta(index=0, tool_name="test_tool", arguments="")
+    tool_call_end = ToolCallResult(
+        origin=ToolCall(tool_name="test_tool", arguments={"city": "Berlin"}), result="sunny", error=None
+    )
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="", index=0, tool_calls=[tool_call_start]),
+        StreamingChunk(content=" some content "),
+        StreamingChunk(content="", index=0, tool_call_result=tool_call_end),
+    ]
+
+    async def mock_run_async(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                await streaming_component.streaming_callback(chunk)
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    generator = async_streaming_generator(pipeline)
+    chunks = [chunk async for chunk in generator]
+
+    assert chunks == mock_chunks_from_pipeline

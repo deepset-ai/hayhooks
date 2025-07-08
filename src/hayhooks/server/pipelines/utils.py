@@ -1,18 +1,19 @@
 import asyncio
 import threading
 from queue import Queue
-from typing import AsyncGenerator, Callable, Generator, List, Union, Dict, Tuple, Any
+from typing import AsyncGenerator, Callable, Generator, List, Union, Dict, Tuple, Any, Optional
 from haystack import AsyncPipeline, Pipeline
 from haystack.core.component import Component
 from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
 from haystack.dataclasses import StreamingChunk, ToolCallDelta, ToolCallResult
 from haystack.components.agents import Agent
-from hayhooks.callbacks import (
-    default_on_tool_call_end,
-    default_on_tool_call_start,
-)
 from hayhooks.open_webui import OpenWebUIEvent
+
+
+ToolCallbackReturn = Union[OpenWebUIEvent, str, None, List[Union[OpenWebUIEvent, str]]]
+OnToolCallStart = Optional[Callable[[ToolCallDelta], ToolCallbackReturn]]
+OnToolCallEnd = Optional[Callable[[ToolCallResult], ToolCallbackReturn]]
 
 
 def is_user_message(msg: Union[Message, Dict]) -> bool:
@@ -142,8 +143,8 @@ def streaming_generator(
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
     pipeline_run_args: Dict[str, Any] = {},
-    on_tool_call_start: Callable[[ToolCallDelta], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_start,
-    on_tool_call_end: Callable[[ToolCallResult], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_end,
+    on_tool_call_start: OnToolCallStart = None,
+    on_tool_call_end: OnToolCallEnd = None,
 ) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
@@ -192,17 +193,25 @@ def streaming_generator(
                 break
 
             # Handle tool calls
-            if hasattr(item, "tool_calls") and item.tool_calls:
+            if on_tool_call_start and hasattr(item, "tool_calls") and item.tool_calls:
                 for tool_call in item.tool_calls:
                     if tool_call.tool_name:
                         res = on_tool_call_start(tool_call)
                         if res:
-                            yield res
+                            if isinstance(res, list):
+                                for r in res:
+                                    yield r
+                            else:
+                                yield res
 
-            if hasattr(item, "tool_call_result") and item.tool_call_result:
+            if on_tool_call_end and hasattr(item, "tool_call_result") and item.tool_call_result:
                 res = on_tool_call_end(item.tool_call_result)
                 if res:
-                    yield res
+                    if isinstance(res, list):
+                        for r in res:
+                            yield r
+                    else:
+                        yield res
             yield item
     finally:
         thread.join()
@@ -307,8 +316,8 @@ async def async_streaming_generator(
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
     pipeline_run_args: Dict[str, Any] = {},
-    on_tool_call_start: Callable[[ToolCallDelta], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_start,
-    on_tool_call_end: Callable[[ToolCallResult], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_end,
+    on_tool_call_start: OnToolCallStart = None,
+    on_tool_call_end: OnToolCallEnd = None,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
@@ -347,17 +356,25 @@ async def async_streaming_generator(
     try:
         async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
             # Handle tool calls
-            if hasattr(chunk, "tool_calls") and chunk.tool_calls:
+            if on_tool_call_start and hasattr(chunk, "tool_calls") and chunk.tool_calls:
                 for tool_call in chunk.tool_calls:
                     if tool_call.tool_name:
                         res = on_tool_call_start(tool_call)
                         if res:
-                            yield res
+                            if isinstance(res, list):
+                                for r in res:
+                                    yield r
+                            else:
+                                yield res
 
-            if hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
+            if on_tool_call_end and hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
                 res = on_tool_call_end(chunk.tool_call_result)
                 if res:
-                    yield res
+                    if isinstance(res, list):
+                        for r in res:
+                            yield r
+                    else:
+                        yield res
             yield chunk
 
         await pipeline_task
