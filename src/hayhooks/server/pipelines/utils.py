@@ -1,13 +1,20 @@
 import asyncio
 import threading
 from queue import Queue
-from typing import AsyncGenerator, Generator, List, Union, Dict, Tuple, Any
+from typing import AsyncGenerator, Callable, Generator, List, Union, Dict, Tuple, Any
 from haystack import AsyncPipeline, Pipeline
 from haystack.core.component import Component
 from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
-from haystack.dataclasses import StreamingChunk
+from haystack.dataclasses import StreamingChunk, ToolCallDelta, ToolCallResult
 from haystack.components.agents import Agent
+from hayhooks.callbacks import (
+    default_on_tool_call_end,
+    default_on_tool_call_start,
+    default_on_tool_call_stream,
+    default_on_tool_exception,
+)
+from hayhooks.server.utils.open_webui import OpenWebUIEvent
 
 
 def is_user_message(msg: Union[Message, Dict]) -> bool:
@@ -134,8 +141,13 @@ def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipe
 
 
 def streaming_generator(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict[str, Any]
-) -> Generator[StreamingChunk, None, None]:
+    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    *,
+    pipeline_run_args: Dict[str, Any] = {},
+    on_tool_call_start: Callable[[ToolCallDelta], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_start,
+    on_tool_call_end: Callable[[ToolCallResult], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_end,
+    on_tool_call_stream: Callable[[ToolCallDelta], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_stream,
+) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
     Automatically finds the streaming-capable component in pipelines or uses the agent's streaming callback.
@@ -143,9 +155,14 @@ def streaming_generator(
     Args:
         pipeline: The Pipeline, AsyncPipeline, or Agent to execute
         pipeline_run_args: Arguments for execution
+        on_tool_call_start: Callback for tool call start
+        on_tool_call_end: Callback for tool call end
+        on_tool_call_stream: Callback for tool call stream
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
+        OpenWebUIEvent: Event for tool call
+        str: Tool name or stream content
 
     NOTE: This generator works with sync/async pipelines and agents, but pipeline components
           which support streaming must have a _sync_ `streaming_callback`.
@@ -177,6 +194,23 @@ def streaming_generator(
                 raise item
             if item is None:
                 break
+
+            # Handle tool calls
+            if hasattr(item, "tool_calls") and item.tool_calls:
+                for tool_call in item.tool_calls:
+                    if tool_call.tool_name:
+                        res = on_tool_call_start(tool_call)
+                        if res:
+                            yield res
+                    else:
+                        res = on_tool_call_stream(tool_call)
+                        if res:
+                            yield res
+
+            if hasattr(item, "tool_call_result") and item.tool_call_result:
+                res = on_tool_call_end(item.tool_call_result)
+                if res:
+                    yield res
             yield item
     finally:
         thread.join()
@@ -278,8 +312,13 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
 
 
 async def async_streaming_generator(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict[str, Any]
-) -> AsyncGenerator[StreamingChunk, None]:
+    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    *,
+    pipeline_run_args: Dict[str, Any] = {},
+    on_tool_call_start: Callable[[ToolCallDelta], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_start,
+    on_tool_call_end: Callable[[ToolCallResult], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_end,
+    on_tool_call_stream: Callable[[ToolCallDelta], Union[OpenWebUIEvent, str, None]] = default_on_tool_call_stream,
+) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
     Automatically finds the streaming-capable component in pipelines or uses the agent's streaming callback.
@@ -287,9 +326,14 @@ async def async_streaming_generator(
     Args:
         pipeline: The Pipeline, AsyncPipeline, or Agent to execute
         pipeline_run_args: Arguments for execution
+        on_tool_call_start: Callback for tool call start
+        on_tool_call_end: Callback for tool call end
+        on_tool_call_stream: Callback for tool call stream
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
+        OpenWebUIEvent: Event for tool call
+        str: Tool name or stream content
 
     NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming component
           must support an _async_ `streaming_callback`. Agents have built-in async streaming support.
@@ -312,6 +356,22 @@ async def async_streaming_generator(
 
     try:
         async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
+            # Handle tool calls
+            if hasattr(chunk, "tool_calls") and chunk.tool_calls:
+                for tool_call in chunk.tool_calls:
+                    if tool_call.tool_name:
+                        res = on_tool_call_start(tool_call)
+                        if res:
+                            yield res
+                    else:
+                        res = on_tool_call_stream(tool_call)
+                        if res:
+                            yield res
+
+            if hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
+                res = on_tool_call_end(chunk.tool_call_result)
+                if res:
+                    yield res
             yield chunk
 
         await pipeline_task

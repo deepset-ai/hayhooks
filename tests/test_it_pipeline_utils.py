@@ -2,9 +2,10 @@ import os
 import pytest
 import asyncio
 from haystack import Pipeline, AsyncPipeline
-from haystack.dataclasses import ChatMessage
-from typing import Generator, AsyncGenerator, Dict, Any
+from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall, ToolCallDelta, ToolCallResult
+from typing import Generator, AsyncGenerator, Dict, Any, Union
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator, find_streaming_component
+from hayhooks.server.utils.open_webui import OpenWebUIEvent
 from haystack.components.builders import ChatPromptBuilder, PromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.components.generators import OpenAIGenerator
@@ -58,7 +59,7 @@ def test_sync_pipeline_sync_streaming_callback_streaming_generator(sync_pipeline
 
     generator = streaming_generator(
         pipeline,
-        {
+        pipeline_run_args={
             "prompt_builder": {"template": [ChatMessage.from_user(QUESTION)]},
         },
     )
@@ -66,8 +67,11 @@ def test_sync_pipeline_sync_streaming_callback_streaming_generator(sync_pipeline
 
     chunks = [chunk for chunk in generator]
     assert len(chunks) > 0
-    assert isinstance(chunks[0], StreamingChunk)
-    assert any("Yes" in chunk.content for chunk in chunks)
+
+    streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
+    assert len(streaming_chunks) > 0
+    assert isinstance(streaming_chunks[0], StreamingChunk)
+    assert any("Yes" in chunk.content for chunk in streaming_chunks)
 
 
 @pytest.mark.skipif(
@@ -84,7 +88,7 @@ async def test_async_pipeline_async_streaming_callback_async_streaming_generator
     # which will wrap the call to .run_async() with asyncio.run().
     async_generator = async_streaming_generator(
         pipeline,
-        {
+        pipeline_run_args={
             "prompt_builder": {"template": [ChatMessage.from_user(QUESTION)]},
         },
     )
@@ -92,8 +96,11 @@ async def test_async_pipeline_async_streaming_callback_async_streaming_generator
 
     chunks = [chunk async for chunk in async_generator]
     assert len(chunks) > 0
-    assert isinstance(chunks[0], StreamingChunk)
-    assert any("Yes" in chunk.content for chunk in chunks)
+
+    streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
+    assert len(streaming_chunks) > 0
+    assert isinstance(streaming_chunks[0], StreamingChunk)
+    assert any("Yes" in chunk.content for chunk in streaming_chunks)
 
 
 async def test_async_pipeline_without_async_streaming_callback_support_should_raise_exception(
@@ -102,7 +109,7 @@ async def test_async_pipeline_without_async_streaming_callback_support_should_ra
     pipeline = async_pipeline_without_async_streaming_callback_support
 
     with pytest.raises(ValueError, match="seems to not support async streaming callbacks"):
-        async_generator = async_streaming_generator(pipeline, {})
+        async_generator = async_streaming_generator(pipeline)
 
         # Try to consume the generator to trigger the exception
         _ = [chunk async for chunk in async_generator]
@@ -116,21 +123,6 @@ class MockComponent:
             self.streaming_callback = None
         if has_async_support:
             self.run_async = lambda: None
-
-
-class MockChunk:
-    """Mock chunk object with content"""
-
-    def __init__(self, content: str):
-        self.content = content
-
-    def __eq__(self, other):
-        if isinstance(other, MockChunk):
-            return self.content == other.content
-        return False
-
-    def __repr__(self):
-        return f"MockChunk({self.content!r})"
 
 
 @pytest.fixture
@@ -172,7 +164,7 @@ def test_streaming_generator_no_streaming_component():
     pipeline = Pipeline()
 
     with pytest.raises(ValueError, match="No streaming-capable component found in the pipeline"):
-        list(streaming_generator(pipeline, {}))
+        list(streaming_generator(pipeline))
 
 
 def test_streaming_generator_with_existing_component_args(mocked_pipeline_with_streaming_component):
@@ -182,17 +174,17 @@ def test_streaming_generator_with_existing_component_args(mocked_pipeline_with_s
     def mock_run(data):
         # Simulate calling the streaming callback
         if streaming_component.streaming_callback:
-            streaming_component.streaming_callback(MockChunk("chunk1"))
-            streaming_component.streaming_callback(MockChunk("chunk2"))
+            streaming_component.streaming_callback(StreamingChunk(content="chunk1"))
+            streaming_component.streaming_callback(StreamingChunk(content="chunk2"))
 
     pipeline.run.side_effect = mock_run
 
     pipeline_run_args = {"streaming_component": {"existing": "args"}}
 
-    generator = streaming_generator(pipeline, pipeline_run_args)
+    generator = streaming_generator(pipeline, pipeline_run_args=pipeline_run_args)
     chunks = list(generator)
 
-    assert chunks == [MockChunk("chunk1"), MockChunk("chunk2")]
+    assert chunks == [StreamingChunk(content="chunk1"), StreamingChunk(content="chunk2")]
     # Verify original args were preserved and copied
     assert pipeline_run_args == {"streaming_component": {"existing": "args"}}
 
@@ -204,7 +196,7 @@ def test_streaming_generator_pipeline_exception(mocked_pipeline_with_streaming_c
     expected_error = RuntimeError("Pipeline execution failed")
     pipeline.run.side_effect = expected_error
 
-    generator = streaming_generator(pipeline, {})
+    generator = streaming_generator(pipeline)
 
     with pytest.raises(RuntimeError, match="Pipeline execution failed"):
         list(generator)
@@ -216,7 +208,7 @@ def test_streaming_generator_empty_output(mocked_pipeline_with_streaming_compone
     # Mock the run method without calling streaming callback
     pipeline.run.return_value = None
 
-    generator = streaming_generator(pipeline, {})
+    generator = streaming_generator(pipeline)
     chunks = list(generator)
 
     assert chunks == []
@@ -227,13 +219,13 @@ async def test_async_streaming_generator_no_streaming_component():
     pipeline = Pipeline()
 
     with pytest.raises(ValueError, match="No streaming-capable component found in the pipeline"):
-        _ = [chunk async for chunk in async_streaming_generator(pipeline, {})]
+        _ = [chunk async for chunk in async_streaming_generator(pipeline)]
 
 
 @pytest.mark.asyncio
 async def test_async_streaming_generator_with_existing_component_args(mocker, mocked_pipeline_with_streaming_component):
     streaming_component, pipeline = mocked_pipeline_with_streaming_component
-    mock_chunks = [MockChunk("async_chunk1"), MockChunk("async_chunk2")]
+    mock_chunks = [StreamingChunk(content="async_chunk1"), StreamingChunk(content="async_chunk2")]
 
     # Mock the run_async method to simulate streaming
     async def mock_run_async(data):
@@ -245,7 +237,7 @@ async def test_async_streaming_generator_with_existing_component_args(mocker, mo
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
     pipeline_run_args = {"streaming_component": {"existing": "args"}}
 
-    chunks = [chunk async for chunk in async_streaming_generator(pipeline, pipeline_run_args)]
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline, pipeline_run_args=pipeline_run_args)]
     assert chunks == mock_chunks
 
     # Verify original args were preserved and copied
@@ -261,7 +253,7 @@ async def test_async_streaming_generator_pipeline_exception(mocker, mocked_pipel
     pipeline.run_async = mocker.AsyncMock(side_effect=expected_error)
 
     with pytest.raises(Exception, match="Async pipeline execution failed"):
-        _ = [chunk async for chunk in async_streaming_generator(pipeline, {})]
+        _ = [chunk async for chunk in async_streaming_generator(pipeline)]
 
 
 @pytest.mark.asyncio
@@ -271,7 +263,7 @@ async def test_async_streaming_generator_empty_output(mocker, mocked_pipeline_wi
     # Mock the run_async method without calling streaming callback
     pipeline.run_async = mocker.AsyncMock(return_value=None)
 
-    chunks = [chunk async for chunk in async_streaming_generator(pipeline, {})]
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline)]
 
     assert chunks == []
 
@@ -287,7 +279,7 @@ async def test_async_streaming_generator_cancellation(mocker, mocked_pipeline_wi
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_long_running_task)
 
     async def run_and_cancel():
-        generator = async_streaming_generator(pipeline, {})
+        generator = async_streaming_generator(pipeline)
         task = asyncio.create_task(generator.__anext__())
         await asyncio.sleep(0.1)
         task.cancel()
@@ -308,7 +300,7 @@ async def test_async_streaming_generator_cancellation(mocker, mocked_pipeline_wi
 @pytest.mark.asyncio
 async def test_async_streaming_generator_timeout_scenarios(mocker, mocked_pipeline_with_streaming_component):
     streaming_component, pipeline = mocked_pipeline_with_streaming_component
-    mock_chunks = [MockChunk("delayed_chunk")]
+    mock_chunks = [StreamingChunk(content="delayed_chunk")]
 
     # Mock the run_async method to simulate delayed completion
     async def mock_delayed_task(data):
@@ -318,7 +310,7 @@ async def test_async_streaming_generator_timeout_scenarios(mocker, mocked_pipeli
 
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_delayed_task)
 
-    chunks = [chunk async for chunk in async_streaming_generator(pipeline, {})]
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline)]
 
     assert chunks == mock_chunks
 
@@ -331,7 +323,7 @@ def test_streaming_generator_modifies_args_copy(mocked_pipeline_with_streaming_c
     original_args = {"other_component": {"param": "value"}}
 
     # Consume the generator
-    generator = streaming_generator(pipeline, original_args)
+    generator = streaming_generator(pipeline, pipeline_run_args=original_args)
     list(generator)
 
     # Original args should be unchanged
@@ -354,7 +346,7 @@ async def test_async_streaming_generator_modifies_args_copy(mocker, mocked_pipel
     original_args = {"other_component": {"param": "value"}}
 
     # Consume the generator
-    async_generator = async_streaming_generator(pipeline, original_args)
+    async_generator = async_streaming_generator(pipeline, pipeline_run_args=original_args)
     _ = [chunk async for chunk in async_generator]
 
     # Original args should be unchanged
@@ -365,3 +357,142 @@ async def test_async_streaming_generator_modifies_args_copy(mocker, mocked_pipel
     call_kwargs: Dict[str, Any] = pipeline.run_async.call_args.kwargs
     assert "streaming_component" in call_kwargs["data"]
     assert "other_component" in call_kwargs["data"]
+
+
+def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    tool_call_start = ToolCallDelta(index=0, tool_name="test_tool", arguments="")
+    tool_call_end = ToolCallResult(
+        origin=ToolCall(tool_name="test_tool", arguments={"city": "Berlin"}), result="sunny", error=None
+    )
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="", index=0, tool_calls=[tool_call_start]),
+        StreamingChunk(content=" some content "),
+        StreamingChunk(content="", index=0, tool_call_result=tool_call_end),
+    ]
+
+    def mock_run(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                streaming_component.streaming_callback(chunk)
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline)
+    chunks = list(generator)
+
+    assert len(chunks) == 5
+    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert chunks[0].type == "status"
+    assert "Calling 'test_tool' tool..." in chunks[0].data.description
+    assert chunks[1] == mock_chunks_from_pipeline[0]
+
+    assert chunks[2] == mock_chunks_from_pipeline[1]
+
+    assert isinstance(chunks[3], str)
+    assert "Tool call result for 'test_tool'" in chunks[3]
+    assert chunks[4] == mock_chunks_from_pipeline[2]
+
+
+def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    tool_call_start = ToolCallDelta(index=0, tool_name="test_tool", arguments="")
+    tool_call_end = ToolCallResult(
+        origin=ToolCall(tool_name="test_tool", arguments={"city": "Berlin"}), result="sunny", error=None
+    )
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="", index=0, tool_calls=[tool_call_start]),
+        StreamingChunk(content="", index=0, tool_call_result=tool_call_end),
+    ]
+
+    def mock_run(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                streaming_component.streaming_callback(chunk)
+
+    pipeline.run.side_effect = mock_run
+
+    on_tool_call_start = mocker.Mock(return_value="start")
+    on_tool_call_end = mocker.Mock(return_value="end")
+
+    generator = streaming_generator(pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end)
+    chunks = list(generator)
+
+    assert chunks == ["start", mock_chunks_from_pipeline[0], "end", mock_chunks_from_pipeline[1]]
+    on_tool_call_start.assert_called_once_with(tool_call_start)
+    on_tool_call_end.assert_called_once_with(tool_call_end)
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_with_tool_calls_and_default_callbacks(
+    mocker, mocked_pipeline_with_streaming_component
+):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    tool_call_start = ToolCallDelta(index=0, tool_name="test_tool", arguments="")
+    tool_call_end = ToolCallResult(
+        origin=ToolCall(tool_name="test_tool", arguments={"city": "Berlin"}), result="sunny", error=None
+    )
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="", index=0, tool_calls=[tool_call_start]),
+        StreamingChunk(content=" some content "),
+        StreamingChunk(content="", index=0, tool_call_result=tool_call_end),
+    ]
+
+    async def mock_run_async(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                await streaming_component.streaming_callback(chunk)
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    generator = async_streaming_generator(pipeline)
+    chunks = [chunk async for chunk in generator]
+
+    assert len(chunks) == 5
+
+    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert chunks[0].type == "status"
+    assert "Calling 'test_tool' tool..." in chunks[0].data.description
+
+    assert chunks[1] == mock_chunks_from_pipeline[0]
+    assert chunks[2] == mock_chunks_from_pipeline[1]
+
+    assert isinstance(chunks[3], str)
+    assert "Tool call result for 'test_tool'" in chunks[3]
+    assert chunks[4] == mock_chunks_from_pipeline[2]
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    tool_call_start = ToolCallDelta(index=0, tool_name="test_tool", arguments="")
+    tool_call_end = ToolCallResult(
+        origin=ToolCall(tool_name="test_tool", arguments={"city": "Berlin"}), result="sunny", error=None
+    )
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="", index=0, tool_calls=[tool_call_start]),
+        StreamingChunk(content="", index=0, tool_call_result=tool_call_end),
+    ]
+
+    async def mock_run_async(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                await streaming_component.streaming_callback(chunk)
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    on_tool_call_start = mocker.Mock(return_value="start")
+    on_tool_call_end = mocker.Mock(return_value="end")
+
+    generator = async_streaming_generator(
+        pipeline, on_tool_call_start=on_tool_call_start, on_tool_call_end=on_tool_call_end
+    )
+    chunks = [chunk async for chunk in generator]
+
+    assert chunks == ["start", mock_chunks_from_pipeline[0], "end", mock_chunks_from_pipeline[1]]
+    on_tool_call_start.assert_called_once_with(tool_call_start)
+    on_tool_call_end.assert_called_once_with(tool_call_end)

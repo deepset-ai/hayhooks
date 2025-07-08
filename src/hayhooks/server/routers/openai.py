@@ -10,8 +10,8 @@ from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import handle_pipeline_exceptions
 from hayhooks.server.logger import log
-from haystack.dataclasses import ToolCallDelta, ToolCallResult
-from hayhooks.server.utils.open_webui import create_status_event
+from haystack.dataclasses import StreamingChunk
+from hayhooks.server.utils.open_webui import OpenWebUIEvent
 
 
 router = APIRouter()
@@ -87,47 +87,17 @@ def _create_sse_data_msg(
     return f"data: {response.model_dump_json()}\n\n"
 
 
-def _handle_tool_calls_sync(tool_calls: List[Union[ToolCallDelta, ToolCallResult]]) -> Generator[str, None, None]:
-    for tool_call in tool_calls:
-        if isinstance(tool_call, ToolCallDelta):
-            # Tool call start
-            if tool_call.tool_name is not None:
-                status_update = create_status_event(
-                    description=f"Calling '{tool_call.tool_name}' tool...",
-                    done=False,
-                )
-                yield _event_to_sse_msg(status_update.model_dump())
-
-        elif isinstance(tool_call, ToolCallResult):
-            # Tool call result
-            if tool_call.result is not None:
-                status_update = create_status_event(
-                    description=f"Called tool: {tool_call.origin.tool_name}",
-                    done=True,
-                )
-                yield _event_to_sse_msg(status_update.model_dump())
-
-
-async def _handle_tool_calls_async(tool_calls: List[Union[ToolCallDelta, ToolCallResult]]) -> AsyncGenerator[str, None]:
-    for tool_call in tool_calls:
-        if isinstance(tool_call, ToolCallDelta):
-            # Tool call start
-            if tool_call.tool_name is not None:
-                status_update = create_status_event(
-                    description=f"Calling '{tool_call.tool_name}' tool...",
-                    done=False,
-                )
-                yield _event_to_sse_msg(status_update.model_dump())
-
-
-def _create_sync_streaming_response(result: Generator, resp_id: str, model_name: str) -> StreamingResponse:
+def _create_sync_streaming_response(
+    result: Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None], resp_id: str, model_name: str
+) -> StreamingResponse:
     def stream_chunks() -> Generator[str, None, None]:
         for chunk in result:
-            # Handle tool calls if present
-            if chunk.tool_calls is not None:
-                yield from _handle_tool_calls_sync(chunk.tool_calls)
-            else:
+            if isinstance(chunk, StreamingChunk):
                 yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, chunk_content=chunk.content)
+            elif isinstance(chunk, OpenWebUIEvent):
+                yield _event_to_sse_msg(chunk.to_dict())
+            elif isinstance(chunk, str):
+                yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, chunk_content=chunk)
 
         # After consuming the generator, send a final event with finish_reason "stop"
         yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, finish_reason="stop")
@@ -135,42 +105,17 @@ def _create_sync_streaming_response(result: Generator, resp_id: str, model_name:
     return StreamingResponse(stream_chunks(), media_type="text/event-stream")
 
 
-def _create_async_streaming_response(result: AsyncGenerator, resp_id: str, model_name: str) -> StreamingResponse:
+def _create_async_streaming_response(
+    result: AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None], resp_id: str, model_name: str
+) -> StreamingResponse:
     async def stream_chunks_async() -> AsyncGenerator[str, None]:
         async for chunk in result:
-            if chunk.tool_calls is not None:
-                async for status_msg in _handle_tool_calls_async(chunk.tool_calls):
-                    yield status_msg
-
-            # Handle tool call result
-            if chunk.tool_call_result is not None:
-                status_update = create_status_event(
-                    description=f"Called '{chunk.tool_call_result.origin.tool_name}' tool",
-                    done=True,
-                )
-                yield _event_to_sse_msg(status_update.model_dump())
-
-                log.debug(f"Tool call result: {chunk.tool_call_result.result}")
-
-                yield _create_sse_data_msg(
-                    resp_id=resp_id,
-                    model_name=model_name,
-                    chunk_content=(
-                        f'<details type="{chunk.tool_call_result.origin.tool_name}" done="true">\n'
-                        f"<summary>"
-                        f"Tool call result for '{chunk.tool_call_result.origin.tool_name}'"
-                        f"</summary>\n\n"
-                        f"```\n"
-                        f"Arguments:\n"
-                        f"{chunk.tool_call_result.origin.arguments}\n"
-                        f"\nResponse:\n"
-                        f"{chunk.tool_call_result.result}\n"
-                        "```\n"
-                        "</details>\n\n"
-                    ),
-                )
-
-            yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, chunk_content=chunk.content)
+            if isinstance(chunk, StreamingChunk):
+                yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, chunk_content=chunk.content)
+            elif isinstance(chunk, OpenWebUIEvent):
+                yield _event_to_sse_msg(chunk.to_dict())
+            elif isinstance(chunk, str):
+                yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, chunk_content=chunk)
 
         yield _create_sse_data_msg(resp_id=resp_id, model_name=model_name, finish_reason="stop")
 
