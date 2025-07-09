@@ -7,6 +7,10 @@ from hayhooks.server.pipelines.utils import (
     streaming_generator,
     async_streaming_generator
 )
+from hayhooks.callbacks import (
+    default_on_tool_call_start,
+    default_on_tool_call_end,
+)
 
 __all__ = [
     "log",
@@ -16,4 +20,6 @@ __all__ = [
     "streaming_generator",
     "async_streaming_generator",
     "create_app",
+    "default_on_tool_call_start",
+    "default_on_tool_call_end",
 ]

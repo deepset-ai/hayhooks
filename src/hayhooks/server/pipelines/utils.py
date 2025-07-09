@@ -1,11 +1,19 @@
 import asyncio
 import threading
 from queue import Queue
-from typing import AsyncGenerator, Generator, List, Union, Dict, Tuple
+from typing import AsyncGenerator, Callable, Generator, List, Union, Dict, Tuple, Any, Optional
 from haystack import AsyncPipeline, Pipeline
 from haystack.core.component import Component
 from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
+from haystack.dataclasses import StreamingChunk
+from haystack.components.agents import Agent
+from hayhooks.open_webui import OpenWebUIEvent
+
+
+ToolCallbackReturn = Union[OpenWebUIEvent, str, None, List[Union[OpenWebUIEvent, str]]]
+OnToolCallStart = Optional[Callable[[str, Optional[str], Optional[str]], ToolCallbackReturn]]
+OnToolCallEnd = Optional[Callable[[str, Dict[str, Any], str, bool], ToolCallbackReturn]]
 
 
 def is_user_message(msg: Union[Message, Dict]) -> bool:
@@ -50,33 +58,125 @@ def find_streaming_component(pipeline: Union[Pipeline, AsyncPipeline]) -> Tuple[
     return streaming_component, streaming_component_name
 
 
-def streaming_generator(pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: Dict) -> Generator:
+def _setup_streaming_callback_for_pipeline(
+    pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: Dict[str, Any], streaming_callback: Any
+) -> Dict[str, Any]:
     """
-    Creates a generator that yields streaming chunks from a pipeline execution.
-    Automatically finds the streaming-capable component in the pipeline.
+    Sets up streaming callback for pipeline components.
 
-    NOTE: This generator works with both sync and async pipelines, but the component which supports streaming
-          must support a _sync_ `streaming_callback`.
+    Args:
+        pipeline: The pipeline to configure
+        pipeline_run_args: Arguments for pipeline execution
+        streaming_callback: The callback function to set
+
+    Returns:
+        Updated pipeline run arguments
     """
-    queue: Queue[Union[str, None, Exception]] = Queue()
-
-    def streaming_callback(chunk):
-        queue.put(chunk.content)
-
     _, streaming_component_name = find_streaming_component(pipeline)
-    pipeline_run_args = pipeline_run_args.copy()
 
+    # Ensure component args exist in pipeline run args
     if streaming_component_name not in pipeline_run_args:
         pipeline_run_args[streaming_component_name] = {}
 
+    # Set the streaming callback on the component
     streaming_component = pipeline.get_component(streaming_component_name)
+    assert hasattr(streaming_component, "streaming_callback")
     streaming_component.streaming_callback = streaming_callback
-    log.trace(f"Streaming pipeline run args: {pipeline_run_args}")
 
-    def run_pipeline():
+    return pipeline_run_args
+
+
+def _setup_streaming_callback_for_agent(pipeline_run_args: Dict[str, Any], streaming_callback: Any) -> Dict[str, Any]:
+    """
+    Sets up streaming callback for agent execution.
+
+    Args:
+        pipeline_run_args: Arguments for agent execution
+        streaming_callback: The callback function to set
+
+    Returns:
+        Updated pipeline run arguments
+    """
+    pipeline_run_args["streaming_callback"] = streaming_callback
+    return pipeline_run_args
+
+
+def _setup_streaming_callback(
+    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict[str, Any], streaming_callback: Any
+) -> Dict[str, Any]:
+    """
+    Configures streaming callback for the given pipeline or agent.
+
+    Args:
+        pipeline: The pipeline or agent to configure
+        pipeline_run_args: Execution arguments
+        streaming_callback: The callback function
+
+    Returns:
+        Updated pipeline run arguments
+    """
+    pipeline_run_args = pipeline_run_args.copy()
+
+    if isinstance(pipeline, (Pipeline, AsyncPipeline)):
+        return _setup_streaming_callback_for_pipeline(pipeline, pipeline_run_args, streaming_callback)
+    elif isinstance(pipeline, Agent):
+        return _setup_streaming_callback_for_agent(pipeline_run_args, streaming_callback)
+    else:
+        raise ValueError(f"Unsupported pipeline type: {type(pipeline)}")
+
+
+def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict[str, Any]) -> None:
+    """
+    Executes pipeline synchronously based on its type.
+
+    Args:
+        pipeline: The pipeline or agent to execute
+        pipeline_run_args: Execution arguments
+    """
+    if isinstance(pipeline, Agent):
+        pipeline.run(**pipeline_run_args)
+    else:
+        pipeline.run(data=pipeline_run_args)
+
+
+def streaming_generator(
+    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    *,
+    pipeline_run_args: Dict[str, Any] = {},
+    on_tool_call_start: OnToolCallStart = None,
+    on_tool_call_end: OnToolCallEnd = None,
+) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
+    """
+    Creates a generator that yields streaming chunks from a pipeline or agent execution.
+    Automatically finds the streaming-capable component in pipelines or uses the agent's streaming callback.
+
+    Args:
+        pipeline: The Pipeline, AsyncPipeline, or Agent to execute
+        pipeline_run_args: Arguments for execution
+        on_tool_call_start: Callback for tool call start
+        on_tool_call_end: Callback for tool call end
+
+    Yields:
+        StreamingChunk: Individual chunks from the streaming execution
+        OpenWebUIEvent: Event for tool call
+        str: Tool name or stream content
+
+    NOTE: This generator works with sync/async pipelines and agents, but pipeline components
+          which support streaming must have a _sync_ `streaming_callback`.
+    """
+    queue: Queue[Union[StreamingChunk, None, Exception]] = Queue()
+
+    def streaming_callback(chunk: StreamingChunk) -> None:
+        queue.put(chunk)
+
+    # Configure streaming callback
+    configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, streaming_callback)
+    log.trace(f"Streaming pipeline run args: {configured_args}")
+
+    def run_pipeline() -> None:
         try:
-            pipeline.run(data=pipeline_run_args)
-            queue.put(None)  # Signal normal completion
+            _execute_pipeline_sync(pipeline, configured_args)
+            queue.put(None)  # Signal completion
         except Exception as e:
             log.error(f"Error in pipeline execution thread for streaming_generator: {e}", exc_info=True)
             queue.put(e)  # Signal error
@@ -91,28 +191,51 @@ def streaming_generator(pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_a
                 raise item
             if item is None:
                 break
+
+            # Handle tool calls
+            if on_tool_call_start and hasattr(item, "tool_calls") and item.tool_calls:
+                for tool_call in item.tool_calls:
+                    if tool_call.tool_name:
+                        res = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
+                        if res:
+                            if isinstance(res, list):
+                                for r in res:
+                                    yield r
+                            else:
+                                yield res
+
+            if on_tool_call_end and hasattr(item, "tool_call_result") and item.tool_call_result:
+                res = on_tool_call_end(
+                    item.tool_call_result.origin.tool_name,
+                    item.tool_call_result.origin.arguments,
+                    item.tool_call_result.result,
+                    bool(item.tool_call_result.error),
+                )
+                if res:
+                    if isinstance(res, list):
+                        for r in res:
+                            yield r
+                    else:
+                        yield res
             yield item
     finally:
         thread.join()
 
 
-async def async_streaming_generator(
-    pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: Dict
-) -> AsyncGenerator:
+def _validate_async_streaming_support(pipeline: Union[Pipeline, AsyncPipeline]) -> None:
     """
-    Creates an async generator that yields streaming chunks from a pipeline execution.
-    Automatically finds the streaming-capable component in the pipeline.
+    Validates that the pipeline supports async streaming callbacks.
 
-    NOTE: This generator works with both sync and async pipelines, but the last component
-          (which should accept a `streaming_callback` parameter) must support
-          an _async_ `streaming_callback` as well.
+    Args:
+        pipeline: The pipeline to validate
+
+    Raises:
+        ValueError: If the pipeline doesn't support async streaming
     """
     streaming_component, streaming_component_name = find_streaming_component(pipeline)
 
-    # Here we check if the streaming component supports async streaming callbacks
-    # To do that, we check if the component has a run_async method,
-    # which typically indicates async support including async streaming callbacks.
-    # This is cheaper than actually do a deeper type inspection but still generally valid.
+    # Check if the streaming component supports async streaming callbacks
+    # We check for run_async method as an indicator of async support
     if not hasattr(streaming_component, "run_async"):
         component_type = type(streaming_component).__name__
         raise ValueError(
@@ -121,57 +244,153 @@ async def async_streaming_generator(
             f"(e.g., OpenAIChatGenerator instead of OpenAIGenerator)."
         )
 
-    queue: asyncio.Queue = asyncio.Queue()
 
-    async def streaming_callback(chunk):
-        await queue.put(chunk.content)
+async def _execute_pipeline_async(
+    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict[str, Any]
+) -> asyncio.Task:
+    """
+    Creates and returns an async task for pipeline execution.
 
-    pipeline_run_args = pipeline_run_args.copy()
+    Args:
+        pipeline: The pipeline or agent to execute
+        pipeline_run_args: Execution arguments
 
-    if streaming_component_name not in pipeline_run_args:
-        pipeline_run_args[streaming_component_name] = {}
-
-    streaming_component.streaming_callback = streaming_callback
-
+    Returns:
+        Async task for pipeline execution
+    """
     if isinstance(pipeline, AsyncPipeline):
-        pipeline_task = asyncio.create_task(pipeline.run_async(data=pipeline_run_args))
-    else:
-        pipeline_task = asyncio.create_task(asyncio.to_thread(pipeline.run, data=pipeline_run_args))
+        return asyncio.create_task(pipeline.run_async(data=pipeline_run_args))
+    elif isinstance(pipeline, Agent):
+        return asyncio.create_task(pipeline.run_async(**pipeline_run_args))
+    else:  # Regular Pipeline
+        return asyncio.create_task(asyncio.to_thread(pipeline.run, data=pipeline_run_args))
+
+
+async def _stream_chunks_from_queue(
+    queue: asyncio.Queue[StreamingChunk], pipeline_task: asyncio.Task
+) -> AsyncGenerator[StreamingChunk, None]:
+    """
+    Streams chunks from the queue while the pipeline is running.
+
+    Args:
+        queue: Queue containing streaming chunks
+        pipeline_task: The async task running the pipeline
+
+    Yields:
+        StreamingChunk: Individual chunks from the pipeline
+    """
+    while not pipeline_task.done() or not queue.empty():
+        # Check for pipeline completion with exception
+        if pipeline_task.done():
+            exception = pipeline_task.exception()
+            if exception is not None:
+                raise exception
+
+        try:
+            chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+            yield chunk
+        except asyncio.TimeoutError:
+            continue
+        except asyncio.CancelledError:
+            log.warning("Async streaming generator was cancelled")
+            break
+        except Exception as e:
+            log.error(f"Unexpected error in async streaming generator: {e}")
+            raise e
+
+
+async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
+    """
+    Cleans up the pipeline task if it's still running.
+
+    Args:
+        pipeline_task: The task to clean up
+    """
+    if not pipeline_task.done():
+        pipeline_task.cancel()
+        try:
+            await asyncio.wait_for(pipeline_task, timeout=1.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+        except Exception as e:
+            log.warning(f"Error during pipeline task cleanup: {e}")
+            raise e
+
+
+async def async_streaming_generator(
+    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    *,
+    pipeline_run_args: Dict[str, Any] = {},
+    on_tool_call_start: OnToolCallStart = None,
+    on_tool_call_end: OnToolCallEnd = None,
+) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
+    """
+    Creates an async generator that yields streaming chunks from a pipeline or agent execution.
+    Automatically finds the streaming-capable component in pipelines or uses the agent's streaming callback.
+
+    Args:
+        pipeline: The Pipeline, AsyncPipeline, or Agent to execute
+        pipeline_run_args: Arguments for execution
+        on_tool_call_start: Callback for tool call start
+        on_tool_call_end: Callback for tool call end
+
+    Yields:
+        StreamingChunk: Individual chunks from the streaming execution
+        OpenWebUIEvent: Event for tool call
+        str: Tool name or stream content
+
+    NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming component
+          must support an _async_ `streaming_callback`. Agents have built-in async streaming support.
+    """
+    # Validate async streaming support for pipelines (not needed for agents)
+    if isinstance(pipeline, (AsyncPipeline, Pipeline)):
+        _validate_async_streaming_support(pipeline)
+
+    # Create async queue and streaming callback
+    queue: asyncio.Queue[StreamingChunk] = asyncio.Queue()
+
+    async def streaming_callback(chunk: StreamingChunk) -> None:
+        await queue.put(chunk)
+
+    # Configure streaming callback
+    configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, streaming_callback)
+
+    # Start pipeline execution
+    pipeline_task = await _execute_pipeline_async(pipeline, configured_args)
 
     try:
-        while not pipeline_task.done() or not queue.empty():
-            # Check if the pipeline task has completed with an exception
-            if pipeline_task.done():
-                exception = pipeline_task.exception()
-                if exception is not None:
-                    raise exception
+        async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
+            # Handle tool calls
+            if on_tool_call_start and hasattr(chunk, "tool_calls") and chunk.tool_calls:
+                for tool_call in chunk.tool_calls:
+                    if tool_call.tool_name:
+                        res = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
+                        if res:
+                            if isinstance(res, list):
+                                for r in res:
+                                    yield r
+                            else:
+                                yield res
 
-            try:
-                chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
-                yield chunk
-            except asyncio.TimeoutError:
-                continue
-            except asyncio.CancelledError:
-                log.warning("Async streaming generator was cancelled")
-                break
-            except Exception as e:
-                log.error(f"Unexpected error in async streaming generator: {e}")
-                raise e
+            if on_tool_call_end and hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
+                res = on_tool_call_end(
+                    chunk.tool_call_result.origin.tool_name,
+                    chunk.tool_call_result.origin.arguments,
+                    chunk.tool_call_result.result,
+                    bool(chunk.tool_call_result.error),
+                )
+                if res:
+                    if isinstance(res, list):
+                        for r in res:
+                            yield r
+                    else:
+                        yield res
+            yield chunk
 
-        # Check for any final exception from the pipeline task
         await pipeline_task
 
     except Exception as e:
         log.error(f"Unexpected error in async streaming generator: {e}")
         raise e
     finally:
-        if not pipeline_task.done():
-            pipeline_task.cancel()
-
-            try:
-                await asyncio.wait_for(pipeline_task, timeout=1.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                pass
-            except Exception as e:
-                log.warning(f"Error during pipeline task cleanup: {e}")
-                raise e
+        await _cleanup_pipeline_task(pipeline_task)
