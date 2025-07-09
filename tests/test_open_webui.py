@@ -14,7 +14,6 @@ from hayhooks.open_webui import (
     create_chat_title_event,
     create_chat_tags_event,
     create_source_event,
-    create_citation_event,
     create_notification_event,
     create_details_tag,
 )
@@ -191,12 +190,6 @@ class TestFactoryFunctions:
         event = create_source_event(source_data)
         assert event.type == "source"
         assert event.data == source_data
-
-    def test_create_citation_event(self):
-        citation_data = {"text": "Quote from source", "source_id": "src_123"}
-        event = create_citation_event(citation_data)
-        assert event.type == "citation"
-        assert event.data == citation_data
 
     def test_create_notification_event_default_type(self):
         event = create_notification_event("Default notification")

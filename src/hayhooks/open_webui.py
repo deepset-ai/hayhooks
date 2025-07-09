@@ -85,11 +85,6 @@ def create_source_event(source_data: Dict[str, Any]) -> OpenWebUIEvent:
     return OpenWebUIEvent(type="source", data=source_data)
 
 
-def create_citation_event(citation_data: Dict[str, Any]) -> OpenWebUIEvent:
-    """Create a citation event to add a reference/citation to the message."""
-    return OpenWebUIEvent(type="citation", data=citation_data)
-
-
 def create_notification_event(
     content: str, notification_type: Literal["info", "success", "warning", "error"] = "info"
 ) -> OpenWebUIEvent:
