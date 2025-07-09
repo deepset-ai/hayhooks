@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Union, Literal
+from typing import Dict, Any, Union, Literal
 from pydantic import BaseModel
 
 
@@ -10,15 +10,6 @@ class StatusEventData(BaseModel):
 
 class MessageEventData(BaseModel):
     content: str
-
-
-class ChatTitleEventData(BaseModel):
-    title: str
-
-
-class ChatTagsEventData(BaseModel):
-    tags: List[str]
-
 
 class NotificationEventData(BaseModel):
     type: Literal["info", "success", "warning", "error"] = "info"
@@ -39,8 +30,6 @@ class OpenWebUIEvent(BaseModel):
     data: Union[
         StatusEventData,
         MessageEventData,
-        ChatTitleEventData,
-        ChatTagsEventData,
         NotificationEventData,
         Dict[str, Any],  # Fallback for custom data
     ]

@@ -3,8 +3,6 @@ from pydantic import ValidationError
 from hayhooks.open_webui import (
     StatusEventData,
     MessageEventData,
-    ChatTitleEventData,
-    ChatTagsEventData,
     NotificationEventData,
     OpenWebUIEvent,
     create_status_event,
@@ -47,35 +45,6 @@ class TestMessageEventData:
     def test_message_event_data_validation_error(self):
         with pytest.raises(ValidationError):
             MessageEventData()  # missing required content
-
-
-class TestChatTitleEventData:
-    def test_chat_title_event_data_creation(self):
-        data = ChatTitleEventData(title="AI Assistant Conversation")
-        assert data.title == "AI Assistant Conversation"
-
-    def test_chat_title_event_data_empty_title(self):
-        data = ChatTitleEventData(title="")
-        assert data.title == ""
-
-    def test_chat_title_event_data_validation_error(self):
-        with pytest.raises(ValidationError):
-            ChatTitleEventData()  # missing required title
-
-
-class TestChatTagsEventData:
-    def test_chat_tags_event_data_creation(self):
-        tags = ["ai", "assistant", "helpful"]
-        data = ChatTagsEventData(tags=tags)
-        assert data.tags == tags
-
-    def test_chat_tags_event_data_empty_list(self):
-        data = ChatTagsEventData(tags=[])
-        assert data.tags == []
-
-    def test_chat_tags_event_data_validation_error(self):
-        with pytest.raises(ValidationError):
-            ChatTagsEventData()  # missing required tags
 
 
 class TestNotificationEventData:
