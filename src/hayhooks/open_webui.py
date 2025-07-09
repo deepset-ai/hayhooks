@@ -70,16 +70,6 @@ def create_replace_event(content: str) -> OpenWebUIEvent:
     return OpenWebUIEvent(type="replace", data=MessageEventData(content=content))
 
 
-def create_chat_title_event(title: str) -> OpenWebUIEvent:
-    """Create a chat title event to set or update the conversation title."""
-    return OpenWebUIEvent(type="chat:title", data=ChatTitleEventData(title=title))
-
-
-def create_chat_tags_event(tags: List[str]) -> OpenWebUIEvent:
-    """Create a chat tags event to update the set of tags for the conversation."""
-    return OpenWebUIEvent(type="chat:tags", data=ChatTagsEventData(tags=tags))
-
-
 def create_source_event(source_data: Dict[str, Any]) -> OpenWebUIEvent:
     """Create a source event to add a reference/citation or code execution result."""
     return OpenWebUIEvent(type="source", data=source_data)

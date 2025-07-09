@@ -11,8 +11,6 @@ from hayhooks.open_webui import (
     create_chat_completion_event,
     create_message_event,
     create_replace_event,
-    create_chat_title_event,
-    create_chat_tags_event,
     create_source_event,
     create_notification_event,
     create_details_tag,
@@ -172,19 +170,6 @@ class TestFactoryFunctions:
         assert isinstance(event.data, MessageEventData)
         assert event.data.content == "Replace with this"
 
-    def test_create_chat_title_event(self):
-        event = create_chat_title_event("New Chat Title")
-        assert event.type == "chat:title"
-        assert isinstance(event.data, ChatTitleEventData)
-        assert event.data.title == "New Chat Title"
-
-    def test_create_chat_tags_event(self):
-        tags = ["python", "ai", "development"]
-        event = create_chat_tags_event(tags)
-        assert event.type == "chat:tags"
-        assert isinstance(event.data, ChatTagsEventData)
-        assert event.data.tags == tags
-
     def test_create_source_event(self):
         source_data = {"url": "https://example.com", "metadata": "source metadata"}
         event = create_source_event(source_data)
@@ -226,13 +211,6 @@ class TestEdgeCases:
     def test_empty_strings(self):
         message_event = create_message_event("")
         assert message_event.data.content == ""
-
-        title_event = create_chat_title_event("")
-        assert title_event.data.title == ""
-
-    def test_empty_lists(self):
-        tags_event = create_chat_tags_event([])
-        assert tags_event.data.tags == []
 
     def test_unicode_content(self):
         unicode_content = "Hello 🌍! Special chars: åæø, 中文, العربية"
