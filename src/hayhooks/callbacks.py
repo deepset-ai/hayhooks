@@ -1,6 +1,7 @@
-from typing import Union, Optional, Dict, Any
+from typing import List, Union, Optional, Dict, Any
 from hayhooks.open_webui import (
     create_status_event,
+    create_notification_event,
     OpenWebUIEvent,
     create_details_tag,
 )
@@ -10,10 +11,22 @@ def default_on_tool_call_start(
     tool_name: str, arguments: Optional[str], tool_call_id: Optional[str]
 ) -> Union[OpenWebUIEvent, None]:
     """
-    Default callback when a tool call starts.
+    Default callback function when a tool call starts.
 
-    Returns a status event to indicate that the tool is being called.
-    If the tool name is not present, returns None.
+    This callback creates a status event to indicate that a tool is being invoked.
+    It provides real-time feedback to users about ongoing tool execution in the
+    Open WebUI interface.
+
+    Args:
+        tool_name (str): The name of the tool being called. If empty or falsy,
+            no event will be created.
+        arguments (Optional[str]): The stringified arguments passed to the tool.
+        tool_call_id (Optional[str]): A unique identifier for the tool call.
+
+    Returns:
+        Union[OpenWebUIEvent, None]: A status event object that can be rendered
+            by Open WebUI to show tool execution progress. Returns None if the
+            tool_name is empty or falsy.
     """
     if tool_name:
         return create_status_event(
@@ -23,17 +36,49 @@ def default_on_tool_call_start(
     return None
 
 
-def default_on_tool_call_end(tool_name: str, arguments: Dict[str, Any], result: str, error: bool) -> str:
+def default_on_tool_call_end(
+    tool_name: str, arguments: Dict[str, Any], result: str, error: bool
+) -> List[Union[OpenWebUIEvent, str]]:
     """
-    Default callback when a tool call ends.
+    Default callback function when a tool call ends.
 
-    Returns a detailed HTML block with the tool call's arguments and response.
-    This is designed to be rendered by Open WebUI.
+    This callback creates appropriate events based on whether the tool call succeeded or failed.
+    For successful calls, it generates a completion status event and a detailed summary.
+    For failed calls, it creates an error notification.
+
+    Args:
+        tool_name (str): The name of the tool that was called.
+        arguments (Dict[str, Any]): The arguments that were passed to the tool.
+        result (str): The result or response from the tool execution.
+        error (bool): Whether the tool call resulted in an error.
+
+    Returns:
+        List[Union[OpenWebUIEvent, str]]: A list of events to be processed by Open WebUI.
+            For successful calls, returns a status event and a details tag with the tool's arguments and response.
+            For failed calls, returns a hidden status event and an error notification.
+            The list can contain both OpenWebUIEvent and str objects.
     """
-    summary = f"Tool call result for '{tool_name}'"
-    content = f"```\n" f"Arguments:\n" f"{arguments}\n" f"\nResponse:\n" f"{result}\n" "```"
-    return create_details_tag(
-        tool_name=tool_name,
-        summary=summary,
-        content=content,
-    )
+    if error:
+        return [
+            create_status_event(
+                description=f"Called '{tool_name}' tool",
+                done=True,
+                hidden=True,
+            ),
+            create_notification_event(
+                content=f"Error calling '{tool_name}' tool",
+                notification_type="error",
+            ),
+        ]
+
+    return [
+        create_status_event(
+            description=f"Called '{tool_name}' tool",
+            done=True,
+        ),
+        create_details_tag(
+            tool_name=tool_name,
+            summary=f"Tool call result for '{tool_name}'",
+            content=(f"```\n" f"Arguments:\n" f"{arguments}\n" f"\nResponse:\n" f"{result}\n" "```"),
+        ),
+    ]
