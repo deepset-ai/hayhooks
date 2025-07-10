@@ -47,7 +47,7 @@ With Hayhooks, you can:
   - [Skip MCP Tool listing](#skip-mcp-tool-listing)
 - [Hayhooks as an OpenAPI Tool Server in `open-webui`](#hayhooks-as-an-openapi-tool-server-in-open-webui)
   - [Example: Deploy a Haystack pipeline from `open-webui` chat interface](#example-deploy-a-haystack-pipeline-from-open-webui-chat-interface)
-- [OpenAI Compatibility](#openai-compatibility)
+- [OpenAI Compatibility and `open-webui` integration](#openai-compatibility-and-open-webui-integration)
   - [OpenAI-compatible endpoints generation](#openai-compatible-endpoints-generation)
   - [Using Hayhooks as `open-webui` backend](#using-hayhooks-as-open-webui-backend)
   - [Run Chat Completion Method](#run_chat_completion)
@@ -570,7 +570,7 @@ Here's a video example of how to deploy a Haystack pipeline from the `open-webui
 
 ![open-webui-deploy-pipeline-from-chat-example](./docs/assets/open-webui-deploy-pipeline-from-chat.gif)
 
-## OpenAI compatibility
+## OpenAI compatibility and `open-webui` integration
 
 ### OpenAI-compatible endpoints generation
 
@@ -587,9 +587,11 @@ Requirements:
 
 #### Configuring `open-webui`
 
-First, you need to **turn off `tags` and `title` generation from `Admin settings -> Interface`**:
+First, you need to **turn off `tags`, `title` and `follow-up` generation from `Admin settings -> Interface`**:
 
 ![open-webui-settings](./docs/assets/open-webui-settings.png)
+
+This is needed to avoid `open-webui` to make calls to your deployed pipelines or agents asking for generating tags, title and follow-up messages (they may be not suited for this use case). Of course, if you want to use them, you can leave them enabled.
 
 Then you have two options to connect Hayhooks as a backend.
 

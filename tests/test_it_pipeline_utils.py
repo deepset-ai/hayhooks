@@ -387,7 +387,7 @@ def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeli
     )
     chunks = list(generator)
 
-    assert len(chunks) == 5
+    assert len(chunks) == 6
     assert isinstance(chunks[0], OpenWebUIEvent)
     assert chunks[0].type == "status"
     assert "Calling 'test_tool' tool..." in chunks[0].data.description
@@ -395,9 +395,12 @@ def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeli
 
     assert chunks[2] == mock_chunks_from_pipeline[1]
 
-    assert isinstance(chunks[3], str)
-    assert "Tool call result for 'test_tool'" in chunks[3]
-    assert chunks[4] == mock_chunks_from_pipeline[2]
+    assert isinstance(chunks[3], OpenWebUIEvent)
+    assert chunks[3].type == "status"
+    assert "Called 'test_tool' tool" in chunks[3].data.description
+    assert isinstance(chunks[4], str)
+    assert "Tool call result for 'test_tool'" in chunks[4]
+    assert chunks[5] == mock_chunks_from_pipeline[2]
 
 
 def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_streaming_component):
@@ -429,7 +432,7 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
     chunks = list(generator)
 
     # Verify the chunks contain the expected results from the real callbacks
-    assert len(chunks) == 4
+    assert len(chunks) == 5
 
     # First chunk should be the result from default_on_tool_call_start
     assert isinstance(chunks[0], OpenWebUIEvent)
@@ -439,12 +442,17 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
     # Second chunk is the original streaming chunk
     assert chunks[1] == mock_chunks_from_pipeline[0]
 
-    # Third chunk should be the result from default_on_tool_call_end
-    assert isinstance(chunks[2], str)
-    assert "Tool call result for 'test_tool'" in chunks[2]
+    # Third chunk should be the status event from default_on_tool_call_end
+    assert isinstance(chunks[2], OpenWebUIEvent)
+    assert chunks[2].type == "status"
+    assert "Called 'test_tool' tool" in chunks[2].data.description
 
-    # Fourth chunk is the original streaming chunk
-    assert chunks[3] == mock_chunks_from_pipeline[1]
+    # Fourth chunk should be the details tag from default_on_tool_call_end
+    assert isinstance(chunks[3], str)
+    assert "Tool call result for 'test_tool'" in chunks[3]
+
+    # Fifth chunk is the original streaming chunk
+    assert chunks[4] == mock_chunks_from_pipeline[1]
 
     # Verify the spies were called correctly
     on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
@@ -481,7 +489,7 @@ async def test_async_streaming_generator_with_tool_calls_and_default_callbacks(
     )
     chunks = [chunk async for chunk in generator]
 
-    assert len(chunks) == 5
+    assert len(chunks) == 6
 
     assert isinstance(chunks[0], OpenWebUIEvent)
     assert chunks[0].type == "status"
@@ -490,9 +498,12 @@ async def test_async_streaming_generator_with_tool_calls_and_default_callbacks(
     assert chunks[1] == mock_chunks_from_pipeline[0]
     assert chunks[2] == mock_chunks_from_pipeline[1]
 
-    assert isinstance(chunks[3], str)
-    assert "Tool call result for 'test_tool'" in chunks[3]
-    assert chunks[4] == mock_chunks_from_pipeline[2]
+    assert isinstance(chunks[3], OpenWebUIEvent)
+    assert chunks[3].type == "status"
+    assert "Called 'test_tool' tool" in chunks[3].data.description
+    assert isinstance(chunks[4], str)
+    assert "Tool call result for 'test_tool'" in chunks[4]
+    assert chunks[5] == mock_chunks_from_pipeline[2]
 
 
 @pytest.mark.asyncio
@@ -525,7 +536,7 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
     chunks = [chunk async for chunk in generator]
 
     # Verify the chunks contain the expected results from the real callbacks
-    assert len(chunks) == 4
+    assert len(chunks) == 5
 
     # First chunk should be the result from default_on_tool_call_start
     assert isinstance(chunks[0], OpenWebUIEvent)
@@ -535,12 +546,17 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
     # Second chunk is the original streaming chunk
     assert chunks[1] == mock_chunks_from_pipeline[0]
 
-    # Third chunk should be the result from default_on_tool_call_end
-    assert isinstance(chunks[2], str)
-    assert "Tool call result for 'test_tool'" in chunks[2]
+    # Third chunk should be the status event from default_on_tool_call_end
+    assert isinstance(chunks[2], OpenWebUIEvent)
+    assert chunks[2].type == "status"
+    assert "Called 'test_tool' tool" in chunks[2].data.description
 
-    # Fourth chunk is the original streaming chunk
-    assert chunks[3] == mock_chunks_from_pipeline[1]
+    # Fourth chunk should be the details tag from default_on_tool_call_end
+    assert isinstance(chunks[3], str)
+    assert "Tool call result for 'test_tool'" in chunks[3]
+
+    # Fifth chunk is the original streaming chunk
+    assert chunks[4] == mock_chunks_from_pipeline[1]
 
     # Verify the spies were called correctly
     on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
