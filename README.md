@@ -1,20 +1,18 @@
 # Hayhooks
 
-**Hayhooks** makes it easy to deploy and serve [Haystack](https://haystack.deepset.ai/) pipelines.
+**Hayhooks** makes it easy to deploy and serve [Haystack](https://haystack.deepset.ai/) [Pipelines](https://docs.haystack.deepset.ai/docs/pipelines) and [Agents](https://docs.haystack.deepset.ai/docs/agents).
 
 With Hayhooks, you can:
 
-- **Deploy your Haystack pipelines as REST APIs** with maximum flexibility and minimal boilerplate code.
-- **Expose your Haystack pipelines over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
-- **Expose your Haystack pipelines as OpenAI-compatible chat completion backends** with streaming support (to be used with [open-webui](https://openwebui.com) or any other OpenAI compatible client).
-- **Control Hayhooks core APIs through chat** - deploy, undeploy, list, or run Haystack pipelines by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
+- 📦 **Deploy your Haystack pipelines and agents as REST APIs** with maximum flexibility and minimal boilerplate code.
+- 🛠️ **Expose your Haystack pipelines and agents over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline and agent as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
+- 💬 **Integrate your Haystack pipelines and agents with [open-webui](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
+- 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![Docker image release](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml)
 [![Tests](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml)
-
-**Table of Contents**
 
 - [Quick Start with Docker Compose](#quick-start-with-docker-compose)
 - [Quick Start](#quick-start)
@@ -26,14 +24,15 @@ With Hayhooks, you can:
   - [Using the logger](#using-the-logger)
   - [Changing the log level](#changing-the-log-level)
 - [CLI Commands](#cli-commands)
-- [Start hayhooks](#start-hayhooks)
-- [Deploy a pipeline](#deploy-a-pipeline)
+- [Start Hayhooks](#start-hayhooks)
+- [Deploy a Pipeline](#deploy-a-pipeline)
   - [PipelineWrapper](#why-a-pipeline-wrapper)
   - [Setup Method](#setup)
   - [Run API Method](#run_api)
   - [Async Run API Method](#run_api_async)
   - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
   - [Additional Dependencies](#additional-dependencies)
+- [Deploy an Agent](#deploy-an-agent)
 - [Support file uploads](#support-file-uploads)
 - [Run pipelines from the CLI](#run-pipelines-from-the-cli)
   - [Run a pipeline from the CLI JSON-compatible parameters](#run-a-pipeline-from-the-cli-json-compatible-parameters)
@@ -54,6 +53,8 @@ With Hayhooks, you can:
   - [Async Run Chat Completion Method](#run_chat_completion_async)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
     - [Async Streaming Generator](#async_streaming_generator)
+    - [Sending `open-webui` events enhancing the user experience](#sending-open-webui-events-enhancing-the-user-experience)
+      - [Intercepting tool calls](#intercepting-tool-calls)
   - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
 - [Advanced Usage](#advanced-usage)
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
@@ -176,7 +177,7 @@ hayhooks run
 
 This will start the Hayhooks server on `HAYHOOKS_HOST:HAYHOOKS_PORT`.
 
-### Deploy a pipeline
+### Deploy a Pipeline
 
 Now, we will deploy a pipeline to chat with a website. We have created an example in the [examples/chat_with_website_streaming](examples/chat_with_website_streaming) folder.
 
@@ -187,10 +188,10 @@ In the example folder, we have two files:
 
 #### Why a pipeline wrapper?
 
-The pipeline wrapper provides a flexible foundation for deploying Haystack pipelines by allowing users to:
+The pipeline wrapper provides a flexible foundation for deploying Haystack pipelines, agents or any other component by allowing users to:
 
-- Choose their preferred pipeline initialization method (YAML files, Haystack templates, or inline code)
-- Define custom pipeline execution logic with configurable inputs and outputs
+- Choose their preferred initialization method (YAML files, Haystack templates, or inline code)
+- Define custom execution logic with configurable inputs and outputs
 - Optionally expose OpenAI-compatible chat endpoints with streaming support for integration with interfaces like [open-webui](https://openwebui.com/)
 
 The `pipeline_wrapper.py` file must contain an implementation of the `BasePipelineWrapper` class (see [here](src/hayhooks/server/utils/base_pipeline_wrapper.py) for more details).
@@ -315,6 +316,46 @@ Then, assuming you've installed the Hayhooks package in a virtual environment, y
 ```shell
 pip install trafilatura
 ```
+
+## Deploy an Agent
+
+Deploying an [Haystack Agent](https://docs.haystack.deepset.ai/docs/agents) is very similar to deploying a pipeline.
+
+You simply need to create a `PipelineWrapper` which will wrap the Haystack Agent instance. The following example is the bare minimum to deploy an agent and make it usable through `open-webui`, supporting streaming responses:
+
+```python
+from typing import AsyncGenerator
+from haystack.components.agents import Agent
+from haystack.dataclasses import ChatMessage
+from haystack.components.generators.chat import OpenAIChatGenerator
+from hayhooks import BasePipelineWrapper, async_streaming_generator
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.agent = Agent(
+            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            system_prompt="You're a helpful agent",
+        )
+
+    async def run_chat_completion_async(
+        self, model: str, messages: list[dict], body: dict
+    ) -> AsyncGenerator[str, None]:
+        chat_messages = [
+            ChatMessage.from_openai_dict_format(message) for message in messages
+        ]
+
+        return async_streaming_generator(
+            pipeline=self.agent,
+            pipeline_run_args={
+                "messages": chat_messages,
+            },
+        )
+```
+
+As you can see, the `run_chat_completion_async` method is the one that will be used to run the agent. You can of course implement also `run_api` or `run_api_async` methods if you need to.
+
+The `async_streami8ng_generator` function is a utility function that [will handle the streaming of the agent's responses](#async_streaming_generator).
 
 ## Support file uploads
 
@@ -747,7 +788,7 @@ Here's a video example:
 
 #### async_streaming_generator
 
-For asynchronous pipelines or when you need better concurrency handling, Hayhooks also provides an `async_streaming_generator` utility function:
+For asynchronous pipelines or agents, Hayhooks also provides an `async_streaming_generator` utility function:
 
 ```python
 from pathlib import Path
@@ -786,6 +827,23 @@ The `async_streaming_generator` function:
 - Automatically handles async pipeline execution and cleanup
 
 **NOTE**: The streaming component in your pipeline must support async streaming callbacks. If you get an error about async streaming support, either use the sync `streaming_generator` or switch to async-compatible components.
+
+### Sending `open-webui` events enhancing the user experience
+
+Hayhooks provides support to [some `open-webui` events](https://docs.openwebui.com/features/plugin/events/) to enhance the user experience.
+
+TODO: Add / link examples
+
+#### Intercepting tool calls
+
+Hayhooks provides a set of callbacks to intercept tool calls and send `open-webui` events to the client.
+
+- `default_on_tool_call_start`: Called when a tool call starts.
+- `default_on_tool_call_end`: Called when a tool call ends.
+
+You can override these callbacks by setting the `on_tool_call_start` and `on_tool_call_end` attributes of .
+
+TODO: Add / link examples
 
 ### Integration with haystack OpenAIChatGenerator
 
