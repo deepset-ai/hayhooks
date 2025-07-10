@@ -178,7 +178,7 @@ This will start the Hayhooks server on `HAYHOOKS_HOST:HAYHOOKS_PORT`.
 
 ### Deploy a pipeline
 
-Now, we will deploy a pipeline to chat with a website. We have created an example in the [examples/chat_with_website_streaming](examples/chat_with_website_streaming) folder.
+Now, we will deploy a pipeline to chat with a website. We have created an example in the [examples/pipeline_wrappers/chat_with_website_streaming](examples/pipeline_wrappers/chat_with_website_streaming) folder.
 
 In the example folder, we have two files:
 
@@ -267,7 +267,7 @@ You can find complete working examples of async pipeline wrappers in the [test f
 To deploy the pipeline, run:
 
 ```shell
-hayhooks pipeline deploy-files -n chat_with_website examples/chat_with_website
+hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/chat_with_website_streaming
 ```
 
 This will deploy the pipeline with the name `chat_with_website`. Any error encountered during development will be printed to the console and show in the server logs.
@@ -895,10 +895,10 @@ The former command `hayhooks deploy` is now changed to `hayhooks pipeline deploy
 For example:
 
 ```shell
-hayhooks pipeline deploy -n chat_with_website examples/chat_with_website/chat_with_website.yml
+hayhooks pipeline deploy -n chat_with_website examples/pipeline_wrappers/chat_with_website/chat_with_website.yml
 ```
 
-This will deploy the pipeline with the name `chat_with_website` from the YAML definition file `examples/chat_with_website/chat_with_website.yml`. You then can check the generated docs at `http://HAYHOOKS_HOST:HAYHOOKS_PORT/docs` or `http://HAYHOOKS_HOST:HAYHOOKS_PORT/redoc`, looking at the `POST /chat_with_website` endpoint.
+This will deploy the pipeline with the name `chat_with_website` from the YAML definition file `examples/pipeline_wrappers/chat_with_website/chat_with_website.yml`. You then can check the generated docs at `http://HAYHOOKS_HOST:HAYHOOKS_PORT/docs` or `http://HAYHOOKS_HOST:HAYHOOKS_PORT/redoc`, looking at the `POST /chat_with_website` endpoint.
 
 ### License
 
