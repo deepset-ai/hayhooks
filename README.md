@@ -53,7 +53,7 @@ With Hayhooks, you can:
   - [Async Run Chat Completion Method](#run_chat_completion_async)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
     - [Async Streaming Generator](#async_streaming_generator)
-    - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
+    - [Integration with Haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
 - [Sending `open-webui` events enhancing the user experience](#sending-open-webui-events-enhancing-the-user-experience)
 - [Hooks](#hooks)
   - [Intercepting tool calls when using `open-webui` and streaming responses](#intercepting-tool-calls-when-using-open-webui-and-streaming-responses)
