@@ -53,9 +53,10 @@ With Hayhooks, you can:
   - [Async Run Chat Completion Method](#run_chat_completion_async)
   - [Streaming Responses](#streaming-responses-in-openai-compatible-endpoints)
     - [Async Streaming Generator](#async_streaming_generator)
-    - [Sending `open-webui` events enhancing the user experience](#sending-open-webui-events-enhancing-the-user-experience)
-      - [Intercepting tool calls](#intercepting-tool-calls)
-  - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
+    - [Integration with haystack OpenAIChatGenerator](#integration-with-haystack-openaichatgenerator)
+- [Sending `open-webui` events enhancing the user experience](#sending-open-webui-events-enhancing-the-user-experience)
+- [Hooks](#hooks)
+  - [Intercepting tool calls when using `open-webui` and streaming responses](#intercepting-tool-calls-when-using-open-webui-and-streaming-responses)
 - [Advanced Usage](#advanced-usage)
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
   - [Sharing code between pipeline wrappers](#sharing-code-between-pipeline-wrappers)
@@ -828,23 +829,6 @@ The `async_streaming_generator` function:
 
 **NOTE**: The streaming component in your pipeline must support async streaming callbacks. If you get an error about async streaming support, either use the sync `streaming_generator` or switch to async-compatible components.
 
-### Sending `open-webui` events enhancing the user experience
-
-Hayhooks provides support to [some `open-webui` events](https://docs.openwebui.com/features/plugin/events/) to enhance the user experience.
-
-TODO: Add / link examples
-
-#### Intercepting tool calls
-
-Hayhooks provides a set of callbacks to intercept tool calls and send `open-webui` events to the client.
-
-- `default_on_tool_call_start`: Called when a tool call starts.
-- `default_on_tool_call_end`: Called when a tool call ends.
-
-You can override these callbacks by setting the `on_tool_call_start` and `on_tool_call_end` attributes of .
-
-TODO: Add / link examples
-
 ### Integration with haystack OpenAIChatGenerator
 
 Since Hayhooks is OpenAI-compatible, it can be used as a backend for the [haystack OpenAIChatGenerator](https://docs.haystack.deepset.ai/docs/openaichatgenerator).
@@ -869,6 +853,49 @@ client.run([ChatMessage.from_user("Where are the offices or SSI?")])
 
 # > {'replies': [ChatMessage(_role=<ChatRole.ASSISTANT: 'assistant'>, _content=[TextContent(text='The offices of Safe >Superintelligence Inc. (SSI) are located in Palo Alto, California, and Tel Aviv, Israel.')], _name=None, _meta={'model': >'chat_with_website_streaming', 'index': 0, 'finish_reason': 'stop', 'completion_start_time': '2025-02-11T15:31:44.599726', >'usage': {}})]}
 ```
+
+## Sending `open-webui` events enhancing the user experience
+
+Hayhooks provides support to [some `open-webui` events](https://docs.openwebui.com/features/plugin/events/) to enhance the user experience.
+
+The idea is to enhance the user experience by sending events to the client before, after or when the pipeline is running.
+
+You can use those events to e.g.:
+
+- 🔄 Show a loading spinner
+- 💬 Update the chat messages
+- 🍞 Show a toast notification
+
+You can find a complete example in the [examples/pipeline_wrappers/open_webui_agent_events](examples/pipeline_wrappers/open_webui_agent_events) folder.
+
+Here's a preview:
+
+![open-webui-hayhooks-events](./docs/assets/open-webui-hayhooks-events.gif)
+
+## Hooks
+
+### Intercepting tool calls when using `open-webui` and streaming responses
+
+When using `open-webui` and streaming responses, both `streaming_generator` and `async_streaming_generator` provide hooks to intercept tool calls.
+
+The hooks (parameters of `streaming_generator` and `async_streaming_generator`) are:
+
+- `on_tool_call_start`: Called when a tool call starts. It receives the following arguments:
+  - `tool_name`: The name of the tool that is being called.
+  - `arguments`: The arguments passed to the tool.
+  - `id`: The id of the tool call.
+
+- `on_tool_call_end`: Called when a tool call ends. It receives the following arguments:
+  - `tool_name`: The name of the tool that is being called.
+  - `arguments`: The arguments passed to the tool.
+  - `result`: The result of the tool call.
+  - `error`: Whether the tool call ended with an error.
+
+You can find a complete example in the [examples/pipeline_wrappers/open_webui_agent_on_tool_calls](examples/pipeline_wrappers/open_webui_agent_on_tool_calls) folder.
+
+Here's a preview:
+
+![open-webui-hayhooks-agent-on-tool-calls](./docs/assets/open-webui-hayhooks-agent-on-tool-calls.gif)
 
 ## Advanced usage
 
