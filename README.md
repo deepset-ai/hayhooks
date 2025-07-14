@@ -320,7 +320,7 @@ pip install trafilatura
 
 ## Deploy an Agent
 
-Deploying an [Haystack Agent](https://docs.haystack.deepset.ai/docs/agents) is very similar to deploying a pipeline.
+Deploying a [Haystack Agent](https://docs.haystack.deepset.ai/docs/agents) is very similar to deploying a pipeline.
 
 You simply need to create a `PipelineWrapper` which will wrap the Haystack Agent instance. The following example is the bare minimum to deploy an agent and make it usable through `open-webui`, supporting streaming responses:
 
