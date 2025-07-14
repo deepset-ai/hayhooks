@@ -860,7 +860,7 @@ Hayhooks provides support to [some `open-webui` events](https://docs.openwebui.c
 
 The idea is to enhance the user experience by sending events to the client before, after or when the pipeline is running.
 
-You can use those events to e.g.:
+You can use those events to:
 
 - 🔄 Show a loading spinner
 - 💬 Update the chat messages
