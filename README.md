@@ -121,13 +121,13 @@ The following environment variables are supported:
 - `HAYHOOKS_CORS_ALLOW_CREDENTIALS`: Allow credentials (default: false)
 - `HAYHOOKS_CORS_ALLOW_ORIGIN_REGEX`: Regex pattern for allowed origins (default: null)
 - `HAYHOOKS_CORS_EXPOSE_HEADERS`: Headers to expose in response (default: [])
-- `HAYHOOKS_CORS_MAX_AGE`: Maxium age for CORS preflight responses in seconds (default: 600)
+- `HAYHOOKS_CORS_MAX_AGE`: Maximum age for CORS preflight responses in seconds (default: 600)
 
 ### Logging
 
 #### Using the logger
 
-Hayooks comes with a default logger based on [loguru](https://loguru.readthedocs.io/en/stable/).
+Hayhooks comes with a default logger based on [loguru](https://loguru.readthedocs.io/en/stable/).
 
 To use it, you can import the `log` object from the `hayhooks` package:
 
@@ -356,7 +356,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
 As you can see, the `run_chat_completion_async` method is the one that will be used to run the agent. You can of course implement also `run_api` or `run_api_async` methods if you need to.
 
-The `async_streami8ng_generator` function is a utility function that [will handle the streaming of the agent's responses](#async_streaming_generator).
+The `async_streaming_generator` function is a utility function that [will handle the streaming of the agent's responses](#async_streaming_generator).
 
 ## Support file uploads
 
@@ -430,7 +430,7 @@ Hayhooks now supports the [Model Context Protocol](https://modelcontextprotocol.
 
 It will:
 
-- Expose [Core Tools](#using-hayhooks-core-mcp-tools-in-ides-like-cursor) to make able to control Hayhooks directly from an IDE like [Cursor](https://www.cursor.com/) or any other MCP client.
+- Expose [Core Tools](#using-hayhooks-core-mcp-tools-in-ides-like-cursor) to make it possible to control Hayhooks directly from an IDE like [Cursor](https://www.cursor.com/) or any other MCP client.
 - Expose the deployed Haystack pipelines as usable [MCP Tools](https://modelcontextprotocol.io/docs/concepts/tools), using both [Server-Sent Events (SSE)](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) and (stateless) [Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports#streamable-http) MCP transports.
 
 (Note that **SSE transport is deprecated** and it's maintained only for backward compatibility).
@@ -700,7 +700,7 @@ Some notes:
 - In this example, the `run_chat_completion` method is returning a string, so the `open-webui` will receive a string as response and show the pipeline output in the chat all at once.
 - The `body` argument contains the full request body, which may be used to extract more information like the `temperature` or the `max_tokens` (see the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create) for more information).
 
-Finally, to use non-streaming responses in `open-webui` you need also to turn of `Stream Chat Response` chat settings.
+Finally, to use non-streaming responses in `open-webui` you need also to turn off `Stream Chat Response` chat settings.
 
 Here's a video example:
 
@@ -711,6 +711,8 @@ Here's a video example:
 This method is the asynchronous version of `run_chat_completion`. It handles OpenAI-compatible chat completion requests asynchronously, which is particularly useful for streaming responses and high-concurrency scenarios.
 
 ```python
+from hayhooks import async_streaming_generator, get_last_user_message, log
+
 async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> Union[str, AsyncGenerator]:
     log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
 
@@ -901,7 +903,7 @@ Here's a preview:
 
 ### Run Hayhooks programmatically
 
-A Hayhooks app instance can be run programmatically created by using the `create_app` function. This is useful if you want to add custom routes or middleware to Hayhooks.
+A Hayhooks app instance can be programmatically created by using the `create_app` function. This is useful if you want to add custom routes or middleware to Hayhooks.
 
 Here's an example script:
 
