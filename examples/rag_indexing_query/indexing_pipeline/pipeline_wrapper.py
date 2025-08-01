@@ -1,8 +1,7 @@
-import tempfile
-from pathlib import Path
 from typing import List, Optional
 from fastapi import UploadFile
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from haystack.dataclasses import ByteStream
 
 
 class PipelineWrapper(BasePipelineWrapper):
@@ -63,13 +62,23 @@ class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, files: Optional[List[UploadFile]] = None) -> dict:
         try:
             if files:
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    for file in files:
-                        file_path = Path(temp_dir) / file.filename
-                        file_path.write_bytes(file.file.read())
-                        self.pipeline.run({"file_type_router": {"sources": [file_path]}})
+                byte_streams = []
 
-                return {"message": f"Files indexed successfully: {[file.filename for file in files]}"}
+                for file in files:
+                    if file.filename:
+                        file_content = file.file.read()
+                        byte_stream = ByteStream(
+                            data=file_content, mime_type=file.content_type, meta={"file_name": file.filename}
+                        )
+                        byte_streams.append(byte_stream)
+
+                # Process all files in a single pipeline run
+                if byte_streams:
+                    self.pipeline.run({"file_type_router": {"sources": byte_streams}})
+
+                # NOTE: If you need to save the raw files somewhere (e.g. on S3 or somewhere else), you can do it here
+
+                return {"message": f"Files indexed successfully: {[file.filename for file in files if file.filename]}"}
             else:
                 return {"message": "No files provided"}
         except Exception as e:

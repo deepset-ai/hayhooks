@@ -1,7 +1,4 @@
-from pathlib import Path
-from typing import Generator, List, Union
 from haystack import Pipeline
-from hayhooks.server.pipelines.utils import get_last_user_message
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.logger import log
 
@@ -47,7 +44,7 @@ class PipelineWrapper(BasePipelineWrapper):
             "llm",
             HuggingFaceAPIChatGenerator(
                 api_type="serverless_inference_api",
-                api_params={"model": "HuggingFaceH4/zephyr-7b-beta"},
+                api_params={"model": "Qwen/Qwen2.5-7B-Instruct", "provider": "together"},
             ),
         )
 
