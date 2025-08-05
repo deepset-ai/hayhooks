@@ -20,6 +20,7 @@ from hayhooks.server.routers.deploy import PipelineFilesRequest
 from fastapi.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 from typing import AsyncIterator
@@ -267,10 +268,14 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
             await server.run(streams[0], streams[1], server.create_initialization_options())
 
+    async def handle_status(request):
+        return JSONResponse({"status": "ok"})
+
     return Starlette(
         debug=debug,
         routes=[
             Route("/sse", endpoint=handle_sse),
+            Route("/status", endpoint=handle_status),
             Mount("/messages/", app=sse.handle_post_message),
             Mount("/mcp", app=handle_streamable_http),
         ],

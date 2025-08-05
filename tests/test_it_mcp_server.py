@@ -248,3 +248,11 @@ def test_sse_transport(test_mcp_client):
         # This verifies the endpoint exists and can handle requests
         messages_response = client.get("/messages/")
         assert messages_response.status_code != 404
+
+
+def test_mcp_server_status_endpoint(test_mcp_client):
+    with test_mcp_client as client:
+        response = client.get("/status")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
