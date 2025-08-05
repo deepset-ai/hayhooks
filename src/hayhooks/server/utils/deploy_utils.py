@@ -264,7 +264,7 @@ def create_run_endpoint_handler(
     """
 
     @handle_pipeline_exceptions()
-    async def run_endpoint_with_files(run_req: request_model = Form(...)) -> response_model:  # type: ignore
+    async def run_endpoint_with_files(run_req: request_model = Form(..., media_type="multipart/form-data")) -> response_model:  # type: ignore
         if pipeline_wrapper._is_run_api_async_implemented:
             result = await pipeline_wrapper.run_api_async(**run_req.model_dump())  # type: ignore
         else:
