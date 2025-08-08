@@ -141,12 +141,16 @@ def get_package_version() -> str:
         from importlib.metadata import version
 
         version_str = version("hayhooks")
+        # Fallback to a safe default if metadata lookup returns empty/None
+        if not version_str or not isinstance(version_str, str):
+            raise ValueError("Invalid package version metadata")
         log.debug(f"Version from package metadata: {version_str}")
         return version_str
     except Exception as e:
         log.debug(f"Could not get version from package metadata: {e!s}")
-    
-    return "unknown"
+
+    # Return a PEP440-compliant default
+    return "0.0.0"
 
 
 def create_app() -> FastAPI:

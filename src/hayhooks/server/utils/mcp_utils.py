@@ -2,8 +2,9 @@ import asyncio
 import traceback
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Union
-from hayhooks import log
+from typing import TYPE_CHECKING, List, Union, Any
+from haystack.lazy_imports import LazyImport
+from hayhooks.server.logger import log
 from hayhooks.server.app import init_pipeline_dir
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
@@ -15,7 +16,6 @@ from hayhooks.server.utils.deploy_utils import (
 from hayhooks.settings import settings
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.registry import PipelineType
-from haystack.lazy_imports import LazyImport
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from fastapi.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
@@ -24,13 +24,6 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 from typing import AsyncIterator
-
-
-with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
-    from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
-    from mcp.server import Server
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-    from mcp.server.sse import SseServerTransport
 
 PIPELINE_NAME_SCHEMA = {
     "type": "object",
@@ -48,9 +41,15 @@ class CoreTools(str, Enum):
 
 if TYPE_CHECKING:
     from mcp.types import TextContent, ImageContent, EmbeddedResource, Tool
+    from mcp.server import Server
 
+
+# Lazily import MCP modules so the optional dependency is only required when used
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
-    from mcp.types import TextContent, ImageContent, EmbeddedResource, Tool
+    from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
+    from mcp.server import Server
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from mcp.server.sse import SseServerTransport
 
 
 def deploy_pipelines() -> None:
@@ -168,6 +167,8 @@ async def notify_client(server: "Server") -> None:
 
 
 def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
+    mcp_import.check()
+
     server: Server = Server(name)
 
     @server.list_tools()

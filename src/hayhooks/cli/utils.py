@@ -5,7 +5,6 @@ import time
 import mimetypes
 from typing import Optional, Dict, Any, Callable, List, Tuple
 from pathlib import Path
-from rich.console import Console
 from urllib.parse import urljoin
 from rich.panel import Panel
 from rich.progress import (
@@ -18,7 +17,16 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-console = Console()
+_console = None
+
+
+def get_console():
+    global _console
+    if _console is None:
+        from rich.console import Console
+
+        _console = Console()
+    return _console
 
 
 def get_server_url(host: str, port: int, https: bool = False) -> str:
@@ -56,14 +64,14 @@ def make_request(
         response.raise_for_status()
         return response.json()
     except requests.ConnectionError:
-        console.print("[red][bold]Hayhooks server is not responding.[/bold]\nTo start one, run `hayhooks run`[/red].")
+        get_console().print("[red][bold]Hayhooks server is not responding.[/bold]\nTo start one, run `hayhooks run`[/red].")
         raise typer.Abort()
     except requests.HTTPError:
         error_detail = response.json().get("detail", "Unknown error")
-        console.print(f"[red][bold]Server error[/bold]\n{error_detail}[/red]")
+        get_console().print(f"[red][bold]Server error[/bold]\n{error_detail}[/red]")
         raise typer.Abort()
     except Exception as e:
-        console.print(f"[red][bold]Unexpected error[/bold]\n{str(e)}[/red]")
+        get_console().print(f"[red][bold]Unexpected error[/bold]\n{str(e)}[/red]")
         raise typer.Abort()
 
 
@@ -71,18 +79,18 @@ def show_error_and_abort(message: str, highlight: str = "") -> None:
     """Display error message in a panel and abort."""
     if highlight:
         message = message.replace(highlight, f"[red]{highlight}[/red]")
-    console.print(Panel.fit(message, border_style="red", title="Error"))
+    get_console().print(Panel.fit(message, border_style="red", title="Error"))
     raise typer.Abort()
 
 
 def show_success_panel(message: str, title: str = "Success") -> None:
     """Display success message in a panel."""
-    console.print(Panel.fit(message, border_style="green", title=title))
+    get_console().print(Panel.fit(message, border_style="green", title=title))
 
 
 def show_warning_panel(message: str, title: str = "Warning") -> None:
     """Display warning message in a panel."""
-    console.print(Panel.fit(message, border_style="yellow", title=title))
+    get_console().print(Panel.fit(message, border_style="yellow", title=title))
 
 
 def with_progress_spinner(description: str, operation: Callable, *args, **kwargs):
@@ -99,7 +107,7 @@ def with_progress_spinner(description: str, operation: Callable, *args, **kwargs
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
-        console=console,
+        console=get_console(),
     ) as progress:
         progress.add_task(description=description, total=None)
         return operation(*args, **kwargs)
@@ -190,7 +198,7 @@ def upload_files_with_progress(
     total_size_bytes = sum(file_path.stat().st_size for file_path in files.values())
     total_size_mb = total_size_bytes / (1024 * 1024)
 
-    console.print(f"Uploading {len(files)} files ({total_size_mb:.2f} MB)...")
+    get_console().print(f"Uploading {len(files)} files ({total_size_mb:.2f} MB)...")
 
     start_time = time.time()
     result = None
@@ -207,7 +215,7 @@ def upload_files_with_progress(
             TransferSpeedColumn(),
             "•",
             TimeRemainingColumn(),
-            console=console,
+            console=get_console(),
         ) as progress:
             # Create a single progress bar for all files
             upload_task = progress.add_task(f"[cyan]Uploading {len(files)} files", total=total_size_bytes, completed=0)
@@ -245,6 +253,6 @@ def upload_files_with_progress(
                 pass
 
     elapsed_time = time.time() - start_time
-    console.print(f"Upload and execution completed in {elapsed_time:.2f} seconds")
+    get_console().print(f"Upload and execution completed in {elapsed_time:.2f} seconds")
 
     return result, elapsed_time
