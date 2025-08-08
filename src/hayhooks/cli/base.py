@@ -1,20 +1,14 @@
-import typer
 import sys
-import uvicorn
-import rich
+import typer
 from typing import Annotated, Optional
-from hayhooks.cli.pipeline import pipeline
-from hayhooks.cli.mcp import mcp
 from hayhooks.cli.utils import (
     get_server_url,
     make_request,
     show_success_panel,
-    console,
+    get_console,
 )
-from hayhooks.server.app import create_app
-from hayhooks.settings import settings
-from hayhooks.server.logger import log
-from rich import box
+from hayhooks.cli.pipeline import pipeline
+from hayhooks.cli.mcp import mcp
 
 hayhooks_cli = typer.Typer(name="hayhooks")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
@@ -25,20 +19,23 @@ def get_app():
     """
     Factory function to create the FastAPI app.
     """
+    # Lazy import to avoid importing FastAPI and related dependencies on CLI startup
+    from hayhooks.server.app import create_app
+
     return create_app()
 
 
 @hayhooks_cli.command()
 def run(
-    host: Annotated[str, typer.Option("--host", "-h", help="Host to run the server on")] = settings.host,
-    port: Annotated[int, typer.Option("--port", "-p", help="Port to run the server on")] = settings.port,
+    host: Annotated[Optional[str], typer.Option("--host", "-h", help="Host to run the server on")] = None,
+    port: Annotated[Optional[int], typer.Option("--port", "-p", help="Port to run the server on")] = None,
     pipelines_dir: Annotated[
-        str, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
-    ] = settings.pipelines_dir,
-    root_path: Annotated[str, typer.Option(help="Root path of the server")] = settings.root_path,
+        Optional[str], typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
+    ] = None,
+    root_path: Annotated[Optional[str], typer.Option(help="Root path of the server")] = None,
     additional_python_path: Annotated[
         Optional[str], typer.Option(help="Additional Python path to add to sys.path")
-    ] = settings.additional_python_path,
+    ] = None,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Number of workers to run the server with")] = 1,
     reload: Annotated[
         bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")
@@ -47,6 +44,17 @@ def run(
     """
     Run the Hayhooks server.
     """
+    # Lazy imports to avoid heavy deps on CLI startup
+    from hayhooks.settings import settings
+    from hayhooks.server.logger import log
+    import uvicorn
+
+    # Fill defaults from settings only when command is executed
+    host = host or settings.host
+    port = port or settings.port
+    pipelines_dir = pipelines_dir or settings.pipelines_dir
+    root_path = root_path or settings.root_path
+
     settings.host = host
     settings.port = port
     settings.pipelines_dir = pipelines_dir
@@ -57,7 +65,8 @@ def run(
         sys.path.append(additional_python_path)
         log.trace(f"Added {additional_python_path} to sys.path")
 
-    uvicorn.run("hayhooks.cli.base:get_app", host=host, port=port, workers=workers, reload=reload, factory=True)
+    # Use string import path so server modules load only within uvicorn context
+    uvicorn.run("hayhooks.server.app:create_app", host=host, port=port, workers=workers, reload=reload, factory=True)
 
 
 @hayhooks_cli.command()
@@ -79,6 +88,10 @@ def status(ctx: typer.Context):
     )
 
     if pipes := response.get("pipelines"):
+        # Lazy import rich only when needed to render the table
+        import rich
+        from rich import box
+
         table = rich.table.Table(
             title="[bold]Deployed Pipelines[/bold]", box=box.ROUNDED, show_header=True, header_style="bold cyan"
         )
@@ -89,13 +102,16 @@ def status(ctx: typer.Context):
         for idx, pipeline in enumerate(pipes, 1):
             table.add_row(str(idx), pipeline, "🟢 Active")
 
-        console.print("\n", table)
+        get_console().print("\n", table)
     else:
-        console.print("\n[yellow]No pipelines currently deployed[/yellow]")
+        get_console().print("\n[yellow]No pipelines currently deployed[/yellow]")
 
 
 @hayhooks_cli.callback()
 def callback(ctx: typer.Context):
+    # Lazy import settings so it's only loaded on actual CLI invocation
+    from hayhooks.settings import settings
+
     ctx.obj = {
         "host": settings.host,
         "port": settings.port,

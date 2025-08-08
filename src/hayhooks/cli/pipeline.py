@@ -8,11 +8,10 @@ from hayhooks.cli.utils import (
     show_success_panel,
     show_warning_panel,
     with_progress_spinner,
-    console,
+    get_console,
     get_server_url,
     upload_files_with_progress,
 )
-from hayhooks.server.utils.deploy_utils import read_pipeline_files_from_dir
 
 
 pipeline = typer.Typer()
@@ -70,6 +69,9 @@ def deploy_files(
     """Deploy all pipeline files from a directory to the Hayhooks server."""
     if not pipeline_dir.exists():
         show_error_and_abort("Directory does not exist.", str(pipeline_dir))
+
+    # Lazy import to avoid importing heavy server dependencies on CLI startup
+    from hayhooks.server.utils.deploy_utils import read_pipeline_files_from_dir
 
     files_dict = read_pipeline_files_from_dir(pipeline_dir)
 
@@ -204,7 +206,7 @@ def run_pipeline_with_files(
                 form_data[key] = str(value)
 
         # Use the utility function to upload files with progress tracking
-        console.print(f"Running pipeline '[bold]{pipeline_name}[/bold]'...")
+        get_console().print(f"Running pipeline '[bold]{pipeline_name}[/bold]'...")
         result, _ = upload_files_with_progress(
             url=endpoint, files=files, form_data=form_data, verify_ssl=not ctx.obj["disable_ssl"]
         )
@@ -228,10 +230,10 @@ def run_pipeline_with_files(
 
     # Display the result
     if "result" in result:
-        console.print("\n[bold cyan]Result:[/bold cyan]")
+        get_console().print("\n[bold cyan]Result:[/bold cyan]")
         if isinstance(result["result"], dict) or isinstance(result["result"], list):
-            console.print_json(json.dumps(result["result"]))
+            get_console().print_json(json.dumps(result["result"]))
         else:
-            console.print(result["result"])
+            get_console().print(result["result"])
     else:
-        console.print_json(json.dumps(result))
+        get_console().print_json(json.dumps(result))
