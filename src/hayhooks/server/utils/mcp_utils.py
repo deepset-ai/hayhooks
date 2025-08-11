@@ -2,7 +2,7 @@ import asyncio
 import traceback
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Union, Any
+from typing import TYPE_CHECKING, List, Union
 from haystack.lazy_imports import LazyImport
 from hayhooks.server.logger import log
 from hayhooks.server.app import init_pipeline_dir
