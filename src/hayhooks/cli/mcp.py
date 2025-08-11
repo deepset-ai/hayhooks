@@ -1,14 +1,6 @@
 import typer
-import uvicorn
 import sys
 from typing import Annotated, Optional
-from hayhooks.settings import settings
-from hayhooks.server.utils.mcp_utils import (
-    create_mcp_server,
-    create_starlette_app,
-    deploy_pipelines,
-)
-from hayhooks.server.logger import log
 from haystack.lazy_imports import LazyImport
 
 mcp = typer.Typer()
@@ -19,14 +11,14 @@ with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
 
 @mcp.command()
 def run(
-    host: Annotated[str, typer.Option("--host", "-h", help="Host to run the MCP server on")] = settings.mcp_host,
-    port: Annotated[int, typer.Option("--port", "-p", help="Port to run the MCP server on")] = settings.mcp_port,
+    host: Annotated[Optional[str], typer.Option("--host", "-h", help="Host to run the MCP server on")] = None,
+    port: Annotated[Optional[int], typer.Option("--port", "-p", help="Port to run the MCP server on")] = None,
     pipelines_dir: Annotated[
-        str, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
-    ] = settings.pipelines_dir,
+        Optional[str], typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
+    ] = None,
     additional_python_path: Annotated[
         Optional[str], typer.Option(help="Additional Python path to add to sys.path")
-    ] = settings.additional_python_path,
+    ] = None,
     json_response: Annotated[
         bool, typer.Option("--json-response", "-j", help="Enable JSON responses instead of SSE streams")
     ] = False,
@@ -37,7 +29,22 @@ def run(
     """
     Run the MCP server.
     """
+    # Lazy imports of settings, logger and uvicorn
+    from hayhooks.settings import settings
+    from hayhooks.server.logger import log
+    import uvicorn
+    from hayhooks.server.utils.mcp_utils import (
+        create_mcp_server,
+        create_starlette_app,
+        deploy_pipelines,
+    )
+
     mcp_import.check()
+
+    # Fill defaults from settings when command executes
+    host = host or settings.mcp_host
+    port = port or settings.mcp_port
+    pipelines_dir = pipelines_dir or settings.pipelines_dir
 
     settings.mcp_host = host
     settings.mcp_port = port
