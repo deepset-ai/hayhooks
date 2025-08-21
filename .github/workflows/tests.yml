@@ -9,7 +9,6 @@ on:
       - opened
       - reopened
       - synchronize
-      - ready_for_review
 
 env:
   HATCH_VERSION: "1.14.1"

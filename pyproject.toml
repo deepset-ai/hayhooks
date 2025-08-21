@@ -170,14 +170,10 @@ ignore = [
   ]
 
 [tool.coverage.run]
-source_pkgs = ["hayhooks", "tests"]
+source_pkgs = ["hayhooks"]
 branch = true
 parallel = true
 omit = []
-
-[tool.coverage.paths]
-hayhooks = ["src/hayhooks", "*/hayhooks/src/hayhooks"]
-tests = ["tests", "*/hayhooks/tests"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -187,10 +183,15 @@ exclude_lines = [
 ]
 
 [tool.pytest.ini_options]
+addopts = "--strict-markers"
 filterwarnings = [
   "ignore::UserWarning",
 ]
 asyncio_mode = "auto"
+log_cli = true
 markers = [
-    "integration: marks tests as integration tests"
+  "unit: unit tests",
+  "integration: integration tests",
+  "asyncio: mark a test as an asyncio coroutine",
+  "mcp: tests that require the MCP package",
 ]
