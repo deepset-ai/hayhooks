@@ -33,6 +33,7 @@ jobs:
 
 
       - name: Ruff - check format and linting
+        if: matrix.python-version == '3.9'
         run: hatch run fmt-check
 
       - name: Run tests and generate coverage report
