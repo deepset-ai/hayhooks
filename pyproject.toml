@@ -71,24 +71,16 @@ features = ["mcp"]
 unit = "pytest -vv -m 'not integration' {args:tests}"
 integration = "pytest -vv -m integration {args:tests}"
 all = "pytest -vv {args:tests}"
-all-cov = "coverage run -m pytest {args:tests}"
-cov-report = [
-  "- coverage combine",
-  "coverage report",
-]
-cov = [
-  "all-cov",
-  "cov-report",
-]
+all-cov = "all --cov=hayhooks"
 
 [tool.hatch.envs.test]
 extra-dependencies = [
-  "coverage[toml]>=6.5",
   "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
   "pytest-mock",
   "qdrant-haystack",
   "trafilatura",
-  "pytest-asyncio",
   "mcp ; python_version >= '3.10'",
 ]
 
