@@ -21,7 +21,7 @@ def clear_registry():
 
 
 def collect_chunks(response):
-    return list(response.iter_lines())
+    return [event for event in response.iter_lines() if event]
 
 
 TEST_FILES_DIR = Path(__file__).parent / "test_files/files/chat_with_website"
