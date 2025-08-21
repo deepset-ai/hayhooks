@@ -408,3 +408,13 @@ def test_add_pipeline_to_registry_with_async_run_api():
     schema = request_model.model_json_schema()
     assert "question" in schema["properties"]
     assert schema["properties"]["question"]["type"] == "string"
+
+
+def test_deploy_pipeline_files_without_return_type(test_settings, mocker):
+    mock_app = mocker.Mock()
+
+    test_file_path = Path("tests/test_files/files/no_return_type/pipeline_wrapper.py")
+    files = {"pipeline_wrapper.py": test_file_path.read_text()}
+
+    with pytest.raises(PipelineWrapperError, match="Pipeline wrapper is missing a return type for 'run_api' method"):
+        deploy_pipeline_files(app=mock_app, pipeline_name="test_pipeline_no_return_type", files=files, save_files=False)
