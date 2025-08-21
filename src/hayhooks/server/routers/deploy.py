@@ -1,14 +1,14 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
-from typing import Dict
+
 from hayhooks.server.exceptions import PipelineAlreadyExistsError
 from hayhooks.server.utils.deploy_utils import (
-    deploy_pipeline_def,
     PipelineDefinition,
-    deploy_pipeline_files,
     PipelineFilesError,
     PipelineModuleLoadError,
     PipelineWrapperError,
+    deploy_pipeline_def,
+    deploy_pipeline_files,
 )
 
 router = APIRouter()
@@ -16,7 +16,8 @@ router = APIRouter()
 
 SAMPLE_PIPELINE_FILES = {
     "pipeline_wrapper.py": (
-        "from typing import Dict, Any\n\ndef process(data: Dict[str, Any]) -> Dict[str, Any]:\n    # Your processing logic here\n    return data"
+        "from typing import Dict, Any\n\ndef process(data: Dict[str, Any]) -> Dict[str, Any]:\n    "
+        ":# Your processing logic here\n    return data"
     ),
     "requirements.txt": "pandas==1.3.5\nnumpy==1.21.0",
 }
@@ -24,7 +25,7 @@ SAMPLE_PIPELINE_FILES = {
 
 class PipelineFilesRequest(BaseModel):
     name: str = Field(description="Name of the pipeline to deploy")
-    files: Dict[str, str] = Field(
+    files: dict[str, str] = Field(
         description="Dictionary of files required for the pipeline, must include pipeline_wrapper.py",
         examples=[SAMPLE_PIPELINE_FILES],
     )
@@ -49,11 +50,12 @@ class PipelineFilesRequest(BaseModel):
         }
     }
 
-    @field_validator('files')
+    @field_validator("files")
     @classmethod
-    def validate_files(cls, v: Dict[str, str]) -> Dict[str, str]:
+    def validate_files(cls, v: dict[str, str]) -> dict[str, str]:
         if "pipeline_wrapper.py" not in v:
-            raise ValueError("Missing required file: pipeline_wrapper.py")
+            msg = "Missing required file: pipeline_wrapper.py"
+            raise ValueError(msg)
         return v
 
 
@@ -114,4 +116,4 @@ async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Re
     except PipelineAlreadyExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error deploying pipeline: {str(e)}") from e
+        raise HTTPException(status_code=500, detail=f"Unexpected error deploying pipeline: {e!s}") from e

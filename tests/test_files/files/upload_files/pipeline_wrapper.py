@@ -1,14 +1,16 @@
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from typing import Optional, List
+from typing import Optional
+
 from fastapi import UploadFile
+
 from hayhooks.server.logger import log
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self):
         self.pipeline = None
 
-    def run_api(self, test_param: str, files: Optional[List[UploadFile]] = None) -> str:
+    def run_api(self, test_param: str, files: Optional[list[UploadFile]] = None) -> str:
         log.info(f"----- Received files: {files}")
 
         if files and len(files) > 0:

@@ -1,20 +1,22 @@
 import sys
 from functools import lru_cache
 from os import PathLike
-from typing import Union
-from fastapi import FastAPI
 from pathlib import Path
+from typing import Union
+
+from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
+
+from hayhooks.server.logger import log
+from hayhooks.server.routers import deploy_router, draw_router, openai_router, status_router, undeploy_router
 from hayhooks.server.utils.deploy_utils import (
-    deploy_pipeline_def,
     PipelineDefinition,
+    deploy_pipeline_def,
     deploy_pipeline_files,
     read_pipeline_files_from_dir,
 )
-from hayhooks.server.routers import status_router, draw_router, deploy_router, undeploy_router, openai_router
-from hayhooks.settings import settings, check_cors_settings, APP_TITLE, APP_DESCRIPTION
-from hayhooks.server.logger import log
-from fastapi.middleware.cors import CORSMiddleware
+from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, check_cors_settings, settings
 
 
 def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
@@ -29,7 +31,7 @@ def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
         dict: Deployment result containing pipeline name
     """
     name = pipeline_file_path.stem
-    with open(pipeline_file_path, "r") as pipeline_file:
+    with open(pipeline_file_path) as pipeline_file:
         source_code = pipeline_file.read()
 
     pipeline_definition = PipelineDefinition(name=name, source_code=source_code)
@@ -83,7 +85,8 @@ def init_pipeline_dir(pipelines_dir: Union[PathLike, str]):
         pipelines_dir.mkdir(parents=True, exist_ok=True)
 
     if not pipelines_dir.is_dir():
-        raise ValueError(f"pipelines_dir '{pipelines_dir}' exists but is not a directory")
+        msg = f"pipelines_dir '{pipelines_dir}' exists but is not a directory"
+        raise ValueError(msg)
 
     return str(pipelines_dir)
 
@@ -111,7 +114,7 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: Union[PathLike, str]) -> None:
                 try:
                     deploy_yaml_pipeline(app, pipeline_file_path)
                 except Exception as e:
-                    log.warning(f"Skipping pipeline file {pipeline_file_path}: {str(e)}")
+                    log.warning(f"Skipping pipeline file {pipeline_file_path}: {e!s}")
                     continue
 
         if pipeline_dirs:
@@ -120,7 +123,7 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: Union[PathLike, str]) -> None:
                 try:
                     deploy_files_pipeline(app, pipeline_dir)
                 except Exception as e:
-                    log.warning(f"Skipping pipeline directory {pipeline_dir}: {str(e)}")
+                    log.warning(f"Skipping pipeline directory {pipeline_dir}: {e!s}")
                     continue
 
 
@@ -143,7 +146,8 @@ def get_package_version() -> str:
         version_str = version("hayhooks")
         # Fallback to a safe default if metadata lookup returns empty/None
         if not version_str or not isinstance(version_str, str):
-            raise ValueError("Invalid package version metadata")
+            msg = "Invalid package version metadata"
+            raise ValueError(msg)
         log.debug(f"Version from package metadata: {version_str}")
         return version_str
     except Exception as e:

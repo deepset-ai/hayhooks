@@ -1,14 +1,12 @@
-from typing import List, Union, Optional, Dict, Any
-from hayhooks.open_webui import (
-    create_status_event,
-    create_notification_event,
-    OpenWebUIEvent,
-    create_details_tag,
-)
+from typing import Any, Optional, Union
+
+from hayhooks.open_webui import OpenWebUIEvent, create_details_tag, create_notification_event, create_status_event
 
 
 def default_on_tool_call_start(
-    tool_name: str, arguments: Optional[str], tool_call_id: Optional[str]
+    tool_name: str,
+    arguments: Optional[str],  # noqa: ARG001
+    tool_call_id: Optional[str],  # noqa: ARG001
 ) -> Union[OpenWebUIEvent, None]:
     """
     Default callback function when a tool call starts.
@@ -37,8 +35,8 @@ def default_on_tool_call_start(
 
 
 def default_on_tool_call_end(
-    tool_name: str, arguments: Dict[str, Any], result: str, error: bool
-) -> List[Union[OpenWebUIEvent, str]]:
+    tool_name: str, arguments: dict[str, Any], result: str, error: bool
+) -> list[Union[OpenWebUIEvent, str]]:
     """
     Default callback function when a tool call ends.
 
@@ -79,6 +77,6 @@ def default_on_tool_call_end(
         create_details_tag(
             tool_name=tool_name,
             summary=f"Tool call result for '{tool_name}'",
-            content=(f"```\n" f"Arguments:\n" f"{arguments}\n" f"\nResponse:\n" f"{result}\n" "```"),
+            content=(f"```\nArguments:\n{arguments}\n\nResponse:\n{result}\n```"),
         ),
     ]

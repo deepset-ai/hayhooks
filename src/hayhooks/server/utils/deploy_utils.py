@@ -1,20 +1,22 @@
-import inspect
 import importlib.util
+import inspect
 import shutil
+import sys
 import tempfile
 import traceback
-import sys
-import docstring_parser
-from docstring_parser.common import Docstring
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Union, Any, Dict, Optional
+from typing import Any, Callable, Optional, Union
+
+import docstring_parser
+from docstring_parser.common import Docstring
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import create_model, Field
+from pydantic import Field, create_model
+
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
@@ -80,7 +82,8 @@ def deploy_pipeline_def(app, pipeline_def: PipelineDefinition):
 
 
 def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir: str) -> dict[str, str]:
-    """Save pipeline files to disk and return their paths.
+    """
+    Save pipeline files to disk and return their paths.
 
     Args:
         pipeline_name: Name of the pipeline
@@ -113,11 +116,13 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
         return saved_files
 
     except Exception as e:
-        raise PipelineFilesError(f"Failed to save pipeline files: {str(e)}") from e
+        msg = f"Failed to save pipeline files: {e!s}"
+        raise PipelineFilesError(msg) from e
 
 
 def remove_pipeline_files(pipeline_name: str, pipelines_dir: str):
-    """Remove pipeline files from disk.
+    """
+    Remove pipeline files from disk.
 
     Args:
         pipeline_name: Name of the pipeline
@@ -129,7 +134,8 @@ def remove_pipeline_files(pipeline_name: str, pipelines_dir: str):
 
 
 def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> ModuleType:
-    """Load a pipeline module from a directory path.
+    """
+    Load a pipeline module from a directory path.
 
     Args:
         pipeline_name: Name of the pipeline
@@ -149,7 +155,8 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         wrapper_path = dir_path / "pipeline_wrapper.py"
 
         if not wrapper_path.exists():
-            raise PipelineWrapperError(f"Required file '{wrapper_path}' not found")
+            msg = f"Required file '{wrapper_path}' not found"
+            raise PipelineWrapperError(msg)
 
         # Clear the module from sys.modules if it exists to ensure a fresh load
         module_name = pipeline_name
@@ -159,29 +166,30 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
 
         spec = importlib.util.spec_from_file_location(pipeline_name, wrapper_path)
         if spec is None or spec.loader is None:
-            raise PipelineModuleLoadError(
-                f"Failed to load pipeline module '{pipeline_name}' - module loader not available"
-            )
+            msg = f"Failed to load pipeline module '{pipeline_name}' - module loader not available"
+            raise PipelineModuleLoadError(msg)
 
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         log.debug(f"Loaded module {module}")
 
         if not hasattr(module, "PipelineWrapper"):
-            raise PipelineWrapperError(f"Failed to load '{pipeline_name}' pipeline module spec")
+            msg = f"Failed to load '{pipeline_name}' pipeline module spec"
+            raise PipelineWrapperError(msg)
 
         return module
 
     except Exception as e:
-        log.error(f"Error loading pipeline module: {str(e)}")
-        error_msg = f"Failed to load pipeline module '{pipeline_name}' - {str(e)}"
+        log.error(f"Error loading pipeline module: {e!s}")
+        error_msg = f"Failed to load pipeline module '{pipeline_name}' - {e!s}"
         if settings.show_tracebacks:
             error_msg += f"\n{traceback.format_exc()}"
         raise PipelineModuleLoadError(error_msg) from e
 
 
 def create_request_model_from_callable(func: Callable, model_name: str, docstring: Docstring):
-    """Create a dynamic Pydantic model based on callable's signature.
+    """
+    Create a dynamic Pydantic model based on callable's signature.
 
     Args:
         func: The callable (function/method) to analyze
@@ -194,18 +202,19 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
     params = inspect.signature(func).parameters
     param_docs = {p.arg_name: p.description for p in docstring.params}
 
-    fields: Dict[str, Any] = {}
+    fields: dict[str, Any] = {}
     for name, param in params.items():
         default_value = ... if param.default == param.empty else param.default
         description = param_docs.get(name) or f"Parameter '{name}'"
         field_info = Field(default=default_value, description=description)
         fields[name] = (param.annotation, field_info)
 
-    return create_model(f'{model_name}Request', **fields)
+    return create_model(f"{model_name}Request", **fields)
 
 
 def create_response_model_from_callable(func: Callable, model_name: str, docstring: Docstring):
-    """Create a dynamic Pydantic model based on callable's return type.
+    """
+    Create a dynamic Pydantic model based on callable's return type.
 
     Args:
         func: The callable (function/method) to analyze
@@ -218,7 +227,7 @@ def create_response_model_from_callable(func: Callable, model_name: str, docstri
     return_type = inspect.signature(func).return_annotation
     return_description = docstring.returns.description if docstring.returns else None
 
-    return create_model(f'{model_name}Response', result=(return_type, Field(..., description=return_description)))
+    return create_model(f"{model_name}Response", result=(return_type, Field(..., description=return_description)))
 
 
 def handle_pipeline_exceptions():
@@ -232,12 +241,12 @@ def handle_pipeline_exceptions():
             except HTTPException as e:
                 raise e from e
             except Exception as e:
-                error_msg = f"Pipeline execution failed: {str(e)}"
+                error_msg = f"Pipeline execution failed: {e!s}"
                 if settings.show_tracebacks:
-                    log.error(f"Pipeline execution error: {str(e)} - {traceback.format_exc()}")
+                    log.error(f"Pipeline execution error: {e!s} - {traceback.format_exc()}")
                     error_msg += f"\n{traceback.format_exc()}"
                 else:
-                    log.error(f"Pipeline execution error: {str(e)}")
+                    log.error(f"Pipeline execution error: {e!s}")
                 raise HTTPException(status_code=500, detail=error_msg) from e
 
         return wrapper
@@ -264,7 +273,9 @@ def create_run_endpoint_handler(
     """
 
     @handle_pipeline_exceptions()
-    async def run_endpoint_with_files(run_req: request_model = Form(..., media_type="multipart/form-data")) -> response_model:  # type: ignore
+    async def run_endpoint_with_files(
+        run_req: request_model = Form(..., media_type="multipart/form-data"),  # noqa: B008
+    ) -> response_model:  # type: ignore
         if pipeline_wrapper._is_run_api_async_implemented:
             result = await pipeline_wrapper.run_api_async(**run_req.model_dump())  # type: ignore
         else:
@@ -304,8 +315,8 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
 
     docstring_content = inspect.getdoc(run_method_to_inspect) or ""
     docstring = docstring_parser.parse(docstring_content)
-    RunRequest = create_request_model_from_callable(run_method_to_inspect, f'{pipeline_name}Run', docstring)
-    RunResponse = create_response_model_from_callable(run_method_to_inspect, f'{pipeline_name}Run', docstring)
+    RunRequest = create_request_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
+    RunResponse = create_response_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
 
     run_api_params = inspect.signature(run_method_to_inspect).parameters
     requires_files = "files" in run_api_params
@@ -354,7 +365,8 @@ def deploy_pipeline_files(
     save_files: bool = True,
     overwrite: bool = False,
 ) -> dict[str, str]:
-    """Deploy a pipeline.
+    """
+    Deploy a pipeline.
 
     This will add the pipeline to the registry and optionally set up the API route if `app` is provided.
 
@@ -376,7 +388,8 @@ def deploy_pipeline_files(
 def add_pipeline_to_registry(
     pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
 ) -> BasePipelineWrapper:
-    """Add a pipeline to the registry.
+    """
+    Add a pipeline to the registry.
 
     Args:
 
@@ -397,7 +410,8 @@ def add_pipeline_to_registry(
             log.debug(f"Removing pipeline files for '{pipeline_name}'")
             remove_pipeline_files(pipeline_name, settings.pipelines_dir)
         else:
-            raise PipelineAlreadyExistsError(f"Pipeline '{pipeline_name}' already exists")
+            msg = f"Pipeline '{pipeline_name}' already exists"
+            raise PipelineAlreadyExistsError(msg)
 
     tmp_dir = None
 
@@ -437,7 +451,7 @@ def add_pipeline_to_registry(
 
     if run_method_to_inspect:
         docstring = docstring_parser.parse(inspect.getdoc(run_method_to_inspect) or "")
-        request_model = create_request_model_from_callable(run_method_to_inspect, f'{pipeline_name}Run', docstring)
+        request_model = create_request_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
     else:
         docstring = docstring_parser.Docstring()
         request_model = None
@@ -495,7 +509,8 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
         f"pipeline_wrapper._is_run_chat_completion_implemented: {pipeline_wrapper._is_run_chat_completion_implemented}"
     )
     log.debug(
-        f"pipeline_wrapper._is_run_chat_completion_async_implemented: {pipeline_wrapper._is_run_chat_completion_async_implemented}"
+        "pipeline_wrapper._is_run_chat_completion_async_implemented: "
+        f"{pipeline_wrapper._is_run_chat_completion_async_implemented}"
     )
 
     if not (
@@ -504,9 +519,11 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
         or pipeline_wrapper._is_run_chat_completion_implemented
         or pipeline_wrapper._is_run_chat_completion_async_implemented
     ):
-        raise PipelineWrapperError(
-            "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented"
+        msg = (
+            "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async "
+            "must be implemented"
         )
+        raise PipelineWrapperError(msg)
 
     return pipeline_wrapper
 
@@ -522,7 +539,7 @@ def _set_method_implementation_flag(pipeline_wrapper: BasePipelineWrapper, attr_
         setattr(
             pipeline_wrapper,
             attr_name,
-            getattr(wrapper_method, '__func__', wrapper_method) is not getattr(base_method, '__func__', base_method),
+            getattr(wrapper_method, "__func__", wrapper_method) is not getattr(base_method, "__func__", base_method),
         )
     else:
         # Fallback or error handling if methods are not found
@@ -530,7 +547,9 @@ def _set_method_implementation_flag(pipeline_wrapper: BasePipelineWrapper, attr_
 
 
 def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
-    """Read pipeline files from a directory and return a dictionary mapping filenames to their contents.
+    """
+    Read pipeline files from a directory and return a dictionary mapping filenames to their contents.
+
     Skips directories, hidden files, and common Python artifacts.
 
     Args:
@@ -542,7 +561,7 @@ def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
 
     files = {}
     for file_path in dir_path.rglob("*"):
-        if file_path.is_dir() or file_path.name.startswith('.'):
+        if file_path.is_dir() or file_path.name.startswith("."):
             continue
 
         if any(file_path.match(pattern) for pattern in settings.files_to_ignore_patterns):
@@ -551,14 +570,15 @@ def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
         try:
             files[str(file_path.relative_to(dir_path))] = file_path.read_text(encoding="utf-8", errors="ignore")
         except Exception as e:
-            log.warning(f"Skipping file {file_path}: {str(e)}")
+            log.warning(f"Skipping file {file_path}: {e!s}")
             continue
 
     return files
 
 
 def undeploy_pipeline(pipeline_name: str, app: Optional[FastAPI] = None) -> None:
-    """Undeploy a pipeline.
+    """
+    Undeploy a pipeline.
 
     Removes a pipeline from the registry, removes its API routes and deletes its files from disk.
 
@@ -577,13 +597,11 @@ def undeploy_pipeline(pipeline_name: str, app: Optional[FastAPI] = None) -> None
         # Remove API routes for the pipeline
         # YAML based pipelines have a run endpoint at /<pipeline_name>
         # Wrapper based pipelines have a run endpoint at /<pipeline_name>/run
-        routes_to_remove = []
-        for route in app.routes:
-            if isinstance(route, APIRoute) and (
-                route.path == f"/{pipeline_name}/run" or route.path == f"/{pipeline_name}"
-            ):
-                routes_to_remove.append(route)
-
+        routes_to_remove = [
+            route
+            for route in app.routes
+            if isinstance(route, APIRoute) and (route.path in (f"/{pipeline_name}/run", f"/{pipeline_name}"))
+        ]
         for route in routes_to_remove:
             app.routes.remove(route)
 

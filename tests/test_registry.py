@@ -1,9 +1,9 @@
-import pytest
-from hayhooks.server.exceptions import PipelineNotFoundError
 from pathlib import Path
-from haystack import Pipeline, Document
-from haystack.core.errors import PipelineError
-from typing import List
+
+import pytest
+from haystack import Document, Pipeline
+
+from hayhooks.server.exceptions import PipelineNotFoundError
 from hayhooks.server.pipelines.registry import _PipelineRegistry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
@@ -24,10 +24,10 @@ def test_pipeline_wrapper_class():
         def setup(self) -> None:
             pass
 
-        def run_api(self, urls: List[str], question: str) -> dict:
+        def run_api(self, urls: list[str], question: str) -> dict:
             return {}
 
-        def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> dict:
+        def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> dict:
             return {}
 
     return TestPipelineWrapper
@@ -62,7 +62,7 @@ def test_get_nonexistent_pipeline(pipeline_registry):
 
 
 def test_get_names(pipeline_registry, sample_pipeline_yaml, mocker):
-    mocker.patch('haystack.Pipeline.loads', return_value=mocker.Mock(spec=Pipeline))
+    mocker.patch("haystack.Pipeline.loads", return_value=mocker.Mock(spec=Pipeline))
 
     pipeline_registry.add("pipeline1", sample_pipeline_yaml)
     pipeline_registry.add("pipeline2", sample_pipeline_yaml)

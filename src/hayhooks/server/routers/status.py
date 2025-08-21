@@ -1,14 +1,14 @@
 from fastapi import APIRouter, HTTPException
-from hayhooks.server.pipelines import registry
 from pydantic import BaseModel, Field
-from typing import List
+
+from hayhooks.server.pipelines import registry
 
 router = APIRouter()
 
 
 class StatusResponse(BaseModel):
     status: str = Field(description="The current status of the system, 'Up!' when operational")
-    pipelines: List[str] = Field(description="List of all available pipeline names")
+    pipelines: list[str] = Field(description="List of all available pipeline names")
 
     model_config = {
         "json_schema_extra": {"description": "Response model for the system status and available pipelines"}

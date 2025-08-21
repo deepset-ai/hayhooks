@@ -1,5 +1,6 @@
 import pytest
 from typer.testing import CliRunner
+
 from hayhooks.cli.base import hayhooks_cli
 from hayhooks.settings import settings
 
@@ -29,7 +30,6 @@ def test_run_command(monkeypatch):
 
     def fake_uvicorn_run(*args, **kwargs):
         calls.append(kwargs)
-        return
 
     monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
 
@@ -59,7 +59,7 @@ def test_status_command(monkeypatch):
     Test the status command. We patch make_request (used in the status command)
     to return a dummy response.
     """
-    import hayhooks.cli.base as base
+    from hayhooks.cli import base
 
     fake_response = {"pipelines": ["test_pipeline"]}
 
@@ -76,7 +76,7 @@ def test_status_command(monkeypatch):
 
 
 def test_deploy_files_command_name_options(monkeypatch, tmp_path):
-    import hayhooks.cli.pipeline as pipeline
+    from hayhooks.cli import pipeline
 
     # Create a dummy pipeline directory with a file
     pipeline_dir = tmp_path / "test_pipeline"
@@ -87,7 +87,6 @@ def test_deploy_files_command_name_options(monkeypatch, tmp_path):
 
     def fake_deploy_with_progress(*args, **kwargs):
         calls.append(kwargs)
-        return
 
     monkeypatch.setattr(pipeline, "_deploy_with_progress", fake_deploy_with_progress)
 
@@ -110,8 +109,9 @@ def test_deploy_files_command_name_options(monkeypatch, tmp_path):
 
 def test_cli_undeploy_command(monkeypatch):
     from typer.testing import CliRunner
-    from hayhooks.cli.base import hayhooks_cli
+
     import hayhooks.cli.pipeline as pipeline_module
+    from hayhooks.cli.base import hayhooks_cli
 
     runner = CliRunner()
 

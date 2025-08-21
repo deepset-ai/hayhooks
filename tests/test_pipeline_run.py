@@ -1,7 +1,9 @@
+from unittest.mock import Mock
+
 import pytest
 from typer.testing import CliRunner
+
 from hayhooks.cli.base import hayhooks_cli
-from unittest.mock import Mock
 
 
 @pytest.fixture
@@ -10,7 +12,8 @@ def runner():
 
 
 def create_test_files(base_dir, file_dict):
-    """Helper to create test files from a dictionary.
+    """
+    Helper to create test files from a dictionary.
 
     Args:
         base_dir: The base directory to create files in
@@ -60,9 +63,9 @@ def test_run_with_json_params(runner, monkeypatch):
             "--param",
             "list=[1,2,3]",
             "--param",
-            "dict={\"a\":1,\"b\":2}",
+            'dict={"a":1,"b":2}',
             "--param",
-            "list_of_strings=[\"a\",\"b\",\"c\"]",
+            'list_of_strings=["a","b","c"]',
         ],
     )
 

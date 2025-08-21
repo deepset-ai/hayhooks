@@ -1,14 +1,11 @@
 import sys
-import typer
 from typing import Annotated, Optional
-from hayhooks.cli.utils import (
-    get_server_url,
-    make_request,
-    show_success_panel,
-    get_console,
-)
-from hayhooks.cli.pipeline import pipeline
+
+import typer
+
 from hayhooks.cli.mcp import mcp
+from hayhooks.cli.pipeline import pipeline
+from hayhooks.cli.utils import get_console, get_server_url, make_request, show_success_panel
 
 hayhooks_cli = typer.Typer(name="hayhooks")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
@@ -26,7 +23,7 @@ def get_app():
 
 
 @hayhooks_cli.command()
-def run(
+def run(  # noqa: PLR0913
     host: Annotated[Optional[str], typer.Option("--host", "-h", help="Host to run the server on")] = None,
     port: Annotated[Optional[int], typer.Option("--port", "-p", help="Port to run the server on")] = None,
     pipelines_dir: Annotated[
@@ -45,9 +42,10 @@ def run(
     Run the Hayhooks server.
     """
     # Lazy imports to avoid heavy deps on CLI startup
-    from hayhooks.settings import settings
-    from hayhooks.server.logger import log
     import uvicorn
+
+    from hayhooks.server.logger import log
+    from hayhooks.settings import settings
 
     # Fill defaults from settings only when command is executed
     host = host or settings.host

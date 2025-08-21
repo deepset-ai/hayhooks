@@ -1,6 +1,7 @@
 from collections.abc import Callable as CallableABC
 from types import GenericAlias
 from typing import Callable, Optional, Union, get_args, get_origin
+
 from loguru import logger
 
 

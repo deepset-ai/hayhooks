@@ -1,12 +1,14 @@
-import pytest
 import shutil
 from pathlib import Path
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from hayhooks.server.app import create_app
-from hayhooks.settings import settings
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
+from hayhooks.settings import settings
 
 
 def pytest_configure(config):

@@ -12,7 +12,7 @@ on:
       - ready_for_review
 
 env:
-  HATCH_VERSION: "1.14.0"
+  HATCH_VERSION: "1.14.1"
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.9, '3.10', 3.11, 3.12]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +30,10 @@ jobs:
 
       - name: Install Hatch
         run: pip install hatch==${{ env.HATCH_VERSION }}
+
+
+      - name: Ruff - check format and linting
+        run: hatch run fmt-check
 
       - name: Run tests and generate coverage report
         run: hatch run test:cov

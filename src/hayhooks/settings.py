@@ -1,7 +1,9 @@
-from typing import Union
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from dotenv import load_dotenv, find_dotenv
 from pathlib import Path
+from typing import Union
+
+from dotenv import find_dotenv, load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from hayhooks.server.logger import log
 
 load_dotenv(dotenv_path=find_dotenv(usecwd=True))
@@ -59,13 +61,16 @@ class AppSettings(BaseSettings):
 
     # Prefix for the environment variables to avoid conflicts
     # with other similar environment variables
-    model_config = SettingsConfigDict(env_prefix='hayhooks_')
+    model_config = SettingsConfigDict(env_prefix="hayhooks_")
 
 
 settings = AppSettings()
 
 
 def check_cors_settings():
+    """
+    Check if the CORS settings are set to the default values.
+    """
     if (
         settings.cors_allow_origins == ["*"]
         and settings.cors_allow_methods == ["*"]

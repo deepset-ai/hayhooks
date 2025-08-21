@@ -1,12 +1,18 @@
-import pytest
 import importlib.util
-from hayhooks.server.pipelines import registry
 from pathlib import Path
-from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
-from hayhooks.server.utils.mcp_utils import list_pipelines_as_tools, run_pipeline_as_tool
-from hayhooks.server.utils.mcp_utils import list_core_tools, CoreTools, PIPELINE_NAME_SCHEMA
-from hayhooks.server.routers.deploy import PipelineFilesRequest
 
+import pytest
+
+from hayhooks.server.pipelines import registry
+from hayhooks.server.routers.deploy import PipelineFilesRequest
+from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
+from hayhooks.server.utils.mcp_utils import (
+    PIPELINE_NAME_SCHEMA,
+    CoreTools,
+    list_core_tools,
+    list_pipelines_as_tools,
+    run_pipeline_as_tool,
+)
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
@@ -57,13 +63,13 @@ async def test_list_pipelines_as_tools(deploy_chat_with_website_mcp):
     assert tools[0].name == "chat_with_website"
     assert tools[0].description == "Ask a question about one or more websites using a Haystack pipeline."
     assert tools[0].inputSchema == {
-        'properties': {
-            'urls': {'items': {'type': 'string'}, 'title': 'Urls', 'type': 'array', 'description': "Parameter 'urls'"},
-            'question': {'title': 'Question', 'type': 'string', 'description': "Parameter 'question'"},
+        "properties": {
+            "urls": {"items": {"type": "string"}, "title": "Urls", "type": "array", "description": "Parameter 'urls'"},
+            "question": {"title": "Question", "type": "string", "description": "Parameter 'question'"},
         },
-        'required': ['urls', 'question'],
-        'title': 'chat_with_websiteRunRequest',
-        'type': 'object',
+        "required": ["urls", "question"],
+        "title": "chat_with_websiteRunRequest",
+        "type": "object",
     }
 
 
