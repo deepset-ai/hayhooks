@@ -15,7 +15,7 @@ components:
     type: haystack.components.generators.openai.OpenAIGenerator
   prompt_builder:
     init_parameters:
-      required_variables: null
+      required_variables: "*"
       template: "\nGiven the following information, answer the question.\n\nContext:\n\
         {% for document in documents %}\n    {{ document.content }}\n{% endfor %}\n\
         \nQuestion: {{question}}\nAnswer:\n"

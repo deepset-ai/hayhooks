@@ -15,7 +15,7 @@ components:
     type: haystack.components.generators.openai.OpenAIGenerator
   prompt_builder:
     init_parameters:
-      required_variables: null
+      required_variables: "*"
       template: "{{ question }}"
       variables: null
     type: haystack.components.builders.prompt_builder.PromptBuilder
