@@ -15,6 +15,7 @@ from rich.progress import (
     DownloadColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeRemainingColumn,
     TransferSpeedColumn,
@@ -126,7 +127,7 @@ def with_progress_spinner(description: str, operation: Callable[..., T], *args: 
 class ProgressFileReader:
     """File-like object wrapper that updates progress bar when read."""
 
-    def __init__(self, file_obj: Any, progress: Any, task_id: Any, file_size: int) -> None:
+    def __init__(self, file_obj: io.IOBase, progress: Progress, task_id: TaskID, file_size: int) -> None:
         self.file_obj = file_obj
         self.progress = progress
         self.task_id = task_id
@@ -150,7 +151,9 @@ class ProgressFileReader:
         return self.file_obj.close()
 
 
-def prepare_files_with_progress(files: dict[str, Path], progress: Any, task_id: Any) -> tuple[list[tuple], list]:
+def prepare_files_with_progress(
+    files: dict[str, Path], progress: Progress, task_id: TaskID
+) -> tuple[list[tuple[str, tuple[str, ProgressFileReader, str]]], list[io.BufferedReader]]:
     """
     Prepare files for upload with progress tracking.
 
@@ -190,7 +193,7 @@ def prepare_files_with_progress(files: dict[str, Path], progress: Any, task_id: 
 
 def upload_files_with_progress(
     url: str, files: dict[str, Path], form_data: Optional[dict[str, Any]] = None, verify_ssl: bool = True
-) -> tuple[Any, float]:
+) -> tuple[Optional[dict[str, Any]], float]:
     """
     Upload files with progress bar tracking.
 
