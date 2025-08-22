@@ -63,8 +63,8 @@ def deploy_pipeline_def(app: FastAPI, pipeline_def: PipelineDefinition) -> dict[
     # There's no way in FastAPI to define the type of the request body other than annotating
     # the endpoint handler. We have to ignore the type here to make FastAPI happy while
     # silencing static type checkers (that would have good reasons to trigger!).
-    async def pipeline_run(pipeline_run_req: PipelineRunRequest) -> JSONResponse:  # type: ignore
-        result = await run_in_threadpool(pipe.run, data=pipeline_run_req.dict())
+    async def pipeline_run(pipeline_run_req: PipelineRunRequest) -> JSONResponse:  # type:ignore[valid-type]
+        result = await run_in_threadpool(pipe.run, data=pipeline_run_req.dict())  # type:ignore[attr-defined]
         final_output = {}
         for component_name, output in result.items():
             final_output[component_name] = convert_component_output(output)
@@ -281,20 +281,20 @@ def create_run_endpoint_handler(
 
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(
-        run_req: request_model = Form(..., media_type="multipart/form-data"),  # noqa: B008
-    ) -> response_model:
+        run_req: request_model = Form(..., media_type="multipart/form-data"),  # type:ignore[valid-type] # noqa: B008
+    ) -> response_model:  # type:ignore[valid-type]
         if pipeline_wrapper._is_run_api_async_implemented:
-            result = await pipeline_wrapper.run_api_async(**run_req.model_dump())
+            result = await pipeline_wrapper.run_api_async(**run_req.model_dump())  # type:ignore[attr-defined]
         else:
-            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())
+            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type:ignore[attr-defined]
         return response_model(result=result)
 
     @handle_pipeline_exceptions()
-    async def run_endpoint_without_files(run_req: request_model) -> response_model:
+    async def run_endpoint_without_files(run_req: request_model) -> response_model:  # type:ignore[valid-type]
         if pipeline_wrapper._is_run_api_async_implemented:
-            result = await pipeline_wrapper.run_api_async(**run_req.model_dump())
+            result = await pipeline_wrapper.run_api_async(**run_req.model_dump())  # type:ignore[attr-defined]
         else:
-            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())
+            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type:ignore[attr-defined]
         return response_model(result=result)
 
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
