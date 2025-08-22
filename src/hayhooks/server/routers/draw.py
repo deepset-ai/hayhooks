@@ -27,7 +27,7 @@ router = APIRouter()
 )
 async def draw(
     pipeline_name: str = PathParam(description="Name of the pipeline to visualize", examples=["my_pipeline"]),
-):
+) -> FileResponse:
     pipeline = registry.get(pipeline_name)
 
     if isinstance(pipeline, BasePipelineWrapper):
@@ -36,6 +36,6 @@ async def draw(
     if not pipeline:
         raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
 
-    _, fpath = tempfile.mkstemp()
-    pipeline.draw(Path(fpath))
+    _, fpath = tempfile.mkstemp(suffix=".png")
+    pipeline.draw(path=Path(fpath))
     return FileResponse(fpath, media_type="image/png")

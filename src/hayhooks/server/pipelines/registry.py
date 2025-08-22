@@ -37,7 +37,7 @@ class _PipelineRegistry:
 
         return pipeline
 
-    def remove(self, name: str):
+    def remove(self, name: str) -> None:
         if name in self._pipelines:
             del self._pipelines[name]
             del self._metadata[name]
@@ -57,7 +57,7 @@ class _PipelineRegistry:
     def get_names(self) -> list[str]:
         return list(self._pipelines.keys())
 
-    def clear(self):
+    def clear(self) -> None:
         self._pipelines.clear()
         self._metadata.clear()
 

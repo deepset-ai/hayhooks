@@ -67,12 +67,14 @@ fmt-check = "ruff check {args} && ruff format --check {args}"
 [tool.hatch.envs.test]
 features = ["mcp"]
 extra-dependencies = [
+  "qdrant-haystack",
+  "trafilatura",
   "pytest",
   "pytest-asyncio",
   "pytest-cov",
-  "pytest-mock",
-  "qdrant-haystack",
-  "trafilatura",
+  "pytest-mock",  
+  "mypy",
+  "pip",                     # mypy needs pip to install missing stub packages
 ]
 
 [tool.hatch.envs.test.scripts]
@@ -80,7 +82,16 @@ unit = "pytest -vv -m 'not integration' {args:tests}"
 integration = "pytest -vv -m integration {args:tests}"
 all = "pytest -vv {args:tests}"
 all-cov = "all --cov=hayhooks"
+types = "mypy --install-types --non-interactive --cache-dir=.mypy_cache/ {args:src/hayhooks}"
 
+
+[tool.mypy]
+python_version = "3.10"  # needed for mcp
+check_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = false
 
 [tool.ruff]
 line-length = 120
@@ -127,7 +138,6 @@ select = [
   "SIM",   # flake8-simplify
   "SLOT",  # flake8-slots
   "T10",   # flake8-debugger
-  "UP006", # non-pep585-annotation
   "W",     # pycodestyle
   "YTT",   # flake8-2020
   # (docstring rules)

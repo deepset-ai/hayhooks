@@ -2,6 +2,7 @@ import sys
 from typing import Annotated, Optional
 
 import typer
+from fastapi import FastAPI
 
 from hayhooks.cli.mcp import mcp
 from hayhooks.cli.pipeline import pipeline
@@ -12,7 +13,7 @@ hayhooks_cli.add_typer(pipeline, name="pipeline")
 hayhooks_cli.add_typer(mcp, name="mcp")
 
 
-def get_app():
+def get_app() -> FastAPI:
     """
     Factory function to create the FastAPI app.
     """
@@ -37,7 +38,7 @@ def run(  # noqa: PLR0913
     reload: Annotated[
         bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")
     ] = False,
-):
+) -> None:
     """
     Run the Hayhooks server.
     """
@@ -68,7 +69,7 @@ def run(  # noqa: PLR0913
 
 
 @hayhooks_cli.command()
-def status(ctx: typer.Context):
+def status(ctx: typer.Context) -> None:
     """Get the status of the Hayhooks server."""
     response = make_request(
         host=ctx.obj["host"],
@@ -106,7 +107,7 @@ def status(ctx: typer.Context):
 
 
 @hayhooks_cli.callback()
-def callback(ctx: typer.Context):
+def callback(ctx: typer.Context) -> None:
     # Lazy import settings so it's only loaded on actual CLI invocation
     from hayhooks.settings import settings
 

@@ -1,4 +1,5 @@
 import sys
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from os import PathLike
 from pathlib import Path
@@ -65,7 +66,7 @@ def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> Union[dict, None]
         return None
 
 
-def init_pipeline_dir(pipelines_dir: Union[PathLike, str]):
+def init_pipeline_dir(pipelines_dir: Union[PathLike, str]) -> str:
     """
     Create a directory for pipelines if it doesn't exist.
 
@@ -128,7 +129,7 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: Union[PathLike, str]) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.pipelines_dir:
         deploy_pipelines(app, settings.pipelines_dir)
 

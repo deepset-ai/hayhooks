@@ -4,7 +4,7 @@ import io
 import mimetypes
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypeVar
 from urllib.parse import urljoin
 
 import requests
@@ -15,6 +15,7 @@ from rich.progress import (
     DownloadColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeRemainingColumn,
     TransferSpeedColumn,
@@ -99,7 +100,10 @@ def show_warning_panel(message: str, title: str = "Warning") -> None:
     get_console().print(Panel.fit(message, border_style="yellow", title=title))
 
 
-def with_progress_spinner(description: str, operation: Callable, *args, **kwargs):
+T = TypeVar("T")
+
+
+def with_progress_spinner(description: str, operation: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """
     Execute an operation with a progress spinner.
 
@@ -123,31 +127,33 @@ def with_progress_spinner(description: str, operation: Callable, *args, **kwargs
 class ProgressFileReader:
     """File-like object wrapper that updates progress bar when read."""
 
-    def __init__(self, file_obj, progress, task_id, file_size):
+    def __init__(self, file_obj: io.IOBase, progress: Progress, task_id: TaskID, file_size: int) -> None:
         self.file_obj = file_obj
         self.progress = progress
         self.task_id = task_id
         self.file_size = file_size
         self.bytes_read = 0
 
-    def read(self, size=-1):
+    def read(self, size: int = -1) -> bytes:
         chunk = self.file_obj.read(size)
         chunk_size = len(chunk)
         self.bytes_read += chunk_size
         self.progress.update(self.task_id, advance=chunk_size)
         return chunk
 
-    def seek(self, offset, whence=0):
+    def seek(self, offset: int, whence: int = 0) -> int:
         return self.file_obj.seek(offset, whence)
 
-    def tell(self):
+    def tell(self) -> int:
         return self.file_obj.tell()
 
-    def close(self):
+    def close(self) -> None:
         return self.file_obj.close()
 
 
-def prepare_files_with_progress(files: dict[str, Path], progress, task_id) -> tuple[list[tuple], list]:
+def prepare_files_with_progress(
+    files: dict[str, Path], progress: Progress, task_id: TaskID
+) -> tuple[list[tuple[str, tuple[str, ProgressFileReader, str]]], list[io.BufferedReader]]:
     """
     Prepare files for upload with progress tracking.
 
@@ -187,7 +193,7 @@ def prepare_files_with_progress(files: dict[str, Path], progress, task_id) -> tu
 
 def upload_files_with_progress(
     url: str, files: dict[str, Path], form_data: Optional[dict[str, Any]] = None, verify_ssl: bool = True
-) -> tuple[Any, float]:
+) -> tuple[dict[str, Any], float]:
     """
     Upload files with progress bar tracking.
 
@@ -210,7 +216,7 @@ def upload_files_with_progress(
     get_console().print(f"Uploading {len(files)} files ({total_size_mb:.2f} MB)...")
 
     start_time = time.time()
-    result = None
+    result: dict[str, Any] = {}
     file_handles: list[io.BufferedReader] = []
 
     try:
