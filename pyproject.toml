@@ -89,7 +89,6 @@ types = "mypy --install-types --non-interactive --cache-dir=.mypy_cache/ {args:s
 python_version = "3.10"  # needed for mcp
 check_untyped_defs = true
 disallow_incomplete_defs = true
-# ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_return_any = false
