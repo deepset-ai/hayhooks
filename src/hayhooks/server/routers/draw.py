@@ -37,6 +37,5 @@ async def draw(
         raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
 
     _, fpath = tempfile.mkstemp(suffix=".png")
-    # The draw method should save the diagram to the specified path
     pipeline.draw(path=Path(fpath))
     return FileResponse(fpath, media_type="image/png")

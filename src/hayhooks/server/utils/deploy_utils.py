@@ -272,6 +272,11 @@ def create_run_endpoint_handler(
     """
     Factory method to create the appropriate run endpoint handler based on whether file uploads are supported.
 
+    Note:
+        There's no way in FastAPI to define the type of the request body other than annotating
+        the endpoint handler. We have to **ignore types several times in this method** to make FastAPI happy while
+        silencing static type checkers (that would have good reasons to trigger!).
+
     Args:
         pipeline_wrapper: The pipeline wrapper instance
         request_model: The request model
