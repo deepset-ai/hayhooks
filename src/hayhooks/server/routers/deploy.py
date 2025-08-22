@@ -81,7 +81,7 @@ class DeployResponse(BaseModel):
     ),
     deprecated=True,
 )
-async def deploy(pipeline_def: PipelineDefinition, request: Request):
+async def deploy(pipeline_def: PipelineDefinition, request: Request) -> DeployResponse:
     result = deploy_pipeline_def(request.app, pipeline_def)
     return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
 
@@ -97,7 +97,7 @@ async def deploy(pipeline_def: PipelineDefinition, request: Request):
         "Returns 409 if the pipeline already exists and overwrite is false."
     ),
 )
-async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Request):
+async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Request) -> DeployResponse:
     try:
         result = deploy_pipeline_files(
             app=request.app,

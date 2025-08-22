@@ -4,7 +4,7 @@ import io
 import mimetypes
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypeVar
 from urllib.parse import urljoin
 
 import requests
@@ -99,7 +99,10 @@ def show_warning_panel(message: str, title: str = "Warning") -> None:
     get_console().print(Panel.fit(message, border_style="yellow", title=title))
 
 
-def with_progress_spinner(description: str, operation: Callable, *args, **kwargs):
+T = TypeVar("T")
+
+
+def with_progress_spinner(description: str, operation: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """
     Execute an operation with a progress spinner.
 
@@ -123,31 +126,31 @@ def with_progress_spinner(description: str, operation: Callable, *args, **kwargs
 class ProgressFileReader:
     """File-like object wrapper that updates progress bar when read."""
 
-    def __init__(self, file_obj, progress, task_id, file_size):
+    def __init__(self, file_obj: Any, progress: Any, task_id: Any, file_size: int) -> None:
         self.file_obj = file_obj
         self.progress = progress
         self.task_id = task_id
         self.file_size = file_size
         self.bytes_read = 0
 
-    def read(self, size=-1):
+    def read(self, size: int = -1) -> bytes:
         chunk = self.file_obj.read(size)
         chunk_size = len(chunk)
         self.bytes_read += chunk_size
         self.progress.update(self.task_id, advance=chunk_size)
         return chunk
 
-    def seek(self, offset, whence=0):
+    def seek(self, offset: int, whence: int = 0) -> int:
         return self.file_obj.seek(offset, whence)
 
-    def tell(self):
+    def tell(self) -> int:
         return self.file_obj.tell()
 
-    def close(self):
+    def close(self) -> None:
         return self.file_obj.close()
 
 
-def prepare_files_with_progress(files: dict[str, Path], progress, task_id) -> tuple[list[tuple], list]:
+def prepare_files_with_progress(files: dict[str, Path], progress: Any, task_id: Any) -> tuple[list[tuple], list]:
     """
     Prepare files for upload with progress tracking.
 

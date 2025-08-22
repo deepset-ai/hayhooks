@@ -26,7 +26,7 @@ def run(  # noqa: PLR0913
     debug: Annotated[
         bool, typer.Option("--debug", "-d", help="If true, tracebacks should be returned on errors")
     ] = False,
-):
+) -> None:
     """
     Run the MCP server.
     """

@@ -45,7 +45,7 @@ def deploy(
     pipeline_file: Path = typer.Argument(  # noqa: B008
         help="The path to the pipeline file to deploy."
     ),
-):
+) -> None:
     """Deploy a pipeline to the Hayhooks server."""
     if not pipeline_file.exists():
         show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
@@ -70,7 +70,7 @@ def deploy_files(
     skip_saving_files: Annotated[
         bool, typer.Option("--skip-saving-files", "-s", help="Whether to skip saving the files to the server.")
     ] = False,
-):
+) -> None:
     """Deploy all pipeline files from a directory to the Hayhooks server."""
     if not pipeline_dir.exists():
         show_error_and_abort("Directory does not exist.", str(pipeline_dir))
@@ -95,7 +95,7 @@ def deploy_files(
 def undeploy(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The name of the pipeline to undeploy.")],
-):
+) -> None:
     """Undeploy a pipeline from the Hayhooks server."""
     response = with_progress_spinner(
         f"Undeploying pipeline '{name}'...",
@@ -135,7 +135,7 @@ def run(  # noqa: PLR0912, C901
         Optional[list[str]],
         typer.Option("--param", "-p", help="Parameters in format key=value (value can be string or JSON)"),
     ] = None,
-):
+) -> None:
     """Run a pipeline with the given files and parameters."""
     # Initialize collections
     files_to_upload = {}
