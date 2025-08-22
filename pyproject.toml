@@ -138,7 +138,6 @@ select = [
   "SIM",   # flake8-simplify
   "SLOT",  # flake8-slots
   "T10",   # flake8-debugger
-  "UP006", # non-pep585-annotation
   "W",     # pycodestyle
   "YTT",   # flake8-2020
   # (docstring rules)

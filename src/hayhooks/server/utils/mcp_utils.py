@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from typing import Union
 
 from fastapi.concurrency import run_in_threadpool
 from haystack.lazy_imports import LazyImport
@@ -41,17 +41,12 @@ class CoreTools(str, Enum):
     DEPLOY_PIPELINE = "deploy_pipeline"
 
 
-if TYPE_CHECKING:
-    from mcp.server import Server
-    from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
-
-
 # Lazily import MCP modules so the optional dependency is only required when used
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
     from mcp.server import Server
     from mcp.server.sse import SseServerTransport
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-    from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
+    from mcp.types import TextContent, Tool
 
 
 def deploy_pipelines() -> None:
@@ -140,9 +135,7 @@ async def list_pipelines_as_tools() -> list["Tool"]:
     return tools
 
 
-async def run_pipeline_as_tool(
-    name: str, arguments: dict
-) -> list[Union["TextContent", "ImageContent", "EmbeddedResource"]]:
+async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"]:
     mcp_import.check()
 
     log.debug(f"Calling pipeline as tool '{name}' with arguments: {arguments}")
@@ -192,7 +185,7 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C
             return []
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list[TextContent | ImageContent | EmbeddedResource]:
+    async def call_tool(name: str, arguments: dict) -> list["TextContent"]:
         try:
             if name == CoreTools.DEPLOY_PIPELINE:
                 result = await asyncio.to_thread(
