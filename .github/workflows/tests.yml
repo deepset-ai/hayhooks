@@ -30,10 +30,20 @@ jobs:
       - name: Install Hatch
         run: pip install hatch==${{ env.HATCH_VERSION }}
 
-
-      - name: Ruff - check format and linting
-        if: matrix.python-version == '3.9'
-        run: hatch run fmt-check
-
       - name: Run tests and generate coverage report
         run: hatch run test:all-cov
+
+  linting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"      
+
+      - name: Install Hatch
+        run: pip install hatch==${{ env.HATCH_VERSION }}
+
+      - name: Ruff - check format and linting
+        run: hatch run fmt-check
