@@ -1,4 +1,4 @@
-from typing import Union, Dict, List, Any
+from typing import Any, Union
 
 from haystack import Document
 from pydantic import BaseModel, ConfigDict, create_model
@@ -16,7 +16,7 @@ DEFAULT_TYPES_MAPPING = {
 }
 
 
-def get_request_model(pipeline_name: str, pipeline_inputs: Dict[str, Dict[str, Any]]) -> type[BaseModel]:
+def get_request_model(pipeline_name: str, pipeline_inputs: dict[str, dict[str, Any]]) -> type[BaseModel]:
     """
     Inputs have the form below.
 
@@ -28,11 +28,11 @@ def get_request_model(pipeline_name: str, pipeline_inputs: Dict[str, Dict[str, A
         'second_addition': {'add': {'type': typing.Optional[int], 'is_mandatory': False}},
     }
     """
-    request_model: Dict[str, Any] = {}
+    request_model: dict[str, Any] = {}
     config = ConfigDict(arbitrary_types_allowed=True)
 
     for component_name, inputs in pipeline_inputs.items():
-        component_model: Dict[str, Any] = {}
+        component_model: dict[str, Any] = {}
         for name, typedef in inputs.items():
             if isinstance(typedef, dict) and "type" in typedef:
                 try:
@@ -50,7 +50,7 @@ def get_request_model(pipeline_name: str, pipeline_inputs: Dict[str, Dict[str, A
     return create_model(f"{pipeline_name.capitalize()}RunRequest", **request_model, __config__=config)
 
 
-def get_response_model(pipeline_name: str, pipeline_outputs: Dict[str, Dict[str, Any]]) -> type[BaseModel]:
+def get_response_model(pipeline_name: str, pipeline_outputs: dict[str, dict[str, Any]]) -> type[BaseModel]:
     """
     Outputs have the form below.
 
@@ -60,10 +60,10 @@ def get_response_model(pipeline_name: str, pipeline_outputs: Dict[str, Dict[str,
         },
     }
     """
-    response_model: Dict[str, Any] = {}
+    response_model: dict[str, Any] = {}
     config = ConfigDict(arbitrary_types_allowed=True)
     for component_name, outputs in pipeline_outputs.items():
-        component_model: Dict[str, Any] = {}
+        component_model: dict[str, Any] = {}
         for name, typedef in outputs.items():
             if isinstance(typedef, dict) and "type" in typedef:
                 output_type = typedef["type"]
@@ -76,7 +76,7 @@ def get_response_model(pipeline_name: str, pipeline_outputs: Dict[str, Dict[str,
     return create_model(f"{pipeline_name.capitalize()}RunResponse", **response_model, __config__=config)
 
 
-def convert_value_to_dict(value: Any) -> Union[str, int, float, bool, None, Dict[str, Any], List[Any]]:
+def convert_value_to_dict(value: Any) -> Union[str, int, float, bool, None, dict[str, Any], list[Any]]:
     """Convert a single value to a dictionary if possible"""
     if hasattr(value, "to_dict"):
         if "init_parameters" in value.to_dict():
@@ -92,7 +92,7 @@ def convert_value_to_dict(value: Any) -> Union[str, int, float, bool, None, Dict
         return value
 
 
-def convert_component_output(component_output: Any) -> Union[str, int, float, bool, None, Dict[str, Any], List[Any]]:
+def convert_component_output(component_output: Any) -> Union[str, int, float, bool, None, dict[str, Any], list[Any]]:
     """
     Converts component outputs to dictionaries that can be validated against response model.
 
