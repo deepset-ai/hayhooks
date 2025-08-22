@@ -1,9 +1,10 @@
 from haystack import Pipeline
-from hayhooks import BasePipelineWrapper
 from haystack.core.component import component
 
 # This import assumes that './common' is in the Python path.
 from my_custom_lib import subtract_two_numbers
+
+from hayhooks import BasePipelineWrapper
 
 
 @component

@@ -1,7 +1,8 @@
 from pathlib import Path
-from fastapi.testclient import TestClient
-from hayhooks.server.pipelines.registry import registry
 
+from fastapi.testclient import TestClient
+
+from hayhooks.server.pipelines.registry import registry
 
 TEST_FILES_DIR = Path(__file__).parent / "test_files/files"
 
@@ -33,7 +34,7 @@ def test_undeploy_standard_pipeline(client: TestClient, deploy_pipeline, undeplo
     assert "test_undeploy_pipeline" not in registry.get_names()
 
     # Verify pipeline endpoint no longer exists
-    response = client.post(f"/test_undeploy_pipeline", json={})
+    response = client.post("/test_undeploy_pipeline", json={})
     assert response.status_code == 404
 
 
@@ -47,7 +48,7 @@ def test_undeploy_wrapper_pipeline(client: TestClient, deploy_files, undeploy_pi
 
     # Verify run endpoint exists
     run_response = client.post(
-        f"/test_undeploy_wrapper/run", json={"question": "test", "urls": ["https://www.google.com"]}
+        "/test_undeploy_wrapper/run", json={"question": "test", "urls": ["https://www.google.com"]}
     )
     assert run_response.status_code == 200
 
@@ -62,7 +63,7 @@ def test_undeploy_wrapper_pipeline(client: TestClient, deploy_files, undeploy_pi
 
     # Verify run endpoint no longer exists
     run_response = client.post(
-        f"/test_undeploy_wrapper/run", json={"question": "test", "urls": ["https://www.google.com"]}
+        "/test_undeploy_wrapper/run", json={"question": "test", "urls": ["https://www.google.com"]}
     )
     assert run_response.status_code == 404
 

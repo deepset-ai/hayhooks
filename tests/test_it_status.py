@@ -1,6 +1,8 @@
-import pytest
-from hayhooks.server.pipelines import registry
 from pathlib import Path
+
+import pytest
+
+from hayhooks.server.pipelines import registry
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +31,7 @@ def test_status_single_pipeline(client, deploy_pipeline, status_pipeline):
 def test_status_non_existent_pipeline(client, status_pipeline):
     status_response = status_pipeline(client, "non_existent_pipeline")
     assert status_response.status_code == 404
-    assert status_response.json()["detail"] == f"Pipeline 'non_existent_pipeline' not found"
+    assert status_response.json()["detail"] == "Pipeline 'non_existent_pipeline' not found"
 
 
 def test_status_no_pipelines(client, status_pipeline):

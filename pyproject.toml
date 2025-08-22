@@ -12,6 +12,7 @@ license = "Apache-2.0"
 keywords = []
 authors = [
   { name = "Massimiliano Pippi", email = "mpippi@gmail.com" },
+  { name = "deepset.ai", email = "malte.pietsch@deepset.ai" }
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -43,9 +44,9 @@ mcp = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/unknown/hayhooks#readme"
-Issues = "https://github.com/unknown/hayhooks/issues"
-Source = "https://github.com/unknown/hayhooks"
+Documentation = "https://github.com/deepset-ai/hayhooks#readme"
+Issues = "https://github.com/deepset-ai/hayhooks/issues"
+Source = "https://github.com/deepset-ai/hayhooks"
 
 [project.scripts]
 hayhooks = "hayhooks.cli:hayhooks_cli"
@@ -55,66 +56,38 @@ source = "vcs"
 
 [tool.hatch.envs.default]
 installer = "uv"
+dependencies = [
+  "ruff",
+]
 
-[tool.hatch.envs.mcp]
+[tool.hatch.envs.default.scripts]
+fmt = "ruff check --fix {args} && ruff format {args}"
+fmt-check = "ruff check {args} && ruff format --check {args}"
+
+[tool.hatch.envs.test]
 features = ["mcp"]
+extra-dependencies = [
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-mock",
+  "qdrant-haystack",
+  "trafilatura",
+]
 
 [tool.hatch.envs.test.scripts]
 unit = "pytest -vv -m 'not integration' {args:tests}"
 integration = "pytest -vv -m integration {args:tests}"
 all = "pytest -vv {args:tests}"
-all-cov = "coverage run -m pytest {args:tests}"
-cov-report = [
-  "- coverage combine",
-  "coverage report",
-]
-cov = [
-  "all-cov",
-  "cov-report",
-]
+all-cov = "all --cov=hayhooks"
 
-[tool.hatch.envs.test]
-extra-dependencies = [
-  "coverage[toml]>=6.5",
-  "pytest",
-  "pytest-mock",
-  "qdrant-haystack",
-  "trafilatura",
-  "pytest-asyncio",
-  "mcp ; python_version >= '3.10'",
-]
-
-[tool.hatch.envs.lint]
-detached = true
-dependencies = [
-  "black>=23.1.0",
-  "mypy>=1.0.0",
-  "ruff>=0.0.243",
-]
-[tool.hatch.envs.lint.scripts]
-typing = "mypy --install-types --non-interactive {args:src/hayhooks tests}"
-style = [
-  "ruff {args:.}",
-  "black --check --diff {args:.}",
-]
-fmt = [
-  "black {args:.}",
-  "ruff --fix {args:.}",
-  "style",
-]
-all = [
-  "style",
-  "typing",
-]
-
-[tool.black]
-target-version = ["py37"]
-line-length = 120
-skip-string-normalization = true
 
 [tool.ruff]
-target-version = "py37"
 line-length = 120
+
+[tool.ruff.lint]
+isort.split-on-trailing-comma = false
+flake8-tidy-imports.ban-relative-imports = "all"
 select = [
   "A",
   "ARG",
@@ -141,41 +114,57 @@ select = [
   "UP",
   "W",
   "YTT",
+  # from Haystack:
+  "ASYNC", # flake8-async
+  "C4",    # flake8-comprehensions
+  "C90",   # McCabe cyclomatic complexity
+  "EXE",   # flake8-executable
+  "F",     # Pyflakes
+  "INT",   # flake8-gettext
+  "PERF",  # Perflint
+  "PL",    # Pylint
+  "Q",     # flake8-quotes
+  "SIM",   # flake8-simplify
+  "SLOT",  # flake8-slots
+  "T10",   # flake8-debugger
+  "UP006", # non-pep585-annotation
+  "W",     # pycodestyle
+  "YTT",   # flake8-2020
+  # (docstring rules)
+  "D209",  # Closing triple quotes go to new line
+  "D205",  # 1 blank line required between summary line and description
+  "D213",  # summary lines must be positioned on the second physical line of the docstring
+  "D419",  # undocumented-returns  
 ]
 ignore = [
-  # Allow non-abstract empty methods in abstract base classes
-  "B027",
-  # Allow boolean positional values in function calls, like `dict.get(... True)`
-  "FBT003",
-  # Ignore checks for possible passwords
-  "S105", "S106", "S107",
-  # Ignore complexity
-  "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915",
-]
-unfixable = [
-  # Don't touch unused imports
-  "F401",
+  "FBT001",  # Boolean-typed positional argument in function definition
+  "FBT002",  # Boolean default positional argument in function definition
+  "N806",    # Variable in function should be lowercase
+  "PERF203", # `try`-`except` within a loop incurs performance overhead
+  "PLC0415", # `import` should be at the top-level of a file
+  "S101",    # Use of `assert` detected  
 ]
 
-[tool.ruff.isort]
-known-first-party = ["hayhooks"]
-
-[tool.ruff.flake8-tidy-imports]
-ban-relative-imports = "all"
-
-[tool.ruff.per-file-ignores]
-# Tests can use magic values, assertions, and relative imports
-"tests/**/*" = ["PLR2004", "S101", "TID252"]
+[tool.ruff.lint.per-file-ignores]
+# Specific ignores for tests
+"tests/**/*" = [
+  "B017",    # Do not assert blind exception
+  "ARG001",  # Unused function argument
+  "ARG002",  # Unused method argument
+  "D102",    # Missing docstring in public method
+  "D103",    # Missing docstring in public function
+  "D205",    # 1 blank line required between summary line and description
+  "FBT003",  # Boolean-typed default argument in function definition
+  "PLR2004", # Magic value used in comparison
+  "S101",    # Use of `assert` detected
+  "TID252",  # Prefer absolute imports over relative imports from parent modules
+  ]
 
 [tool.coverage.run]
-source_pkgs = ["hayhooks", "tests"]
+source_pkgs = ["hayhooks"]
 branch = true
 parallel = true
 omit = []
-
-[tool.coverage.paths]
-hayhooks = ["src/hayhooks", "*/hayhooks/src/hayhooks"]
-tests = ["tests", "*/hayhooks/tests"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -185,10 +174,15 @@ exclude_lines = [
 ]
 
 [tool.pytest.ini_options]
+addopts = "--strict-markers"
 filterwarnings = [
   "ignore::UserWarning",
 ]
 asyncio_mode = "auto"
+log_cli = true
 markers = [
-    "integration: marks tests as integration tests"
+  "unit: unit tests",
+  "integration: integration tests",
+  "asyncio: mark a test as an asyncio coroutine",
+  "mcp: tests that require the MCP package",
 ]

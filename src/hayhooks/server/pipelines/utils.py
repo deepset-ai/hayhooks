@@ -1,34 +1,36 @@
 import asyncio
 import threading
+from collections.abc import AsyncGenerator, Generator
 from queue import Queue
-from typing import AsyncGenerator, Callable, Generator, List, Union, Dict, Tuple, Any, Optional
+from typing import Any, Callable, Optional, Union
+
 from haystack import AsyncPipeline, Pipeline
+from haystack.components.agents import Agent
 from haystack.core.component import Component
+from haystack.dataclasses import StreamingChunk
+
+from hayhooks.open_webui import OpenWebUIEvent
 from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
-from haystack.dataclasses import StreamingChunk
-from haystack.components.agents import Agent
-from hayhooks.open_webui import OpenWebUIEvent
 
-
-ToolCallbackReturn = Union[OpenWebUIEvent, str, None, List[Union[OpenWebUIEvent, str]]]
+ToolCallbackReturn = Union[OpenWebUIEvent, str, None, list[Union[OpenWebUIEvent, str]]]
 OnToolCallStart = Optional[Callable[[str, Optional[str], Optional[str]], ToolCallbackReturn]]
-OnToolCallEnd = Optional[Callable[[str, Dict[str, Any], str, bool], ToolCallbackReturn]]
+OnToolCallEnd = Optional[Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn]]
 
 
-def is_user_message(msg: Union[Message, Dict]) -> bool:
+def is_user_message(msg: Union[Message, dict]) -> bool:
     if isinstance(msg, Message):
         return msg.role == "user"
     return msg.get("role") == "user"
 
 
-def get_content(msg: Union[Message, Dict]) -> str:
+def get_content(msg: Union[Message, dict]) -> str:
     if isinstance(msg, Message):
         return msg.content
     return msg.get("content", "")
 
 
-def get_last_user_message(messages: List[Union[Message, Dict]]) -> Union[str, None]:
+def get_last_user_message(messages: list[Union[Message, dict]]) -> Union[str, None]:
     user_messages = (msg for msg in reversed(messages) if is_user_message(msg))
 
     for message in user_messages:
@@ -37,7 +39,7 @@ def get_last_user_message(messages: List[Union[Message, Dict]]) -> Union[str, No
     return None
 
 
-def find_streaming_component(pipeline: Union[Pipeline, AsyncPipeline]) -> Tuple[Component, str]:
+def find_streaming_component(pipeline: Union[Pipeline, AsyncPipeline]) -> tuple[Component, str]:
     """
     Finds the component in the pipeline that supports streaming_callback
 
@@ -53,14 +55,15 @@ def find_streaming_component(pipeline: Union[Pipeline, AsyncPipeline]) -> Tuple[
             streaming_component = component
             streaming_component_name = name
     if not streaming_component:
-        raise ValueError("No streaming-capable component found in the pipeline")
+        msg = "No streaming-capable component found in the pipeline"
+        raise ValueError(msg)
 
     return streaming_component, streaming_component_name
 
 
 def _setup_streaming_callback_for_pipeline(
-    pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: Dict[str, Any], streaming_callback: Any
-) -> Dict[str, Any]:
+    pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: dict[str, Any], streaming_callback: Any
+) -> dict[str, Any]:
     """
     Sets up streaming callback for pipeline components.
 
@@ -86,7 +89,7 @@ def _setup_streaming_callback_for_pipeline(
     return pipeline_run_args
 
 
-def _setup_streaming_callback_for_agent(pipeline_run_args: Dict[str, Any], streaming_callback: Any) -> Dict[str, Any]:
+def _setup_streaming_callback_for_agent(pipeline_run_args: dict[str, Any], streaming_callback: Any) -> dict[str, Any]:
     """
     Sets up streaming callback for agent execution.
 
@@ -102,8 +105,8 @@ def _setup_streaming_callback_for_agent(pipeline_run_args: Dict[str, Any], strea
 
 
 def _setup_streaming_callback(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict[str, Any], streaming_callback: Any
-) -> Dict[str, Any]:
+    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any], streaming_callback: Any
+) -> dict[str, Any]:
     """
     Configures streaming callback for the given pipeline or agent.
 
@@ -122,10 +125,11 @@ def _setup_streaming_callback(
     elif isinstance(pipeline, Agent):
         return _setup_streaming_callback_for_agent(pipeline_run_args, streaming_callback)
     else:
-        raise ValueError(f"Unsupported pipeline type: {type(pipeline)}")
+        msg = f"Unsupported pipeline type: {type(pipeline)}"
+        raise ValueError(msg)
 
 
-def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict[str, Any]) -> None:
+def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]) -> None:
     """
     Executes pipeline synchronously based on its type.
 
@@ -139,15 +143,16 @@ def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipe
         pipeline.run(data=pipeline_run_args)
 
 
-def streaming_generator(
+def streaming_generator(  # noqa: C901, PLR0912
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
-    pipeline_run_args: Dict[str, Any] = {},
+    pipeline_run_args: Optional[dict[str, Any]] = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
 ) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
+
     Automatically finds the streaming-capable component in pipelines or uses the agent's streaming callback.
 
     Args:
@@ -164,6 +169,8 @@ def streaming_generator(
     NOTE: This generator works with sync/async pipelines and agents, but pipeline components
           which support streaming must have a _sync_ `streaming_callback`.
     """
+    if pipeline_run_args is None:
+        pipeline_run_args = {}
     queue: Queue[Union[StreamingChunk, None, Exception]] = Queue()
 
     def streaming_callback(chunk: StreamingChunk) -> None:
@@ -238,15 +245,16 @@ def _validate_async_streaming_support(pipeline: Union[Pipeline, AsyncPipeline]) 
     # We check for run_async method as an indicator of async support
     if not hasattr(streaming_component, "run_async"):
         component_type = type(streaming_component).__name__
-        raise ValueError(
-            f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async streaming callbacks. "
-            f"Use the sync 'streaming_generator' function instead, or switch to a component that supports async streaming callbacks "
-            f"(e.g., OpenAIChatGenerator instead of OpenAIGenerator)."
+        msg = (
+            f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async streaming "
+            "callbacks. Use the sync 'streaming_generator' function instead, or switch to a component that supports "
+            "async streaming callbacks (e.g., OpenAIChatGenerator instead of OpenAIGenerator)."
         )
+        raise ValueError(msg)
 
 
 async def _execute_pipeline_async(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: Dict[str, Any]
+    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]
 ) -> asyncio.Task:
     """
     Creates and returns an async task for pipeline execution.
@@ -317,15 +325,16 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
             raise e
 
 
-async def async_streaming_generator(
+async def async_streaming_generator(  # noqa: C901, PLR0912
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
-    pipeline_run_args: Dict[str, Any] = {},
+    pipeline_run_args: Optional[dict[str, Any]] = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
+
     Automatically finds the streaming-capable component in pipelines or uses the agent's streaming callback.
 
     Args:
@@ -343,6 +352,8 @@ async def async_streaming_generator(
           must support an _async_ `streaming_callback`. Agents have built-in async streaming support.
     """
     # Validate async streaming support for pipelines (not needed for agents)
+    if pipeline_run_args is None:
+        pipeline_run_args = {}
     if isinstance(pipeline, (AsyncPipeline, Pipeline)):
         _validate_async_streaming_support(pipeline)
 

@@ -1,6 +1,7 @@
-from pydantic import BaseModel, ConfigDict, create_model
-from hayhooks.server.utils.create_valid_type import handle_unsupported_types
 from haystack import Document
+from pydantic import BaseModel, ConfigDict, create_model
+
+from hayhooks.server.utils.create_valid_type import handle_unsupported_types
 
 
 class PipelineDefinition(BaseModel):
@@ -15,7 +16,8 @@ DEFAULT_TYPES_MAPPING = {
 
 def get_request_model(pipeline_name: str, pipeline_inputs):
     """
-    Inputs have this form:
+    Inputs have the form below.
+
     {
         'first_addition': { <-- Component Name
             'value': {'type': <class 'int'>, 'is_mandatory': True}, <-- Input
@@ -33,7 +35,6 @@ def get_request_model(pipeline_name: str, pipeline_inputs):
             try:
                 input_type = handle_unsupported_types(type_=typedef["type"], types_mapping=DEFAULT_TYPES_MAPPING)
             except TypeError as e:
-                print(f"ERROR at {component_name!r}, {name}: {typedef}")
                 raise e
 
             if input_type is not None:
@@ -48,7 +49,8 @@ def get_request_model(pipeline_name: str, pipeline_inputs):
 
 def get_response_model(pipeline_name: str, pipeline_outputs):
     """
-    Outputs have this form:
+    Outputs have the form below.
+
     {
         'second_addition': { <-- Component Name
             'result': {'type': "<class 'int'>"}  <-- Output
@@ -89,6 +91,7 @@ def convert_value_to_dict(value):
 def convert_component_output(component_output):
     """
     Converts component outputs to dictionaries that can be validated against response model.
+
     Handles nested structures recursively.
 
     Args:

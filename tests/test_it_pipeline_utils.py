@@ -1,17 +1,19 @@
-import os
-import pytest
 import asyncio
-from haystack import Pipeline, AsyncPipeline
-from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall, ToolCallDelta, ToolCallResult
-from typing import Generator, AsyncGenerator, Dict, Any
-from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator, find_streaming_component
-from hayhooks.open_webui import OpenWebUIEvent
+import os
+from collections.abc import AsyncGenerator, Generator
+from typing import Any
+
+import pytest
+from haystack import AsyncPipeline, Pipeline
 from haystack.components.builders import ChatPromptBuilder, PromptBuilder
-from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.components.generators import OpenAIGenerator
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall, ToolCallDelta, ToolCallResult
 from haystack.utils import Secret
-from hayhooks.open_webui import create_notification_event
+
 from hayhooks import callbacks
+from hayhooks.open_webui import OpenWebUIEvent, create_notification_event
+from hayhooks.server.pipelines.utils import async_streaming_generator, find_streaming_component, streaming_generator
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
@@ -66,7 +68,7 @@ def test_sync_pipeline_sync_streaming_callback_streaming_generator(sync_pipeline
     )
     assert isinstance(generator, Generator)
 
-    chunks = [chunk for chunk in generator]
+    chunks = list(generator)
     assert len(chunks) > 0
 
     streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
@@ -292,7 +294,8 @@ async def test_async_streaming_generator_cancellation(mocker, mocked_pipeline_wi
             pass
         except Exception as e:
             # Any other exception should cause the test to fail
-            raise AssertionError(f"Unexpected exception during cancellation: {e}")
+            msg = f"Unexpected exception during cancellation: {e}"
+            raise AssertionError(msg) from e
 
     # Should not raise any unexpected exceptions
     await run_and_cancel()
@@ -332,7 +335,7 @@ def test_streaming_generator_modifies_args_copy(mocked_pipeline_with_streaming_c
 
     # Args passed to pipeline.run should include the streaming component
     pipeline.run.assert_called_once()
-    call_kwargs: Dict[str, Any] = pipeline.run.call_args.kwargs
+    call_kwargs: dict[str, Any] = pipeline.run.call_args.kwargs
     assert "streaming_component" in call_kwargs["data"]
     assert "other_component" in call_kwargs["data"]
 
@@ -355,7 +358,7 @@ async def test_async_streaming_generator_modifies_args_copy(mocker, mocked_pipel
 
     # Args passed to pipeline.run_async should include the streaming component
     pipeline.run_async.assert_called_once()
-    call_kwargs: Dict[str, Any] = pipeline.run_async.call_args.kwargs
+    call_kwargs: dict[str, Any] = pipeline.run_async.call_args.kwargs
     assert "streaming_component" in call_kwargs["data"]
     assert "other_component" in call_kwargs["data"]
 
@@ -423,8 +426,8 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
     pipeline.run.side_effect = mock_run
 
     # Use real functions and spy on them
-    on_tool_call_start_spy = mocker.spy(callbacks, 'default_on_tool_call_start')
-    on_tool_call_end_spy = mocker.spy(callbacks, 'default_on_tool_call_end')
+    on_tool_call_start_spy = mocker.spy(callbacks, "default_on_tool_call_start")
+    on_tool_call_end_spy = mocker.spy(callbacks, "default_on_tool_call_end")
 
     generator = streaming_generator(
         pipeline, on_tool_call_start=on_tool_call_start_spy, on_tool_call_end=on_tool_call_end_spy
@@ -527,8 +530,8 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
     # Use real functions and spy on them
-    on_tool_call_start_spy = mocker.spy(callbacks, 'default_on_tool_call_start')
-    on_tool_call_end_spy = mocker.spy(callbacks, 'default_on_tool_call_end')
+    on_tool_call_start_spy = mocker.spy(callbacks, "default_on_tool_call_start")
+    on_tool_call_end_spy = mocker.spy(callbacks, "default_on_tool_call_end")
 
     generator = async_streaming_generator(
         pipeline, on_tool_call_start=on_tool_call_start_spy, on_tool_call_end=on_tool_call_end_spy

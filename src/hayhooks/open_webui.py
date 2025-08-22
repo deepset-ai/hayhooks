@@ -1,4 +1,5 @@
-from typing import Dict, Any, Union, Literal
+from typing import Any, Literal, Union
+
 from pydantic import BaseModel
 
 
@@ -11,13 +12,16 @@ class StatusEventData(BaseModel):
 class MessageEventData(BaseModel):
     content: str
 
+
 class NotificationEventData(BaseModel):
     type: Literal["info", "success", "warning", "error"] = "info"
     content: str
 
+
 class OpenWebUIEvent(BaseModel):
     """
     OpenWebUIEvent is a Pydantic model that represents an event that can be sent to the Open WebUI.
+
     It is used to send events to the Open WebUI from Hayhooks.
 
     Full event documentation: https://docs.openwebui.com/features/plugin/events
@@ -31,10 +35,10 @@ class OpenWebUIEvent(BaseModel):
         StatusEventData,
         MessageEventData,
         NotificationEventData,
-        Dict[str, Any],  # Fallback for custom data
+        dict[str, Any],  # Fallback for custom data
     ]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for Open WebUI."""
         return self.model_dump()
 
@@ -44,7 +48,7 @@ def create_status_event(description: str, done: bool = False, hidden: bool = Fal
     return OpenWebUIEvent(type="status", data=StatusEventData(description=description, done=done, hidden=hidden))
 
 
-def create_chat_completion_event(data: Dict[str, Any]) -> OpenWebUIEvent:
+def create_chat_completion_event(data: dict[str, Any]) -> OpenWebUIEvent:
     """Create a chat completion event to provide completion results."""
     return OpenWebUIEvent(type="chat:completion", data=data)
 
@@ -59,7 +63,7 @@ def create_replace_event(content: str) -> OpenWebUIEvent:
     return OpenWebUIEvent(type="replace", data=MessageEventData(content=content))
 
 
-def create_source_event(source_data: Dict[str, Any]) -> OpenWebUIEvent:
+def create_source_event(source_data: dict[str, Any]) -> OpenWebUIEvent:
     """Create a source event to add a reference/citation or code execution result."""
     return OpenWebUIEvent(type="source", data=source_data)
 
@@ -88,9 +92,4 @@ def create_details_tag(
     This is not an OpenWebUIEvent, but a string that can be rendered
     by Open WebUI as a details block.
     """
-    return (
-        f'<details type="{tool_name}" done="true">\n'
-        f"<summary>{summary}</summary>\n\n"
-        f"{content}\n"
-        "</details>\n\n"
-    )
+    return f'<details type="{tool_name}" done="true">\n<summary>{summary}</summary>\n\n{content}\n</details>\n\n'

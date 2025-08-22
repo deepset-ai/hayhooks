@@ -1,9 +1,12 @@
-from typing import AsyncGenerator, Union
+from collections.abc import AsyncGenerator
+from typing import Union
+
 from haystack.components.agents import Agent
-from haystack.dataclasses import ChatMessage, StreamingChunk
 from haystack.components.generators.chat import OpenAIChatGenerator
-from hayhooks.open_webui import OpenWebUIEvent, create_status_event, create_details_tag
+from haystack.dataclasses import ChatMessage, StreamingChunk
+
 from hayhooks import BasePipelineWrapper, async_streaming_generator
+from hayhooks.open_webui import OpenWebUIEvent, create_details_tag, create_status_event
 
 
 class PipelineWrapper(BasePipelineWrapper):
@@ -14,11 +17,12 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 
     async def run_chat_completion_async(
-        self, model: str, messages: list[dict], body: dict
+        self,
+        model: str,  # noqa: ARG002
+        messages: list[dict],
+        body: dict,  # noqa: ARG002
     ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
-        chat_messages = [
-            ChatMessage.from_openai_dict_format(message) for message in messages
-        ]
+        chat_messages = [ChatMessage.from_openai_dict_format(message) for message in messages]
 
         async def main_async_generator():
             # Send a status event to open-webui to indicate that the pipeline is running
@@ -45,8 +49,8 @@ class PipelineWrapper(BasePipelineWrapper):
             )
 
             # We can event send a <details> tag to open-webui to provide more details about the pipeline
-            # This will be displayed as a collapsible section in the open-webui UI with the summary "Pipeline completed!"
-            # and the content "Pipeline successfully completed!"
+            # This will be displayed as a collapsible section in the open-webui UI with the summary
+            # "Pipeline completed!" and the content "Pipeline successfully completed!"
             yield "\n" + create_details_tag(
                 tool_name="Pipeline",
                 summary="Pipeline completed!",

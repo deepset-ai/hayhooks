@@ -1,4 +1,5 @@
 from haystack import Pipeline
+
 from hayhooks import BasePipelineWrapper
 
 

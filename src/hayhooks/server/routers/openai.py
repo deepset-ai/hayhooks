@@ -1,18 +1,20 @@
+import json
 import time
 import uuid
-import json
-from typing import Generator, List, Literal, Union, AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
+from typing import Literal, Union
+
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+from haystack.dataclasses import StreamingChunk
 from pydantic import BaseModel, ConfigDict
+
+from hayhooks.open_webui import OpenWebUIEvent
+from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import handle_pipeline_exceptions
-from hayhooks.server.logger import log
-from haystack.dataclasses import StreamingChunk
-from hayhooks.open_webui import OpenWebUIEvent
-
 
 router = APIRouter()
 
@@ -26,7 +28,7 @@ class ModelObject(BaseModel):
 
 
 class ModelsResponse(BaseModel):
-    data: List[ModelObject]
+    data: list[ModelObject]
     object: Literal["list"]
 
 
@@ -36,7 +38,7 @@ class OpenAIBaseModel(BaseModel):
 
 class ChatRequest(OpenAIBaseModel):
     model: str
-    messages: List[dict]
+    messages: list[dict]
     stream: bool = False
 
 
@@ -58,7 +60,7 @@ class ChatCompletion(OpenAIBaseModel):
     object: Union[Literal["chat.completion"], Literal["chat.completion.chunk"]]
     created: int
     model: str
-    choices: List[Choice]
+    choices: list[Choice]
 
 
 MODELS_PARAMS: dict = {
@@ -133,7 +135,7 @@ def _chat_completion_response(result: str, resp_id: str, model_name: str) -> Cha
 
 
 async def _execute_pipeline_method(
-    pipeline_wrapper: BasePipelineWrapper, model: str, messages: List[dict], body: dict
+    pipeline_wrapper: BasePipelineWrapper, model: str, messages: list[dict], body: dict
 ) -> Union[str, Generator, AsyncGenerator]:
     # Check if either sync or async chat completion is implemented
     sync_implemented = pipeline_wrapper._is_run_chat_completion_implemented

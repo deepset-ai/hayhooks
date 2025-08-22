@@ -1,12 +1,12 @@
-import pytest
 import importlib.util
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
 from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
-from hayhooks.server.utils.mcp_utils import create_mcp_server, CoreTools
-from starlette.testclient import TestClient
-
+from hayhooks.server.utils.mcp_utils import CoreTools, create_mcp_server
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
@@ -19,10 +19,8 @@ pytestmark = [
 # Conditional import for mcp types if needed, though skipif should guard tests
 if MCP_AVAILABLE:
     from mcp.server import Server
-    from mcp.types import TextContent, CallToolResult
-    from mcp.shared.memory import (
-        create_connected_server_and_client_session as client_session,
-    )
+    from mcp.shared.memory import create_connected_server_and_client_session as client_session
+    from mcp.types import CallToolResult, TextContent
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +62,6 @@ def mcp_server_instance() -> "Server":
 
 @pytest.mark.asyncio
 async def test_list_only_core_tools(mcp_server_instance):
-
     async with client_session(mcp_server_instance) as client:
         list_tools_result = await client.list_tools()
 
@@ -90,18 +87,18 @@ async def test_list_tools_with_one_pipeline_deployed(mcp_server_instance, deploy
         assert pipeline_tool.name == deploy_chat_with_website_mcp_pipeline
         assert pipeline_tool.description == "Ask a question about one or more websites using a Haystack pipeline."
         assert pipeline_tool.inputSchema == {
-            'properties': {
-                'urls': {
-                    'description': "Parameter 'urls'",
-                    'items': {'type': 'string'},
-                    'title': 'Urls',
-                    'type': 'array',
+            "properties": {
+                "urls": {
+                    "description": "Parameter 'urls'",
+                    "items": {"type": "string"},
+                    "title": "Urls",
+                    "type": "array",
                 },
-                'question': {'description': "Parameter 'question'", 'title': 'Question', 'type': 'string'},
+                "question": {"description": "Parameter 'question'", "title": "Question", "type": "string"},
             },
-            'required': ['urls', 'question'],
-            'title': 'chat_with_websiteRunRequest',
-            'type': 'object',
+            "required": ["urls", "question"],
+            "title": "chat_with_websiteRunRequest",
+            "type": "object",
         }
 
 
@@ -166,7 +163,6 @@ async def test_call_pipeline_as_tool_with_invalid_pipeline_name(mcp_server_insta
 async def test_ensure_send_tool_list_changed_notification_after_deploy_or_undeploy(mcp_server_instance):
     with patch("hayhooks.server.utils.mcp_utils.notify_client") as mock_notify_client:
         async with client_session(mcp_server_instance) as client:
-
             result = await client.call_tool(
                 CoreTools.DEPLOY_PIPELINE,
                 {

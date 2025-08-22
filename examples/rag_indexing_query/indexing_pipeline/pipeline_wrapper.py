@@ -1,26 +1,22 @@
-from typing import List, Optional
+from typing import Optional
+
 from fastapi import UploadFile
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from haystack.dataclasses import ByteStream
+
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        from haystack.components.writers import DocumentWriter
-        from haystack.components.converters import (
-            MarkdownToDocument,
-            PyPDFToDocument,
-            TextFileToDocument,
-        )
-        from haystack.components.preprocessors import DocumentSplitter, DocumentCleaner
-        from haystack.components.routers import FileTypeRouter
-        from haystack.components.joiners import DocumentJoiner
-        from haystack.components.embedders import SentenceTransformersDocumentEmbedder
         from haystack import Pipeline
+        from haystack.components.converters import MarkdownToDocument, PyPDFToDocument, TextFileToDocument
+        from haystack.components.embedders import SentenceTransformersDocumentEmbedder
+        from haystack.components.joiners import DocumentJoiner
+        from haystack.components.preprocessors import DocumentCleaner, DocumentSplitter
+        from haystack.components.routers import FileTypeRouter
+        from haystack.components.writers import DocumentWriter
         from haystack.document_stores.types import DuplicatePolicy
-        from haystack_integrations.document_stores.elasticsearch import (
-            ElasticsearchDocumentStore,
-        )
+        from haystack_integrations.document_stores.elasticsearch import ElasticsearchDocumentStore
 
         document_store = ElasticsearchDocumentStore(hosts="http://localhost:9200")
         file_type_router = FileTypeRouter(mime_types=["text/plain", "application/pdf", "text/markdown"])
@@ -59,7 +55,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
         self.pipeline = pipe
 
-    def run_api(self, files: Optional[List[UploadFile]] = None) -> dict:
+    def run_api(self, files: Optional[list[UploadFile]] = None) -> dict:
         try:
             if files:
                 byte_streams = []
