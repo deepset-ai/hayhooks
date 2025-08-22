@@ -85,7 +85,7 @@ components:
     type: haystack.components.generators.openai.OpenAIGenerator
   query_rephrase_prompt_builder:
     init_parameters:
-      required_variables: null
+      required_variables: "*"
       template: "\nRewrite the question for semantic search while keeping its meaning\
         \ and key terms intact.\nIf the conversation history is empty, DO NOT change\
         \ the query.\nDo not translate the question.\nUse conversation history only\

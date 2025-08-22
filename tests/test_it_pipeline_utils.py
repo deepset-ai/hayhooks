@@ -21,7 +21,7 @@ QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes o
 @pytest.fixture
 def sync_pipeline_with_sync_streaming_callback_support():
     pipeline = Pipeline()
-    pipeline.add_component("prompt_builder", ChatPromptBuilder())
+    pipeline.add_component("prompt_builder", ChatPromptBuilder(required_variables="*"))
     pipeline.add_component(
         "llm", OpenAIChatGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini")
     )
@@ -35,7 +35,7 @@ def async_pipeline_with_async_streaming_callback_support():
     NOTE: `OpenAIChatGenerator` supports both _async_ and _sync_ `streaming_callback`.
     """
     pipeline = AsyncPipeline()
-    pipeline.add_component("prompt_builder", ChatPromptBuilder())
+    pipeline.add_component("prompt_builder", ChatPromptBuilder(required_variables="*"))
     pipeline.add_component(
         "llm", OpenAIChatGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini")
     )
@@ -46,7 +46,7 @@ def async_pipeline_with_async_streaming_callback_support():
 @pytest.fixture
 def async_pipeline_without_async_streaming_callback_support():
     pipeline = AsyncPipeline()
-    pipeline.add_component("prompt_builder", PromptBuilder(template=QUESTION))
+    pipeline.add_component("prompt_builder", PromptBuilder(template=QUESTION, required_variables="*"))
     pipeline.add_component("llm", OpenAIGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
     pipeline.connect("prompt_builder.prompt", "llm.prompt")
     return pipeline

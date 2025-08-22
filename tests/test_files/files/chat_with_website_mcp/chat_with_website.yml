@@ -37,6 +37,7 @@ components:
         Answer the given question: {{query}}
         Answer:
         "
+      required_variables: "*"
     type: haystack.components.builders.prompt_builder.PromptBuilder
 
 connections:
