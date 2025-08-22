@@ -7,7 +7,7 @@ import traceback
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Optional, TypeVar, Union
+from typing import Any, Callable, Optional, Union
 
 import docstring_parser
 from docstring_parser.common import Docstring
@@ -15,7 +15,6 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from haystack import AsyncPipeline, Pipeline
 from pydantic import BaseModel, Field, create_model
 
 from hayhooks.server.exceptions import (
@@ -34,12 +33,6 @@ from hayhooks.server.pipelines.models import (
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.settings import settings
-
-PipelineType = Union[Pipeline, AsyncPipeline, BasePipelineWrapper]
-
-# Type variables for request and response models
-RequestModelT = TypeVar("RequestModelT", bound=BaseModel)
-ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel)
 
 
 def deploy_pipeline_def(app: FastAPI, pipeline_def: PipelineDefinition) -> dict[str, str]:
@@ -64,26 +57,26 @@ def deploy_pipeline_def(app: FastAPI, pipeline_def: PipelineDefinition) -> dict[
         msg = "Pipelines of type BasePipelineWrapper are not supported"
         raise ValueError(msg)
 
-    request_model = get_request_model(pipeline_def.name, pipe.inputs())
-    response_model = get_response_model(pipeline_def.name, pipe.outputs())
+    PipelineRunRequest = get_request_model(pipeline_def.name, pipe.inputs())
+    PipelineRunResponse = get_response_model(pipeline_def.name, pipe.outputs())
 
     # There's no way in FastAPI to define the type of the request body other than annotating
     # the endpoint handler. We have to ignore the type here to make FastAPI happy while
     # silencing static type checkers (that would have good reasons to trigger!).
-    async def pipeline_run(pipeline_run_req: BaseModel) -> JSONResponse:
-        result = await run_in_threadpool(pipe.run, data=pipeline_run_req.model_dump())
+    async def pipeline_run(pipeline_run_req: PipelineRunRequest) -> JSONResponse:  # type: ignore
+        result = await run_in_threadpool(pipe.run, data=pipeline_run_req.dict())
         final_output = {}
         for component_name, output in result.items():
             final_output[component_name] = convert_component_output(output)
 
-        return JSONResponse(response_model(**final_output).model_dump(), status_code=200)
+        return JSONResponse(PipelineRunResponse(**final_output).model_dump(), status_code=200)
 
     app.add_api_route(
         path=f"/{pipeline_def.name}",
         endpoint=pipeline_run,
         methods=["POST"],
         name=pipeline_def.name,
-        response_model=response_model,
+        response_model=PipelineRunResponse,
         tags=["pipelines"],
     )
     app.openapi_schema = None
@@ -251,7 +244,7 @@ def handle_pipeline_exceptions() -> Callable:
 
     def decorator(func):
         @wraps(func)  # Preserve the original function's metadata
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        async def wrapper(*args, **kwargs):
             try:
                 return await func(*args, **kwargs)
             except HTTPException as e:
@@ -272,17 +265,12 @@ def handle_pipeline_exceptions() -> Callable:
 
 def create_run_endpoint_handler(
     pipeline_wrapper: BasePipelineWrapper,
-    request_model: type[RequestModelT],
-    response_model: type[ResponseModelT],
+    request_model: type[BaseModel],
+    response_model: type[BaseModel],
     requires_files: bool,
 ) -> Callable:
     """
     Factory method to create the appropriate run endpoint handler based on whether file uploads are supported.
-
-    Note:
-        There's no way in FastAPI to define the type of the request body other than annotating
-        the endpoint handler. We have to **ignore the type here** to make FastAPI happy while
-        silencing static type checkers (that would have good reasons to trigger!).
 
     Args:
         pipeline_wrapper: The pipeline wrapper instance
@@ -293,8 +281,8 @@ def create_run_endpoint_handler(
 
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(
-        run_req: RequestModelT = Form(..., media_type="multipart/form-data"),  # noqa: B008
-    ) -> ResponseModelT:
+        run_req: request_model = Form(..., media_type="multipart/form-data"),  # noqa: B008
+    ) -> response_model:
         if pipeline_wrapper._is_run_api_async_implemented:
             result = await pipeline_wrapper.run_api_async(**run_req.model_dump())
         else:
@@ -302,7 +290,7 @@ def create_run_endpoint_handler(
         return response_model(result=result)
 
     @handle_pipeline_exceptions()
-    async def run_endpoint_without_files(run_req: RequestModelT) -> ResponseModelT:
+    async def run_endpoint_without_files(run_req: request_model) -> response_model:
         if pipeline_wrapper._is_run_api_async_implemented:
             result = await pipeline_wrapper.run_api_async(**run_req.model_dump())
         else:
