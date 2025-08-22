@@ -36,7 +36,7 @@ class PipelineWrapper(BasePipelineWrapper):
             SentenceTransformersTextEmbedder(model="sentence-transformers/all-MiniLM-L6-v2"),
         )
         pipe.add_component("retriever", ElasticsearchEmbeddingRetriever(document_store=document_store))
-        pipe.add_component("chat_prompt_builder", ChatPromptBuilder(template=template))
+        pipe.add_component("chat_prompt_builder", ChatPromptBuilder(template=template, required_variables="*"))
         pipe.add_component(
             "llm",
             HuggingFaceAPIChatGenerator(
