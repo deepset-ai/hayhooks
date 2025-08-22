@@ -193,7 +193,7 @@ def prepare_files_with_progress(
 
 def upload_files_with_progress(
     url: str, files: dict[str, Path], form_data: Optional[dict[str, Any]] = None, verify_ssl: bool = True
-) -> tuple[Optional[dict[str, Any]], float]:
+) -> tuple[dict[str, Any], float]:
     """
     Upload files with progress bar tracking.
 
@@ -216,7 +216,7 @@ def upload_files_with_progress(
     get_console().print(f"Uploading {len(files)} files ({total_size_mb:.2f} MB)...")
 
     start_time = time.time()
-    result = None
+    result: dict[str, Any] = {}
     file_handles: list[io.BufferedReader] = []
 
     try:
