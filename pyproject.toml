@@ -64,16 +64,8 @@ dependencies = [
 fmt = "ruff check --fix {args} && ruff format {args}"
 fmt-check = "ruff check {args} && ruff format --check {args}"
 
-[tool.hatch.envs.mcp]
-features = ["mcp"]
-
-[tool.hatch.envs.test.scripts]
-unit = "pytest -vv -m 'not integration' {args:tests}"
-integration = "pytest -vv -m integration {args:tests}"
-all = "pytest -vv {args:tests}"
-all-cov = "all --cov=hayhooks"
-
 [tool.hatch.envs.test]
+features = ["mcp"]
 extra-dependencies = [
   "pytest",
   "pytest-asyncio",
@@ -81,8 +73,13 @@ extra-dependencies = [
   "pytest-mock",
   "qdrant-haystack",
   "trafilatura",
-  "mcp ; python_version >= '3.10'",
 ]
+
+[tool.hatch.envs.test.scripts]
+unit = "pytest -vv -m 'not integration' {args:tests}"
+integration = "pytest -vv -m integration {args:tests}"
+all = "pytest -vv {args:tests}"
+all-cov = "all --cov=hayhooks"
 
 
 [tool.ruff]
