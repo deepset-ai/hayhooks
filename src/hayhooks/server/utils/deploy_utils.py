@@ -107,7 +107,7 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Save file content
-            file_path.write_text(content)
+            file_path.write_text(content, encoding="utf8")
             saved_files[filename] = str(file_path)
 
         return saved_files
