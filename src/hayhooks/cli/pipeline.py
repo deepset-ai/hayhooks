@@ -1,18 +1,19 @@
-import typer
 import json
-from typing import Optional, Annotated, Dict, List, Any
 from pathlib import Path
+from typing import Annotated, Any, Optional
+
+import typer
+
 from hayhooks.cli.utils import (
+    get_console,
+    get_server_url,
     make_request,
     show_error_and_abort,
     show_success_panel,
     show_warning_panel,
-    with_progress_spinner,
-    get_console,
-    get_server_url,
     upload_files_with_progress,
+    with_progress_spinner,
 )
-
 
 pipeline = typer.Typer()
 
@@ -41,8 +42,10 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
 def deploy(
     ctx: typer.Context,
     name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
-    pipeline_file: Path = typer.Argument(help="The path to the pipeline file to deploy."),
-):
+    pipeline_file: Path = typer.Argument(  # noqa: B008
+        help="The path to the pipeline file to deploy."
+    ),
+) -> None:
     """Deploy a pipeline to the Hayhooks server."""
     if not pipeline_file.exists():
         show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
@@ -58,14 +61,16 @@ def deploy(
 def deploy_files(
     ctx: typer.Context,
     name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
-    pipeline_dir: Path = typer.Argument(help="The path to the directory containing the pipeline files to deploy."),
+    pipeline_dir: Path = typer.Argument(  # noqa: B008
+        help="The path to the directory containing the pipeline files to deploy."
+    ),
     overwrite: Annotated[
         bool, typer.Option("--overwrite", "-o", help="Whether to overwrite the pipeline if it already exists.")
     ] = False,
     skip_saving_files: Annotated[
         bool, typer.Option("--skip-saving-files", "-s", help="Whether to skip saving the files to the server.")
     ] = False,
-):
+) -> None:
     """Deploy all pipeline files from a directory to the Hayhooks server."""
     if not pipeline_dir.exists():
         show_error_and_abort("Directory does not exist.", str(pipeline_dir))
@@ -90,7 +95,7 @@ def deploy_files(
 def undeploy(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The name of the pipeline to undeploy.")],
-):
+) -> None:
     """Undeploy a pipeline from the Hayhooks server."""
     response = with_progress_spinner(
         f"Undeploying pipeline '{name}'...",
@@ -116,21 +121,21 @@ def undeploy(
 
 
 @pipeline.command()
-def run(
+def run(  # noqa: PLR0912, C901
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The name of the pipeline to run.")],
     file: Annotated[
-        Optional[List[Path]], typer.Option("--file", "-f", help="Files to upload (can be specified multiple times)")
+        Optional[list[Path]], typer.Option("--file", "-f", help="Files to upload (can be specified multiple times)")
     ] = None,
     directory: Annotated[
-        Optional[List[Path]],
+        Optional[list[Path]],
         typer.Option("--dir", "-d", help="Directories to upload (all files within will be uploaded)"),
     ] = None,
     param: Annotated[
-        Optional[List[str]],
+        Optional[list[str]],
         typer.Option("--param", "-p", help="Parameters in format key=value (value can be string or JSON)"),
     ] = None,
-):
+) -> None:
     """Run a pipeline with the given files and parameters."""
     # Initialize collections
     files_to_upload = {}
@@ -148,10 +153,10 @@ def run(
             try:
                 # First check if it looks like it might be JSON
                 if (
-                    (value.startswith('{') and value.endswith('}'))
-                    or (value.startswith('[') and value.endswith(']'))
-                    or value.lower() in ('true', 'false', 'null')
-                    or (value.replace('.', '', 1).isdigit())
+                    (value.startswith("{") and value.endswith("}"))
+                    or (value.startswith("[") and value.endswith("]"))
+                    or value.lower() in ("true", "false", "null")
+                    or (value.replace(".", "", 1).isdigit())
                 ):
                     params_dict[key] = json.loads(value)
                 else:
@@ -179,7 +184,7 @@ def run(
                 show_error_and_abort(f"{dir_path} is not a directory")
 
             for file_path in dir_path.rglob("*"):
-                if file_path.is_file() and not file_path.name.startswith('.'):
+                if file_path.is_file() and not file_path.name.startswith("."):
                     # Use relative path as key to preserve directory structure
                     rel_path = file_path.relative_to(dir_path)
                     files_to_upload[str(rel_path)] = file_path
@@ -189,7 +194,7 @@ def run(
 
 
 def run_pipeline_with_files(
-    ctx: typer.Context, pipeline_name: str, files: Dict[str, Path], params: Dict[str, Any]
+    ctx: typer.Context, pipeline_name: str, files: dict[str, Path], params: dict[str, Any]
 ) -> None:
     """Run a pipeline with files and parameters."""
     server_url = get_server_url(host=ctx.obj["host"], port=ctx.obj["port"], https=ctx.obj["use_https"])
@@ -231,7 +236,7 @@ def run_pipeline_with_files(
     # Display the result
     if "result" in result:
         get_console().print("\n[bold cyan]Result:[/bold cyan]")
-        if isinstance(result["result"], dict) or isinstance(result["result"], list):
+        if isinstance(result["result"], (dict, list)):
             get_console().print_json(json.dumps(result["result"]))
         else:
             get_console().print(result["result"])

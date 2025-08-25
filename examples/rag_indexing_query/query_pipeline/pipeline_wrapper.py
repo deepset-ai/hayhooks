@@ -1,20 +1,17 @@
 from haystack import Pipeline
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+
 from hayhooks.server.logger import log
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        from haystack.components.embedders import SentenceTransformersTextEmbedder
         from haystack.components.builders import ChatPromptBuilder
-        from haystack.dataclasses import ChatMessage
+        from haystack.components.embedders import SentenceTransformersTextEmbedder
         from haystack.components.generators.chat import HuggingFaceAPIChatGenerator
-        from haystack_integrations.document_stores.elasticsearch import (
-            ElasticsearchDocumentStore,
-        )
-        from haystack_integrations.components.retrievers.elasticsearch import (
-            ElasticsearchEmbeddingRetriever,
-        )
+        from haystack.dataclasses import ChatMessage
+        from haystack_integrations.components.retrievers.elasticsearch import ElasticsearchEmbeddingRetriever
+        from haystack_integrations.document_stores.elasticsearch import ElasticsearchDocumentStore
 
         document_store = ElasticsearchDocumentStore(hosts="http://localhost:9200")
 
@@ -39,7 +36,7 @@ class PipelineWrapper(BasePipelineWrapper):
             SentenceTransformersTextEmbedder(model="sentence-transformers/all-MiniLM-L6-v2"),
         )
         pipe.add_component("retriever", ElasticsearchEmbeddingRetriever(document_store=document_store))
-        pipe.add_component("chat_prompt_builder", ChatPromptBuilder(template=template))
+        pipe.add_component("chat_prompt_builder", ChatPromptBuilder(template=template, required_variables="*"))
         pipe.add_component(
             "llm",
             HuggingFaceAPIChatGenerator(

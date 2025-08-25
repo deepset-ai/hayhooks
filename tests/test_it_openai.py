@@ -1,14 +1,15 @@
 import json
 import shutil
-import pytest
-from typing import Any, Dict
 from concurrent.futures import ThreadPoolExecutor
-from hayhooks.settings import settings
 from pathlib import Path
+from typing import Any
+
+import pytest
+
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import DeployResponse
-from hayhooks.server.routers.openai import ChatRequest, ChatCompletion, ModelObject, ModelsResponse
-from haystack import Pipeline
+from hayhooks.server.routers.openai import ChatCompletion, ChatRequest, ModelObject, ModelsResponse
+from hayhooks.settings import settings
 
 
 @pytest.fixture(autouse=True)
@@ -20,11 +21,7 @@ def clear_registry():
 
 
 def collect_chunks(response):
-    chunks = []
-    for event in response.iter_lines():
-        if event:
-            chunks.append(event)
-    return chunks
+    return [event for event in response.iter_lines() if event]
 
 
 TEST_FILES_DIR = Path(__file__).parent / "test_files/files/chat_with_website"
@@ -142,11 +139,11 @@ def test_chat_completion_not_implemented(client, deploy_files) -> None:
     response = client.post("/chat/completions", json=request.model_dump())
     assert response.status_code == 501
 
-    err_body: Dict[str, Any] = response.json()
+    err_body: dict[str, Any] = response.json()
     assert err_body["detail"] == "Chat endpoint not implemented for this model"
 
 
-def _test_streaming_chat_completion(client, deploy_files, pipeline_name: str, pipeline_files: Dict[str, str]):
+def _test_streaming_chat_completion(client, deploy_files, pipeline_name: str, pipeline_files: dict[str, str]):
     """
     Helper function to test the streaming chat completion.
     Used in tests for both sync and async streaming.
@@ -168,7 +165,7 @@ def _test_streaming_chat_completion(client, deploy_files, pipeline_name: str, pi
     # response is a stream of SSE events
     assert response.status_code == 200
 
-    headers: Dict[str, Any] = response.headers
+    headers: dict[str, Any] = response.headers
     assert headers["Content-Type"] == "text/event-stream; charset=utf-8"
 
     # collect the chunks

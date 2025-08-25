@@ -1,18 +1,22 @@
+import builtins
+import contextlib
 import io
+import mimetypes
+import time
+from pathlib import Path
+from typing import Any, Callable, Optional, TypeVar
+from urllib.parse import urljoin
+
 import requests
 import typer
-import time
-import mimetypes
-from typing import Optional, Dict, Any, Callable, List, Tuple
-from pathlib import Path
-from urllib.parse import urljoin
 from rich.panel import Panel
 from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
     BarColumn,
     DownloadColumn,
+    Progress,
+    SpinnerColumn,
+    TaskID,
+    TextColumn,
     TimeRemainingColumn,
     TransferSpeedColumn,
 )
@@ -21,7 +25,7 @@ _console = None
 
 
 def get_console():
-    global _console
+    global _console  # noqa: PLW0603
     if _console is None:
         from rich.console import Console
 
@@ -36,16 +40,17 @@ def get_server_url(host: str, port: int, https: bool = False) -> str:
         return f"http://{host}:{port}"
 
 
-def make_request(
+def make_request(  # noqa: PLR0913
     host: str,
     port: int,
     endpoint: str,
     method: str = "GET",
-    json: Optional[Dict[str, Any]] = None,
+    json: Optional[dict[str, Any]] = None,
     use_https: bool = False,
     disable_ssl: bool = False,
-) -> Dict[str, Any]:
-    """Make HTTP request to Hayhooks server with error handling.
+) -> dict[str, Any]:
+    """
+    Make HTTP request to Hayhooks server with error handling.
 
     Args:
         host: Server hostname
@@ -60,19 +65,21 @@ def make_request(
     url = urljoin(server_url, endpoint)
 
     try:
-        response = requests.request(method=method, url=url, json=json, verify=not disable_ssl)
+        response = requests.request(method=method, url=url, json=json, verify=not disable_ssl)  # noqa: S113
         response.raise_for_status()
         return response.json()
-    except requests.ConnectionError:
-        get_console().print("[red][bold]Hayhooks server is not responding.[/bold]\nTo start one, run `hayhooks run`[/red].")
-        raise typer.Abort()
-    except requests.HTTPError:
+    except requests.ConnectionError as connection_error:
+        get_console().print(
+            "[red][bold]Hayhooks server is not responding.[/bold]\nTo start one, run `hayhooks run`[/red]."
+        )
+        raise typer.Abort() from connection_error
+    except requests.HTTPError as http_error:
         error_detail = response.json().get("detail", "Unknown error")
         get_console().print(f"[red][bold]Server error[/bold]\n{error_detail}[/red]")
-        raise typer.Abort()
+        raise typer.Abort() from http_error
     except Exception as e:
-        get_console().print(f"[red][bold]Unexpected error[/bold]\n{str(e)}[/red]")
-        raise typer.Abort()
+        get_console().print(f"[red][bold]Unexpected error[/bold]\n{e!s}[/red]")
+        raise typer.Abort() from e
 
 
 def show_error_and_abort(message: str, highlight: str = "") -> None:
@@ -93,8 +100,12 @@ def show_warning_panel(message: str, title: str = "Warning") -> None:
     get_console().print(Panel.fit(message, border_style="yellow", title=title))
 
 
-def with_progress_spinner(description: str, operation: Callable, *args, **kwargs):
-    """Execute an operation with a progress spinner.
+T = TypeVar("T")
+
+
+def with_progress_spinner(description: str, operation: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    """
+    Execute an operation with a progress spinner.
 
     Args:
         description: Description to show in the spinner
@@ -116,32 +127,35 @@ def with_progress_spinner(description: str, operation: Callable, *args, **kwargs
 class ProgressFileReader:
     """File-like object wrapper that updates progress bar when read."""
 
-    def __init__(self, file_obj, progress, task_id, file_size):
+    def __init__(self, file_obj: io.IOBase, progress: Progress, task_id: TaskID, file_size: int) -> None:
         self.file_obj = file_obj
         self.progress = progress
         self.task_id = task_id
         self.file_size = file_size
         self.bytes_read = 0
 
-    def read(self, size=-1):
+    def read(self, size: int = -1) -> bytes:
         chunk = self.file_obj.read(size)
         chunk_size = len(chunk)
         self.bytes_read += chunk_size
         self.progress.update(self.task_id, advance=chunk_size)
         return chunk
 
-    def seek(self, offset, whence=0):
+    def seek(self, offset: int, whence: int = 0) -> int:
         return self.file_obj.seek(offset, whence)
 
-    def tell(self):
+    def tell(self) -> int:
         return self.file_obj.tell()
 
-    def close(self):
+    def close(self) -> None:
         return self.file_obj.close()
 
 
-def prepare_files_with_progress(files: Dict[str, Path], progress, task_id) -> Tuple[List[Tuple], List]:
-    """Prepare files for upload with progress tracking.
+def prepare_files_with_progress(
+    files: dict[str, Path], progress: Progress, task_id: TaskID
+) -> tuple[list[tuple[str, tuple[str, ProgressFileReader, str]]], list[io.BufferedReader]]:
+    """
+    Prepare files for upload with progress tracking.
 
     Args:
         files: Dictionary mapping file keys to Path objects
@@ -157,7 +171,7 @@ def prepare_files_with_progress(files: Dict[str, Path], progress, task_id) -> Tu
     files_list = []
     file_handles = []
 
-    for file_key, file_path in files.items():
+    for file_path in files.values():
         # Determine content type using mimetypes module
         content_type, _ = mimetypes.guess_type(file_path)
         if content_type is None:
@@ -165,22 +179,23 @@ def prepare_files_with_progress(files: Dict[str, Path], progress, task_id) -> Tu
 
         # Get file size and open file
         file_size = file_path.stat().st_size
-        file_obj = open(file_path, 'rb')
-        file_handles.append(file_obj)
+        with open(file_path, "rb") as file_obj:
+            file_handles.append(file_obj)
 
         # Create progress tracking wrapper
         progress_reader = ProgressFileReader(file_obj, progress, task_id, file_size)
 
         # Add to files list with repeating 'files' field name
-        files_list.append(('files', (file_path.name, progress_reader, content_type)))
+        files_list.append(("files", (file_path.name, progress_reader, content_type)))
 
     return files_list, file_handles
 
 
 def upload_files_with_progress(
-    url: str, files: Dict[str, Path], form_data: Optional[Dict[str, Any]] = None, verify_ssl: bool = True
-) -> Tuple[Any, float]:
-    """Upload files with progress bar tracking.
+    url: str, files: dict[str, Path], form_data: Optional[dict[str, Any]] = None, verify_ssl: bool = True
+) -> tuple[dict[str, Any], float]:
+    """
+    Upload files with progress bar tracking.
 
     Args:
         url: The URL to upload to
@@ -201,8 +216,8 @@ def upload_files_with_progress(
     get_console().print(f"Uploading {len(files)} files ({total_size_mb:.2f} MB)...")
 
     start_time = time.time()
-    result = None
-    file_handles: List[io.BufferedReader] = []
+    result: dict[str, Any] = {}
+    file_handles: list[io.BufferedReader] = []
 
     try:
         with Progress(
@@ -224,7 +239,7 @@ def upload_files_with_progress(
             files_list, file_handles = prepare_files_with_progress(files, progress, upload_task)
 
             # Upload files with progress tracking
-            response = requests.post(
+            response = requests.post(  # noqa: S113
                 url,
                 data=form_data,  # Form fields
                 files=files_list,  # Multiple files as a list of tuples
@@ -240,17 +255,15 @@ def upload_files_with_progress(
         try:
             error_detail = response.json().get("detail", "Unknown error")
             show_error_and_abort(f"Server error: {error_detail}")
-        except:
+        except Exception:
             show_error_and_abort(f"Server error: {response.text}")
     except Exception as e:
-        show_error_and_abort(f"Unexpected error: {str(e)}")
+        show_error_and_abort(f"Unexpected error: {e!s}")
     finally:
         # Close all file handles
         for file_obj in file_handles:
-            try:
+            with contextlib.suppress(builtins.BaseException):
                 file_obj.close()
-            except:
-                pass
 
     elapsed_time = time.time() - start_time
     get_console().print(f"Upload and execution completed in {elapsed_time:.2f} seconds")

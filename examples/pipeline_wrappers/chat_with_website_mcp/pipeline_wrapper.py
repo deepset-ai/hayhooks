@@ -1,6 +1,7 @@
 from pathlib import Path
-from typing import List
+
 from haystack import Pipeline
+
 from hayhooks import BasePipelineWrapper, log
 
 
@@ -9,7 +10,7 @@ class PipelineWrapper(BasePipelineWrapper):
         pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
-    def run_api(self, urls: List[str], question: str) -> str:
+    def run_api(self, urls: list[str], question: str) -> str:
         """
         Ask a question about one or more websites using a Haystack pipeline.
         """

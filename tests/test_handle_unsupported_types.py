@@ -1,20 +1,21 @@
-from typing import Optional, List
+from typing import Optional
+
 from hayhooks.server.utils.create_valid_type import handle_unsupported_types
 
 
 def test_handle_simple_type():
     result = handle_unsupported_types(int, {})
-    assert result == int
+    assert result is int
 
 
 def test_handle_generic_type():
-    result = handle_unsupported_types(List[int], {})
+    result = handle_unsupported_types(list[int], {})
     assert result == list[int]
 
 
 def test_handle_recursive_type():
     class Node:
-        def __init__(self, value: int, next: Optional['Node'] = None):
+        def __init__(self, value: int, next: Optional["Node"] = None):  # noqa: A002
             self.value = value
             self.next = next
 
@@ -24,11 +25,11 @@ def test_handle_recursive_type():
 
 def test_handle_circular_reference():
     class A:
-        def __init__(self, b: 'B'):
+        def __init__(self, b: "B"):
             self.b = b
 
     class B:
-        def __init__(self, a: 'A'):
+        def __init__(self, a: "A"):
             self.a = a
 
     result = handle_unsupported_types(A, {})

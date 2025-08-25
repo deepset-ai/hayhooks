@@ -1,9 +1,11 @@
-import pytest
 from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
+from packaging.version import InvalidVersion, Version
+
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
-from packaging.version import Version, InvalidVersion
 
 
 @pytest.fixture(autouse=True)
@@ -104,5 +106,6 @@ def test_app_version_is_pep440_compliant():
     assert app.version not in (None, "", "unknown"), "App version should be defined and not 'unknown'"
     try:
         Version(app.version)
-    except InvalidVersion:
-        assert False, f"App version '{app.version}' is not a valid PEP 440 version"
+    except InvalidVersion as e:
+        msg = f"App version '{app.version}' is not a valid PEP 440 version"
+        raise AssertionError(msg) from e

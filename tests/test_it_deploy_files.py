@@ -1,10 +1,12 @@
-import pytest
 import shutil
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.routers.deploy import DeployResponse
 from hayhooks.server.routers.status import PipelineStatusResponse
-from pathlib import Path
-from hayhooks.server.pipelines.registry import registry
-from typing import Dict, Any
 
 
 def clear_registry_and_files(pipelines_dir: str):
@@ -88,18 +90,18 @@ def test_deploy_files_ok(status_pipeline, pipeline_files: tuple[str, dict], clie
 
 
 def test_deploy_files_missing_wrapper(client, deploy_files) -> None:
-    pipeline_data: Dict[str, Any] = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES.copy()}
+    pipeline_data: dict[str, Any] = {"name": "test_pipeline", "files": SAMPLE_PIPELINE_FILES.copy()}
     pipeline_data["files"].pop("pipeline_wrapper.py")
 
     response = deploy_files(client, pipeline_name=pipeline_data["name"], pipeline_files=pipeline_data["files"])
     assert response.status_code == 422
 
-    err_body: Dict[str, Any] = response.json()
+    err_body: dict[str, Any] = response.json()
     assert "Missing required file" in err_body["detail"][0]["msg"]
 
 
 def test_deploy_files_invalid_wrapper(client, deploy_files) -> None:
-    invalid_files: Dict[str, Any] = {
+    invalid_files: dict[str, Any] = {
         "pipeline_wrapper.py": "invalid python code",
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
@@ -107,7 +109,7 @@ def test_deploy_files_invalid_wrapper(client, deploy_files) -> None:
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
 
-    err_body: Dict[str, Any] = response.json()
+    err_body: dict[str, Any] = response.json()
     assert "Failed to load pipeline module" in err_body["detail"]
 
 
@@ -118,12 +120,12 @@ def test_deploy_files_duplicate_pipeline(client, deploy_files) -> None:
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=SAMPLE_PIPELINE_FILES)
     assert response.status_code == 409
 
-    err_body: Dict[str, Any] = response.json()
+    err_body: dict[str, Any] = response.json()
     assert "Pipeline 'test_pipeline' already exists" in err_body["detail"]
 
 
 def test_pipeline_endpoint_error_handling(client, deploy_files) -> None:
-    pipeline_files: Dict[str, Any] = {
+    pipeline_files: dict[str, Any] = {
         "pipeline_wrapper.py": (RUN_API_ERROR_DIR / "pipeline_wrapper.py").read_text(),
     }  # This pipeline wrapper will raise an error in run_api
 
@@ -136,13 +138,13 @@ def test_pipeline_endpoint_error_handling(client, deploy_files) -> None:
     )
     assert run_response.status_code == 500
 
-    err_body: Dict[str, Any] = run_response.json()
+    err_body: dict[str, Any] = run_response.json()
     assert "Pipeline execution failed" in err_body["detail"]
     assert "This is a test error" in err_body["detail"]
 
 
 def test_deploy_files_missing_required_methods(client, deploy_files) -> None:
-    invalid_files: Dict[str, Any] = {
+    invalid_files: dict[str, Any] = {
         "pipeline_wrapper.py": (MISSING_METHODS_DIR / "pipeline_wrapper.py").read_text(),
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
@@ -150,7 +152,7 @@ def test_deploy_files_missing_required_methods(client, deploy_files) -> None:
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
 
-    err_body: Dict[str, Any] = response.json()
+    err_body: dict[str, Any] = response.json()
     assert (
         "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented"
         in err_body["detail"]
@@ -158,7 +160,7 @@ def test_deploy_files_missing_required_methods(client, deploy_files) -> None:
 
 
 def test_deploy_files_setup_error(client, deploy_files) -> None:
-    invalid_files: Dict[str, Any] = {
+    invalid_files: dict[str, Any] = {
         "pipeline_wrapper.py": (SETUP_ERROR_DIR / "pipeline_wrapper.py").read_text(),
         "chat_with_website.yml": SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
     }
@@ -166,7 +168,7 @@ def test_deploy_files_setup_error(client, deploy_files) -> None:
     response = deploy_files(client, pipeline_name="test_pipeline", pipeline_files=invalid_files)
     assert response.status_code == 422
 
-    err_body: Dict[str, Any] = response.json()
+    err_body: dict[str, Any] = response.json()
     assert "Failed to call setup() on pipeline wrapper instance: Setup failed!" in err_body["detail"]
 
 

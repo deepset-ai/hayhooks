@@ -1,21 +1,19 @@
 import time
-from typing import AsyncGenerator, List
-from haystack.tools import Tool
+from collections.abc import AsyncGenerator
+
 from haystack.components.agents import Agent
-from haystack.dataclasses import ChatMessage
 from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage
+from haystack.tools import Tool
+
 from hayhooks import BasePipelineWrapper, async_streaming_generator
-from hayhooks.open_webui import (
-    create_notification_event,
-    create_status_event,
-    create_details_tag,
-)
-from hayhooks.open_webui import OpenWebUIEvent
+from hayhooks.open_webui import OpenWebUIEvent, create_details_tag, create_notification_event, create_status_event
 
 
 def weather_function(location):
     """
     This function is a mock for a weather API.
+
     It returns a dictionary with the weather information for a given location.
     It also sleeps for 3 seconds to simulate a real API call.
     """
@@ -51,7 +49,12 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 
     # Define a callback to intercept the "on_tool_call_start" event.
-    def on_tool_call_start(self, tool_name: str, arguments: dict, id: str) -> List[OpenWebUIEvent]:
+    def on_tool_call_start(
+        self,
+        tool_name: str,
+        arguments: dict,  # noqa: ARG002
+        id: str,  # noqa: ARG002, A002
+    ) -> list[OpenWebUIEvent]:
         return [
             create_status_event(description=f"Tool call started: {tool_name}"),
             create_notification_event(
@@ -66,8 +69,8 @@ class PipelineWrapper(BasePipelineWrapper):
         tool_name: str,
         arguments: dict,
         result: str,
-        error: bool,
-    ) -> List[OpenWebUIEvent]:
+        error: bool,  # noqa: ARG002
+    ) -> list[OpenWebUIEvent]:
         return [
             create_status_event(
                 description=f"Tool call ended: {tool_name}",
@@ -80,12 +83,15 @@ class PipelineWrapper(BasePipelineWrapper):
             create_details_tag(
                 tool_name=tool_name,
                 summary=f"Tool call result for {tool_name}",
-                content=(f"```\n" f"Arguments:\n" f"{arguments}\n" f"\nResponse:\n" f"{result}\n" "```"),
+                content=(f"```\nArguments:\n{arguments}\n\nResponse:\n{result}\n```"),
             ),
         ]
 
     async def run_chat_completion_async(
-        self, model: str, messages: list[dict], body: dict
+        self,
+        model: str,  # noqa: ARG002
+        messages: list[dict],
+        body: dict,  # noqa: ARG002
     ) -> AsyncGenerator[str, None]:
         chat_messages = [ChatMessage.from_openai_dict_format(message) for message in messages]
 

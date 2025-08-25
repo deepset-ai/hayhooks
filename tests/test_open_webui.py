@@ -1,17 +1,18 @@
 import pytest
 from pydantic import ValidationError
+
 from hayhooks.open_webui import (
-    StatusEventData,
     MessageEventData,
     NotificationEventData,
     OpenWebUIEvent,
-    create_status_event,
+    StatusEventData,
     create_chat_completion_event,
+    create_details_tag,
     create_message_event,
+    create_notification_event,
     create_replace_event,
     create_source_event,
-    create_notification_event,
-    create_details_tag,
+    create_status_event,
 )
 
 
@@ -169,10 +170,7 @@ class TestFactoryFunctions:
 
     def test_create_details_tag(self):
         assert create_details_tag(tool_name="test_tool", summary="Test Summary", content="Test Content") == (
-            f'<details type="test_tool" done="true">\n'
-            f"<summary>Test Summary</summary>\n\n"
-            f"Test Content\n"
-            "</details>\n\n"
+            '<details type="test_tool" done="true">\n<summary>Test Summary</summary>\n\nTest Content\n</details>\n\n'
         )
 
 

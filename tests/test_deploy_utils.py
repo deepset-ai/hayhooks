@@ -1,28 +1,26 @@
-import pytest
-import shutil
-import docstring_parser
 import inspect
-from fastapi.routing import APIRoute
-from hayhooks.server.pipelines import registry
-from haystack import Pipeline
+import shutil
 from pathlib import Path
 from typing import Callable
+
+import docstring_parser
+import pytest
+from fastapi.routing import APIRoute
+from haystack import Pipeline
+
+from hayhooks.server.exceptions import PipelineFilesError, PipelineModuleLoadError, PipelineWrapperError
+from hayhooks.server.pipelines import registry
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
-    load_pipeline_module,
-    save_pipeline_files,
+    add_pipeline_to_registry,
+    create_pipeline_wrapper_instance,
     create_request_model_from_callable,
     create_response_model_from_callable,
-    create_pipeline_wrapper_instance,
     deploy_pipeline_files,
+    load_pipeline_module,
+    save_pipeline_files,
     undeploy_pipeline,
-    add_pipeline_to_registry,
 )
-from hayhooks.server.exceptions import (
-    PipelineFilesError,
-    PipelineModuleLoadError,
-    PipelineWrapperError,
-)
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 
 @pytest.fixture(autouse=True)
@@ -42,9 +40,9 @@ def test_load_pipeline_module():
 
     assert module is not None
     assert hasattr(module, "PipelineWrapper")
-    assert isinstance(getattr(module.PipelineWrapper, "run_api"), Callable)
-    assert isinstance(getattr(module.PipelineWrapper, "run_chat_completion"), Callable)
-    assert isinstance(getattr(module.PipelineWrapper, "setup"), Callable)
+    assert isinstance(module.PipelineWrapper.run_api, Callable)
+    assert isinstance(module.PipelineWrapper.run_chat_completion, Callable)
+    assert isinstance(module.PipelineWrapper.setup, Callable)
 
 
 def test_load_pipeline_module_async():
@@ -55,9 +53,9 @@ def test_load_pipeline_module_async():
 
     assert module is not None
     assert hasattr(module, "PipelineWrapper")
-    assert isinstance(getattr(module.PipelineWrapper, "run_api_async"), Callable)
-    assert isinstance(getattr(module.PipelineWrapper, "run_chat_completion_async"), Callable)
-    assert isinstance(getattr(module.PipelineWrapper, "setup"), Callable)
+    assert isinstance(module.PipelineWrapper.run_api_async, Callable)
+    assert isinstance(module.PipelineWrapper.run_chat_completion_async, Callable)
+    assert isinstance(module.PipelineWrapper.setup, Callable)
 
 
 def test_load_pipeline_wrong_dir():
@@ -105,7 +103,7 @@ def test_save_pipeline_files_empty(test_settings):
     assert len(saved_paths) == 0
     assert (Path(test_settings.pipelines_dir) / pipeline_name).exists()
     assert (Path(test_settings.pipelines_dir) / pipeline_name).is_dir()
-    assert len([file for file in (Path(test_settings.pipelines_dir) / pipeline_name).iterdir()]) == 0
+    assert len(list((Path(test_settings.pipelines_dir) / pipeline_name).iterdir())) == 0
 
 
 def test_save_pipeline_files_raises_error(tmp_path):
@@ -123,7 +121,8 @@ def test_save_pipeline_files_raises_error(tmp_path):
 
 def test_create_request_model_from_callable():
     def sample_func(name: str, age: int = 25, optional: str = ""):
-        """Sample function with docstring.
+        """
+        Sample function with docstring.
 
         Args:
             name: The name of the person.
@@ -174,7 +173,8 @@ def test_create_request_model_no_docstring():
 
 def test_create_request_model_partial_docstring():
     def sample_func_partial_doc(documented_param: str, undocumented_param: int = 42):
-        """Sample function with partial docstring.
+        """
+        Sample function with partial docstring.
 
         Args:
             documented_param: This parameter is documented.
@@ -200,7 +200,8 @@ def test_create_request_model_partial_docstring():
 
 def test_create_response_model_from_callable():
     def sample_func() -> dict:
-        """Sample function with return description.
+        """
+        Sample function with return description.
 
         Returns:
             A dictionary result.
@@ -243,21 +244,22 @@ def test_create_pipeline_wrapper_instance_success():
         def run_chat_completion(self, model, messages, body):
             pass
 
-    module = type('Module', (), {'PipelineWrapper': ValidPipelineWrapper})
+    module = type("Module", (), {"PipelineWrapper": ValidPipelineWrapper})
 
     wrapper = create_pipeline_wrapper_instance(module)
     assert isinstance(wrapper, BasePipelineWrapper)
-    assert hasattr(wrapper, 'run_api')
-    assert hasattr(wrapper, 'run_chat_completion')
+    assert hasattr(wrapper, "run_api")
+    assert hasattr(wrapper, "run_chat_completion")
     assert isinstance(wrapper.pipeline, Pipeline)
 
 
 def test_create_pipeline_wrapper_instance_init_error():
     class BrokenPipelineWrapper:
         def __init__(self):
-            raise ValueError("Init error")
+            msg = "Init error"
+            raise ValueError(msg)
 
-    module = type('Module', (), {'PipelineWrapper': BrokenPipelineWrapper})
+    module = type("Module", (), {"PipelineWrapper": BrokenPipelineWrapper})
 
     with pytest.raises(PipelineWrapperError, match="Failed to create pipeline wrapper instance: Init error"):
         create_pipeline_wrapper_instance(module)
@@ -266,12 +268,13 @@ def test_create_pipeline_wrapper_instance_init_error():
 def test_create_pipeline_wrapper_instance_setup_error():
     class BrokenSetupWrapper(BasePipelineWrapper):
         def setup(self):
-            raise ValueError("Setup error")
+            msg = "Setup error"
+            raise ValueError(msg)
 
         def run_api(self):
             pass
 
-    module = type('Module', (), {'PipelineWrapper': BrokenSetupWrapper})
+    module = type("Module", (), {"PipelineWrapper": BrokenSetupWrapper})
 
     with pytest.raises(
         PipelineWrapperError, match="Failed to call setup\\(\\) on pipeline wrapper instance: Setup error"
@@ -284,11 +287,11 @@ def test_create_pipeline_wrapper_instance_missing_methods():
         def setup(self):
             self.pipeline = Pipeline()
 
-    module = type('Module', (), {'PipelineWrapper': IncompleteWrapper})
+    module = type("Module", (), {"PipelineWrapper": IncompleteWrapper})
 
     with pytest.raises(
         PipelineWrapperError,
-        match="At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented",
+        match="At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async",
     ):
         create_pipeline_wrapper_instance(module)
 

@@ -1,10 +1,12 @@
-import sys
-import pytest
 import shutil
+import sys
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
 from hayhooks.server.app import create_app
 from hayhooks.settings import AppSettings, check_cors_settings
-from unittest.mock import patch
 
 
 @pytest.fixture
@@ -124,8 +126,7 @@ def test_additional_python_path_env_var(monkeypatch):
     assert settings.additional_python_path == custom_path
 
 
-def test_additional_python_path_in_sys_path(monkeypatch, test_settings):
-
+def test_additional_python_path_in_sys_path(test_settings):
     original_sys_path = sys.path.copy()
 
     try:

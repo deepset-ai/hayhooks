@@ -1,14 +1,14 @@
 from fastapi import APIRouter, HTTPException
-from hayhooks.server.pipelines import registry
 from pydantic import BaseModel, Field
-from typing import List
+
+from hayhooks.server.pipelines import registry
 
 router = APIRouter()
 
 
 class StatusResponse(BaseModel):
     status: str = Field(description="The current status of the system, 'Up!' when operational")
-    pipelines: List[str] = Field(description="List of all available pipeline names")
+    pipelines: list[str] = Field(description="List of all available pipeline names")
 
     model_config = {
         "json_schema_extra": {"description": "Response model for the system status and available pipelines"}
@@ -30,9 +30,9 @@ class PipelineStatusResponse(BaseModel):
     summary="Get status of all pipelines",
     description="Returns the system status and a list of all available pipelines.",
 )
-async def status_all():
+async def status_all() -> StatusResponse:
     pipelines = registry.get_names()
-    return {"status": "Up!", "pipelines": pipelines}
+    return StatusResponse(status="Up!", pipelines=pipelines)
 
 
 @router.get(
@@ -43,7 +43,7 @@ async def status_all():
     summary="Get status of a specific pipeline",
     description="Returns the status of a specific pipeline. Returns 404 if the pipeline doesn't exist.",
 )
-async def status(pipeline_name: str):
+async def status(pipeline_name: str) -> PipelineStatusResponse:
     if pipeline_name not in registry.get_names():
         raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
-    return {"status": "Up!", "pipeline": pipeline_name}
+    return PipelineStatusResponse(status="Up!", pipeline=pipeline_name)

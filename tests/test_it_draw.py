@@ -1,9 +1,10 @@
-import pytest
 from pathlib import Path
-from typing import List
+
+import pytest
 from haystack import Pipeline
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+
 from hayhooks.server.pipelines import registry
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 
 @pytest.mark.skip(reason="Requests to https://mermaid.ink seem to be failing")
@@ -32,10 +33,10 @@ def test_draw_pipeline_wrapper(client, deploy_pipeline, draw_pipeline):
             pipeline_file = Path(__file__).parent / "test_files/yaml" / "working_pipelines/test_pipeline_01.yml"
             self.pipeline = Pipeline.loads(pipeline_file.read_text())
 
-        def run_api(self, urls: List[str], question: str) -> dict:
+        def run_api(self, urls: list[str], question: str) -> dict:
             return {}
 
-        def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> dict:
+        def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> dict:
             return {}
 
     wrapper = TestPipelineWrapper()

@@ -1,11 +1,23 @@
 import asyncio
 import traceback
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Union
+from typing import Union
+
+from fastapi.concurrency import run_in_threadpool
 from haystack.lazy_imports import LazyImport
-from hayhooks.server.logger import log
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
+from starlette.types import Receive, Scope, Send
+
 from hayhooks.server.app import init_pipeline_dir
+from hayhooks.server.logger import log
+from hayhooks.server.pipelines import registry
+from hayhooks.server.pipelines.registry import PipelineType
+from hayhooks.server.routers.deploy import PipelineFilesRequest
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
     add_pipeline_to_registry,
@@ -14,16 +26,6 @@ from hayhooks.server.utils.deploy_utils import (
     undeploy_pipeline,
 )
 from hayhooks.settings import settings
-from hayhooks.server.pipelines import registry
-from hayhooks.server.pipelines.registry import PipelineType
-from hayhooks.server.routers.deploy import PipelineFilesRequest
-from fastapi.concurrency import run_in_threadpool
-from contextlib import asynccontextmanager
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
-from starlette.types import Receive, Scope, Send
-from typing import AsyncIterator
 
 PIPELINE_NAME_SCHEMA = {
     "type": "object",
@@ -39,17 +41,12 @@ class CoreTools(str, Enum):
     DEPLOY_PIPELINE = "deploy_pipeline"
 
 
-if TYPE_CHECKING:
-    from mcp.types import TextContent, ImageContent, EmbeddedResource, Tool
-    from mcp.server import Server
-
-
 # Lazily import MCP modules so the optional dependency is only required when used
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
-    from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
     from mcp.server import Server
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from mcp.server.sse import SseServerTransport
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from mcp.types import TextContent, Tool
 
 
 def deploy_pipelines() -> None:
@@ -68,11 +65,11 @@ def deploy_pipelines() -> None:
         try:
             add_pipeline_to_registry(pipeline_name=pipeline_dir.name, files=read_pipeline_files_from_dir(pipeline_dir))
         except Exception as e:
-            log.warning(f"Skipping pipeline directory {pipeline_dir}: {str(e)}")
+            log.warning(f"Skipping pipeline directory {pipeline_dir}: {e!s}")
             continue
 
 
-async def list_core_tools() -> List["Tool"]:
+async def list_core_tools() -> list["Tool"]:
     """List available Hayhooks core tools"""
     mcp_import.check()
 
@@ -91,7 +88,9 @@ async def list_core_tools() -> List["Tool"]:
         ),
         Tool(
             name=CoreTools.UNDEPLOY_PIPELINE,
-            description="Undeploy a pipeline. Removes a pipeline from the registry, its API routes, and deletes its files.",
+            description=(
+                "Undeploy a pipeline. Removes a pipeline from the registry, its API routes, and deletes its files."
+            ),
             inputSchema=PIPELINE_NAME_SCHEMA,
         ),
         Tool(
@@ -104,7 +103,7 @@ async def list_core_tools() -> List["Tool"]:
     return tools
 
 
-async def list_pipelines_as_tools() -> List["Tool"]:
+async def list_pipelines_as_tools() -> list["Tool"]:
     """List available pipelines as MCP tools"""
     mcp_import.check()
 
@@ -136,20 +135,20 @@ async def list_pipelines_as_tools() -> List["Tool"]:
     return tools
 
 
-async def run_pipeline_as_tool(
-    name: str, arguments: dict
-) -> List[Union["TextContent", "ImageContent", "EmbeddedResource"]]:
+async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"]:
     mcp_import.check()
 
     log.debug(f"Calling pipeline as tool '{name}' with arguments: {arguments}")
     pipeline: Union[PipelineType, None] = registry.get(name)
 
     if not pipeline:
-        raise ValueError(f"Pipeline '{name}' not found")
+        msg = f"Pipeline '{name}' not found"
+        raise ValueError(msg)
 
     # Only BasePipelineWrapper instances support run_api/run_api_async methods
     if not isinstance(pipeline, BasePipelineWrapper):
-        raise ValueError(f"Pipeline '{name}' is not a BasePipelineWrapper and cannot be used as an MCP tool")
+        msg = f"Pipeline '{name}' is not a BasePipelineWrapper and cannot be used as an MCP tool"
+        raise ValueError(msg)
 
     # Use the same async/sync pattern as in deploy_utils.py
     if pipeline._is_run_api_async_implemented:
@@ -166,13 +165,13 @@ async def notify_client(server: "Server") -> None:
     await server.request_context.session.send_tool_list_changed()
 
 
-def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
+def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C901
     mcp_import.check()
 
     server: Server = Server(name)
 
     @server.list_tools()
-    async def list_tools() -> List[Tool]:
+    async def list_tools() -> list[Tool]:
         try:
             core_tools = await list_core_tools()
             log.debug(f"Listing {len(core_tools)} core tools")
@@ -186,7 +185,7 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
             return []
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> List[TextContent | ImageContent | EmbeddedResource]:
+    async def call_tool(name: str, arguments: dict) -> list["TextContent"]:
         try:
             if name == CoreTools.DEPLOY_PIPELINE:
                 result = await asyncio.to_thread(
@@ -233,13 +232,16 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
 
         finally:
             if name in [CoreTools.DEPLOY_PIPELINE, CoreTools.UNDEPLOY_PIPELINE]:
-                log.debug(f"Sending 'tools/list_changed' notification after deploy/undeploy")
+                log.debug("Sending 'tools/list_changed' notification after deploy/undeploy")
                 await notify_client(server)
 
     return server
 
 
 def create_starlette_app(server: "Server", *, debug: bool = False, json_response: bool = False) -> "Starlette":
+    """
+    Create a Starlette app for the MCP server.
+    """
     mcp_import.check()
 
     # Setup the Streamable HTTP session manager
@@ -257,7 +259,7 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
         await session_manager.handle_request(scope, receive, send)
 
     @asynccontextmanager
-    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+    async def lifespan(app: Starlette) -> AsyncIterator[None]:  # noqa: ARG001
         async with session_manager.run():
             log.info("Hayhooks MCP server started")
             try:
@@ -269,7 +271,7 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
             await server.run(streams[0], streams[1], server.create_initialization_options())
 
-    async def handle_status(request):
+    async def handle_status(request):  # noqa: ARG001
         return JSONResponse({"status": "ok"})
 
     return Starlette(

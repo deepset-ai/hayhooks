@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Generator, List, Union
+from collections.abc import AsyncGenerator, Generator
+from typing import Union
 
 
 class BasePipelineWrapper(ABC):
@@ -42,13 +43,15 @@ class BasePipelineWrapper(ABC):
     #       If you want to provide a custom description, you can override the
     #       docstring in the subclass.
     def run_api(self):
-        raise NotImplementedError("run_api not implemented")
+        msg = "run_api not implemented"
+        raise NotImplementedError(msg)
 
     # Asynchronous version of run_api.
     async def run_api_async(self):
-        raise NotImplementedError("run_api_async not implemented")
+        msg = "run_api_async not implemented"
+        raise NotImplementedError(msg)
 
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
         """
         This method is called when a user sends an OpenAI-compatible chat completion request.
 
@@ -62,12 +65,14 @@ class BasePipelineWrapper(ABC):
             messages: The history of messages as OpenAI-compatible list of dicts
             body: Additional parameters and configuration options
         """
-        raise NotImplementedError("run_chat_completion not implemented")
+        msg = "run_chat_completion not implemented"
+        raise NotImplementedError(msg)
 
     async def run_chat_completion_async(
-        self, model: str, messages: List[dict], body: dict
+        self, model: str, messages: list[dict], body: dict
     ) -> Union[str, AsyncGenerator]:
         """
         Asynchronous version of run_chat_completion.
         """
-        raise NotImplementedError("run_chat_completion_async not implemented")
+        msg = "run_chat_completion_async not implemented"
+        raise NotImplementedError(msg)

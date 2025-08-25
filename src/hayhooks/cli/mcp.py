@@ -1,6 +1,7 @@
-import typer
 import sys
 from typing import Annotated, Optional
+
+import typer
 from haystack.lazy_imports import LazyImport
 
 mcp = typer.Typer()
@@ -10,7 +11,7 @@ with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
 
 
 @mcp.command()
-def run(
+def run(  # noqa: PLR0913
     host: Annotated[Optional[str], typer.Option("--host", "-h", help="Host to run the MCP server on")] = None,
     port: Annotated[Optional[int], typer.Option("--port", "-p", help="Port to run the MCP server on")] = None,
     pipelines_dir: Annotated[
@@ -25,19 +26,16 @@ def run(
     debug: Annotated[
         bool, typer.Option("--debug", "-d", help="If true, tracebacks should be returned on errors")
     ] = False,
-):
+) -> None:
     """
     Run the MCP server.
     """
     # Lazy imports of settings, logger and uvicorn
-    from hayhooks.settings import settings
-    from hayhooks.server.logger import log
     import uvicorn
-    from hayhooks.server.utils.mcp_utils import (
-        create_mcp_server,
-        create_starlette_app,
-        deploy_pipelines,
-    )
+
+    from hayhooks.server.logger import log
+    from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app, deploy_pipelines
+    from hayhooks.settings import settings
 
     mcp_import.check()
 

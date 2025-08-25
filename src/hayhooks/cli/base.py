@@ -1,21 +1,19 @@
 import sys
-import typer
 from typing import Annotated, Optional
-from hayhooks.cli.utils import (
-    get_server_url,
-    make_request,
-    show_success_panel,
-    get_console,
-)
-from hayhooks.cli.pipeline import pipeline
+
+import typer
+from fastapi import FastAPI
+
 from hayhooks.cli.mcp import mcp
+from hayhooks.cli.pipeline import pipeline
+from hayhooks.cli.utils import get_console, get_server_url, make_request, show_success_panel
 
 hayhooks_cli = typer.Typer(name="hayhooks")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
 hayhooks_cli.add_typer(mcp, name="mcp")
 
 
-def get_app():
+def get_app() -> FastAPI:
     """
     Factory function to create the FastAPI app.
     """
@@ -26,7 +24,7 @@ def get_app():
 
 
 @hayhooks_cli.command()
-def run(
+def run(  # noqa: PLR0913
     host: Annotated[Optional[str], typer.Option("--host", "-h", help="Host to run the server on")] = None,
     port: Annotated[Optional[int], typer.Option("--port", "-p", help="Port to run the server on")] = None,
     pipelines_dir: Annotated[
@@ -40,14 +38,15 @@ def run(
     reload: Annotated[
         bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")
     ] = False,
-):
+) -> None:
     """
     Run the Hayhooks server.
     """
     # Lazy imports to avoid heavy deps on CLI startup
-    from hayhooks.settings import settings
-    from hayhooks.server.logger import log
     import uvicorn
+
+    from hayhooks.server.logger import log
+    from hayhooks.settings import settings
 
     # Fill defaults from settings only when command is executed
     host = host or settings.host
@@ -70,7 +69,7 @@ def run(
 
 
 @hayhooks_cli.command()
-def status(ctx: typer.Context):
+def status(ctx: typer.Context) -> None:
     """Get the status of the Hayhooks server."""
     response = make_request(
         host=ctx.obj["host"],
@@ -108,7 +107,7 @@ def status(ctx: typer.Context):
 
 
 @hayhooks_cli.callback()
-def callback(ctx: typer.Context):
+def callback(ctx: typer.Context) -> None:
     # Lazy import settings so it's only loaded on actual CLI invocation
     from hayhooks.settings import settings
 

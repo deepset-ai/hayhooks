@@ -1,8 +1,10 @@
-import pytest
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 from unittest.mock import MagicMock
-from requests import ConnectionError, HTTPError, JSONDecodeError
-from hayhooks.cli.utils import make_request, get_server_url
+
+import pytest
+from requests import ConnectionError, HTTPError  # noqa: A004
+
+from hayhooks.cli.utils import get_server_url, make_request
 
 
 @pytest.fixture
@@ -13,8 +15,10 @@ def mock_requests(monkeypatch):
 
 
 def configure_mock_response(
-    mock_requests, *, json_return_value: Dict[str, Any] = {}, raise_return_value: Optional[Exception] = None
+    mock_requests, *, json_return_value: Optional[dict[str, Any]] = None, raise_return_value: Optional[Exception] = None
 ):
+    if json_return_value is None:
+        json_return_value = {}
     mock_response = MagicMock()
     mock_response.json.return_value = json_return_value
 
