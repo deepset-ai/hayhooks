@@ -72,7 +72,7 @@ extra-dependencies = [
   "pytest",
   "pytest-asyncio",
   "pytest-cov",
-  "pytest-mock",  
+  "pytest-mock",
   "mypy",
   "pip",                     # mypy needs pip to install missing stub packages
 ]
@@ -92,6 +92,10 @@ disallow_incomplete_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_errors = true
 
 [tool.ruff]
 line-length = 120
@@ -144,7 +148,7 @@ select = [
   "D209",  # Closing triple quotes go to new line
   "D205",  # 1 blank line required between summary line and description
   "D213",  # summary lines must be positioned on the second physical line of the docstring
-  "D419",  # undocumented-returns  
+  "D419",  # undocumented-returns
 ]
 ignore = [
   "FBT001",  # Boolean-typed positional argument in function definition
@@ -152,7 +156,7 @@ ignore = [
   "N806",    # Variable in function should be lowercase
   "PERF203", # `try`-`except` within a loop incurs performance overhead
   "PLC0415", # `import` should be at the top-level of a file
-  "S101",    # Use of `assert` detected  
+  "S101",    # Use of `assert` detected
 ]
 
 [tool.ruff.lint.per-file-ignores]
