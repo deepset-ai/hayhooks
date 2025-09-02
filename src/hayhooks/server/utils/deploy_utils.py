@@ -29,9 +29,12 @@ from hayhooks.server.pipelines.models import (
     PipelineDefinition,
     convert_component_output,
     get_request_model,
+    get_request_model_from_resolved_io,
     get_response_model,
+    get_response_model_from_resolved_io,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.yaml_utils import get_inputs_outputs_from_yaml
 from hayhooks.settings import settings
 
 
@@ -395,6 +398,69 @@ def deploy_pipeline_files(
         add_pipeline_api_route(app, pipeline_name, pipeline_wrapper)
 
     return {"name": pipeline_name}
+
+
+def add_yaml_pipeline_to_registry(
+    pipeline_name: str,
+    source_code: str,
+    overwrite: bool = False,
+    description: Optional[str] = None,
+    skip_mcp: Optional[bool] = False,
+) -> None:
+    """
+    Add a YAML pipeline to the registry.
+
+    Args:
+        pipeline_name: Name of the pipeline to deploy
+        source_code: Source code of the pipeline
+    """
+
+    log.debug(f"Checking if YAML pipeline '{pipeline_name}' already exists: {registry.get(pipeline_name)}")
+    if registry.get(pipeline_name):
+        if overwrite:
+            log.debug(f"Clearing existing YAML pipeline '{pipeline_name}'")
+            registry.remove(pipeline_name)
+        else:
+            msg = f"YAML pipeline '{pipeline_name}' already exists"
+            raise PipelineAlreadyExistsError(msg)
+
+    clog = log.bind(pipeline_name=pipeline_name, type="yaml")
+
+    clog.debug("Creating request/response models from declared YAML inputs/outputs")
+
+    # Build request/response models from declared YAML inputs/outputs using resolved IO types
+    try:
+        resolved_io = get_inputs_outputs_from_yaml(source_code)
+
+        pipeline_inputs = resolved_io.get("inputs", {})
+        pipeline_outputs = resolved_io.get("outputs", {})
+
+        # Prefer resolved IO-based flat models for API schema
+        request_model = get_request_model_from_resolved_io(pipeline_name, pipeline_inputs)
+        response_model = get_response_model_from_resolved_io(pipeline_name, pipeline_outputs)
+    except Exception as e:
+        clog.error(f"Failed creating request/response models for YAML pipeline: {e!s}")
+        raise
+
+    metadata = {
+        "description": description or pipeline_name,
+        "request_model": request_model,
+        "response_model": response_model,
+        "skip_mcp": bool(skip_mcp),
+    }
+
+    clog.debug(f"Adding YAML pipeline to registry with metadata: {metadata}")
+
+    # Store the instantiated pipeline together with its metadata
+    try:
+        from haystack import Pipeline
+
+        pipeline = Pipeline.loads(source_code)
+    except Exception as e:
+        msg = f"Unable to parse Haystack Pipeline {pipeline_name}: {e!s}"
+        raise ValueError(msg) from e
+
+    registry.add(pipeline_name, pipeline, metadata=metadata)
 
 
 def add_pipeline_to_registry(

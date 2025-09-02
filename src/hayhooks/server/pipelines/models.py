@@ -4,6 +4,7 @@ from haystack import Document
 from pydantic import BaseModel, ConfigDict, create_model
 
 from hayhooks.server.utils.create_valid_type import handle_unsupported_types
+from hayhooks.server.utils.yaml_utils import InputResolution, OutputResolution
 
 
 class PipelineDefinition(BaseModel):
@@ -74,6 +75,51 @@ def get_response_model(pipeline_name: str, pipeline_outputs: dict[str, dict[str,
         response_model[component_name] = (create_model("ComponentParams", **component_model, __config__=config), ...)
 
     return create_model(f"{pipeline_name.capitalize()}RunResponse", **response_model, __config__=config)
+
+
+def get_request_model_from_resolved_io(
+    pipeline_name: str, declared_inputs: dict[str, InputResolution]
+) -> type[BaseModel]:
+    """
+    Create a flat Pydantic request model from declared inputs resolved by yaml_utils.
+
+    Args:
+        pipeline_name: Name of the pipeline used for model naming.
+        declared_inputs: Mapping of declared input name to InputResolution.
+
+    Returns:
+        A Pydantic model with top-level fields matching declared input names.
+    """
+    fields: dict[str, Any] = {}
+
+    for input_name, resolution in declared_inputs.items():
+        input_type = resolution.type
+        default_value = ... if resolution.required else None
+        fields[input_name] = (input_type, default_value)
+
+    return create_model(f"{pipeline_name.capitalize()}RunRequest", **fields)
+
+
+def get_response_model_from_resolved_io(
+    pipeline_name: str, declared_outputs: dict[str, OutputResolution]
+) -> type[BaseModel]:
+    """
+    Create a flat Pydantic response model from declared outputs resolved by yaml_utils.
+
+    Args:
+        pipeline_name: Name of the pipeline used for model naming.
+        declared_outputs: Mapping of declared output name to OutputResolution.
+
+    Returns:
+        A Pydantic model with top-level fields matching declared output names.
+    """
+    fields: dict[str, Any] = {}
+
+    for output_name, resolution in declared_outputs.items():
+        output_type = resolution.type
+        fields[output_name] = (output_type, ...)
+
+    return create_model(f"{pipeline_name.capitalize()}RunResponse", **fields)
 
 
 def convert_value_to_dict(value: Any) -> Union[str, int, float, bool, None, dict[str, Any], list[Any]]:
