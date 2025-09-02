@@ -432,8 +432,8 @@ def add_yaml_pipeline_to_registry(
     try:
         resolved_io = get_inputs_outputs_from_yaml(source_code)
 
-        pipeline_inputs = resolved_io.get("inputs", {})
-        pipeline_outputs = resolved_io.get("outputs", {})
+        pipeline_inputs = resolved_io["inputs"]
+        pipeline_outputs = resolved_io["outputs"]
 
         # Prefer resolved IO-based flat models for API schema
         request_model = get_request_model_from_resolved_io(pipeline_name, pipeline_inputs)

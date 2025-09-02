@@ -1,4 +1,4 @@
-from typing import Any, Union
+from typing import Any, TypedDict, Union
 
 import yaml
 from pydantic import BaseModel
@@ -17,6 +17,11 @@ class InputResolution(BaseInputOutputResolution):
 
 class OutputResolution(BaseInputOutputResolution):
     pass
+
+
+class ResolvedIO(TypedDict):
+    inputs: dict[str, InputResolution]
+    outputs: dict[str, OutputResolution]
 
 
 def _normalize_declared_path(value: Any) -> Union[str, None]:
@@ -38,24 +43,21 @@ def _normalize_declared_path(value: Any) -> Union[str, None]:
     return value
 
 
-def _resolve_declared_io(
+def _resolve_declared_inputs(
     declared_map: dict[str, Any],
     pipeline_meta: dict[str, dict[str, Any]],
-) -> dict[str, BaseInputOutputResolution]:
+) -> dict[str, InputResolution]:
     """
-    Resolve declared IO entries using the pipeline metadata.
-
-    Auto-detects input vs output based on metadata: inputs generally expose
-    "is_mandatory" or "default_value", while outputs do not.
+    Resolve declared input entries using the pipeline metadata.
 
     Args:
         declared_map: Mapping from declared IO name to path (string or list).
-        pipeline_meta: Pipeline metadata as returned by Haystack (inputs/outputs).
+        pipeline_meta: Pipeline inputs metadata as returned by Haystack.
 
     Returns:
-        A mapping from declared IO name to `InputResolution` or `OutputResolution`.
+        A mapping from declared IO name to `InputResolution`.
     """
-    resolutions: dict[str, BaseInputOutputResolution] = {}
+    resolutions: dict[str, InputResolution] = {}
     for io_name, declared_path in declared_map.items():
         normalized_path = _normalize_declared_path(declared_path)
         if not isinstance(normalized_path, str) or "." not in normalized_path:
@@ -65,28 +67,52 @@ def _resolve_declared_io(
         meta = (pipeline_meta.get(component_name, {}) or {}).get(field_name, {}) or {}
         resolved_type = meta.get("type")
 
-        # inputs metadata expose "is_mandatory"/"default_value"
-        is_input_like = "is_mandatory" in meta or "default_value" in meta
-        if is_input_like:
-            resolutions[io_name] = InputResolution(
-                path=f"{component_name}.{field_name}",
-                component=component_name,
-                name=field_name,
-                type=resolved_type,
-                required=bool(meta.get("is_mandatory", False)),
-            )
-        else:
-            resolutions[io_name] = OutputResolution(
-                path=f"{component_name}.{field_name}",
-                component=component_name,
-                name=field_name,
-                type=resolved_type,
-            )
+        resolutions[io_name] = InputResolution(
+            path=f"{component_name}.{field_name}",
+            component=component_name,
+            name=field_name,
+            type=resolved_type,
+            required=bool(meta.get("is_mandatory", False)),
+        )
 
     return resolutions
 
 
-def get_inputs_outputs_from_yaml(yaml_source_code: str) -> dict[str, dict[str, BaseInputOutputResolution]]:
+def _resolve_declared_outputs(
+    declared_map: dict[str, Any],
+    pipeline_meta: dict[str, dict[str, Any]],
+) -> dict[str, OutputResolution]:
+    """
+    Resolve declared output entries using the pipeline metadata.
+
+    Args:
+        declared_map: Mapping from declared IO name to path (string or list).
+        pipeline_meta: Pipeline outputs metadata as returned by Haystack.
+
+    Returns:
+        A mapping from declared IO name to `OutputResolution`.
+    """
+    resolutions: dict[str, OutputResolution] = {}
+    for io_name, declared_path in declared_map.items():
+        normalized_path = _normalize_declared_path(declared_path)
+        if not isinstance(normalized_path, str) or "." not in normalized_path:
+            continue
+
+        component_name, field_name = normalized_path.split(".", 1)
+        meta = (pipeline_meta.get(component_name, {}) or {}).get(field_name, {}) or {}
+        resolved_type = meta.get("type")
+
+        resolutions[io_name] = OutputResolution(
+            path=f"{component_name}.{field_name}",
+            component=component_name,
+            name=field_name,
+            type=resolved_type,
+        )
+
+    return resolutions
+
+
+def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
     """
     Resolve inputs and outputs from a Haystack pipeline YAML.
 
@@ -119,7 +145,7 @@ def get_inputs_outputs_from_yaml(yaml_source_code: str) -> dict[str, dict[str, B
     pipeline_inputs = pipeline.inputs()
     pipeline_outputs = pipeline.outputs()
 
-    input_resolutions = _resolve_declared_io(declared_inputs, pipeline_inputs)
-    output_resolutions = _resolve_declared_io(declared_outputs, pipeline_outputs)
+    input_resolutions = _resolve_declared_inputs(declared_inputs, pipeline_inputs)
+    output_resolutions = _resolve_declared_outputs(declared_outputs, pipeline_outputs)
 
     return {"inputs": input_resolutions, "outputs": output_resolutions}
