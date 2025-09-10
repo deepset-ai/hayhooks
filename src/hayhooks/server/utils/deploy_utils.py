@@ -127,6 +127,33 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
         raise PipelineFilesError(msg) from e
 
 
+def save_yaml_pipeline_file(pipeline_name: str, source_code: str, pipelines_dir: str) -> str:
+    """
+    Save a single YAML pipeline file in the pipelines directory as {name}.yml.
+
+    Args:
+        pipeline_name: Name of the pipeline
+        source_code: YAML content
+        pipelines_dir: Path to the pipelines directory
+
+    Returns:
+        The saved file path as string
+
+    Raises:
+        PipelineFilesError: If there are any issues saving the file
+    """
+    try:
+        pipelines_dir_path = Path(pipelines_dir)
+        pipelines_dir_path.mkdir(parents=True, exist_ok=True)
+        file_path = pipelines_dir_path / f"{pipeline_name}.yml"
+        log.debug(f"Saving YAML pipeline file: {file_path}")
+        file_path.write_text(source_code)
+        return str(file_path)
+    except Exception as e:
+        msg = f"Failed to save YAML pipeline file: {e!s}"
+        raise PipelineFilesError(msg) from e
+
+
 def remove_pipeline_files(pipeline_name: str, pipelines_dir: str) -> None:
     """
     Remove pipeline files from disk.
@@ -308,7 +335,7 @@ def create_run_endpoint_handler(
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
 
 
-def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
+def add_pipeline_wrapper_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
     clog = log.bind(pipeline_name=pipeline_name)
 
     # Determine which run_api method to use (prefer async if available)
@@ -373,6 +400,75 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
     app.setup()
 
 
+def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str, source_code: str) -> None:
+    """
+    Create or replace the YAML pipeline run endpoint at /{pipeline_name}/run.
+
+    Builds the flat request/response models from declared YAML inputs/outputs and wires a handler that
+    maps the flat body into the nested structure required by Haystack Pipeline.run.
+    """
+    pipeline = registry.get(pipeline_name)
+    if pipeline is None:
+        msg = f"Pipeline '{pipeline_name}' not found after registration"
+        raise HTTPException(status_code=500, detail=msg)
+
+    # Compute IO resolution to map flat request fields to pipeline.run nested inputs
+    resolved_io = get_inputs_outputs_from_yaml(source_code)
+    declared_inputs = resolved_io["inputs"]
+    declared_outputs = resolved_io["outputs"]
+
+    metadata = registry.get_metadata(pipeline_name) or {}
+    PipelineRunRequest = metadata.get("request_model")  # type: ignore[assignment]
+    PipelineRunResponse = metadata.get("response_model")  # type: ignore[assignment]
+
+    if PipelineRunRequest is None or PipelineRunResponse is None:
+        msg = f"Missing request/response models for YAML pipeline '{pipeline_name}'"
+        raise HTTPException(status_code=500, detail=msg)
+
+    @handle_pipeline_exceptions()
+    async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type: ignore[valid-type]
+        # Map flat declared inputs to the nested structure expected by Haystack Pipeline.run
+        payload = {}
+        req_dict = run_req.model_dump()
+        for input_name, resolution in declared_inputs.items():
+            value = req_dict.get(input_name)
+            if value is None:
+                continue
+            component_inputs = payload.setdefault(resolution.component, {})
+            component_inputs[resolution.name] = value
+
+        # Execute the pipeline
+        result = await run_in_threadpool(pipeline.run, data=payload)  # type: ignore[attr-defined]
+
+        # Map pipeline outputs back to declared outputs (flat)
+        final_output: dict[str, Any] = {}
+        for output_name, resolution in declared_outputs.items():
+            component_result = (result or {}).get(resolution.component, {})
+            raw_value = component_result.get(resolution.name)
+            final_output[output_name] = convert_component_output(raw_value)
+
+        return PipelineRunResponse(**final_output)  # type: ignore[call-arg]
+
+    # Clear existing YAML run route if it exists (old or new path)
+    for route in list(app.routes):
+        if isinstance(route, APIRoute) and route.path in (f"/{pipeline_name}", f"/{pipeline_name}/run"):
+            app.routes.remove(route)
+
+    # Register the run endpoint at /{pipeline_name}/run
+    app.add_api_route(
+        path=f"/{pipeline_name}/run",
+        endpoint=pipeline_run,
+        methods=["POST"],
+        name=f"{pipeline_name}_run",
+        response_model=PipelineRunResponse,
+        tags=["pipelines"],
+    )
+
+    # Invalidate OpenAPI cache
+    app.openapi_schema = None
+    app.setup()
+
+
 def deploy_pipeline_files(
     pipeline_name: str,
     files: dict[str, str],
@@ -392,10 +488,53 @@ def deploy_pipeline_files(
         save_files: Whether to save the pipeline files to disk
         overwrite: Whether to overwrite an existing pipeline
     """
-    pipeline_wrapper = add_pipeline_to_registry(pipeline_name, files, save_files, overwrite)
+    pipeline_wrapper = add_pipeline_wrapper_to_registry(pipeline_name, files, save_files, overwrite)
 
     if app:
-        add_pipeline_api_route(app, pipeline_name, pipeline_wrapper)
+        add_pipeline_wrapper_api_route(app, pipeline_name, pipeline_wrapper)
+
+    return {"name": pipeline_name}
+
+
+def deploy_pipeline_yaml(
+    app: FastAPI,
+    pipeline_name: str,
+    source_code: str,
+    overwrite: bool = False,
+    options: Optional[dict[str, Any]] = None,
+) -> dict[str, str]:
+    """
+    Deploy a YAML pipeline to the FastAPI application with IO declared in the YAML.
+
+    This will add the pipeline to the registry, create flat request/response models based on
+    declared inputs/outputs, and set up the API route at /{pipeline_name}/run.
+
+    Args:
+        app: FastAPI application instance
+        pipeline_name: Name of the pipeline
+        source_code: YAML pipeline source code
+        overwrite: Whether to overwrite an existing pipeline
+        options: Optional dict with additional deployment options. Supported keys:
+            - description: Optional[str]
+            - skip_mcp: Optional[bool]
+    """
+
+    # Optionally save YAML to disk as pipelines/{name}.yml (default True)
+    save_file: bool = True if options is None else bool(options.get("save_file", True))
+    if save_file:
+        save_yaml_pipeline_file(pipeline_name, source_code, settings.pipelines_dir)
+
+    # Add pipeline to the registry and build metadata (request/response models)
+    add_yaml_pipeline_to_registry(
+        pipeline_name=pipeline_name,
+        source_code=source_code,
+        overwrite=overwrite,
+        description=(options or {}).get("description"),
+        skip_mcp=(options or {}).get("skip_mcp"),
+    )
+
+    # Add the YAML pipeline API route at /{pipeline_name}/run
+    add_pipeline_yaml_api_route(app, pipeline_name, source_code)
 
     return {"name": pipeline_name}
 
@@ -463,7 +602,7 @@ def add_yaml_pipeline_to_registry(
     registry.add(pipeline_name, pipeline, metadata=metadata)
 
 
-def add_pipeline_to_registry(
+def add_pipeline_wrapper_to_registry(
     pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
 ) -> BasePipelineWrapper:
     """

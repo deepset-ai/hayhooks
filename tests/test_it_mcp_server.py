@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from hayhooks.server.pipelines import registry
-from hayhooks.server.utils.deploy_utils import add_pipeline_to_registry
+from hayhooks.server.utils.deploy_utils import add_pipeline_wrapper_to_registry
 from hayhooks.server.utils.mcp_utils import CoreTools, create_mcp_server
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -38,7 +38,7 @@ def deploy_chat_with_website_mcp_pipeline():
         "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
         "chat_with_website.yml": pipeline_yml_path.read_text(),
     }
-    add_pipeline_to_registry(pipeline_name=pipeline_name, files=files)
+    add_pipeline_wrapper_to_registry(pipeline_name=pipeline_name, files=files)
     return pipeline_name
 
 
@@ -51,7 +51,7 @@ def deploy_async_question_answer_mcp_pipeline():
         "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
         "question_answer.yml": pipeline_yml_path.read_text(),
     }
-    add_pipeline_to_registry(pipeline_name=pipeline_name, files=files)
+    add_pipeline_wrapper_to_registry(pipeline_name=pipeline_name, files=files)
     return pipeline_name
 
 

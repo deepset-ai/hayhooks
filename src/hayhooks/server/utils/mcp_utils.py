@@ -20,7 +20,7 @@ from hayhooks.server.pipelines.registry import PipelineType
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
-    add_pipeline_to_registry,
+    add_pipeline_wrapper_to_registry,
     deploy_pipeline_files,
     read_pipeline_files_from_dir,
     undeploy_pipeline,
@@ -63,7 +63,9 @@ def deploy_pipelines() -> None:
         log.debug(f"Deploying pipeline from {pipeline_dir}")
 
         try:
-            add_pipeline_to_registry(pipeline_name=pipeline_dir.name, files=read_pipeline_files_from_dir(pipeline_dir))
+            add_pipeline_wrapper_to_registry(
+                pipeline_name=pipeline_dir.name, files=read_pipeline_files_from_dir(pipeline_dir)
+            )
         except Exception as e:
             log.warning(f"Skipping pipeline directory {pipeline_dir}: {e!s}")
             continue

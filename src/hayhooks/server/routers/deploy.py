@@ -9,6 +9,7 @@ from hayhooks.server.utils.deploy_utils import (
     PipelineWrapperError,
     deploy_pipeline_def,
     deploy_pipeline_files,
+    deploy_pipeline_yaml,
 )
 
 router = APIRouter()
@@ -84,6 +85,65 @@ class DeployResponse(BaseModel):
 async def deploy(pipeline_def: PipelineDefinition, request: Request) -> DeployResponse:
     result = deploy_pipeline_def(request.app, pipeline_def)
     return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
+
+
+class YamlDeployRequest(BaseModel):
+    name: str = Field(description="Name of the pipeline to deploy")
+    source_code: str = Field(description="YAML pipeline definition source code")
+    overwrite: bool = Field(default=False, description="Whether to overwrite an existing pipeline with the same name")
+    description: str | None = Field(default=None, description="Optional description for the pipeline")
+    skip_mcp: bool | None = Field(default=None, description="Whether to skip MCP integration for this pipeline")
+    save_file: bool | None = Field(default=True, description="Whether to save YAML under pipelines/{name}.yml")
+
+    model_config = {
+        "json_schema_extra": {
+            "description": "Request model for deploying a YAML pipeline",
+            "examples": [
+                {
+                    "name": "inputs_outputs_pipeline",
+                    "source_code": "{yaml source}",
+                    "overwrite": False,
+                    "description": "My pipeline",
+                    "skip_mcp": False,
+                }
+            ],
+        }
+    }
+
+
+@router.post(
+    "/deploy-yaml",
+    tags=["config"],
+    operation_id="yaml_pipeline_deploy",
+    response_model=DeployResponse,
+    summary="Deploy a pipeline from a YAML definition (preferred)",
+    description=(
+        "Deploys a Haystack pipeline from a YAML string. Builds request/response schemas from declared "
+        "inputs/outputs. Returns 409 if the pipeline already exists and overwrite is false."
+    ),
+)
+async def deploy_yaml(yaml_request: YamlDeployRequest, request: Request) -> DeployResponse:
+    try:
+        result = deploy_pipeline_yaml(
+            app=request.app,
+            pipeline_name=yaml_request.name,
+            source_code=yaml_request.source_code,
+            overwrite=yaml_request.overwrite,
+            options={
+                "description": yaml_request.description,
+                "skip_mcp": yaml_request.skip_mcp,
+                "save_file": yaml_request.save_file,
+            },
+        )
+        return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
+    except PipelineModuleLoadError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except PipelineWrapperError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except PipelineAlreadyExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error deploying YAML pipeline: {e!s}") from e
 
 
 @router.post(

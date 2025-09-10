@@ -12,7 +12,7 @@ from hayhooks.server.exceptions import PipelineFilesError, PipelineModuleLoadErr
 from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
-    add_pipeline_to_registry,
+    add_pipeline_wrapper_to_registry,
     create_pipeline_wrapper_instance,
     create_request_model_from_callable,
     create_response_model_from_callable,
@@ -393,7 +393,7 @@ def test_add_pipeline_to_registry_with_async_run_api():
         "question_answer.yml": pipeline_yml_path.read_text(),
     }
 
-    pipeline_wrapper = add_pipeline_to_registry(pipeline_name=pipeline_name, files=files, save_files=False)
+    pipeline_wrapper = add_pipeline_wrapper_to_registry(pipeline_name=pipeline_name, files=files, save_files=False)
     assert registry.get(pipeline_name) == pipeline_wrapper
 
     metadata = registry.get_metadata(pipeline_name)
