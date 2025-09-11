@@ -11,12 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from hayhooks.server.logger import log
 from hayhooks.server.routers import deploy_router, draw_router, openai_router, status_router, undeploy_router
-from hayhooks.server.utils.deploy_utils import (
-    PipelineDefinition,
-    deploy_pipeline_def,
-    deploy_pipeline_files,
-    read_pipeline_files_from_dir,
-)
+from hayhooks.server.utils.deploy_utils import deploy_pipeline_files, deploy_pipeline_yaml, read_pipeline_files_from_dir
 from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, check_cors_settings, settings
 
 
@@ -35,8 +30,7 @@ def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
     with open(pipeline_file_path) as pipeline_file:
         source_code = pipeline_file.read()
 
-    pipeline_definition = PipelineDefinition(name=name, source_code=source_code)
-    deployed_pipeline = deploy_pipeline_def(app, pipeline_definition)
+    deployed_pipeline = deploy_pipeline_yaml(pipeline_name=name, source_code=source_code, app=app)
     log.info(f"Deployed pipeline from yaml: {deployed_pipeline['name']}")
 
     return deployed_pipeline

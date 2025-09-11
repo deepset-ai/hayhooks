@@ -608,6 +608,7 @@ def add_yaml_pipeline_to_registry(
         raise ValueError(msg) from e
 
     registry.add(pipeline_name, pipeline, metadata=metadata)
+    log.success(f"YAML pipeline '{pipeline_name}' successfully added to registry")
 
 
 def add_pipeline_wrapper_to_registry(
