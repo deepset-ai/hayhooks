@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
@@ -91,9 +93,9 @@ class YamlDeployRequest(BaseModel):
     name: str = Field(description="Name of the pipeline to deploy")
     source_code: str = Field(description="YAML pipeline definition source code")
     overwrite: bool = Field(default=False, description="Whether to overwrite an existing pipeline with the same name")
-    description: str | None = Field(default=None, description="Optional description for the pipeline")
-    skip_mcp: bool | None = Field(default=None, description="Whether to skip MCP integration for this pipeline")
-    save_file: bool | None = Field(default=True, description="Whether to save YAML under pipelines/{name}.yml")
+    description: Optional[str] = Field(default=None, description="Optional description for the pipeline")
+    skip_mcp: Optional[bool] = Field(default=None, description="Whether to skip MCP integration for this pipeline")
+    save_file: Optional[bool] = Field(default=True, description="Whether to save YAML under pipelines/{name}.yml")
 
     model_config = {
         "json_schema_extra": {
