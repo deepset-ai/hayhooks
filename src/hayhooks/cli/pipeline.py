@@ -57,6 +57,53 @@ def deploy(
     _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy", payload=payload)
 
 
+@pipeline.command(name="deploy-yaml")
+def deploy_yaml(  # noqa: PLR0913
+    ctx: typer.Context,
+    pipeline_file: Path = typer.Argument(  # noqa: B008
+        help="The path to the YAML pipeline file to deploy."
+    ),
+    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")] = None,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", "-o", help="Whether to overwrite the pipeline if it already exists.")
+    ] = False,
+    description: Annotated[
+        Optional[str], typer.Option("--description", help="Optional description for the pipeline.")
+    ] = None,
+    skip_mcp: Annotated[
+        bool, typer.Option("--skip-mcp", help="If set, skip MCP integration for this pipeline.")
+    ] = False,
+    save_file: Annotated[
+        bool,
+        typer.Option(
+            "--save-file/--no-save-file",
+            help="Whether to save the YAML under pipelines/{name}.yml on the server.",
+        ),
+    ] = True,
+) -> None:
+    """Deploy a YAML pipeline using the preferred /deploy-yaml endpoint."""
+    if not pipeline_file.exists():
+        show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
+
+    if name is None:
+        name = pipeline_file.stem
+
+    payload = {
+        "name": name,
+        "source_code": pipeline_file.read_text(),
+        "overwrite": overwrite,
+        "save_file": save_file,
+    }
+
+    if description is not None:
+        payload["description"] = description
+
+    # Always include skip_mcp flag (defaults to False)
+    payload["skip_mcp"] = skip_mcp
+
+    _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy-yaml", payload=payload)
+
+
 @pipeline.command()
 def deploy_files(
     ctx: typer.Context,
