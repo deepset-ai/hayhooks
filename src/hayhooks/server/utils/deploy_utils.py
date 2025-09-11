@@ -7,7 +7,7 @@ import traceback
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, Union, cast
 
 import docstring_parser
 from docstring_parser.common import Docstring
@@ -15,6 +15,7 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from haystack import AsyncPipeline, Pipeline
 from pydantic import BaseModel, Field, create_model
 
 from hayhooks.server.exceptions import (
@@ -407,10 +408,17 @@ def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str, source_code: s
     Builds the flat request/response models from declared YAML inputs/outputs and wires a handler that
     maps the flat body into the nested structure required by Haystack Pipeline.run.
     """
-    pipeline = registry.get(pipeline_name)
-    if pipeline is None:
+    pipeline_instance = registry.get(pipeline_name)
+    if pipeline_instance is None:
         msg = f"Pipeline '{pipeline_name}' not found after registration"
         raise HTTPException(status_code=500, detail=msg)
+
+    # Ensure the registered object is a Haystack Pipeline, not a wrapper
+    if not isinstance(pipeline_instance, (Pipeline, AsyncPipeline)):
+        msg = f"Pipeline '{pipeline_name}' is not a Haystack Pipeline instance"
+        raise HTTPException(status_code=500, detail=msg)
+
+    pipeline: Union[Pipeline, AsyncPipeline] = pipeline_instance
 
     # Compute IO resolution to map flat request fields to pipeline.run nested inputs
     resolved_io = get_inputs_outputs_from_yaml(source_code)
@@ -418,36 +426,36 @@ def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str, source_code: s
     declared_outputs = resolved_io["outputs"]
 
     metadata = registry.get_metadata(pipeline_name) or {}
-    PipelineRunRequest = metadata.get("request_model")  # type: ignore[assignment]
-    PipelineRunResponse = metadata.get("response_model")  # type: ignore[assignment]
+    PipelineRunRequest = metadata.get("request_model")
+    PipelineRunResponse = metadata.get("response_model")
 
     if PipelineRunRequest is None or PipelineRunResponse is None:
         msg = f"Missing request/response models for YAML pipeline '{pipeline_name}'"
         raise HTTPException(status_code=500, detail=msg)
 
     @handle_pipeline_exceptions()
-    async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type: ignore[valid-type]
+    async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type: ignore
         # Map flat declared inputs to the nested structure expected by Haystack Pipeline.run
-        payload = {}
-        req_dict = run_req.model_dump()
-        for input_name, resolution in declared_inputs.items():
+        payload: dict[str, dict[str, Any]] = {}
+        req_dict = run_req.model_dump()  # type: ignore[attr-defined]
+        for input_name, in_resolution in declared_inputs.items():
             value = req_dict.get(input_name)
             if value is None:
                 continue
-            component_inputs = payload.setdefault(resolution.component, {})
-            component_inputs[resolution.name] = value
+            component_inputs = payload.setdefault(in_resolution.component, {})
+            component_inputs[in_resolution.name] = value
 
         # Execute the pipeline
-        result = await run_in_threadpool(pipeline.run, data=payload)  # type: ignore[attr-defined]
+        result = await run_in_threadpool(pipeline.run, data=payload)
 
         # Map pipeline outputs back to declared outputs (flat)
         final_output: dict[str, Any] = {}
-        for output_name, resolution in declared_outputs.items():
-            component_result = (result or {}).get(resolution.component, {})
-            raw_value = component_result.get(resolution.name)
+        for output_name, out_resolution in declared_outputs.items():
+            component_result = (result or {}).get(out_resolution.component, {})
+            raw_value = component_result.get(out_resolution.name)
             final_output[output_name] = convert_component_output(raw_value)
 
-        return PipelineRunResponse(**final_output)  # type: ignore[call-arg]
+        return PipelineRunResponse(**final_output)
 
     # Clear existing YAML run route if it exists (old or new path)
     for route in list(app.routes):
