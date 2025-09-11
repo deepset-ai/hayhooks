@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any
 
@@ -40,5 +41,7 @@ def test_get_inputs_outputs_from_yaml_raises_when_missing_inputs_outputs():
     yaml_path = Path(__file__).parent / "test_files" / "mixed" / "chat_with_website" / "chat_with_website.yml"
     yaml_source = yaml_path.read_text()
 
-    with pytest.raises(ValueError, match="YAML pipeline must declare at least one of 'inputs' or 'outputs'."):
+    with pytest.raises(
+        ValueError, match=re.escape("YAML pipeline must declare at least one of 'inputs' or 'outputs'.")
+    ):
         get_inputs_outputs_from_yaml(yaml_source)

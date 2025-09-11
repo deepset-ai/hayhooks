@@ -1,4 +1,5 @@
 import inspect
+import re
 import shutil
 from pathlib import Path
 from typing import Callable
@@ -64,7 +65,7 @@ def test_load_pipeline_wrong_dir():
 
     with pytest.raises(
         PipelineModuleLoadError,
-        match="Required file 'tests/test_files/files/wrong_dir/pipeline_wrapper.py' not found",
+        match=re.escape("Required file 'tests/test_files/files/wrong_dir/pipeline_wrapper.py' not found"),
     ):
         load_pipeline_module(pipeline_name, pipeline_dir_path)
 
@@ -75,7 +76,7 @@ def test_load_pipeline_no_wrapper():
 
     with pytest.raises(
         PipelineModuleLoadError,
-        match="Required file 'tests/test_files/files/no_wrapper/pipeline_wrapper.py' not found",
+        match=re.escape("Required file 'tests/test_files/files/no_wrapper/pipeline_wrapper.py' not found"),
     ):
         load_pipeline_module(pipeline_name, pipeline_dir_path)
 
@@ -277,7 +278,7 @@ def test_create_pipeline_wrapper_instance_setup_error():
     module = type("Module", (), {"PipelineWrapper": BrokenSetupWrapper})
 
     with pytest.raises(
-        PipelineWrapperError, match="Failed to call setup\\(\\) on pipeline wrapper instance: Setup error"
+        PipelineWrapperError, match=re.escape("Failed to call setup\\(\\) on pipeline wrapper instance: Setup error")
     ):
         create_pipeline_wrapper_instance(module)
 
@@ -291,7 +292,7 @@ def test_create_pipeline_wrapper_instance_missing_methods():
 
     with pytest.raises(
         PipelineWrapperError,
-        match="At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async",
+        match=re.escape("At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async"),
     ):
         create_pipeline_wrapper_instance(module)
 
@@ -416,5 +417,7 @@ def test_deploy_pipeline_files_without_return_type(test_settings, mocker):
     test_file_path = Path("tests/test_files/files/no_return_type/pipeline_wrapper.py")
     files = {"pipeline_wrapper.py": test_file_path.read_text()}
 
-    with pytest.raises(PipelineWrapperError, match="Pipeline wrapper is missing a return type for 'run_api' method"):
+    with pytest.raises(
+        PipelineWrapperError, match=re.escape("Pipeline wrapper is missing a return type for 'run_api' method")
+    ):
         deploy_pipeline_files(app=mock_app, pipeline_name="test_pipeline_no_return_type", files=files, save_files=False)
