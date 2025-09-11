@@ -505,9 +505,9 @@ def deploy_pipeline_files(
 
 
 def deploy_pipeline_yaml(
-    app: FastAPI,
     pipeline_name: str,
     source_code: str,
+    app: Optional[FastAPI] = None,
     overwrite: bool = False,
     options: Optional[dict[str, Any]] = None,
 ) -> dict[str, str]:
@@ -518,7 +518,7 @@ def deploy_pipeline_yaml(
     declared inputs/outputs, and set up the API route at /{pipeline_name}/run.
 
     Args:
-        app: FastAPI application instance
+        app: Optional FastAPI application instance. If provided, the API route will be added.
         pipeline_name: Name of the pipeline
         source_code: YAML pipeline source code
         overwrite: Whether to overwrite an existing pipeline
@@ -541,8 +541,8 @@ def deploy_pipeline_yaml(
         skip_mcp=(options or {}).get("skip_mcp"),
     )
 
-    # Add the YAML pipeline API route at /{pipeline_name}/run
-    add_pipeline_yaml_api_route(app, pipeline_name, source_code)
+    if app:
+        add_pipeline_yaml_api_route(app, pipeline_name, source_code)
 
     return {"name": pipeline_name}
 
