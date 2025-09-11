@@ -7,7 +7,7 @@ import traceback
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Optional, Union, cast
+from typing import Any, Callable, Optional, Union
 
 import docstring_parser
 from docstring_parser.common import Docstring
