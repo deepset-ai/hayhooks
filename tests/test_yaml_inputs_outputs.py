@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from hayhooks.server.exceptions import InvalidYamlIOError
 from hayhooks.server.utils.yaml_utils import InputResolution, OutputResolution, get_inputs_outputs_from_yaml
 
 
@@ -42,6 +43,6 @@ def test_get_inputs_outputs_from_yaml_raises_when_missing_inputs_outputs():
     yaml_source = yaml_path.read_text()
 
     with pytest.raises(
-        ValueError, match=re.escape("YAML pipeline must declare at least one of 'inputs' or 'outputs'.")
+        InvalidYamlIOError, match=re.escape("YAML pipeline must declare at least one of 'inputs' or 'outputs'.")
     ):
         get_inputs_outputs_from_yaml(yaml_source)

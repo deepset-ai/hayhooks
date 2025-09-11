@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from hayhooks.server.exceptions import PipelineAlreadyExistsError
+from hayhooks.server.exceptions import InvalidYamlIOError, PipelineAlreadyExistsError
 from hayhooks.server.utils.deploy_utils import (
     PipelineDefinition,
     PipelineFilesError,
@@ -138,6 +138,8 @@ async def deploy_yaml(yaml_request: YamlDeployRequest, request: Request) -> Depl
             },
         )
         return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
+    except InvalidYamlIOError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineModuleLoadError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineWrapperError as e:

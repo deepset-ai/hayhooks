@@ -24,3 +24,9 @@ class PipelineNotFoundError(Exception):
     """Exception for errors when a pipeline is not found."""
 
     pass
+
+
+class InvalidYamlIOError(Exception):
+    """Exception for invalid or missing YAML inputs/outputs declarations."""
+
+    pass

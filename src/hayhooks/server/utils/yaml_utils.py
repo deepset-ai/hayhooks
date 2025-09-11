@@ -3,6 +3,8 @@ from typing import Any, TypedDict, Union
 import yaml
 from pydantic import BaseModel
 
+from hayhooks.server.exceptions import InvalidYamlIOError
+
 
 class BaseInputOutputResolution(BaseModel):
     path: str
@@ -129,7 +131,7 @@ def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
         `OutputResolution` for outputs).
 
     Raises:
-        ValueError: If both inputs and outputs are missing from the YAML definition.
+        InvalidYamlIOError: If both inputs and outputs are missing from the YAML definition.
     """
     yaml_dict = yaml.safe_load(yaml_source_code) or {}
     declared_inputs = yaml_dict.get("inputs", {}) or {}
@@ -137,7 +139,7 @@ def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
 
     if not declared_inputs and not declared_outputs:
         msg = "YAML pipeline must declare at least one of 'inputs' or 'outputs'."
-        raise ValueError(msg)
+        raise InvalidYamlIOError(msg)
 
     from haystack import Pipeline
 

@@ -46,3 +46,25 @@ def test_deploy_yaml_saves_file(client, test_settings):
     file_path = Path(test_settings.pipelines_dir) / "save_me.yml"
     assert file_path.exists()
     assert file_path.read_text() == yaml_source
+
+
+def test_deploy_yaml_missing_io_returns_422(client):
+    yaml_source = """
+components:
+  first_addition:
+    init_parameters:
+      add: 2
+    type: haystack.testing.sample_components.add_value.AddFixedValue
+  double:
+    init_parameters: {}
+    type: haystack.testing.sample_components.double.Double
+connections:
+- receiver: double.value
+  sender: first_addition.result
+
+metadata: {}
+""".strip()
+
+    response = client.post("/deploy-yaml", json={"name": "no_io", "source_code": yaml_source, "overwrite": True})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "YAML pipeline must declare at least one of 'inputs' or 'outputs'."
