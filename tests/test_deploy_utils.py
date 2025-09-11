@@ -278,7 +278,7 @@ def test_create_pipeline_wrapper_instance_setup_error():
     module = type("Module", (), {"PipelineWrapper": BrokenSetupWrapper})
 
     with pytest.raises(
-        PipelineWrapperError, match=re.escape("Failed to call setup\\(\\) on pipeline wrapper instance: Setup error")
+        PipelineWrapperError, match=re.escape("Failed to call setup() on pipeline wrapper instance: Setup error")
     ):
         create_pipeline_wrapper_instance(module)
 
