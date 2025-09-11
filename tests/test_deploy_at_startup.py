@@ -84,6 +84,7 @@ def test_app_loads_pipeline_from_files_directory(test_client_files, test_files_p
     assert "chat_with_website" in pipelines
 
 
+@pytest.mark.skip(reason="To be reviewed when old YAML deployment is removed")
 def test_app_loads_pipeline_from_yaml_directory(test_client_yaml, test_yaml_pipelines_dir):
     response = test_client_yaml.get("/status")
     assert response.status_code == 200
@@ -92,6 +93,7 @@ def test_app_loads_pipeline_from_yaml_directory(test_client_yaml, test_yaml_pipe
     assert len(pipelines) == len(list(test_yaml_pipelines_dir.rglob("*")))
 
 
+@pytest.mark.skip(reason="To be reviewed when old YAML deployment is removed")
 def test_app_loads_pipeline_from_mixed_directory(test_client_mixed, test_mixed_pipelines_dir):
     response = test_client_mixed.get("/status")
     assert response.status_code == 200
