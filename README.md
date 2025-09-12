@@ -32,6 +32,7 @@ With Hayhooks, you can:
   - [Async Run API Method](#run_api_async)
   - [PipelineWrapper development with `overwrite` option](#pipelinewrapper-development-with-overwrite-option)
   - [Additional Dependencies](#additional-dependencies)
+- [Deploy a YAML Pipeline](#deploy-a-yaml-pipeline)
 - [Deploy an Agent](#deploy-an-agent)
 - [Support file uploads](#support-file-uploads)
 - [Run pipelines from the CLI](#run-pipelines-from-the-cli)
@@ -61,15 +62,13 @@ With Hayhooks, you can:
   - [Run Hayhooks Programmatically](#run-hayhooks-programmatically)
   - [Sharing code between pipeline wrappers](#sharing-code-between-pipeline-wrappers)
 - [Deployment Guidelines](#deployment-guidelines)
-- [Legacy Features](#legacy-features)
-  - [Deploy Pipeline Using YAML](#deploy-a-pipeline-using-only-its-yaml-definition)
 - [License](#license)
 
 ## Quick start with Docker Compose
 
 To quickly get started with Hayhooks, we provide a ready-to-use Docker Compose 🐳 setup with pre-configured integration with [open-webui](https://openwebui.com/).
 
-It's available [here](https://github.com/deepset-ai/hayhooks-open-webui-docker-compose).
+It's available in the [Hayhooks + Open WebUI Docker Compose repository](https://github.com/deepset-ai/hayhooks-open-webui-docker-compose).
 
 ## Quick start
 
@@ -162,8 +161,9 @@ CLI commands are basically wrappers around the HTTP API of the server. The full 
 hayhooks run     # Start the server
 hayhooks status  # Check the status of the server and show deployed pipelines
 
-hayhooks pipeline deploy-files <path_to_dir>   # Deploy a pipeline using PipelineWrapper
-hayhooks pipeline deploy <pipeline_name>       # Deploy a pipeline from a YAML file
+hayhooks pipeline deploy-yaml <path_to_yaml>   # Deploy a pipeline from a YAML file (preferred)
+hayhooks pipeline deploy-files <path_to_dir>   # Deploy a pipeline using PipelineWrapper files
+hayhooks pipeline deploy <path_to_dir>         # Alias for deploy-files
 hayhooks pipeline undeploy <pipeline_name>     # Undeploy a pipeline
 hayhooks pipeline run <pipeline_name>          # Run a pipeline
 ```
@@ -195,7 +195,7 @@ The pipeline wrapper provides a flexible foundation for deploying Haystack pipel
 - Define custom execution logic with configurable inputs and outputs
 - Optionally expose OpenAI-compatible chat endpoints with streaming support for integration with interfaces like [open-webui](https://openwebui.com/)
 
-The `pipeline_wrapper.py` file must contain an implementation of the `BasePipelineWrapper` class (see [here](src/hayhooks/server/utils/base_pipeline_wrapper.py) for more details).
+The `pipeline_wrapper.py` file must contain an implementation of the `BasePipelineWrapper` class (see [BasePipelineWrapper source](src/hayhooks/server/utils/base_pipeline_wrapper.py) for more details).
 
 A minimal `PipelineWrapper` looks like this:
 
@@ -274,6 +274,8 @@ hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/c
 
 This will deploy the pipeline with the name `chat_with_website`. Any error encountered during development will be printed to the console and show in the server logs.
 
+Alternatively, you can deploy via HTTP: `POST /deploy_files` (CLI alias: `hayhooks pipeline deploy`).
+
 #### PipelineWrapper development with `overwrite` option
 
 During development, you can use the `--overwrite` flag to redeploy your pipeline without restarting the Hayhooks server:
@@ -317,6 +319,54 @@ Then, assuming you've installed the Hayhooks package in a virtual environment, y
 ```shell
 pip install trafilatura
 ```
+
+## Deploy a YAML Pipeline
+
+You can deploy a Haystack pipeline directly from its YAML definition using the preferred `/deploy-yaml` endpoint. This mode builds request/response schemas from the YAML-declared `inputs` and `outputs`.
+
+Note: You can also deploy YAML pipelines from the CLI with `hayhooks pipeline deploy-yaml`. Wrapper-based deployments continue to use `/deploy_files` or the CLI alias `hayhooks pipeline deploy`.
+
+Tip: You can obtain a pipeline's YAML from an existing `Pipeline` instance using `pipeline.dumps()`. See the [Haystack serialization docs](https://docs.haystack.deepset.ai/docs/serialization) for details.
+
+Requirements:
+
+- The YAML must declare both `inputs` and `outputs` fields so the API request/response schemas can be generated.
+- `inputs`/`outputs` entries map friendly names to pipeline component fields (e.g. `fetcher.urls`, `prompt.query`).
+
+Minimal example:
+
+```yaml
+# ... pipeline definition ...
+
+inputs:
+  urls:
+    - fetcher.urls
+  query:
+    - prompt.query
+outputs:
+  replies: llm.replies
+```
+
+CLI:
+
+```shell
+hayhooks pipeline deploy-yaml -n inputs_outputs_pipeline pipelines/inputs_outputs_pipeline.yml
+```
+
+Alternatively, you can deploy via HTTP: `POST /deploy-yaml`.
+
+If successful, the server exposes a run endpoint at `/{name}/run` with a request/response schema derived from the YAML IO. For example:
+
+```shell
+curl -X POST \
+  http://HAYHOOKS_HOST:HAYHOOKS_PORT/inputs_outputs_pipeline/run \
+  -H 'Content-Type: application/json' \
+  -d '{"urls": ["https://haystack.deepset.ai"], "query": "What is Haystack?"}'
+```
+
+Limitations:
+
+- YAML-deployed pipelines do not support OpenAI-compatible chat completion endpoints, so they cannot be used with Open WebUI. If you need chat completion/streaming, use a `PipelineWrapper` and implement `run_chat_completion` or `run_chat_completion_async` (see the OpenAI compatibility section below).
 
 ## Deploy an Agent
 
@@ -970,24 +1020,6 @@ We have some dedicated documentation for deployment:
 - Kubernetes-based deployments: <https://docs.haystack.deepset.ai/docs/kubernetes>
 
 We also have some additional deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
-
-### Legacy Features
-
-#### Deploy a pipeline using only its YAML definition
-
-**⚠️ This way of deployment is not maintained anymore and will be deprecated in the future**.
-
-We're still supporting the Hayhooks _former_ way to deploy a pipeline.
-
-The former command `hayhooks deploy` is now changed to `hayhooks pipeline deploy` and can be used to deploy a pipeline only from a YAML definition file.
-
-For example:
-
-```shell
-hayhooks pipeline deploy -n chat_with_website examples/pipeline_wrappers/chat_with_website/chat_with_website.yml
-```
-
-This will deploy the pipeline with the name `chat_with_website` from the YAML definition file `examples/pipeline_wrappers/chat_with_website/chat_with_website.yml`. You then can check the generated docs at `http://HAYHOOKS_HOST:HAYHOOKS_PORT/docs` or `http://HAYHOOKS_HOST:HAYHOOKS_PORT/redoc`, looking at the `POST /chat_with_website` endpoint.
 
 ### License
 
