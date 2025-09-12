@@ -119,6 +119,10 @@ def deploy_files(
     _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy_files", payload=payload)
 
 
+# Register alias: `deploy` -> `deploy-files`
+pipeline.command(name="deploy")(deploy_files)
+
+
 @pipeline.command()
 def undeploy(
     ctx: typer.Context,
