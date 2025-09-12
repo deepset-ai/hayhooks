@@ -38,25 +38,6 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
         show_error_and_abort(f"Pipeline '[bold]{name}[/bold]' already exists! ⚠️")
 
 
-@pipeline.command()
-def deploy(
-    ctx: typer.Context,
-    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
-    pipeline_file: Path = typer.Argument(  # noqa: B008
-        help="The path to the pipeline file to deploy."
-    ),
-) -> None:
-    """Deploy a pipeline to the Hayhooks server."""
-    if not pipeline_file.exists():
-        show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
-
-    if name is None:
-        name = pipeline_file.stem
-
-    payload = {"name": name, "source_code": pipeline_file.read_text()}
-    _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy", payload=payload)
-
-
 @pipeline.command(name="deploy-yaml")
 def deploy_yaml(  # noqa: PLR0913
     ctx: typer.Context,
