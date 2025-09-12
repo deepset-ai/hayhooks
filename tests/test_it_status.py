@@ -16,11 +16,11 @@ def test_status_all_pipelines(client, status_pipeline):
     assert "pipelines" in status_response.json()
 
 
-def test_status_single_pipeline(client, deploy_pipeline, status_pipeline):
-    pipeline_file = Path(__file__).parent / "test_files/yaml" / "working_pipelines/test_pipeline_01.yml"
+def test_status_single_pipeline(client, deploy_yaml_pipeline, status_pipeline):
+    pipeline_file = Path(__file__).parent / "test_files/yaml" / "inputs_outputs_pipeline.yml"
     pipeline_data = {"name": pipeline_file.stem, "source_code": pipeline_file.read_text()}
 
-    deploy_response = deploy_pipeline(client, pipeline_data["name"], pipeline_data["source_code"])
+    deploy_response = deploy_yaml_pipeline(client, pipeline_data["name"], pipeline_data["source_code"])
     assert deploy_response.status_code == 200
 
     status_response = status_pipeline(client, pipeline_data["name"])

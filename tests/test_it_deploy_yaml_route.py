@@ -5,11 +5,11 @@ from hayhooks.server.routers.deploy import DeployResponse
 SAMPLE_CALC_PIPELINE_PATH = Path(__file__).parent / "test_files" / "yaml" / "sample_calc_pipeline.yml"
 
 
-def test_deploy_yaml_route_and_run_ok(client):
+def test_deploy_yaml_route_and_run_ok(client, deploy_yaml_pipeline):
     yaml_source = SAMPLE_CALC_PIPELINE_PATH.read_text().strip()
 
     # Deploy via the new route
-    response = client.post("/deploy-yaml", json={"name": "calc", "source_code": yaml_source, "overwrite": True})
+    response = deploy_yaml_pipeline(client, "calc", yaml_source)
     assert response.status_code == 200
     assert response.json() == DeployResponse(name="calc", success=True, endpoint="/calc/run").model_dump()
 
@@ -27,7 +27,7 @@ def test_deploy_yaml_route_and_run_ok(client):
     assert run_response.status_code == 200
 
     # (3 + 2) * 2 = 10
-    assert run_response.json() == {"result": 10}
+    assert run_response.json() == {"result": {"double": {"value": 10}}}
 
 
 def test_deploy_yaml_saves_file(client, test_settings):

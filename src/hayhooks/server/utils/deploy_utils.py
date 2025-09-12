@@ -10,83 +10,31 @@ from types import ModuleType
 from typing import Any, Callable, Optional, Union
 
 import docstring_parser
-from docstring_parser.common import Docstring
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from haystack import AsyncPipeline, Pipeline
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel
 
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
     PipelineModuleLoadError,
+    PipelineNotFoundError,
     PipelineWrapperError,
+    PipelineYamlError,
 )
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.models import (
-    PipelineDefinition,
-    convert_component_output,
-    get_request_model,
+    create_request_model_from_callable,
+    create_response_model_from_callable,
     get_request_model_from_resolved_io,
-    get_response_model,
     get_response_model_from_resolved_io,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.yaml_utils import get_inputs_outputs_from_yaml
 from hayhooks.settings import settings
-
-
-def deploy_pipeline_def(app: FastAPI, pipeline_def: PipelineDefinition) -> dict[str, str]:
-    """
-    Deploy a pipeline definition to the FastAPI application.
-
-    NOTE: This is a legacy method which is used in YAML-only based deployments.
-          It's not maintained anymore and will be removed in a future version.
-
-    Args:
-        app: FastAPI application instance
-        pipeline_def: PipelineDefinition instance
-    """
-    try:
-        pipe = registry.add(pipeline_def.name, pipeline_def.source_code)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=f"{e}") from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{e}") from e
-
-    if isinstance(pipe, BasePipelineWrapper):
-        msg = "Pipelines of type BasePipelineWrapper are not supported"
-        raise ValueError(msg)
-
-    PipelineRunRequest = get_request_model(pipeline_def.name, pipe.inputs())
-    PipelineRunResponse = get_response_model(pipeline_def.name, pipe.outputs())
-
-    # There's no way in FastAPI to define the type of the request body other than annotating
-    # the endpoint handler. We have to ignore the type here to make FastAPI happy while
-    # silencing static type checkers (that would have good reasons to trigger!).
-    async def pipeline_run(pipeline_run_req: PipelineRunRequest) -> JSONResponse:  # type:ignore[valid-type]
-        result = await run_in_threadpool(pipe.run, data=pipeline_run_req.dict())  # type:ignore[attr-defined]
-        final_output = {}
-        for component_name, output in result.items():
-            final_output[component_name] = convert_component_output(output)
-
-        return JSONResponse(PipelineRunResponse(**final_output).model_dump(), status_code=200)
-
-    app.add_api_route(
-        path=f"/{pipeline_def.name}",
-        endpoint=pipeline_run,
-        methods=["POST"],
-        name=pipeline_def.name,
-        response_model=PipelineRunResponse,
-        tags=["pipelines"],
-    )
-    app.openapi_schema = None
-    app.setup()
-
-    return {"name": pipeline_def.name}
 
 
 def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir: str) -> dict[str, str]:
@@ -222,54 +170,6 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         raise PipelineModuleLoadError(error_msg) from e
 
 
-def create_request_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:
-    """
-    Create a dynamic Pydantic model based on callable's signature.
-
-    Args:
-        func: The callable (function/method) to analyze
-        model_name: Name for the generated model
-
-    Returns:
-        Pydantic model class for request
-    """
-
-    params = inspect.signature(func).parameters
-    param_docs = {p.arg_name: p.description for p in docstring.params}
-
-    fields: dict[str, Any] = {}
-    for name, param in params.items():
-        default_value = ... if param.default == param.empty else param.default
-        description = param_docs.get(name) or f"Parameter '{name}'"
-        field_info = Field(default=default_value, description=description)
-        fields[name] = (param.annotation, field_info)
-
-    return create_model(f"{model_name}Request", **fields)
-
-
-def create_response_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:
-    """
-    Create a dynamic Pydantic model based on callable's return type.
-
-    Args:
-        func: The callable (function/method) to analyze
-        model_name: Name for the generated model
-
-    Returns:
-        Pydantic model class for response
-    """
-
-    return_type = inspect.signature(func).return_annotation
-
-    if return_type is inspect.Signature.empty:
-        msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"
-        raise PipelineWrapperError(msg)
-
-    return_description = docstring.returns.description if docstring.returns else None
-
-    return create_model(f"{model_name}Response", result=(return_type, Field(..., description=return_description)))
-
-
 def handle_pipeline_exceptions() -> Callable:
     """Decorator to handle pipeline execution exceptions."""
 
@@ -401,7 +301,7 @@ def add_pipeline_wrapper_api_route(app: FastAPI, pipeline_name: str, pipeline_wr
     app.setup()
 
 
-def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str, source_code: str) -> None:
+def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str) -> None:
     """
     Create or replace the YAML pipeline run endpoint at /{pipeline_name}/run.
 
@@ -410,52 +310,28 @@ def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str, source_code: s
     """
     pipeline_instance = registry.get(pipeline_name)
     if pipeline_instance is None:
-        msg = f"Pipeline '{pipeline_name}' not found after registration"
-        raise HTTPException(status_code=500, detail=msg)
+        msg = f"Pipeline '{pipeline_name}' not found"
+        raise PipelineNotFoundError(msg)
 
     # Ensure the registered object is a Haystack Pipeline, not a wrapper
     if not isinstance(pipeline_instance, (Pipeline, AsyncPipeline)):
         msg = f"Pipeline '{pipeline_name}' is not a Haystack Pipeline instance"
-        raise HTTPException(status_code=500, detail=msg)
+        raise PipelineYamlError(msg)
 
     pipeline: Union[Pipeline, AsyncPipeline] = pipeline_instance
-
-    # Compute IO resolution to map flat request fields to pipeline.run nested inputs
-    resolved_io = get_inputs_outputs_from_yaml(source_code)
-    declared_inputs = resolved_io["inputs"]
-    declared_outputs = resolved_io["outputs"]
-
     metadata = registry.get_metadata(pipeline_name) or {}
+
     PipelineRunRequest = metadata.get("request_model")
     PipelineRunResponse = metadata.get("response_model")
 
     if PipelineRunRequest is None or PipelineRunResponse is None:
         msg = f"Missing request/response models for YAML pipeline '{pipeline_name}'"
-        raise HTTPException(status_code=500, detail=msg)
+        raise PipelineYamlError(msg)
 
     @handle_pipeline_exceptions()
-    async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type: ignore
-        # Map flat declared inputs to the nested structure expected by Haystack Pipeline.run
-        payload: dict[str, dict[str, Any]] = {}
-        req_dict = run_req.model_dump()  # type: ignore[attr-defined]
-        for input_name, in_resolution in declared_inputs.items():
-            value = req_dict.get(input_name)
-            if value is None:
-                continue
-            component_inputs = payload.setdefault(in_resolution.component, {})
-            component_inputs[in_resolution.name] = value
-
-        # Execute the pipeline
-        result = await run_in_threadpool(pipeline.run, data=payload)
-
-        # Map pipeline outputs back to declared outputs (flat)
-        final_output: dict[str, Any] = {}
-        for output_name, out_resolution in declared_outputs.items():
-            component_result = (result or {}).get(out_resolution.component, {})
-            raw_value = component_result.get(out_resolution.name)
-            final_output[output_name] = convert_component_output(raw_value)
-
-        return PipelineRunResponse(**final_output)
+    async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type:ignore[valid-type]
+        result = await run_in_threadpool(pipeline.run, data=run_req.model_dump())  # type: ignore[attr-defined]
+        return PipelineRunResponse(result=result)
 
     # Clear existing YAML run route if it exists (old or new path)
     for route in list(app.routes):
@@ -542,7 +418,7 @@ def deploy_pipeline_yaml(
     )
 
     if app:
-        add_pipeline_yaml_api_route(app, pipeline_name, source_code)
+        add_pipeline_yaml_api_route(app, pipeline_name)
 
     return {"name": pipeline_name}
 

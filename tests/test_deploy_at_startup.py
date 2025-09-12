@@ -21,7 +21,7 @@ def test_files_pipelines_dir():
 
 @pytest.fixture
 def test_yaml_pipelines_dir():
-    return Path("tests/test_files/yaml/working_pipelines")
+    return Path("tests/test_files/yaml")
 
 
 @pytest.fixture

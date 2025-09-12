@@ -54,12 +54,12 @@ def cleanup_pipelines(test_settings):
 
 
 @pytest.fixture
-def deploy_pipeline():
-    def _deploy_pipeline(client: TestClient, pipeline_name: str, pipeline_source_code: str):
-        deploy_response = client.post("/deploy", json={"name": pipeline_name, "source_code": pipeline_source_code})
+def deploy_yaml_pipeline():
+    def _deploy_yaml_pipeline(client: TestClient, pipeline_name: str, pipeline_source_code: str):
+        deploy_response = client.post("/deploy-yaml", json={"name": pipeline_name, "source_code": pipeline_source_code})
         return deploy_response
 
-    return _deploy_pipeline
+    return _deploy_yaml_pipeline
 
 
 @pytest.fixture

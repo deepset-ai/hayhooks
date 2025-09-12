@@ -12,29 +12,32 @@ SAMPLE_PIPELINE_FILES = {
 }
 
 
-def test_undeploy_standard_pipeline(client: TestClient, deploy_pipeline, undeploy_pipeline):
-    deploy_response = deploy_pipeline(
+def test_undeploy_yaml_pipeline(client: TestClient, deploy_yaml_pipeline, undeploy_pipeline):
+    pipeline_file = Path(__file__).parent / "test_files/yaml" / "inputs_outputs_pipeline.yml"
+    pipeline_data = {"name": pipeline_file.stem, "source_code": pipeline_file.read_text()}
+
+    deploy_response = deploy_yaml_pipeline(
         client,
-        pipeline_name="test_undeploy_pipeline",
-        pipeline_source_code=SAMPLE_PIPELINE_FILES["chat_with_website.yml"],
+        pipeline_name=pipeline_data["name"],
+        pipeline_source_code=pipeline_data["source_code"],
     )
     assert deploy_response.status_code == 200
-    assert deploy_response.json()["name"] == "test_undeploy_pipeline"
+    assert deploy_response.json()["name"] == pipeline_data["name"]
 
     # Verify pipeline exists in registry
-    assert "test_undeploy_pipeline" in registry.get_names()
+    assert pipeline_data["name"] in registry.get_names()
 
     # Undeploy the pipeline
-    undeploy_response = undeploy_pipeline(client, pipeline_name="test_undeploy_pipeline")
+    undeploy_response = undeploy_pipeline(client, pipeline_name=pipeline_data["name"])
     assert undeploy_response.status_code == 200
     assert undeploy_response.json()["success"] is True
-    assert undeploy_response.json()["name"] == "test_undeploy_pipeline"
+    assert undeploy_response.json()["name"] == pipeline_data["name"]
 
     # Verify pipeline no longer exists in registry
-    assert "test_undeploy_pipeline" not in registry.get_names()
+    assert pipeline_data["name"] not in registry.get_names()
 
     # Verify pipeline endpoint no longer exists
-    response = client.post("/test_undeploy_pipeline", json={})
+    response = client.post(f"/{pipeline_data['name']}/run", json={})
     assert response.status_code == 404
 
 

@@ -10,6 +10,12 @@ class PipelineWrapperError(Exception):
     pass
 
 
+class PipelineYamlError(Exception):
+    """Exception for errors loading pipeline YAML."""
+
+    pass
+
+
 class PipelineModuleLoadError(Exception):
     """Exception for errors loading pipeline module."""
 

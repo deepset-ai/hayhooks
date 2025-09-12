@@ -42,13 +42,14 @@ def test_deploy_pipeline_with_inputs_outputs():
 
     assert metadata["response_model"].model_json_schema() == {
         "properties": {
-            "replies": {
-                "type": "array",
-                "items": {"type": "string"},
-                "title": "Replies",
+            "result": {
+                "additionalProperties": True,
+                "description": "Pipeline result",
+                "type": "object",
+                "title": "Result",
             },
         },
-        "required": ["replies"],
+        "required": ["result"],
         "type": "object",
         "title": "Inputs_outputs_pipelineRunResponse",
     }

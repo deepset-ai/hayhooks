@@ -3,13 +3,11 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from hayhooks.server.exceptions import InvalidYamlIOError, PipelineAlreadyExistsError
+from hayhooks.server.exceptions import InvalidYamlIOError, PipelineAlreadyExistsError, PipelineYamlError
 from hayhooks.server.utils.deploy_utils import (
-    PipelineDefinition,
     PipelineFilesError,
     PipelineModuleLoadError,
     PipelineWrapperError,
-    deploy_pipeline_def,
     deploy_pipeline_files,
     deploy_pipeline_yaml,
 )
@@ -70,25 +68,6 @@ class DeployResponse(BaseModel):
     model_config = {"json_schema_extra": {"description": "Response model for pipeline deployment operations"}}
 
 
-@router.post(
-    "/deploy",
-    tags=["config"],
-    response_model=DeployResponse,
-    operation_id="legacy_yaml_deploy",
-    summary="Deploy a pipeline from YAML definition (Not Maintained)",
-    description=(
-        "[DEPRECATED] This route is no longer maintained and will be removed in a future version. "
-        "Please use /deploy_files endpoint instead. "
-        "Deploys a pipeline from a PipelineDefinition object. "
-        "Returns 409 if the pipeline already exists and overwrite is false."
-    ),
-    deprecated=True,
-)
-async def deploy(pipeline_def: PipelineDefinition, request: Request) -> DeployResponse:
-    result = deploy_pipeline_def(request.app, pipeline_def)
-    return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
-
-
 class YamlDeployRequest(BaseModel):
     name: str = Field(description="Name of the pipeline to deploy")
     source_code: str = Field(description="YAML pipeline definition source code")
@@ -140,9 +119,7 @@ async def deploy_yaml(yaml_request: YamlDeployRequest, request: Request) -> Depl
         return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
     except InvalidYamlIOError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
-    except PipelineModuleLoadError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
-    except PipelineWrapperError as e:
+    except PipelineYamlError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineAlreadyExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
