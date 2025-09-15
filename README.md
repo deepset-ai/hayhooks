@@ -34,6 +34,7 @@ With Hayhooks, you can:
   - [Additional Dependencies](#additional-dependencies)
 - [Deploy a YAML Pipeline](#deploy-a-yaml-pipeline)
 - [Deploy an Agent](#deploy-an-agent)
+- [Load pipelines or agents at startup](#load-pipelines-or-agents-at-startup)
 - [Support file uploads](#support-file-uploads)
 - [Run pipelines from the CLI](#run-pipelines-from-the-cli)
   - [Run a pipeline from the CLI JSON-compatible parameters](#run-a-pipeline-from-the-cli-json-compatible-parameters)
@@ -407,6 +408,41 @@ class PipelineWrapper(BasePipelineWrapper):
 As you can see, the `run_chat_completion_async` method is the one that will be used to run the agent. You can of course implement also `run_api` or `run_api_async` methods if you need to.
 
 The `async_streaming_generator` function is a utility function that [will handle the streaming of the agent's responses](#async_streaming_generator).
+
+## Load pipelines or agents at startup
+
+Hayhooks can automatically deploy pipelines or agents on startup by scanning a pipelines directory.
+
+- Set `HAYHOOKS_PIPELINES_DIR` (defaults to `./pipelines`).
+- On startup, Hayhooks will:
+  - Deploy every YAML file at the directory root (`*.yml`/`*.yaml`) using the file name as the pipeline name.
+  - Deploy every immediate subfolder as a wrapper-based pipeline/agent if it contains a `pipeline_wrapper.py`.
+
+Example layout:
+
+```text
+my-project/
+├── .env
+└── pipelines/
+    ├── inputs_outputs_pipeline.yml        # YAML-only pipeline -> POST /inputs_outputs_pipeline/run
+    ├── chat_with_website/                 # Wrapper-based pipeline -> POST /chat_with_website/run (+ chat endpoints if implemented)
+    │   ├── pipeline_wrapper.py
+    │   └── chat_with_website.yml
+    └── agent_streaming/
+        └── pipeline_wrapper.py
+```
+
+Configure via environment or `.env`:
+
+```shell
+# .env
+HAYHOOKS_PIPELINES_DIR=./pipelines
+```
+
+Notes:
+
+- YAML-deployed pipelines require `inputs` and `outputs` in the YAML and do not expose OpenAI-compatible chat endpoints. For chat/streaming, use a `PipelineWrapper` and implement `run_chat_completion`/`run_chat_completion_async`.
+- If your wrappers import shared code, set `HAYHOOKS_ADDITIONAL_PYTHON_PATH` (see “Sharing code between pipeline wrappers”).
 
 ## Support file uploads
 
