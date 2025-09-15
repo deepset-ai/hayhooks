@@ -13,7 +13,7 @@ import docstring_parser
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.routing import APIRoute
-from haystack import AsyncPipeline, Pipeline
+from haystack import AsyncPipeline
 from pydantic import BaseModel
 
 from hayhooks.server.exceptions import (
