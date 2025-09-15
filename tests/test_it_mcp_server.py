@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from hayhooks.server.pipelines import registry
-from hayhooks.server.utils.deploy_utils import add_pipeline_wrapper_to_registry
+from hayhooks.server.utils.deploy_utils import add_pipeline_wrapper_to_registry, add_yaml_pipeline_to_registry
 from hayhooks.server.utils.mcp_utils import CoreTools, create_mcp_server
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -157,6 +157,45 @@ async def test_call_pipeline_as_tool_with_invalid_pipeline_name(mcp_server_insta
 
         text_response = result.content[0].text
         assert "Pipeline 'invalid_pipeline_name' not found" in text_response
+
+
+@pytest.fixture
+def deploy_yaml_calc_pipeline():
+    pipeline_name = "calc"
+    yaml_path = Path("tests/test_files/yaml/sample_calc_pipeline.yml")
+    add_yaml_pipeline_to_registry(pipeline_name=pipeline_name, source_code=yaml_path.read_text())
+    return pipeline_name
+
+
+@pytest.mark.asyncio
+async def test_list_tools_with_yaml_pipeline_deployed(mcp_server_instance, deploy_yaml_calc_pipeline):
+    async with client_session(mcp_server_instance) as client:
+        list_tools_result = await client.list_tools()
+
+        # Core tools + 1 YAML pipeline tool
+        assert len(list_tools_result.tools) == len(CoreTools) + 1
+
+        # Find YAML pipeline tool and verify basic schema
+        pipeline_tool = next((t for t in list_tools_result.tools if t.name == deploy_yaml_calc_pipeline), None)
+        assert pipeline_tool is not None
+        assert pipeline_tool.inputSchema["type"] == "object"
+        assert "value" in pipeline_tool.inputSchema["properties"]
+
+
+@pytest.mark.asyncio
+async def test_call_yaml_pipeline_as_tool(mcp_server_instance, deploy_yaml_calc_pipeline):
+    async with client_session(mcp_server_instance) as client:
+        result = await client.call_tool(deploy_yaml_calc_pipeline, {"value": 3})
+
+        assert isinstance(result, CallToolResult)
+        assert result.isError is False
+
+        # YAML pipelines return JSON text content; parse and assert
+        payload = result.content[0].text
+        import json
+
+        parsed = json.loads(payload)
+        assert parsed == {"double": {"value": 10}}
 
 
 @pytest.mark.asyncio

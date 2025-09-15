@@ -1,4 +1,5 @@
 import asyncio
+import json
 import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Union
 
 from fastapi.concurrency import run_in_threadpool
+from haystack import AsyncPipeline
 from haystack.lazy_imports import LazyImport
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -147,20 +149,25 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
         msg = f"Pipeline '{name}' not found"
         raise ValueError(msg)
 
-    # Only BasePipelineWrapper instances support run_api/run_api_async methods
-    if not isinstance(pipeline, BasePipelineWrapper):
-        msg = f"Pipeline '{name}' is not a BasePipelineWrapper and cannot be used as an MCP tool"
-        raise ValueError(msg)
+    if isinstance(pipeline, BasePipelineWrapper):
+        if pipeline._is_run_api_async_implemented:
+            result = await pipeline.run_api_async(**arguments)
+        else:
+            result = await run_in_threadpool(pipeline.run_api, **arguments)
 
-    # Use the same async/sync pattern as in deploy_utils.py
-    if pipeline._is_run_api_async_implemented:
-        result = await pipeline.run_api_async(**arguments)
-    else:
-        result = await run_in_threadpool(pipeline.run_api, **arguments)
+        log.trace(f"Pipeline '{name}' returned result: {result}")
+        return [TextContent(text=result, type="text")]
 
-    log.trace(f"Pipeline '{name}' returned result: {result}")
+    if isinstance(pipeline, AsyncPipeline):
+        result = await pipeline.run_async(data=arguments)
+        log.trace(f"YAML Pipeline '{name}' returned result: {result}")
+        return [TextContent(text=json.dumps(result), type="text")]
 
-    return [TextContent(text=result, type="text")]
+    msg = (
+        f"Pipeline '{name}' is not a supported type for MCP tools. "
+        "Expected a BasePipelineWrapper or AsyncPipeline instance."
+    )
+    raise ValueError(msg)
 
 
 async def notify_client(server: "Server") -> None:
