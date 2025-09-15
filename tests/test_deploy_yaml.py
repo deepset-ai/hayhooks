@@ -1,7 +1,17 @@
 from pathlib import Path
 
+import pytest
+from haystack import AsyncPipeline
+
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import add_yaml_pipeline_to_registry
+
+
+@pytest.fixture(autouse=True)
+def cleanup_test_pipelines():
+    yield
+    for pipeline_name in registry.get_names():
+        registry.remove(pipeline_name)
 
 
 def test_deploy_pipeline_with_inputs_outputs():
@@ -53,3 +63,14 @@ def test_deploy_pipeline_with_inputs_outputs():
         "type": "object",
         "title": "Inputs_outputs_pipelineRunResponse",
     }
+
+
+def test_yaml_pipeline_is_async_pipeline():
+    pipeline_file = Path(__file__).parent / "test_files/yaml/inputs_outputs_pipeline.yml"
+    pipeline_name = pipeline_file.stem
+    source_code = pipeline_file.read_text()
+
+    add_yaml_pipeline_to_registry(pipeline_name=pipeline_name, source_code=source_code)
+
+    pipeline_instance = registry.get(pipeline_name)
+    assert isinstance(pipeline_instance, AsyncPipeline)

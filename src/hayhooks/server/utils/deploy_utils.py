@@ -314,11 +314,11 @@ def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str) -> None:
         raise PipelineNotFoundError(msg)
 
     # Ensure the registered object is a Haystack Pipeline, not a wrapper
-    if not isinstance(pipeline_instance, (Pipeline, AsyncPipeline)):
-        msg = f"Pipeline '{pipeline_name}' is not a Haystack Pipeline instance"
+    if not isinstance(pipeline_instance, AsyncPipeline):
+        msg = f"Pipeline '{pipeline_name}' is not a Haystack AsyncPipeline instance"
         raise PipelineYamlError(msg)
 
-    pipeline: Union[Pipeline, AsyncPipeline] = pipeline_instance
+    pipeline: AsyncPipeline = pipeline_instance
     metadata = registry.get_metadata(pipeline_name) or {}
 
     PipelineRunRequest = metadata.get("request_model")
@@ -330,7 +330,7 @@ def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str) -> None:
 
     @handle_pipeline_exceptions()
     async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type:ignore[valid-type]
-        result = await run_in_threadpool(pipeline.run, data=run_req.model_dump())  # type: ignore[attr-defined]
+        result = await pipeline.run_async(data=run_req.model_dump())  # type: ignore[attr-defined]
         return PipelineRunResponse(result=result)
 
     # Clear existing YAML run route if it exists (old or new path)
@@ -475,10 +475,12 @@ def add_yaml_pipeline_to_registry(
     clog.debug(f"Adding YAML pipeline to registry with metadata: {metadata}")
 
     # Store the instantiated pipeline together with its metadata
+    # NOTE: We want to create an AsyncPipeline here so we can avoid using
+    #       run_in_threadpool when running the pipeline.
     try:
-        from haystack import Pipeline
+        from haystack import AsyncPipeline
 
-        pipeline = Pipeline.loads(source_code)
+        pipeline = AsyncPipeline.loads(source_code)
     except Exception as e:
         msg = f"Unable to parse Haystack Pipeline {pipeline_name}: {e!s}"
         raise ValueError(msg) from e
