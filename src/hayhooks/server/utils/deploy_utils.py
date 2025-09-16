@@ -173,11 +173,10 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
 
 def handle_pipeline_exceptions() -> Callable:
     """
-    Decorator factory that wraps endpoint handlers and converts unexpected exceptions
-    into HTTP 500 responses, optionally including tracebacks based on settings.
+    Decorator factory that wraps pipeline run methods and processes unexpected exceptions.
 
     Returns:
-        A decorator that can be applied to async endpoint handlers.
+        A decorator that can be applied to async pipeline run methods.
     """
 
     def decorator(func):
