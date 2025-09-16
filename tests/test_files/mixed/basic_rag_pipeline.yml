@@ -70,3 +70,12 @@ connections:
   sender: prompt_builder.prompt
 max_runs_per_component: 100
 metadata: {}
+
+
+inputs:
+  question:
+  - llm.prompt
+
+outputs:
+  answer:
+  - llm.response
