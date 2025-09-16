@@ -42,6 +42,7 @@ With Hayhooks, you can:
 - [MCP support](#mcp-support)
   - [MCP Server](#mcp-server)
   - [Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool](#create-a-pipelinewrapper-for-exposing-a-haystack-pipeline-as-a-mcp-tool)
+  - [Expose a YAML pipeline as a MCP Tool](#expose-a-yaml-pipeline-as-a-mcp-tool)
   - [Using Hayhooks MCP Server with Claude Desktop](#using-hayhooks-mcp-server-with-claude-desktop)
   - [Using Hayhooks Core MCP Tools in IDEs like Cursor](#using-hayhooks-core-mcp-tools-in-ides-like-cursor)
   - [Development and deployment of Haystack pipelines directly from Cursor](#development-and-deployment-of-haystack-pipelines-directly-from-cursor)
@@ -351,7 +352,7 @@ outputs:
 CLI:
 
 ```shell
-hayhooks pipeline deploy-yaml -n inputs_outputs_pipeline pipelines/inputs_outputs_pipeline.yml
+hayhooks pipeline deploy-yaml -n inputs_outputs_pipeline --description "My pipeline" pipelines/inputs_outputs_pipeline.yml
 ```
 
 Alternatively, you can deploy via HTTP: `POST /deploy-yaml`.
@@ -368,6 +369,14 @@ curl -X POST \
 Limitations:
 
 - YAML-deployed pipelines do not support OpenAI-compatible chat completion endpoints, so they cannot be used with Open WebUI. If you need chat completion/streaming, use a `PipelineWrapper` and implement `run_chat_completion` or `run_chat_completion_async` (see the OpenAI compatibility section below).
+
+Available CLI options for `hayhooks pipeline deploy-yaml`:
+
+- `--name, -n`: override the pipeline name (default: YAML file stem)
+- `--description`: optional human-readable description (used in MCP tool listing)
+- `--overwrite, -o`: overwrite if the pipeline already exists
+- `--skip-mcp`: skip exposing this pipeline as an MCP Tool
+- `--save-file/--no-save-file`: save the YAML under `pipelines/{name}.yml` on the server (default: `--save-file`)
 
 ## Deploy an Agent
 
@@ -530,6 +539,33 @@ hayhooks mcp run
 ```
 
 This will start the Hayhooks MCP Server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT`.
+
+### Expose a YAML pipeline as a MCP Tool
+
+Hayhooks can expose YAML-deployed pipelines as MCP Tools. When you deploy a pipeline via `/deploy-yaml` (or the CLI `hayhooks pipeline deploy-yaml`), Hayhooks:
+
+- Builds flat request/response models from YAML-declared `inputs` and `outputs`.
+- Registers the pipeline as an `AsyncPipeline` and adds it to the registry with metadata required for MCP Tools.
+- Lists it in MCP `list_tools()` with:
+  - `name`: the pipeline name (YAML file stem or provided `--name`)
+  - `description`: the optional description you pass during deployment (defaults to the pipeline name)
+  - `inputSchema`: JSON schema derived from YAML `inputs`
+
+Calling a YAML pipeline via MCP `call_tool` executes the pipeline asynchronously and returns the pipeline result as a JSON string in `TextContent`.
+
+Example (Streamable HTTP via MCP client):
+
+```python
+tools = await client.list_tools()
+# Find YAML tool by name, e.g., "calc" (the pipeline name)
+result = await client.call_tool("calc", {"value": 3})
+assert result.content[0].text == '{"double": {"value": 10}}'
+```
+
+Notes and limitations:
+
+- YAML pipelines must declare `inputs` and `outputs`.
+- YAML pipelines are run-only via MCP and return JSON text; if you need OpenAI-compatible chat endpoints or streaming, use a `PipelineWrapper` and implement `run_chat_completion`/`run_chat_completion_async`.
 
 ### Create a PipelineWrapper for exposing a Haystack pipeline as a MCP Tool
 
