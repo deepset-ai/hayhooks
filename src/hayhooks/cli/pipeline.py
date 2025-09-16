@@ -74,13 +74,11 @@ def deploy_yaml(  # noqa: PLR0913
         "source_code": pipeline_file.read_text(),
         "overwrite": overwrite,
         "save_file": save_file,
+        "skip_mcp": skip_mcp,
     }
 
     if description is not None:
         payload["description"] = description
-
-    # Always include skip_mcp flag (defaults to False)
-    payload["skip_mcp"] = skip_mcp
 
     _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy-yaml", payload=payload)
 
