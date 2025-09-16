@@ -332,7 +332,7 @@ Tip: You can obtain a pipeline's YAML from an existing `Pipeline` instance using
 
 Requirements:
 
-- The YAML must declare both `inputs` and `outputs` fields so the API request/response schemas can be generated.
+- The YAML must declare both `inputs` and `outputs` fields so the API request/response schemas can be generated. If you have generated the YAML from a `Pipeline` using `pipeline.dumps()`, you will need to add the `inputs` and `outputs` fields _manually_.
 - `inputs`/`outputs` entries map friendly names to pipeline component fields (e.g. `fetcher.urls`, `prompt.query`).
 
 Minimal example:
