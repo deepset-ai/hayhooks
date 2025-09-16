@@ -128,7 +128,8 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         The loaded module
 
     Raises:
-        ValueError: If the module cannot be loaded
+        PipelineWrapperError: If required files or symbols are missing
+        PipelineModuleLoadError: If the module cannot be loaded
     """
     log.trace(f"Loading pipeline module from {dir_path}")
     log.trace(f"Is folder present: {Path(dir_path).exists()}")
@@ -171,7 +172,13 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
 
 
 def handle_pipeline_exceptions() -> Callable:
-    """Decorator to handle pipeline execution exceptions."""
+    """
+    Decorator factory that wraps endpoint handlers and converts unexpected exceptions
+    into HTTP 500 responses, optionally including tracebacks based on settings.
+
+    Returns:
+        A decorator that can be applied to async endpoint handlers.
+    """
 
     def decorator(func):
         @wraps(func)  # Preserve the original function's metadata
@@ -213,6 +220,9 @@ def create_run_endpoint_handler(
         request_model: The request model
         response_model: The response model
         requires_files: Whether the pipeline requires file uploads
+
+    Returns:
+        A FastAPI endpoint function that executes the pipeline and returns the response model.
     """
 
     @handle_pipeline_exceptions()
@@ -237,6 +247,19 @@ def create_run_endpoint_handler(
 
 
 def add_pipeline_wrapper_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
+    """
+    Create or replace the wrapper-based pipeline run endpoint at /{pipeline_name}/run.
+
+    Args:
+        app: FastAPI application instance.
+        pipeline_name: Name of the pipeline.
+        pipeline_wrapper: Initialized pipeline wrapper instance to use as handler target.
+
+    Side Effects:
+        - Removes any existing route at /{pipeline_name}/run
+        - Rebuilds and invalidates the OpenAPI schema
+        - Updates registry metadata with request/response models and file requirement flag
+    """
     clog = log.bind(pipeline_name=pipeline_name)
 
     # Determine which run_api method to use (prefer async if available)
@@ -307,6 +330,14 @@ def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str) -> None:
 
     Builds the flat request/response models from declared YAML inputs/outputs and wires a handler that
     maps the flat body into the nested structure required by Haystack Pipeline.run.
+
+    Args:
+        app: FastAPI application instance.
+        pipeline_name: Name of the YAML pipeline.
+
+    Raises:
+        PipelineNotFoundError: If the pipeline is not registered in the registry.
+        PipelineYamlError: If the registered object is not an AsyncPipeline or metadata is missing.
     """
     pipeline_instance = registry.get(pipeline_name)
     if pipeline_instance is None:
@@ -371,6 +402,15 @@ def deploy_pipeline_files(
         app: Optional FastAPI application instance. If provided, the API route will be added.
         save_files: Whether to save the pipeline files to disk
         overwrite: Whether to overwrite an existing pipeline
+
+    Returns:
+        A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
+
+    Raises:
+        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        PipelineFilesError: If saving files fails.
+        PipelineModuleLoadError: If loading the pipeline module fails.
+        PipelineWrapperError: If wrapper creation or setup fails.
     """
     pipeline_wrapper = add_pipeline_wrapper_to_registry(pipeline_name, files, save_files, overwrite)
 
@@ -394,13 +434,22 @@ def deploy_pipeline_yaml(
     declared inputs/outputs, and set up the API route at /{pipeline_name}/run.
 
     Args:
-        app: Optional FastAPI application instance. If provided, the API route will be added.
         pipeline_name: Name of the pipeline
         source_code: YAML pipeline source code
         overwrite: Whether to overwrite an existing pipeline
         options: Optional dict with additional deployment options. Supported keys:
+            - save_file: Optional[bool] - whether to persist the YAML to disk (default: True)
             - description: Optional[str]
             - skip_mcp: Optional[bool]
+        app: Optional FastAPI application instance. If provided, the API route will be added.
+
+    Returns:
+        A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
+
+    Raises:
+        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        ValueError: If the YAML cannot be parsed into an AsyncPipeline.
+        PipelineYamlError: If route creation fails due to invalid registry state.
     """
 
     # Optionally save YAML to disk as pipelines/{name}.yml (default True)
@@ -434,8 +483,16 @@ def add_yaml_pipeline_to_registry(
     Add a YAML pipeline to the registry.
 
     Args:
-        pipeline_name: Name of the pipeline to deploy
-        source_code: Source code of the pipeline
+        pipeline_name: Name of the pipeline to deploy.
+        source_code: YAML source code of the pipeline.
+        overwrite: Whether to overwrite an existing pipeline with the same name.
+        description: Optional description to store in registry metadata.
+        skip_mcp: Whether to disable MCP integration for this pipeline.
+
+    Raises:
+        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        ValueError: If the YAML cannot be parsed into an AsyncPipeline.
+        Exception: If inputs/outputs cannot be resolved to build request/response models.
     """
 
     log.debug(f"Checking if YAML pipeline '{pipeline_name}' already exists: {registry.get(pipeline_name)}")
@@ -491,16 +548,22 @@ def add_pipeline_wrapper_to_registry(
     pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
 ) -> BasePipelineWrapper:
     """
-    Add a pipeline to the registry.
+    Add a wrapper-based pipeline to the registry.
 
     Args:
-
-    Args:
-        pipeline_name: Name of the pipeline to deploy
-        files: Dictionary mapping filenames to their contents
+        pipeline_name: Name of the pipeline to deploy.
+        files: Mapping of relative filenames to their contents.
+        save_files: Whether to save files under settings.pipelines_dir; if False, uses a temp dir.
+        overwrite: Whether to overwrite an existing pipeline of the same name.
 
     Returns:
-        dict: Dictionary containing the deployed pipeline name
+        The initialized and registered PipelineWrapper instance.
+
+    Raises:
+        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        PipelineFilesError: If saving files fails.
+        PipelineModuleLoadError: If loading the pipeline module fails.
+        PipelineWrapperError: If wrapper instantiation or setup fails, or required methods are missing.
     """
 
     log.debug(f"Checking if pipeline '{pipeline_name}' already exists: {registry.get(pipeline_name)}")
@@ -581,6 +644,18 @@ def add_pipeline_wrapper_to_registry(
 
 
 def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelineWrapper:
+    """
+    Instantiate a `PipelineWrapper` from a loaded module and verify supported methods.
+
+    Args:
+        pipeline_module: The loaded module exposing a `PipelineWrapper` class.
+
+    Returns:
+        An initialized PipelineWrapper instance with capability flags set.
+
+    Raises:
+        PipelineWrapperError: If instantiation or setup fails, or if no supported run methods are implemented.
+    """
     try:
         pipeline_wrapper = pipeline_module.PipelineWrapper()
     except Exception as e:
@@ -631,7 +706,14 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
 
 
 def _set_method_implementation_flag(pipeline_wrapper: BasePipelineWrapper, attr_name: str, method_name: str) -> None:
-    """Helper to check if a method is implemented on the wrapper compared to the base."""
+    """
+    Helper to check if a method is implemented on the wrapper compared to the base.
+
+    Args:
+        pipeline_wrapper: The wrapper instance to annotate.
+        attr_name: The attribute name to set on the wrapper (e.g., "_is_run_api_implemented").
+        method_name: The method name to check (e.g., "run_api").
+    """
     wrapper_method = getattr(pipeline_wrapper, method_name, None)
     base_method = getattr(BasePipelineWrapper, method_name, None)
     if wrapper_method and base_method:
@@ -687,6 +769,9 @@ def undeploy_pipeline(pipeline_name: str, app: Optional[FastAPI] = None) -> None
     Args:
         pipeline_name: Name of the pipeline to undeploy.
         app: Optional FastAPI application instance. If provided, API routes will be removed.
+
+    Raises:
+        HTTPException: If the pipeline is not found in the registry (404).
     """
     # Check if pipeline exists in registry
     if pipeline_name not in registry.get_names():
