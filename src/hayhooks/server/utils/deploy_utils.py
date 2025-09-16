@@ -478,8 +478,6 @@ def add_yaml_pipeline_to_registry(
     # NOTE: We want to create an AsyncPipeline here so we can avoid using
     #       run_in_threadpool when running the pipeline.
     try:
-        from haystack import AsyncPipeline
-
         pipeline = AsyncPipeline.loads(source_code)
     except Exception as e:
         msg = f"Unable to parse Haystack Pipeline {pipeline_name}: {e!s}"
