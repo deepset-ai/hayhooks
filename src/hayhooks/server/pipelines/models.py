@@ -42,7 +42,7 @@ def get_response_model_from_resolved_io(
         declared_outputs: Mapping of declared output name to OutputResolution.
 
     Returns:
-        A Pydantic model with top-level fields matching declared output names.
+        A Pydantic model with a single required field 'result' containing the pipeline result.
     """
     fields: dict[str, Any] = {}
 
@@ -57,14 +57,15 @@ def get_response_model_from_resolved_io(
 
 def create_request_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:
     """
-    Create a dynamic Pydantic model based on callable's signature.
+    Create a dynamic Pydantic model based on the callable's signature.
 
     Args:
-        func: The callable (function/method) to analyze
-        model_name: Name for the generated model
+        func: The callable (function or method) to analyze.
+        model_name: Name to use for the generated model.
+        docstring: Parsed docstring for the callable used to populate parameter descriptions.
 
     Returns:
-        Pydantic model class for request
+        Pydantic model class for the request.
     """
 
     params = inspect.signature(func).parameters
@@ -82,14 +83,15 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
 
 def create_response_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:
     """
-    Create a dynamic Pydantic model based on callable's return type.
+    Create a dynamic Pydantic model based on the callable's return type.
 
     Args:
-        func: The callable (function/method) to analyze
-        model_name: Name for the generated model
+        func: The callable (function or method) to analyze.
+        model_name: Name to use for the generated model.
+        docstring: Parsed docstring for the callable used to populate the return description.
 
     Returns:
-        Pydantic model class for response
+        Pydantic model class for the response with a single required field 'result'.
     """
 
     return_type = inspect.signature(func).return_annotation
