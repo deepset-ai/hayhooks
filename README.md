@@ -163,8 +163,8 @@ CLI commands are basically wrappers around the HTTP API of the server. The full 
 hayhooks run     # Start the server
 hayhooks status  # Check the status of the server and show deployed pipelines
 
-hayhooks pipeline deploy-yaml <path_to_yaml>   # Deploy a pipeline from a YAML file (preferred)
-hayhooks pipeline deploy-files <path_to_dir>   # Deploy a pipeline using PipelineWrapper files
+hayhooks pipeline deploy-files <path_to_dir>   # Deploy a pipeline using PipelineWrapper files (preferred)
+hayhooks pipeline deploy-yaml <path_to_yaml>   # Deploy a pipeline from a YAML file
 hayhooks pipeline deploy <path_to_dir>         # Alias for deploy-files
 hayhooks pipeline undeploy <pipeline_name>     # Undeploy a pipeline
 hayhooks pipeline run <pipeline_name>          # Run a pipeline
