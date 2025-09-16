@@ -41,11 +41,10 @@ def test_deploy_pipeline_with_inputs_outputs():
                 "items": {"type": "string"},
             },
             "query": {
-                "default": None,
                 "title": "Query",
             },
         },
-        "required": ["urls"],
+        "required": ["urls", "query"],
         "title": "Inputs_outputs_pipelineRunRequest",
         "type": "object",
     }

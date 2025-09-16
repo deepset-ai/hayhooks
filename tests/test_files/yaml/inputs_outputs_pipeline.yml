@@ -29,6 +29,7 @@ components:
 
   prompt:
     init_parameters:
+      required_variables: "*"
       template: |
         "According to the contents of this website:
         {% for document in documents %}
