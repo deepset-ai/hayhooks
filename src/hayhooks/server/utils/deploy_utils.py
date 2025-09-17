@@ -348,7 +348,6 @@ def add_yaml_pipeline_api_route(app: FastAPI, pipeline_name: str) -> None:
         msg = f"Pipeline '{pipeline_name}' not found"
         raise PipelineNotFoundError(msg)
 
-    # Ensure the registered object is a Haystack Pipeline, not a wrapper
     if not isinstance(pipeline_instance, AsyncPipeline):
         msg = f"Pipeline '{pipeline_name}' is not a Haystack AsyncPipeline instance"
         raise PipelineYamlError(msg)
@@ -485,6 +484,12 @@ def add_yaml_pipeline_to_registry(
 ) -> None:
     """
     Add a YAML pipeline to the registry.
+
+    Note:
+        We are always creating an AsyncPipeline instance from YAML source code.
+        This is because we are in an async context, so we should avoid running sync methods
+        using e.g. `run_in_threadpool`. With AsyncPipeline, we can await `run_async` directly,
+        so we make use of the current event loop.
 
     Args:
         pipeline_name: Name of the pipeline to deploy.
