@@ -165,7 +165,6 @@ hayhooks status  # Check the status of the server and show deployed pipelines
 
 hayhooks pipeline deploy-files <path_to_dir>   # Deploy a pipeline using PipelineWrapper files (preferred)
 hayhooks pipeline deploy-yaml <path_to_yaml>   # Deploy a pipeline from a YAML file
-hayhooks pipeline deploy <path_to_dir>         # Alias for deploy-files
 hayhooks pipeline undeploy <pipeline_name>     # Undeploy a pipeline
 hayhooks pipeline run <pipeline_name>          # Run a pipeline
 ```
@@ -276,7 +275,7 @@ hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/c
 
 This will deploy the pipeline with the name `chat_with_website`. Any error encountered during development will be printed to the console and show in the server logs.
 
-Alternatively, you can deploy via HTTP: `POST /deploy_files` (CLI alias: `hayhooks pipeline deploy`).
+Alternatively, you can deploy via HTTP: `POST /deploy_files`.
 
 #### PipelineWrapper development with `overwrite` option
 
@@ -326,7 +325,7 @@ pip install trafilatura
 
 You can deploy a Haystack pipeline directly from its YAML definition using the `/deploy-yaml` endpoint. This mode builds request/response schemas from the YAML-declared `inputs` and `outputs`.
 
-Note: You can also deploy YAML pipelines from the CLI with `hayhooks pipeline deploy-yaml`. Wrapper-based deployments continue to use `/deploy_files` or the CLI alias `hayhooks pipeline deploy`.
+Note: You can also deploy YAML pipelines from the CLI with `hayhooks pipeline deploy-yaml`. Wrapper-based deployments continue to use `/deploy_files`.
 
 Tip: You can obtain a pipeline's YAML from an existing `Pipeline` instance using `pipeline.dumps()`. See the [Haystack serialization docs](https://docs.haystack.deepset.ai/docs/serialization) for details.
 
