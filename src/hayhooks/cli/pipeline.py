@@ -123,7 +123,7 @@ def deploy(_ctx: typer.Context) -> None:
     show_warning_panel(
         "[bold yellow]`hayhooks pipeline deploy` has been removed.[/bold yellow]\n"
         "Use: \n"
-        "`hayhooks pipeline deploy-yaml <pipeline.yml>` for YAML pipelines or\n"
+        "`hayhooks pipeline deploy-yaml <pipeline.yml>` for YAML-based deployments or\n"
         "`hayhooks pipeline deploy-files <pipeline_dir>` for PipelineWrapper-based deployments."
     )
 
