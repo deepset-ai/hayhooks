@@ -366,6 +366,8 @@ curl -X POST \
   -d '{"urls": ["https://haystack.deepset.ai"], "query": "What is Haystack?"}'
 ```
 
+Note: when deploying a YAML pipeline, Hayhooks will create an `AsyncPipeline` instance from the YAML source code. This is because we are in an async context, so we should avoid running sync methods using e.g. `run_in_threadpool`. With AsyncPipeline, we can await `run_async` directly, so we make use of the current event loop.
+
 Limitations:
 
 - YAML-deployed pipelines do not support OpenAI-compatible chat completion endpoints, so they cannot be used with Open WebUI. If you need chat completion/streaming, use a `PipelineWrapper` and implement `run_chat_completion` or `run_chat_completion_async` (see the OpenAI compatibility section below).
