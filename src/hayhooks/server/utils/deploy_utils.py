@@ -72,7 +72,7 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
         return saved_files
 
     except Exception as e:
-        msg = f"Failed to save pipeline files: {e!s}"
+        msg = f"Failed to save pipeline files for '{pipeline_name}': {e!s}"
         raise PipelineFilesError(msg) from e
 
 
@@ -99,7 +99,7 @@ def save_yaml_pipeline_file(pipeline_name: str, source_code: str, pipelines_dir:
         file_path.write_text(source_code)
         return str(file_path)
     except Exception as e:
-        msg = f"Failed to save YAML pipeline file: {e!s}"
+        msg = f"Failed to save YAML pipeline file for '{pipeline_name}': {e!s}"
         raise PipelineFilesError(msg) from e
 
 
@@ -523,7 +523,7 @@ def add_yaml_pipeline_to_registry(
         request_model = get_request_model_from_resolved_io(pipeline_name, pipeline_inputs)
         response_model = get_response_model_from_resolved_io(pipeline_name, pipeline_outputs)
     except Exception as e:
-        clog.error(f"Failed creating request/response models for YAML pipeline: {e!s}")
+        clog.error(f"Failed creating request/response models for YAML pipeline '{pipeline_name}': {e!s}")
         raise
 
     metadata = {
