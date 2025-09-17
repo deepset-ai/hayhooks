@@ -553,13 +553,32 @@ Hayhooks can expose YAML-deployed pipelines as MCP Tools. When you deploy a pipe
 
 Calling a YAML pipeline via MCP `call_tool` executes the pipeline asynchronously and returns the pipeline result as a JSON string in `TextContent`.
 
+Sample YAML for a simple `sum` pipeline using only the `haystack.testing.sample_components.sum.Sum` component:
+
+```yaml
+components:
+  sum:
+    init_parameters: {}
+    type: haystack.testing.sample_components.sum.Sum
+
+connections: []
+
+metadata: {}
+
+inputs:
+  values: sum.values
+
+outputs:
+  total: sum.total
+```
+
 Example (Streamable HTTP via MCP client):
 
 ```python
 tools = await client.list_tools()
-# Find YAML tool by name, e.g., "calc" (the pipeline name)
-result = await client.call_tool("calc", {"value": 3})
-assert result.content[0].text == '{"double": {"value": 10}}'
+# Find YAML tool by name, e.g., "sum" (the pipeline name)
+result = await client.call_tool("sum", {"values": [1, 2, 3]})
+assert result.content[0].text == '{"total": 6}'
 ```
 
 Notes and limitations:
