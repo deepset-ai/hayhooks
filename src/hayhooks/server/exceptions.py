@@ -10,6 +10,12 @@ class PipelineWrapperError(Exception):
     pass
 
 
+class PipelineYamlError(Exception):
+    """Exception for errors loading pipeline YAML."""
+
+    pass
+
+
 class PipelineModuleLoadError(Exception):
     """Exception for errors loading pipeline module."""
 
@@ -22,5 +28,11 @@ class PipelineAlreadyExistsError(Exception):
 
 class PipelineNotFoundError(Exception):
     """Exception for errors when a pipeline is not found."""
+
+    pass
+
+
+class InvalidYamlIOError(Exception):
+    """Exception for invalid or missing YAML inputs/outputs declarations."""
 
     pass

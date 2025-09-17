@@ -38,23 +38,49 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
         show_error_and_abort(f"Pipeline '[bold]{name}[/bold]' already exists! ⚠️")
 
 
-@pipeline.command()
-def deploy(
+@pipeline.command(name="deploy-yaml")
+def deploy_yaml(  # noqa: PLR0913
     ctx: typer.Context,
-    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
     pipeline_file: Path = typer.Argument(  # noqa: B008
-        help="The path to the pipeline file to deploy."
+        help="The path to the YAML pipeline file to deploy."
     ),
+    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")] = None,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", "-o", help="Whether to overwrite the pipeline if it already exists.")
+    ] = False,
+    description: Annotated[
+        Optional[str], typer.Option("--description", help="Optional description for the pipeline.")
+    ] = None,
+    skip_mcp: Annotated[
+        bool, typer.Option("--skip-mcp", help="If set, skip MCP integration for this pipeline.")
+    ] = False,
+    save_file: Annotated[
+        bool,
+        typer.Option(
+            "--save-file/--no-save-file",
+            help="Whether to save the YAML under pipelines/{name}.yml on the server.",
+        ),
+    ] = True,
 ) -> None:
-    """Deploy a pipeline to the Hayhooks server."""
+    """Deploy a YAML pipeline using the /deploy-yaml endpoint."""
     if not pipeline_file.exists():
         show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
 
     if name is None:
         name = pipeline_file.stem
 
-    payload = {"name": name, "source_code": pipeline_file.read_text()}
-    _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy", payload=payload)
+    payload = {
+        "name": name,
+        "source_code": pipeline_file.read_text(),
+        "overwrite": overwrite,
+        "save_file": save_file,
+        "skip_mcp": skip_mcp,
+    }
+
+    if description is not None:
+        payload["description"] = description
+
+    _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy-yaml", payload=payload)
 
 
 @pipeline.command()
@@ -89,6 +115,17 @@ def deploy_files(
 
     payload = {"name": name, "files": files_dict, "save_files": not skip_saving_files, "overwrite": overwrite}
     _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy_files", payload=payload)
+
+
+@pipeline.command(name="deploy", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+def deploy(_ctx: typer.Context) -> None:
+    """Removed command; use 'deploy-yaml' or 'deploy-files' instead."""
+    show_warning_panel(
+        "[bold yellow]`hayhooks pipeline deploy` has been removed.[/bold yellow]\n"
+        "Use: \n"
+        "`hayhooks pipeline deploy-yaml <pipeline.yml>` for YAML-based deployments or\n"
+        "`hayhooks pipeline deploy-files <pipeline_dir>` for PipelineWrapper-based deployments."
+    )
 
 
 @pipeline.command()

@@ -9,5 +9,11 @@ components:
 connections:
 - receiver: double.value
   sender: first_addition.result
-max_loops_allowed: 100
+
 metadata: {}
+
+inputs:
+  value: first_addition.value
+
+outputs:
+  result: double.value

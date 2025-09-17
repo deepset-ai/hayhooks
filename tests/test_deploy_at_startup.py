@@ -21,7 +21,7 @@ def test_files_pipelines_dir():
 
 @pytest.fixture
 def test_yaml_pipelines_dir():
-    return Path("tests/test_files/yaml/working_pipelines")
+    return Path("tests/test_files/yaml")
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ def test_app_loads_pipeline_from_yaml_directory(test_client_yaml, test_yaml_pipe
     assert response.status_code == 200
 
     pipelines = response.json()["pipelines"]
-    assert len(pipelines) == len(list(test_yaml_pipelines_dir.rglob("*")))
+    assert len(pipelines) == 2
 
 
 def test_app_loads_pipeline_from_mixed_directory(test_client_mixed, test_mixed_pipelines_dir):

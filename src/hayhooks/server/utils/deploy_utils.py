@@ -10,79 +10,31 @@ from types import ModuleType
 from typing import Any, Callable, Optional, Union
 
 import docstring_parser
-from docstring_parser.common import Docstring
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field, create_model
+from haystack import AsyncPipeline
+from pydantic import BaseModel
 
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
     PipelineModuleLoadError,
+    PipelineNotFoundError,
     PipelineWrapperError,
+    PipelineYamlError,
 )
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.models import (
-    PipelineDefinition,
-    convert_component_output,
-    get_request_model,
-    get_response_model,
+    create_request_model_from_callable,
+    create_response_model_from_callable,
+    get_request_model_from_resolved_io,
+    get_response_model_from_resolved_io,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.yaml_utils import get_inputs_outputs_from_yaml
 from hayhooks.settings import settings
-
-
-def deploy_pipeline_def(app: FastAPI, pipeline_def: PipelineDefinition) -> dict[str, str]:
-    """
-    Deploy a pipeline definition to the FastAPI application.
-
-    NOTE: This is a legacy method which is used in YAML-only based deployments.
-          It's not maintained anymore and will be removed in a future version.
-
-    Args:
-        app: FastAPI application instance
-        pipeline_def: PipelineDefinition instance
-    """
-    try:
-        pipe = registry.add(pipeline_def.name, pipeline_def.source_code)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=f"{e}") from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{e}") from e
-
-    if isinstance(pipe, BasePipelineWrapper):
-        msg = "Pipelines of type BasePipelineWrapper are not supported"
-        raise ValueError(msg)
-
-    PipelineRunRequest = get_request_model(pipeline_def.name, pipe.inputs())
-    PipelineRunResponse = get_response_model(pipeline_def.name, pipe.outputs())
-
-    # There's no way in FastAPI to define the type of the request body other than annotating
-    # the endpoint handler. We have to ignore the type here to make FastAPI happy while
-    # silencing static type checkers (that would have good reasons to trigger!).
-    async def pipeline_run(pipeline_run_req: PipelineRunRequest) -> JSONResponse:  # type:ignore[valid-type]
-        result = await run_in_threadpool(pipe.run, data=pipeline_run_req.dict())  # type:ignore[attr-defined]
-        final_output = {}
-        for component_name, output in result.items():
-            final_output[component_name] = convert_component_output(output)
-
-        return JSONResponse(PipelineRunResponse(**final_output).model_dump(), status_code=200)
-
-    app.add_api_route(
-        path=f"/{pipeline_def.name}",
-        endpoint=pipeline_run,
-        methods=["POST"],
-        name=pipeline_def.name,
-        response_model=PipelineRunResponse,
-        tags=["pipelines"],
-    )
-    app.openapi_schema = None
-    app.setup()
-
-    return {"name": pipeline_def.name}
 
 
 def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir: str) -> dict[str, str]:
@@ -120,7 +72,34 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
         return saved_files
 
     except Exception as e:
-        msg = f"Failed to save pipeline files: {e!s}"
+        msg = f"Failed to save pipeline files for '{pipeline_name}': {e!s}"
+        raise PipelineFilesError(msg) from e
+
+
+def save_yaml_pipeline_file(pipeline_name: str, source_code: str, pipelines_dir: str) -> str:
+    """
+    Save a single YAML pipeline file in the pipelines directory as {name}.yml.
+
+    Args:
+        pipeline_name: Name of the pipeline
+        source_code: YAML content
+        pipelines_dir: Path to the pipelines directory
+
+    Returns:
+        The saved file path as string
+
+    Raises:
+        PipelineFilesError: If there are any issues saving the file
+    """
+    try:
+        pipelines_dir_path = Path(pipelines_dir)
+        pipelines_dir_path.mkdir(parents=True, exist_ok=True)
+        file_path = pipelines_dir_path / f"{pipeline_name}.yml"
+        log.debug(f"Saving YAML pipeline file: {file_path}")
+        file_path.write_text(source_code)
+        return str(file_path)
+    except Exception as e:
+        msg = f"Failed to save YAML pipeline file for '{pipeline_name}': {e!s}"
         raise PipelineFilesError(msg) from e
 
 
@@ -149,7 +128,8 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         The loaded module
 
     Raises:
-        ValueError: If the module cannot be loaded
+        PipelineWrapperError: If required files or symbols are missing
+        PipelineModuleLoadError: If the module cannot be loaded
     """
     log.trace(f"Loading pipeline module from {dir_path}")
     log.trace(f"Is folder present: {Path(dir_path).exists()}")
@@ -191,56 +171,13 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         raise PipelineModuleLoadError(error_msg) from e
 
 
-def create_request_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:
-    """
-    Create a dynamic Pydantic model based on callable's signature.
-
-    Args:
-        func: The callable (function/method) to analyze
-        model_name: Name for the generated model
-
-    Returns:
-        Pydantic model class for request
-    """
-
-    params = inspect.signature(func).parameters
-    param_docs = {p.arg_name: p.description for p in docstring.params}
-
-    fields: dict[str, Any] = {}
-    for name, param in params.items():
-        default_value = ... if param.default == param.empty else param.default
-        description = param_docs.get(name) or f"Parameter '{name}'"
-        field_info = Field(default=default_value, description=description)
-        fields[name] = (param.annotation, field_info)
-
-    return create_model(f"{model_name}Request", **fields)
-
-
-def create_response_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:
-    """
-    Create a dynamic Pydantic model based on callable's return type.
-
-    Args:
-        func: The callable (function/method) to analyze
-        model_name: Name for the generated model
-
-    Returns:
-        Pydantic model class for response
-    """
-
-    return_type = inspect.signature(func).return_annotation
-
-    if return_type is inspect.Signature.empty:
-        msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"
-        raise PipelineWrapperError(msg)
-
-    return_description = docstring.returns.description if docstring.returns else None
-
-    return create_model(f"{model_name}Response", result=(return_type, Field(..., description=return_description)))
-
-
 def handle_pipeline_exceptions() -> Callable:
-    """Decorator to handle pipeline execution exceptions."""
+    """
+    Decorator factory that wraps pipeline run methods and processes unexpected exceptions.
+
+    Returns:
+        A decorator that can be applied to async pipeline run methods.
+    """
 
     def decorator(func):
         @wraps(func)  # Preserve the original function's metadata
@@ -282,6 +219,9 @@ def create_run_endpoint_handler(
         request_model: The request model
         response_model: The response model
         requires_files: Whether the pipeline requires file uploads
+
+    Returns:
+        A FastAPI endpoint function that executes the pipeline and returns the response model.
     """
 
     @handle_pipeline_exceptions()
@@ -305,7 +245,20 @@ def create_run_endpoint_handler(
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
 
 
-def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
+def add_pipeline_wrapper_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
+    """
+    Create or replace the wrapper-based pipeline run endpoint at /{pipeline_name}/run.
+
+    Args:
+        app: FastAPI application instance.
+        pipeline_name: Name of the pipeline.
+        pipeline_wrapper: Initialized pipeline wrapper instance to use as handler target.
+
+    Side Effects:
+        - Removes any existing route at /{pipeline_name}/run
+        - Rebuilds and invalidates the OpenAPI schema
+        - Updates registry metadata with request/response models and file requirement flag
+    """
     clog = log.bind(pipeline_name=pipeline_name)
 
     # Determine which run_api method to use (prefer async if available)
@@ -370,6 +323,70 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
     app.setup()
 
 
+def add_yaml_pipeline_api_route(app: FastAPI, pipeline_name: str) -> None:
+    """
+    Create or replace the YAML pipeline run endpoint at /{pipeline_name}/run.
+
+    Builds the flat request/response models from declared YAML inputs/outputs and wires a handler that
+    maps the flat body into the nested structure required by Haystack Pipeline.run.
+
+    Note:
+        There's no way in FastAPI to define the type of the request body other than annotating
+        the endpoint handler. We have to **ignore types several times in this method** to make FastAPI happy while
+        silencing static type checkers (that would have good reasons to trigger!).
+
+    Args:
+        app: FastAPI application instance.
+        pipeline_name: Name of the YAML pipeline.
+
+    Raises:
+        PipelineNotFoundError: If the pipeline is not registered in the registry.
+        PipelineYamlError: If the registered object is not an AsyncPipeline or metadata is missing.
+    """
+    pipeline_instance = registry.get(pipeline_name)
+    if pipeline_instance is None:
+        msg = f"Pipeline '{pipeline_name}' not found"
+        raise PipelineNotFoundError(msg)
+
+    if not isinstance(pipeline_instance, AsyncPipeline):
+        msg = f"Pipeline '{pipeline_name}' is not a Haystack AsyncPipeline instance"
+        raise PipelineYamlError(msg)
+
+    pipeline: AsyncPipeline = pipeline_instance
+    metadata = registry.get_metadata(pipeline_name) or {}
+
+    PipelineRunRequest = metadata.get("request_model")
+    PipelineRunResponse = metadata.get("response_model")
+
+    if PipelineRunRequest is None or PipelineRunResponse is None:
+        msg = f"Missing request/response models for YAML pipeline '{pipeline_name}'"
+        raise PipelineYamlError(msg)
+
+    @handle_pipeline_exceptions()
+    async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type:ignore[valid-type]
+        result = await pipeline.run_async(data=run_req.model_dump())  # type: ignore[attr-defined]
+        return PipelineRunResponse(result=result)
+
+    # Clear existing YAML run route if it exists (old or new path)
+    for route in list(app.routes):
+        if isinstance(route, APIRoute) and route.path in (f"/{pipeline_name}", f"/{pipeline_name}/run"):
+            app.routes.remove(route)
+
+    # Register the run endpoint at /{pipeline_name}/run
+    app.add_api_route(
+        path=f"/{pipeline_name}/run",
+        endpoint=pipeline_run,
+        methods=["POST"],
+        name=f"{pipeline_name}_run",
+        response_model=PipelineRunResponse,
+        tags=["pipelines"],
+    )
+
+    # Invalidate OpenAPI cache
+    app.openapi_schema = None
+    app.setup()
+
+
 def deploy_pipeline_files(
     pipeline_name: str,
     files: dict[str, str],
@@ -388,29 +405,174 @@ def deploy_pipeline_files(
         app: Optional FastAPI application instance. If provided, the API route will be added.
         save_files: Whether to save the pipeline files to disk
         overwrite: Whether to overwrite an existing pipeline
+
+    Returns:
+        A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
+
+    Raises:
+        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        PipelineFilesError: If saving files fails.
+        PipelineModuleLoadError: If loading the pipeline module fails.
+        PipelineWrapperError: If wrapper creation or setup fails.
     """
-    pipeline_wrapper = add_pipeline_to_registry(pipeline_name, files, save_files, overwrite)
+    pipeline_wrapper = add_pipeline_wrapper_to_registry(pipeline_name, files, save_files, overwrite)
 
     if app:
-        add_pipeline_api_route(app, pipeline_name, pipeline_wrapper)
+        add_pipeline_wrapper_api_route(app, pipeline_name, pipeline_wrapper)
 
     return {"name": pipeline_name}
 
 
-def add_pipeline_to_registry(
+def deploy_pipeline_yaml(
+    pipeline_name: str,
+    source_code: str,
+    app: Optional[FastAPI] = None,
+    overwrite: bool = False,
+    options: Optional[dict[str, Any]] = None,
+) -> dict[str, str]:
+    """
+    Deploy a YAML pipeline to the FastAPI application with IO declared in the YAML.
+
+    This will add the pipeline to the registry, create flat request/response models based on
+    declared inputs/outputs, and set up the API route at /{pipeline_name}/run.
+
+    Args:
+        pipeline_name: Name of the pipeline
+        source_code: YAML pipeline source code
+        overwrite: Whether to overwrite an existing pipeline
+        options: Optional dict with additional deployment options. Supported keys:
+            - save_file: Optional[bool] - whether to persist the YAML to disk (default: True)
+            - description: Optional[str]
+            - skip_mcp: Optional[bool]
+        app: Optional FastAPI application instance. If provided, the API route will be added.
+
+    Returns:
+        A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
+
+    Raises:
+        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        ValueError: If the YAML cannot be parsed into an AsyncPipeline.
+        PipelineYamlError: If route creation fails due to invalid registry state.
+    """
+
+    # Optionally save YAML to disk as pipelines/{name}.yml (default True)
+    save_file: bool = True if options is None else bool(options.get("save_file", True))
+    if save_file:
+        save_yaml_pipeline_file(pipeline_name, source_code, settings.pipelines_dir)
+
+    # Add pipeline to the registry and build metadata (request/response models)
+    add_yaml_pipeline_to_registry(
+        pipeline_name=pipeline_name,
+        source_code=source_code,
+        overwrite=overwrite,
+        description=(options or {}).get("description"),
+        skip_mcp=(options or {}).get("skip_mcp"),
+    )
+
+    if app:
+        add_yaml_pipeline_api_route(app, pipeline_name)
+
+    return {"name": pipeline_name}
+
+
+def add_yaml_pipeline_to_registry(
+    pipeline_name: str,
+    source_code: str,
+    overwrite: bool = False,
+    description: Optional[str] = None,
+    skip_mcp: Optional[bool] = False,
+) -> None:
+    """
+    Add a YAML pipeline to the registry.
+
+    Note:
+        We are always creating an AsyncPipeline instance from YAML source code.
+        This is because we are in an async context, so we should avoid running sync methods
+        using e.g. `run_in_threadpool`. With AsyncPipeline, we can await `run_async` directly,
+        so we make use of the current event loop.
+
+    Args:
+        pipeline_name: Name of the pipeline to deploy.
+        source_code: YAML source code of the pipeline.
+        overwrite: Whether to overwrite an existing pipeline with the same name.
+        description: Optional description to store in registry metadata.
+        skip_mcp: Whether to disable MCP integration for this pipeline.
+
+    Raises:
+        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        ValueError: If the YAML cannot be parsed into an AsyncPipeline.
+        Exception: If inputs/outputs cannot be resolved to build request/response models.
+    """
+
+    log.debug(f"Checking if YAML pipeline '{pipeline_name}' already exists: {registry.get(pipeline_name)}")
+    if registry.get(pipeline_name):
+        if overwrite:
+            log.debug(f"Clearing existing YAML pipeline '{pipeline_name}'")
+            registry.remove(pipeline_name)
+        else:
+            msg = f"YAML pipeline '{pipeline_name}' already exists"
+            raise PipelineAlreadyExistsError(msg)
+
+    clog = log.bind(pipeline_name=pipeline_name, type="yaml")
+
+    clog.debug("Creating request/response models from declared YAML inputs/outputs")
+
+    # Build request/response models from declared YAML inputs/outputs using resolved IO types
+    try:
+        resolved_io = get_inputs_outputs_from_yaml(source_code)
+
+        pipeline_inputs = resolved_io["inputs"]
+        pipeline_outputs = resolved_io["outputs"]
+
+        # Prefer resolved IO-based flat models for API schema
+        request_model = get_request_model_from_resolved_io(pipeline_name, pipeline_inputs)
+        response_model = get_response_model_from_resolved_io(pipeline_name, pipeline_outputs)
+    except Exception as e:
+        clog.error(f"Failed creating request/response models for YAML pipeline '{pipeline_name}': {e!s}")
+        raise
+
+    metadata = {
+        "description": description or pipeline_name,
+        "request_model": request_model,
+        "response_model": response_model,
+        "skip_mcp": bool(skip_mcp),
+    }
+
+    clog.debug(f"Adding YAML pipeline to registry with metadata: {metadata}")
+
+    # Store the instantiated pipeline together with its metadata
+    # NOTE: We want to create an AsyncPipeline here so we can avoid using
+    #       run_in_threadpool when running the pipeline.
+    try:
+        pipeline = AsyncPipeline.loads(source_code)
+    except Exception as e:
+        msg = f"Unable to parse Haystack Pipeline {pipeline_name}: {e!s}"
+        raise ValueError(msg) from e
+
+    registry.add(pipeline_name, pipeline, metadata=metadata)
+    log.success(f"YAML pipeline '{pipeline_name}' successfully added to registry")
+
+
+def add_pipeline_wrapper_to_registry(
     pipeline_name: str, files: dict[str, str], save_files: bool = True, overwrite: bool = False
 ) -> BasePipelineWrapper:
     """
-    Add a pipeline to the registry.
+    Add a wrapper-based pipeline to the registry.
 
     Args:
-
-    Args:
-        pipeline_name: Name of the pipeline to deploy
-        files: Dictionary mapping filenames to their contents
+        pipeline_name: Name of the pipeline to deploy.
+        files: Mapping of relative filenames to their contents.
+        save_files: Whether to save files under settings.pipelines_dir; if False, uses a temp dir.
+        overwrite: Whether to overwrite an existing pipeline of the same name.
 
     Returns:
-        dict: Dictionary containing the deployed pipeline name
+        The initialized and registered PipelineWrapper instance.
+
+    Raises:
+        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        PipelineFilesError: If saving files fails.
+        PipelineModuleLoadError: If loading the pipeline module fails.
+        PipelineWrapperError: If wrapper instantiation or setup fails, or required methods are missing.
     """
 
     log.debug(f"Checking if pipeline '{pipeline_name}' already exists: {registry.get(pipeline_name)}")
@@ -491,6 +653,18 @@ def add_pipeline_to_registry(
 
 
 def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelineWrapper:
+    """
+    Instantiate a `PipelineWrapper` from a loaded module and verify supported methods.
+
+    Args:
+        pipeline_module: The loaded module exposing a `PipelineWrapper` class.
+
+    Returns:
+        An initialized PipelineWrapper instance with capability flags set.
+
+    Raises:
+        PipelineWrapperError: If instantiation or setup fails, or if no supported run methods are implemented.
+    """
     try:
         pipeline_wrapper = pipeline_module.PipelineWrapper()
     except Exception as e:
@@ -541,7 +715,14 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
 
 
 def _set_method_implementation_flag(pipeline_wrapper: BasePipelineWrapper, attr_name: str, method_name: str) -> None:
-    """Helper to check if a method is implemented on the wrapper compared to the base."""
+    """
+    Helper to check if a method is implemented on the wrapper compared to the base.
+
+    Args:
+        pipeline_wrapper: The wrapper instance to annotate.
+        attr_name: The attribute name to set on the wrapper (e.g., "_is_run_api_implemented").
+        method_name: The method name to check (e.g., "run_api").
+    """
     wrapper_method = getattr(pipeline_wrapper, method_name, None)
     base_method = getattr(BasePipelineWrapper, method_name, None)
     if wrapper_method and base_method:
@@ -597,6 +778,9 @@ def undeploy_pipeline(pipeline_name: str, app: Optional[FastAPI] = None) -> None
     Args:
         pipeline_name: Name of the pipeline to undeploy.
         app: Optional FastAPI application instance. If provided, API routes will be removed.
+
+    Raises:
+        HTTPException: If the pipeline is not found in the registry (404).
     """
     # Check if pipeline exists in registry
     if pipeline_name not in registry.get_names():

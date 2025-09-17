@@ -15,7 +15,7 @@ def pipeline_registry():
 
 @pytest.fixture
 def sample_pipeline_yaml():
-    return (Path(__file__).parent / "test_files/yaml" / "working_pipelines" / "basic_rag_pipeline.yml").read_text()
+    return (Path(__file__).parent / "test_files/yaml" / "inputs_outputs_pipeline.yml").read_text()
 
 
 @pytest.fixture

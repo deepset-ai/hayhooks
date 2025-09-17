@@ -1,4 +1,5 @@
 import asyncio
+import json
 import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Union
 
 from fastapi.concurrency import run_in_threadpool
+from haystack import AsyncPipeline
 from haystack.lazy_imports import LazyImport
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -20,7 +22,7 @@ from hayhooks.server.pipelines.registry import PipelineType
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
-    add_pipeline_to_registry,
+    add_pipeline_wrapper_to_registry,
     deploy_pipeline_files,
     read_pipeline_files_from_dir,
     undeploy_pipeline,
@@ -63,7 +65,9 @@ def deploy_pipelines() -> None:
         log.debug(f"Deploying pipeline from {pipeline_dir}")
 
         try:
-            add_pipeline_to_registry(pipeline_name=pipeline_dir.name, files=read_pipeline_files_from_dir(pipeline_dir))
+            add_pipeline_wrapper_to_registry(
+                pipeline_name=pipeline_dir.name, files=read_pipeline_files_from_dir(pipeline_dir)
+            )
         except Exception as e:
             log.warning(f"Skipping pipeline directory {pipeline_dir}: {e!s}")
             continue
@@ -145,20 +149,25 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
         msg = f"Pipeline '{name}' not found"
         raise ValueError(msg)
 
-    # Only BasePipelineWrapper instances support run_api/run_api_async methods
-    if not isinstance(pipeline, BasePipelineWrapper):
-        msg = f"Pipeline '{name}' is not a BasePipelineWrapper and cannot be used as an MCP tool"
-        raise ValueError(msg)
+    if isinstance(pipeline, BasePipelineWrapper):
+        if pipeline._is_run_api_async_implemented:
+            result = await pipeline.run_api_async(**arguments)
+        else:
+            result = await run_in_threadpool(pipeline.run_api, **arguments)
 
-    # Use the same async/sync pattern as in deploy_utils.py
-    if pipeline._is_run_api_async_implemented:
-        result = await pipeline.run_api_async(**arguments)
-    else:
-        result = await run_in_threadpool(pipeline.run_api, **arguments)
+        log.trace(f"Pipeline '{name}' returned result: {result}")
+        return [TextContent(text=result, type="text")]
 
-    log.trace(f"Pipeline '{name}' returned result: {result}")
+    if isinstance(pipeline, AsyncPipeline):
+        result = await pipeline.run_async(data=arguments)
+        log.trace(f"YAML Pipeline '{name}' returned result: {result}")
+        return [TextContent(text=json.dumps(result), type="text")]
 
-    return [TextContent(text=result, type="text")]
+    msg = (
+        f"Pipeline '{name}' is not a supported type for MCP tools. "
+        "Expected a BasePipelineWrapper or AsyncPipeline instance."
+    )
+    raise ValueError(msg)
 
 
 async def notify_client(server: "Server") -> None:

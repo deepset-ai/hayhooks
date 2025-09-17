@@ -29,6 +29,7 @@ components:
 
   prompt:
     init_parameters:
+      required_variables: "*"
       template: |
         "According to the contents of this website:
         {% for document in documents %}
@@ -37,7 +38,6 @@ components:
         Answer the given question: {{query}}
         Answer:
         "
-      required_variables: "*"
     type: haystack.components.builders.prompt_builder.PromptBuilder
 
 connections:
@@ -49,3 +49,12 @@ connections:
     sender: prompt.prompt
 
 metadata: {}
+
+inputs:
+  urls:
+  - fetcher.urls
+  query:
+  - prompt.query
+
+outputs:
+  replies: llm.replies
