@@ -117,8 +117,15 @@ def deploy_files(
     _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy_files", payload=payload)
 
 
-# Register alias: `deploy` -> `deploy-files`
-pipeline.command(name="deploy")(deploy_files)
+@pipeline.command(name="deploy", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+def deploy(_ctx: typer.Context) -> None:
+    """Removed command; use 'deploy-yaml' or 'deploy-files' instead."""
+    show_warning_panel(
+        "[bold yellow]`hayhooks pipeline deploy` has been removed.[/bold yellow]\n"
+        "Use: \n"
+        "`hayhooks pipeline deploy-yaml <pipeline.yml>` for YAML pipelines or\n"
+        "`hayhooks pipeline deploy-files <pipeline_dir>` for PipelineWrapper-based deployments."
+    )
 
 
 @pipeline.command()
