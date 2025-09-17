@@ -323,12 +323,17 @@ def add_pipeline_wrapper_api_route(app: FastAPI, pipeline_name: str, pipeline_wr
     app.setup()
 
 
-def add_pipeline_yaml_api_route(app: FastAPI, pipeline_name: str) -> None:
+def add_yaml_pipeline_api_route(app: FastAPI, pipeline_name: str) -> None:
     """
     Create or replace the YAML pipeline run endpoint at /{pipeline_name}/run.
 
     Builds the flat request/response models from declared YAML inputs/outputs and wires a handler that
     maps the flat body into the nested structure required by Haystack Pipeline.run.
+
+    Note:
+        There's no way in FastAPI to define the type of the request body other than annotating
+        the endpoint handler. We have to **ignore types several times in this method** to make FastAPI happy while
+        silencing static type checkers (that would have good reasons to trigger!).
 
     Args:
         app: FastAPI application instance.
@@ -466,7 +471,7 @@ def deploy_pipeline_yaml(
     )
 
     if app:
-        add_pipeline_yaml_api_route(app, pipeline_name)
+        add_yaml_pipeline_api_route(app, pipeline_name)
 
     return {"name": pipeline_name}
 
