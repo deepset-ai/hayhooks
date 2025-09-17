@@ -62,7 +62,7 @@ def deploy_yaml(  # noqa: PLR0913
         ),
     ] = True,
 ) -> None:
-    """Deploy a YAML pipeline using the preferred /deploy-yaml endpoint."""
+    """Deploy a YAML pipeline using the /deploy-yaml endpoint."""
     if not pipeline_file.exists():
         show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
 

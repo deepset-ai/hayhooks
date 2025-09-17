@@ -97,7 +97,7 @@ class YamlDeployRequest(BaseModel):
     tags=["config"],
     operation_id="yaml_pipeline_deploy",
     response_model=DeployResponse,
-    summary="Deploy a pipeline from a YAML definition (preferred)",
+    summary="Deploy a pipeline from a YAML definition",
     description=(
         "Deploys a Haystack pipeline from a YAML string. Builds request/response schemas from declared "
         "inputs/outputs. Returns 409 if the pipeline already exists and overwrite is false."
