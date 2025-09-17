@@ -324,7 +324,7 @@ pip install trafilatura
 
 ## Deploy a YAML Pipeline
 
-You can deploy a Haystack pipeline directly from its YAML definition using the preferred `/deploy-yaml` endpoint. This mode builds request/response schemas from the YAML-declared `inputs` and `outputs`.
+You can deploy a Haystack pipeline directly from its YAML definition using the `/deploy-yaml` endpoint. This mode builds request/response schemas from the YAML-declared `inputs` and `outputs`.
 
 Note: You can also deploy YAML pipelines from the CLI with `hayhooks pipeline deploy-yaml`. Wrapper-based deployments continue to use `/deploy_files` or the CLI alias `hayhooks pipeline deploy`.
 
