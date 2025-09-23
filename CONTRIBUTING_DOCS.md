@@ -1,0 +1,233 @@
+# Documentation Development
+
+This guide covers how to work with and contribute to the Hayhooks documentation.
+
+## Prerequisites
+
+- Python 3.9+
+- Hatch installed (`pip install hatch`)
+
+## Building Documentation
+
+### Using Hatch (Recommended)
+
+The documentation can be built and served using Hatch commands:
+
+#### Development Server (Recommended)
+
+Start a local development server with live reloading using the dedicated docs environment:
+
+```bash
+# Using the dedicated docs environment (auto-installs all dependencies)
+hatch run docs:serve
+
+# With custom options
+hatch run docs:serve --open --dirty
+
+# Or using default environment (requires mkdocs to be installed)
+hatch run docs-serve
+```
+
+The server will be available at `http://localhost:8000/hayhooks/`
+
+#### Build Production Site
+
+Build the documentation for deployment:
+
+```bash
+# Using the docs environment (recommended)
+hatch run docs:build
+
+# Clean build (removes old files first)
+hatch run docs:build --clean
+
+# Or using default environment (requires mkdocs to be installed)
+hatch run docs-build
+```
+
+The built site will be available in the `site/` directory.
+
+### Direct MkDocs Usage
+
+If you prefer to use MkDocs directly:
+
+```bash
+# Install dependencies
+pip install mkdocs-material
+
+# Serve documentation
+mkdocs serve
+
+# Build documentation
+mkdocs build
+```
+
+## Documentation Structure
+
+```
+docs/
+├── mkdocs.yml                 # Main configuration
+├── index.md                   # Homepage
+├── getting-started/           # Getting started guides
+├── concepts/                  # Core concepts
+├── features/                  # Feature documentation
+├── advanced/                  # Advanced topics
+├── deployment/                # Deployment guides
+├── examples/                  # Example documentation
+├── reference/                 # Reference documentation
+├── about/                     # About information
+├── assets/                    # Images and static assets
+├── stylesheets/               # Custom CSS
+└── javascripts/               # Custom JavaScript
+```
+
+## Adding New Documentation
+
+### 1. Create New Files
+
+Add new Markdown files in the appropriate directory:
+
+```bash
+# Create a new feature document
+touch docs/features/new-feature.md
+
+# Create a new example
+touch docs/examples/new-example.md
+```
+
+### 2. Update Navigation
+
+Update `mkdocs.yml` to include your new documentation in the navigation:
+
+```yaml
+nav:
+  - Features:
+    - New Feature: features/new-feature.md  # Add this line
+    - OpenAI Compatibility: features/openai-compatibility.md
+    - MCP Support: features/mcp-support.md
+```
+
+### 3. Add Images
+
+Place images in the `docs/assets/` directory:
+
+```bash
+# Add an image
+mv screenshot.png docs/assets/
+
+# Reference in Markdown
+![Screenshot](../assets/screenshot.png)
+```
+
+## Documentation Style Guide
+
+### Writing Style
+
+- Use clear, concise language
+- Include practical examples
+- Provide step-by-step instructions
+- Use proper Markdown formatting
+
+### Code Examples
+
+Use proper code block formatting:
+
+```python
+# Python code
+def example_function():
+    return "Hello, World!"
+```
+
+```bash
+# Shell commands
+hatch run docs-serve
+```
+
+### Links
+
+- Use relative links for internal documentation
+- Use absolute links for external resources
+- Test all links before committing
+
+## Testing Documentation
+
+### Build Verification
+
+Always test the documentation builds successfully:
+
+```bash
+hatch run docs-build --strict
+```
+
+### Link Verification
+
+Check for broken links:
+
+```bash
+# Test locally
+hatch run docs-serve
+
+# Or use a link checker tool
+pip install linkchecker
+linkchecker http://localhost:8000/hayhooks/
+```
+
+### Preview Changes
+
+Preview your changes in the browser:
+
+```bash
+hatch run docs-serve --open
+```
+
+## Deployment
+
+### GitHub Pages
+
+The documentation is automatically deployed to GitHub Pages via GitHub Actions when changes are merged to the main branch.
+
+### Manual Deployment
+
+To deploy manually:
+
+```bash
+# Build the documentation
+hatch run docs-build
+
+# The site is now ready in the site/ directory
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Build Fails**
+   - Check for Markdown syntax errors
+   - Verify all links are valid
+   - Ensure image paths are correct
+
+2. **Navigation Issues**
+   - Check `mkdocs.yml` syntax
+   - Verify all referenced files exist
+   - Test navigation structure
+
+3. **Style Issues**
+   - Check CSS file paths
+   - Verify JavaScript syntax
+   - Test in multiple browsers
+
+### Getting Help
+
+- Check MkDocs documentation: https://www.mkdocs.org/
+- Review Material theme docs: https://squidfunk.github.io/mkdocs-material/
+- Open an issue on GitHub: https://github.com/deepset-ai/hayhooks/issues
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your documentation changes
+4. Test locally with `hatch run docs-serve`
+5. Submit a pull request
+
+Thank you for contributing to Hayhooks documentation!

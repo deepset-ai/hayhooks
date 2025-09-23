@@ -1,0 +1,123 @@
+site_name: Hayhooks
+site_description: Deploy and serve Haystack Pipelines and Agents as REST APIs
+site_author: deepset
+site_url: https://deepset-ai.github.io/hayhooks
+
+repo_name: deepset-ai/hayhooks
+repo_url: https://github.com/deepset-ai/hayhooks
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: getting-started/quick-start.md
+    - Quick Start with Docker Compose: getting-started/quick-start-docker.md
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+  - Core Concepts:
+    - Pipeline Deployment: concepts/pipeline-deployment.md
+    - PipelineWrapper: concepts/pipeline-wrapper.md
+    - YAML Pipeline Deployment: concepts/yaml-pipeline-deployment.md
+    - Agent Deployment: concepts/agent-deployment.md
+  - Features:
+    - OpenAI Compatibility: features/openai-compatibility.md
+    - MCP Support: features/mcp-support.md
+    - OpenWebUI Integration: features/openwebui-integration.md
+    - File Upload Support: features/file-upload-support.md
+    - CLI Commands: features/cli-commands.md
+  - Advanced Usage:
+    - Running Pipelines: advanced/running-pipelines.md
+    - Advanced Configuration: advanced/advanced-configuration.md
+    - Code Sharing: advanced/code-sharing.md
+    - Custom Routes: advanced/custom-routes.md
+  - Deployment:
+    - Deployment Guidelines: deployment/deployment-guidelines.md
+  - Examples:
+    - Examples Overview: examples/overview.md
+    - Chat with Website: examples/chat-with-website.md
+    - RAG System: examples/rag-system.md
+    - Async Operations: examples/async-operations.md
+    - OpenWebUI Events: examples/openwebui-events.md
+  - Reference:
+    - API Reference: reference/api-reference.md
+    - Environment Variables: reference/environment-variables.md
+    - Logging: reference/logging.md
+  - About:
+    - License: about/license.md
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - codehilite:
+      guess_lang: false
+  - def_list
+  - footnotes
+  - meta
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/deepset-ai/hayhooks
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/deepset_ai
+
+extra_css: []
+
+extra_javascript: []

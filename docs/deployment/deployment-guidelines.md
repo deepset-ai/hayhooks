@@ -27,14 +27,14 @@ command (or having a single Docker container running). This will launch a **sing
 You can deploy a pipeline using:
 
 ```bash
-hayhooks deploy-files # recommended
+hayhooks deploy-files
 
 # or
 
-hayhooks deploy ...
+hayhooks deploy-yaml ...
 ```
 
-or make `POST /deploy` / `POST /deploy-files` requests.
+or make `POST /deploy-yaml` / `POST /deploy-files` requests.
 
 ### Handling concurrent requests (single worker)
 

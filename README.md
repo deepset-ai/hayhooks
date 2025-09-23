@@ -1111,7 +1111,7 @@ We have some dedicated documentation for deployment:
 - Docker-based deployments: <https://docs.haystack.deepset.ai/docs/docker>
 - Kubernetes-based deployments: <https://docs.haystack.deepset.ai/docs/kubernetes>
 
-We also have some additional deployment guidelines, see [deployment_guidelines.md](docs/deployment_guidelines.md).
+We also have some additional deployment guidelines, see [Deployment Guidelines](docs/deployment/deployment-guidelines.md).
 
 ### License
 
