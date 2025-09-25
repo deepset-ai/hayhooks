@@ -354,18 +354,13 @@ Currently, Hayhooks MCP server doesn't include built-in authentication. Consider
 
 ### Debug Commands
 
-```bash
-# Check MCP server status
-curl http://localhost:1417/mcp/health
+The MCP server exposes:
 
-# List available tools
-curl http://localhost:1417/mcp/tools
+- Streamable HTTP endpoint at `http://localhost:1417/mcp`
+- SSE endpoint at `http://localhost:1417/sse`
+- Simple status at `http://localhost:1417/status`
 
-# Test tool execution
-curl -X POST http://localhost:1417/mcp/call \
-  -H 'Content-Type: application/json' \
-  -d '{"tool": "get_all_pipeline_statuses"}'
-```
+Use an MCP-capable client (e.g., supergateway, Cursor, Claude Desktop) to list and call tools. Example supergateway usage is shown above.
 
 ## Examples
 

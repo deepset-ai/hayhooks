@@ -105,9 +105,9 @@ HAYHOOKS_ADDITIONAL_PYTHON_PATH=./shared_modules
 
 ```python
 # custom_middleware.py
+import time
 from fastapi import Request, Response
-from fastapi.middleware import Middleware
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 class CustomMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -189,77 +189,22 @@ async def run_pipeline_limited(request: Request):
     return await run_pipeline(request)
 ```
 
-## Logging and Monitoring
+## Logging
 
-### Advanced Logging Configuration
+Hayhooks uses loguru under the hood and exposes a logger:
 
 ```python
-# logging_config.py
-import logging
-from logging.handlers import RotatingFileHandler
-import sys
+from hayhooks import log
 
-def setup_logging():
-    # Create formatters
-    console_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    file_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
-    )
-
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(console_formatter)
-
-    # File handler with rotation
-    file_handler = RotatingFileHandler(
-        'hayhooks.log',
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(file_formatter)
-
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+log.info("Server starting")
+log.debug("Details", extra={"foo": "bar"})
+log.error("Something went wrong")
 ```
 
-### Metrics Collection
+Configure level via env:
 
-```python
-# metrics.py
-from prometheus_client import Counter, Histogram, Gauge
-import time
-
-# Define metrics
-REQUEST_COUNT = Counter('hayhooks_requests_total', 'Total requests', ['method', 'endpoint'])
-REQUEST_DURATION = Histogram('hayhooks_request_duration_seconds', 'Request duration')
-ACTIVE_PIPELINES = Gauge('hayhooks_active_pipelines', 'Number of active pipelines')
-
-# Middleware for metrics collection
-@app.middleware("http")
-async def metrics_middleware(request: Request, call_next):
-    start_time = time.time()
-
-    # Record request count
-    REQUEST_COUNT.labels(
-        method=request.method,
-        endpoint=request.url.path
-    ).inc()
-
-    # Process request
-    response = await call_next(request)
-
-    # Record duration
-    REQUEST_DURATION.observe(time.time() - start_time)
-
-    return response
+```bash
+LOG=DEBUG hayhooks run
 ```
 
 ## Cache Configuration
