@@ -177,10 +177,10 @@ def prepare_files_with_progress(
         if content_type is None:
             content_type = "application/octet-stream"  # Default if type cannot be determined
 
-        # Get file size and open file
+        # Get file size and open file (keep handle open for the duration of the upload)
         file_size = file_path.stat().st_size
-        with open(file_path, "rb") as file_obj:
-            file_handles.append(file_obj)
+        file_obj = file_path.open("rb")
+        file_handles.append(file_obj)
 
         # Create progress tracking wrapper
         progress_reader = ProgressFileReader(file_obj, progress, task_id, file_size)
