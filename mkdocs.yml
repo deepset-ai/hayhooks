@@ -28,7 +28,6 @@ nav:
     - Running Pipelines: advanced/running-pipelines.md
     - Advanced Configuration: advanced/advanced-configuration.md
     - Code Sharing: advanced/code-sharing.md
-    - Custom Routes: advanced/custom-routes.md
   - Deployment:
     - Deployment Guidelines: deployment/deployment-guidelines.md
   - Examples:
@@ -119,6 +118,8 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/deepset-ai/hayhooks
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/deepset/hayhooks
     - icon: fontawesome/brands/twitter
       link: https://twitter.com/deepset_ai
 

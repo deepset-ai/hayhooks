@@ -6,7 +6,7 @@ With Hayhooks, you can:
 
 - 📦 **Deploy your Haystack pipelines and agents as REST APIs** with maximum flexibility and minimal boilerplate code.
 - 🛠️ **Expose your Haystack pipelines and agents over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline and agent as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
-- 💬 **Integrate your Haystack pipelines and agents with [open-webui](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
+- 💬 **Integrate your Haystack pipelines and agents with [Open WebUI](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
 - 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
@@ -16,16 +16,107 @@ With Hayhooks, you can:
 
 ## Quick Start
 
+### 1. Install Hayhooks
+
 ```bash
 # Install Hayhooks
 pip install hayhooks
-
-# Start the server
-hayhooks run
-
-# Deploy a pipeline
-hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/chat_with_website_streaming
 ```
+
+### 2. Start Hayhooks
+
+```bash
+hayhooks run
+```
+
+### 3. Create a simple agent
+
+Create a minimal agent wrapper with streaming chat support and a simple HTTP POST API:
+
+```python
+from typing import AsyncGenerator
+from haystack.components.agents import Agent
+from haystack.dataclasses import ChatMessage
+from haystack.tools import Tool
+from haystack.components.generators.chat import OpenAIChatGenerator
+from hayhooks import BasePipelineWrapper, async_streaming_generator
+
+
+# Define a Haystack Tool that provides weather information for a given location.
+def weather_function(location):
+    return f"The weather in {location} is sunny."
+
+weather_tool = Tool(
+    name="weather_tool",
+    description="Provides weather information for a given location.",
+    parameters={
+        "type": "object",
+        "properties": {"location": {"type": "string"}},
+        "required": ["location"],
+    },
+    function=weather_function,
+)
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.agent = Agent(
+            chat_generator=OpenAIChatGenerator(model="gpt-5-mini"),
+            system_prompt="You're a helpful agent",
+            tools=[weather_tool],
+        )
+
+    # This will create a POST /my_agent/run endpoint
+    # `question` will be the input argument and will be auto-validated by a Pydantic model
+    async def run_api_async(self, question: str) -> str:
+        result = await self.agent.run_async({"messages": [ChatMessage.from_user(question)]})
+        return result["replies"][0].text
+
+    # This will create an OpenAI-compatible /chat/completions endpoint
+    async def run_chat_completion_async(
+        self, model: str, messages: list[dict], body: dict
+    ) -> AsyncGenerator[str, None]:
+        chat_messages = [
+            ChatMessage.from_openai_dict_format(message) for message in messages
+        ]
+
+        return async_streaming_generator(
+            pipeline=self.agent,
+            pipeline_run_args={
+                "messages": chat_messages,
+            },
+        )
+```
+
+Save as `my_agent_dir/pipeline_wrapper.py`.
+
+### 4. Deploy it
+
+```bash
+hayhooks pipeline deploy-files -n my_agent ./my_agent_dir
+```
+
+### 5. Run it
+
+Call the HTTP POST API (`/my_agent/run`):
+
+```bash
+curl -X POST http://localhost:1416/my_agent/run \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "What can you do?"}'
+```
+
+Call the OpenAI-compatible chat completion API (streaming enabled):
+
+```bash
+curl -X POST http://localhost:1416/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "my_agent",
+    "messages": [{"role": "user", "content": "What can you do?"}]
+  }'
+```
+
+Or [integrate it with OpenWebUI](features/openai-compatibility.md#openwebui-integration) and start chatting with it!
 
 ## Key Features
 

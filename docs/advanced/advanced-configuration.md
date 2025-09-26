@@ -13,7 +13,7 @@ HAYHOOKS_PORT=1416
 HAYHOOKS_MCP_HOST=0.0.0.0
 HAYHOOKS_MCP_PORT=1417
 HAYHOOKS_PIPELINES_DIR=./pipelines
-HAYHOOKS_ADDITIONAL_PYTHON_PATH=./custom_modules
+HAYHOOKS_ADDITIONAL_PYTHON_PATH=./common
 HAYHOOKS_ROOT_PATH=/
 HAYHOOKS_DISABLE_SSL=false
 HAYHOOKS_USE_HTTPS=false
@@ -111,37 +111,27 @@ pipelines/
 ```ini
 # .env
 HAYHOOKS_PIPELINES_DIR=./custom_pipelines
-HAYHOOKS_ADDITIONAL_PYTHON_PATH=./shared_modules
+HAYHOOKS_ADDITIONAL_PYTHON_PATH=./common
 ```
 
 ## Custom Routes and Middleware
 
-### Add custom routes or middleware (via create_app)
+### When to add custom routes
 
-```python
-import uvicorn
-from hayhooks.settings import settings
-from fastapi import Request
-from hayhooks import create_app
+- Add specialized endpoints for application-specific logic
+- Provide admin/operations endpoints (restart, status, maintenance tasks)
+- Expose health checks, metrics, and webhook handlers for integrations
+- Implement authentication/authorization flows
+- Offer file management or other utility endpoints
 
-# Create the Hayhooks app
-hayhooks = create_app()
+### When to add middleware
 
-# Add a custom route
-@hayhooks.get("/custom")
-async def custom_route():
-    return {"message": "Hi, this is a custom route!"}
+- Apply cross-cutting concerns (logging/tracing, correlation IDs)
+- Enforce security controls (authn/z, rate limiting, quotas)
+- Control headers, CORS, compression, and caching
+- Normalize inputs/outputs and error handling consistently
 
-# Add a custom middleware
-@hayhooks.middleware("http")
-async def custom_middleware(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Custom-Header"] = "custom-header-value"
-    return response
-
-if __name__ == "__main__":
-    uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
-```
+For implementation examples of adding routes or middleware, see the README section “Run Hayhooks programmatically”.
 
 ## Logging
 
@@ -195,4 +185,3 @@ LOG=DEBUG hayhooks run
 
 - [Deployment Guidelines](../deployment/deployment-guidelines.md) - Production deployment
 - [Code Sharing](code-sharing.md) - Reusable components
-- [Custom Routes](custom-routes.md) - Custom endpoint development
