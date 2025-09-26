@@ -107,6 +107,7 @@ inputs:
 ```
 
 **Mapping rules:**
+
 - Use `component.field` syntax
 - Field must exist in the component
 - Multiple inputs can map to the same component field
@@ -125,6 +126,7 @@ outputs:
 ```
 
 **Mapping rules:**
+
 - Use `component.field` syntax
 - Field must exist in the component
 - Response fields are serialized to JSON
@@ -313,6 +315,7 @@ components:
 To migrate from `PipelineWrapper` to YAML deployment:
 
 1. **Extract Pipeline Logic**:
+
    ```python
    # From PipelineWrapper.setup()
    pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
@@ -320,6 +323,7 @@ To migrate from `PipelineWrapper` to YAML deployment:
    ```
 
 2. **Create YAML File**:
+
    ```yaml
    # pipeline.yml
    components:
@@ -339,6 +343,7 @@ To migrate from `PipelineWrapper` to YAML deployment:
    ```
 
 3. **Deploy with YAML**:
+
    ```bash
    hayhooks pipeline deploy-yaml -n my_pipeline pipeline.yml
    ```

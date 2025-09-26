@@ -626,21 +626,25 @@ class CachedPipelineWrapper(BasePipelineWrapper):
 ## Best Practices
 
 ### 1. URL Validation
+
 - Always validate URLs before processing
 - Handle malformed URLs gracefully
 - Check for accessibility before full processing
 
 ### 2. Content Processing
+
 - Clean HTML content properly
 - Handle different content types
 - Respect website terms of service
 
 ### 3. Performance
+
 - Implement caching for frequently accessed sites
 - Use streaming for large content
 - Set appropriate timeouts
 
 ### 4. Error Handling
+
 - Provide clear error messages
 - Log errors for debugging
 - Implement retry logic for transient failures

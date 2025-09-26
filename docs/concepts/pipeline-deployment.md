@@ -9,6 +9,7 @@ Hayhooks provides flexible options for deploying Haystack pipelines and agents. 
 The most flexible approach is to create a `PipelineWrapper` class that encapsulates your pipeline logic.
 
 **Key Features:**
+
 - Maximum flexibility for initialization
 - Custom execution logic
 - OpenAI-compatible endpoint support
@@ -16,6 +17,7 @@ The most flexible approach is to create a `PipelineWrapper` class that encapsula
 - File upload handling
 
 **Basic Structure:**
+
 ```python
 from pathlib import Path
 from typing import List
@@ -39,16 +41,19 @@ class PipelineWrapper(BasePipelineWrapper):
 Deploy pipelines directly from YAML definitions with automatic schema generation.
 
 **Key Features:**
+
 - Simple deployment from YAML files
 - Automatic request/response schema generation
 - No wrapper code required
 - Perfect for straightforward pipelines
 
 **Requirements:**
+
 - YAML must include `inputs` and `outputs` sections
 - Pipeline components must be properly defined
 
 **Example YAML:**
+
 ```yaml
 components:
   fetcher:

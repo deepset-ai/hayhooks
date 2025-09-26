@@ -481,24 +481,28 @@ def call_pipeline(base_url: str, pipeline_name: str, params: dict) -> dict:
 ## Best Practices
 
 ### 1. Error Handling
+
 - Always check response status codes
 - Implement retry logic for transient failures
 - Use proper exception handling
 - Log errors for debugging
 
 ### 2. Performance
+
 - Use async clients for high-throughput scenarios
 - Implement connection pooling
 - Use appropriate timeouts
 - Monitor resource usage
 
 ### 3. Security
+
 - Use HTTPS in production
 - Implement authentication
 - Validate input parameters
 - Use secure file handling
 
 ### 4. Monitoring
+
 - Track execution times
 - Monitor success/failure rates
 - Log important events

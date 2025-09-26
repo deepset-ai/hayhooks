@@ -4,13 +4,14 @@ Hayhooks provides a comprehensive REST API for managing and executing Haystack p
 
 ## Base URL
 
-```
+```text
 http://localhost:1416
 ```
 
 ## Authentication
 
 Currently, Hayhooks does not include built-in authentication. Consider implementing:
+
 - Reverse proxy authentication
 - Network-level security
 - Custom middleware
@@ -20,11 +21,13 @@ Currently, Hayhooks does not include built-in authentication. Consider implement
 ### Pipeline Management
 
 #### Deploy Pipeline (files)
+
 ```http
 POST /deploy_files
 ```
 
 **Request Body:**
+
 ```json
 {
   "name": "pipeline_name",
@@ -38,6 +41,7 @@ POST /deploy_files
 ```
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -46,6 +50,7 @@ POST /deploy_files
 ```
 
 #### Undeploy Pipeline
+
 ```http
 POST /undeploy/{pipeline_name}
 ```
@@ -53,6 +58,7 @@ POST /undeploy/{pipeline_name}
 Remove a deployed pipeline.
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -61,23 +67,24 @@ Remove a deployed pipeline.
 ```
 
 #### Get Pipeline Status
+
 ```http
-GET /pipelines/{pipeline_name}/status
+GET /status/{pipeline_name}
 ```
 
 Check the status of a specific pipeline.
 
 **Response:**
+
 ```json
 {
-  "name": "pipeline_name",
-  "status": "running",
-  "version": "1.0.0",
-  "uptime": 3600
+  "status": "Up!",
+  "pipeline": "pipeline_name"
 }
 ```
 
 #### Get All Pipeline Statuses
+
 ```http
 GET /status
 ```
@@ -85,27 +92,21 @@ GET /status
 Get status of all deployed pipelines.
 
 **Response:**
+
 ```json
 {
   "pipelines": [
-    {
-      "name": "pipeline1",
-      "status": "running",
-      "version": "1.0.0"
-    },
-    {
-      "name": "pipeline2",
-      "status": "error",
-      "version": "1.0.0",
-      "error": "Import error"
-    }
-  ]
+    "pipeline1",
+    "pipeline2"
+  ],
+  "status": "Up!"
 }
 ```
 
 ### Pipeline Execution
 
 #### Run Pipeline
+
 ```http
 POST /{pipeline_name}/run
 ```
@@ -113,6 +114,7 @@ POST /{pipeline_name}/run
 Execute a deployed pipeline.
 
 **Request Body:**
+
 ```json
 {
   "query": "What is the capital of France?",
@@ -123,6 +125,7 @@ Execute a deployed pipeline.
 ```
 
 **Response:**
+
 ```json
 {
   "result": "The capital of France is Paris."
@@ -132,6 +135,7 @@ Execute a deployed pipeline.
 ### OpenAI Compatibility
 
 #### Chat Completion
+
 ```http
 POST /chat/completions
 POST /v1/chat/completions
@@ -140,6 +144,7 @@ POST /v1/chat/completions
 OpenAI-compatible chat completion endpoint.
 
 **Request Body:**
+
 ```json
 {
   "model": "pipeline_name",
@@ -155,6 +160,7 @@ OpenAI-compatible chat completion endpoint.
 ```
 
 **Response:**
+
 ```json
 {
   "id": "chat-123",
@@ -180,51 +186,17 @@ OpenAI-compatible chat completion endpoint.
 ```
 
 #### Streaming Chat Completion
+
 Use the same endpoints with `"stream": true`. Hayhooks streams chunks in OpenAI-compatible format.
 
 ### MCP Server
 
-#### MCP Health Check
-```http
-GET /mcp/health
-```
-
-Check MCP server status.
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "version": "1.0.0"
-}
-```
-
-#### List MCP Tools
-```http
-GET /mcp/tools
-```
-
-Get available MCP tools.
-
-**Response:**
-```json
-{
-  "tools": [
-    {
-      "name": "get_all_pipeline_statuses",
-      "description": "Get status of all deployed pipelines"
-    },
-    {
-      "name": "deploy_pipeline",
-      "description": "Deploy a new pipeline"
-    }
-  ]
-}
-```
+> MCP runs in a separate Starlette app when invoked via `hayhooks mcp run`. Use the configured Streamable HTTP endpoint `/mcp` or SSE `/sse` depending on your client. See the MCP feature page for details.
 
 ### OpenAPI Schema
 
 #### Get OpenAPI Schema
+
 ```http
 GET /openapi.json
 GET /openapi.yaml
@@ -255,6 +227,7 @@ Get the complete OpenAPI specification.
 ## Rate Limiting
 
 Currently, Hayhooks does not include built-in rate limiting. Consider implementing:
+
 - Reverse proxy rate limiting
 - Custom middleware
 - Request throttling
@@ -279,7 +252,7 @@ Configure webhooks for pipeline events:
 ### Deploy via cURL
 
 ```bash
-curl -X POST http://localhost:1416/pipelines/deploy \
+curl -X POST http://localhost:1416/deploy_files \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "chat_pipeline",

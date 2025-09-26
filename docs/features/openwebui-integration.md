@@ -20,7 +20,7 @@ OpenWebUI integration allows you to:
 - Hayhooks server running
 - Pipeline with chat completion support
 
-### Configuration
+### Configuration (OpenAPI Tool Server)
 
 #### 1. Install OpenWebUI
 
@@ -35,9 +35,10 @@ open-webui serve
 
 #### 2. Configure OpenWebUI
 
-**Step 1: Disable Auto-generated Content**
+Step 1: Disable Auto-generated Content
 
 Go to **Admin Settings → Interface** and turn off:
+
 - Tags generation
 - Title generation
 - Follow-up message generation
@@ -46,7 +47,7 @@ Go to **Admin Settings → Interface** and turn off:
 
 This prevents unnecessary calls to your pipelines.
 
-**Step 2: Add Hayhooks Connection**
+Step 2: Add Hayhooks Connection
 
 Go to **Settings → Connections** and add a new connection:
 
@@ -58,6 +59,7 @@ Go to **Settings → Connections** and add a new connection:
 Alternatively, for admin-level configuration:
 
 Go to **Admin Settings → Connections** and add:
+
 - **Name**: Hayhooks
 - **API Base URL**: `http://localhost:1416/v1`
 - **API Key**: `any-value`
@@ -134,41 +136,34 @@ Hayhooks supports sending events to OpenWebUI for enhanced user experience:
 ### Event Implementation
 
 ```python
-from hayhooks import send_openwebui_event
+from typing import AsyncGenerator, List
+from hayhooks import async_streaming_generator, get_last_user_message, BasePipelineWrapper
+from hayhooks.open_webui import create_status_event, create_message_event, OpenWebUIEvent
 
 class PipelineWrapper(BasePipelineWrapper):
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
-        # Send loading start event
-        await send_openwebui_event(
-            event_type="loading_start",
-            data={"message": "Processing your request..."}
-        )
+    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator[str | OpenWebUIEvent, None]:
+        # Indicate loading
+        yield create_status_event("Processing your request...", done=False)
 
         question = get_last_user_message(messages)
 
         try:
-            # Process pipeline
+            # Stream model output alongside events
             result = async_streaming_generator(
                 pipeline=self.pipeline,
                 pipeline_run_args={"prompt_builder": {"query": question}},
             )
 
-            # Send completion event
-            await send_openwebui_event(
-                event_type="loading_end",
-                data={"message": "Request completed successfully"}
-            )
+            # Optional UI hint
+            yield create_message_event("✍️ Generating response...")
 
-            return result
+            async for chunk in result:
+                yield chunk
+
+            yield create_status_event("Request completed successfully", done=True)
         except Exception as e:
-            # Send error event
-            await send_openwebui_event(
-                event_type="toast_notification",
-                data={
-                    "message": f"Error: {str(e)}",
-                    "type": "error"
-                }
-            )
+            yield create_status_event("Request failed", done=True)
+            yield create_message_event(f"Error: {str(e)}")
             raise
 ```
 
@@ -181,9 +176,11 @@ def on_tool_call_start(tool_name: str, arguments: dict, tool_id: str):
     """Called when a tool call starts"""
     print(f"Tool call started: {tool_name}")
 
+
 def on_tool_call_end(tool_name: str, arguments: dict, result: dict, error: bool):
     """Called when a tool call ends"""
     print(f"Tool call ended: {tool_name}, Error: {error}")
+
 
 class PipelineWrapper(BasePipelineWrapper):
     def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
@@ -330,17 +327,20 @@ curl -X POST http://localhost:1416/my_pipeline/run \
 ## Best Practices
 
 ### 1. Pipeline Design
+
 - Implement both sync and async methods for compatibility
 - Use proper error handling
 - Add logging for debugging
 - Consider streaming for better UX
 
 ### 2. OpenWebUI Configuration
+
 - Disable auto-generated content for simple pipelines
 - Use appropriate models for your use case
 - Configure timeouts appropriately
 
 ### 3. Performance
+
 - Use async pipelines for better performance
 - Implement proper error handling
 - Monitor resource usage

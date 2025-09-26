@@ -456,24 +456,28 @@ class RAGPipelineWrapper(BasePipelineWrapper):
 ## Best Practices
 
 ### 1. File Management
+
 - Use temporary files for processing
 - Clean up files after processing
 - Implement file size limits
 - Validate file types and names
 
 ### 2. Security
+
 - Scan uploaded files for malware
 - Validate file contents
 - Implement rate limiting
 - Use secure file storage
 
 ### 3. Performance
+
 - Process files in parallel when possible
 - Use streaming for large files
 - Implement caching where appropriate
 - Monitor resource usage
 
 ### 4. Error Handling
+
 - Provide clear error messages
 - Log errors for debugging
 - Implement graceful degradation

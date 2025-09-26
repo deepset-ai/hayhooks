@@ -30,22 +30,26 @@ hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/c
 ## Key Features
 
 ### 🚀 Easy Deployment
+
 - Deploy Haystack pipelines and agents as REST APIs with minimal setup
 - Support for both YAML-based and wrapper-based pipeline deployment
 - Automatic OpenAI-compatible endpoint generation
 
 ### 🌐 Multiple Integration Options
+
 - **MCP Protocol**: Expose pipelines as MCP tools for use in AI development environments
 - **OpenWebUI Integration**: Use Hayhooks as a backend for OpenWebUI with streaming support
 - **OpenAI Compatibility**: Seamless integration with OpenAI-compatible tools and frameworks
 
 ### 🔧 Developer Friendly
+
 - CLI for easy pipeline management
 - Flexible configuration options
 - Comprehensive logging and debugging support
 - Custom route and middleware support
 
 ### 📁 File Upload Support
+
 - Built-in support for handling file uploads in pipelines
 - Perfect for RAG systems and document processing
 

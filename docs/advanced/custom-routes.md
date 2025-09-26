@@ -659,24 +659,28 @@ if __name__ == "__main__":
 ## Best Practices
 
 ### 1. Route Design
+
 - Use clear, descriptive route names
 - Organize routes by functionality
 - Use proper HTTP methods (GET, POST, PUT, DELETE)
 - Implement proper error handling
 
 ### 2. Security
+
 - Implement proper authentication and authorization
 - Validate all input data
 - Use HTTPS in production
 - Implement rate limiting
 
 ### 3. Performance
+
 - Use asynchronous code for I/O operations
 - Implement caching where appropriate
 - Monitor performance metrics
 - Optimize database queries
 
 ### 4. Documentation
+
 - Document all routes with OpenAPI/Swagger
 - Provide clear error messages
 - Include usage examples

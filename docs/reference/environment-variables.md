@@ -1,226 +1,168 @@
 # Environment Variables
 
-Hayhooks can be configured using environment variables for deployment flexibility and security.
+Hayhooks can be configured via environment variables (loaded with prefix `HAYHOOKS_` or `LOG`). This page lists the canonical variables supported by the codebase.
 
-## Configuration Variables
+## Server
 
-### Server Configuration
+### HAYHOOKS_HOST
 
-#### HAYHOOKS_HOST
-- **Default**: `127.0.0.1`
-- **Description**: Host address to bind the server to
-- **Example**: `HAYHOOKS_HOST=0.0.0.0`
+- Default: `localhost`
+- Description: Host for the FastAPI app
 
-#### HAYHOOKS_PORT
-- **Default**: `1416`
-- **Description**: Port number for the main Hayhooks server
-- **Example**: `HAYHOOKS_PORT=8080`
+### HAYHOOKS_PORT
 
-> Note: Worker count is configured via CLI `hayhooks run --workers N`, not via env var.
+- Default: `1416`
+- Description: Port for the FastAPI app
 
-### Pipeline Configuration
+### HAYHOOKS_ROOT_PATH
 
-#### HAYHOOKS_PIPELINES_DIR
-- **Default**: `./pipelines`
-- **Description**: Directory to store deployed pipeline files
-- **Example**: `HAYHOOKS_PIPELINES_DIR=/app/pipelines`
+- Default: `""`
+- Description: Root path to mount the API under (FastAPI `root_path`)
 
-> Saving/overwriting is controlled per-deploy via CLI/API flags, not global env vars.
+### HAYHOOKS_PIPELINES_DIR
 
-### MCP Server Configuration
+- Default: `./pipelines`
+- Description: Directory containing pipelines to auto-deploy on startup
 
-#### HAYHOOKS_MCP_HOST
-- **Default**: `127.0.0.1`
-- **Description**: Host address for the MCP server
-- **Example**: `HAYHOOKS_MCP_HOST=0.0.0.0`
+### HAYHOOKS_ADDITIONAL_PYTHON_PATH
 
-#### HAYHOOKS_MCP_PORT
-- **Default**: `1417`
-- **Description**: Port number for the MCP server
-- **Example**: `HAYHOOKS_MCP_PORT=1418`
+- Default: `""`
+- Description: Additional path appended to `sys.path` for wrapper imports
 
-> Start the MCP server via `hayhooks mcp run`; no global enable flag.
+### HAYHOOKS_USE_HTTPS
 
-### Logging Configuration
+- Default: `false`
+- Description: Use HTTPS when the CLI calls the server (affects CLI only)
 
-#### LOG
-- **Default**: `INFO`
-- **Description**: Logging level (DEBUG, INFO, WARNING, ERROR)
-- **Example**: `LOG=DEBUG`
+### HAYHOOKS_DISABLE_SSL
 
-#### HAYHOOKS_LOG_FORMAT
-- **Default**: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
-- **Description**: Log message format
-- **Example**: `HAYHOOKS_LOG_FORMAT=%(levelname)s:%(name)s:%(message)s`
+- Default: `false`
+- Description: Disable SSL verification for CLI calls
 
-#### HAYHOOKS_LOG_FILE
-- **Default**: `None` (logs to console)
-- **Description**: File path to write logs to
-- **Example**: `HAYHOOKS_LOG_FILE=/var/log/hayhooks.log`
+### HAYHOOKS_SHOW_TRACEBACKS
 
-### Security Configuration
+- Default: `false`
+- Description: Include tracebacks in error messages (server and MCP)
 
-> CORS is always configured via specific allow/expose settings.
+## MCP
 
-#### HAYHOOKS_CORS_ORIGINS
-- **Default**: `*`
-- **Description**: Comma-separated list of allowed CORS origins
-- **Example**: `HAYHOOKS_CORS_ORIGINS=http://localhost:3000,https://yourdomain.com`
+### HAYHOOKS_MCP_HOST
 
-#### HAYHOOKS_API_KEY
-- **Default**: `None`
-- **Description**: API key for authentication (if implemented)
-- **Example**: `HAYHOOKS_API_KEY=your-secret-key`
+- Default: `localhost`
+- Description: Host for the MCP server
 
-### OpenAI Configuration
+### HAYHOOKS_MCP_PORT
 
-#### HAYHOOKS_OPENAI_BASE_URL
-- **Default**: `None`
-- **Description**: Custom OpenAI API base URL
-- **Example**: `HAYHOOKS_OPENAI_BASE_URL=https://api.openai.com/v1`
+- Default: `1417`
+- Description: Port for the MCP server
 
-#### HAYHOOKS_OPENAI_API_KEY
-- **Default**: `None`
-- **Description**: OpenAI API key for pipelines that use it
-- **Example**: `HAYHOOKS_OPENAI_API_KEY=sk-...`
+## CORS
+
+These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.AppSettings`.
+
+### HAYHOOKS_CORS_ALLOW_ORIGINS
+
+- Default: `["*"]`
+- Description: List of allowed origins
+
+### HAYHOOKS_CORS_ALLOW_METHODS
+
+- Default: `["*"]`
+- Description: List of allowed HTTP methods
+
+### HAYHOOKS_CORS_ALLOW_HEADERS
+
+- Default: `["*"]`
+- Description: List of allowed headers
+
+### HAYHOOKS_CORS_ALLOW_CREDENTIALS
+
+- Default: `false`
+- Description: Allow credentials
+
+### HAYHOOKS_CORS_ALLOW_ORIGIN_REGEX
+
+- Default: `null`
+- Description: Regex pattern for allowed origins
+
+### HAYHOOKS_CORS_EXPOSE_HEADERS
+
+- Default: `[]`
+- Description: Headers to expose in response
+
+### HAYHOOKS_CORS_MAX_AGE
+
+- Default: `600`
+- Description: Maximum age for CORS preflight responses in seconds
+
+## Logging
+
+### LOG (log level)
+
+- Default: `INFO`
+- Description: Global log level (consumed by Loguru). Example: `LOG=DEBUG hayhooks run`
+
+Note: Format/handlers are configured internally; Hayhooks does not expose `HAYHOOKS_LOG_FORMAT` or `HAYHOOKS_LOG_FILE` env vars at this time.
 
 ## Usage Examples
 
-### Docker Environment
+### Docker
 
 ```bash
 docker run -d \
   -e HAYHOOKS_HOST=0.0.0.0 \
-  -e HAYHOOKS_PORT=8080 \
-  -e HAYHOOKS_WORKERS=4 \
-  -e HAYHOOKS_LOG_LEVEL=INFO \
-  -p 8080:8080 \
+  -e HAYHOOKS_PORT=1416 \
+  -e HAYHOOKS_PIPELINES_DIR=/app/pipelines \
+  -v "$PWD/pipelines:/app/pipelines:ro" \
+  -p 1416:1416 \
   deepset/hayhooks:latest
 ```
 
-### Development Environment
+Note: Without mounting a pipelines directory (or baking pipelines into the image), the server will start but no pipelines will be deployed.
+
+### Development
 
 ```bash
 export HAYHOOKS_HOST=127.0.0.1
 export HAYHOOKS_PORT=1416
-export HAYHOOKS_LOG_LEVEL=DEBUG
-export HAYHOOKS_MCP_ENABLED=true
+export HAYHOOKS_PIPELINES_DIR=./pipelines
+export LOG=DEBUG
 
 hayhooks run
 ```
 
-### Production Environment
+### MCP Server startup
 
 ```bash
-export HAYHOOKS_HOST=0.0.0.0
-export HAYHOOKS_PORT=80
-export HAYHOOKS_WORKERS=4
-export HAYHOOKS_TIMEOUT=60
-export HAYHOOKS_LOG_LEVEL=INFO
-export HAYHOOKS_LOG_FILE=/var/log/hayhooks.log
-export HAYHOOKS_CORS_ORIGINS=https://yourdomain.com
-
-hayhooks run
-```
-
-### MCP Server Environment
-
-```bash
-export HAYHOOKS_MCP_ENABLED=true
 export HAYHOOKS_MCP_HOST=0.0.0.0
 export HAYHOOKS_MCP_PORT=1417
 
 hayhooks mcp run
 ```
 
-## Environment File (.env)
-
-You can use a `.env` file in your project root:
+### .env file example
 
 ```env
-# Server Configuration
-HAYHOOKS_HOST=127.0.0.1
+HAYHOOKS_HOST=0.0.0.0
 HAYHOOKS_PORT=1416
-HAYHOOKS_WORKERS=1
-HAYHOOKS_TIMEOUT=30
-
-# Pipeline Configuration
-HAYHOOKS_PIPELINES_DIR=./pipelines
-HAYHOOKS_SAVE_PIPELINES=true
-HAYHOOKS_OVERWRITE_PIPELINES=false
-
-# MCP Configuration
-HAYHOOKS_MCP_ENABLED=false
-HAYHOOKS_MCP_HOST=127.0.0.1
+HAYHOOKS_MCP_HOST=0.0.0.0
 HAYHOOKS_MCP_PORT=1417
-
-# Logging
-HAYHOOKS_LOG_LEVEL=INFO
-HAYHOOKS_LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
-
-# CORS
-HAYHOOKS_CORS_ENABLED=true
-HAYHOOKS_CORS_ORIGINS=*
+HAYHOOKS_PIPELINES_DIR=./pipelines
+HAYHOOKS_ADDITIONAL_PYTHON_PATH=./custom_code
+HAYHOOKS_USE_HTTPS=false
+HAYHOOKS_DISABLE_SSL=false
+HAYHOOKS_SHOW_TRACEBACKS=false
+HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
+LOG=INFO
 ```
 
-## Configuration Priority
+## Notes
 
-Environment variables are loaded in this order:
-
-1. Default values
-2. `.env` file (if present)
-3. System environment variables
-
-## Security Considerations
-
-### Sensitive Variables
-
-- Never commit API keys or secrets to version control
-- Use secret management tools in production
-- Consider using `.env.example` for template configuration
-
-### Production Security
-
-```bash
-# Secure production configuration
-export HAYHOOKS_CORS_ORIGINS=https://yourdomain.com
-export HAYHOOKS_API_KEY=${SECURE_API_KEY}
-export HAYHOOKS_LOG_LEVEL=WARNING
-export HAYHOOKS_TIMEOUT=30
-```
-
-## Debugging
-
-### Check Current Configuration
-
-```bash
-# Start with debug logging
-export HAYHOOKS_LOG_LEVEL=DEBUG
-hayhooks run
-
-# Check environment variables
-env | grep HAYHOOKS
-```
-
-### Common Issues
-
-1. **Port Already in Use**
-   ```bash
-   export HAYHOOKS_PORT=1417
-   ```
-
-2. **Permission Denied**
-   ```bash
-   export HAYHOOKS_PIPELINES_DIR=/tmp/pipelines
-   ```
-
-3. **CORS Issues**
-   ```bash
-   export HAYHOOKS_CORS_ORIGINS=http://localhost:3000
-   ```
+- Worker count, timeouts, and other server process settings are CLI flags (e.g., `hayhooks run --workers 4`).
+- YAML/file saving and MCP exposure are controlled per-deploy via API/CLI flags, not global env vars.
 
 ## Next Steps
 
-- [API Reference](api-reference.md) - Complete API documentation
-- [Logging](logging.md) - Logging configuration and usage
-- [Deployment Guidelines](../deployment/deployment-guidelines.md) - Production deployment tips
+- [Configuration](../getting-started/configuration.md)
+- [Logging](logging.md)
+- [Deployment Guidelines](../deployment/deployment-guidelines.md)

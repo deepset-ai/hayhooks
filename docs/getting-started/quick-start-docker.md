@@ -23,7 +23,7 @@ cp .env.example .env
 
 Edit the `.env` file to configure your settings:
 
-```bash
+```ini
 # Hayhooks Configuration
 HAYHOOKS_HOST=0.0.0.0
 HAYHOOKS_PORT=1416
@@ -41,15 +41,16 @@ docker-compose up -d
 ```
 
 This will start:
+
 - Hayhooks server on port 1416
 - Hayhooks MCP server on port 1417
 - OpenWebUI on port 3000
 
 ### 4. Access the Services
 
-- **Hayhooks API**: http://localhost:1416
-- **OpenWebUI**: http://localhost:3000
-- **Hayhooks API Documentation**: http://localhost:1416/docs
+- **Hayhooks API**: <http://localhost:1416>
+- **OpenWebUI**: <http://localhost:3000>
+- **Hayhooks API Documentation**: <http://localhost:1416/docs>
 
 ### 5. Deploy Example Pipelines
 
@@ -88,7 +89,7 @@ The Docker Compose setup comes pre-configured to integrate Hayhooks with OpenWeb
 
 ### 1. Configure OpenWebUI
 
-1. Access OpenWebUI at http://localhost:3000
+1. Access OpenWebUI at <http://localhost:3000>
 2. Go to **Settings → Connections**
 3. Add a new connection with:
    - **API Base URL**: `http://hayhooks:1416/v1`

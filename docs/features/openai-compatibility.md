@@ -145,6 +145,7 @@ The endpoints are automatically documented in the OpenAPI schema:
 ### Configuration
 
 1. **Install OpenWebUI**
+
 2. **Configure Connection**
    - Go to Settings → Connections
    - Add new connection:
@@ -152,11 +153,12 @@ The endpoints are automatically documented in the OpenAPI schema:
      - API Key: `any-value` (not used by Hayhooks)
 
 3. **Deploy Chat Pipeline**
+
 ```bash
 hayhooks pipeline deploy-files -n chat_agent ./path/to/pipeline
 ```
 
-4. **Test Integration**
+1. **Test Integration**
    - Start a conversation in OpenWebUI
    - Select your Hayhooks backend
    - The pipeline will respond through OpenWebUI
@@ -165,35 +167,9 @@ hayhooks pipeline deploy-files -n chat_agent ./path/to/pipeline
 
 ### OpenWebUI Events
 
-Hayhooks supports OpenWebUI events for enhanced user experience:
+Hayhooks supports sending event objects that OpenWebUI can render alongside streaming chunks. Use the helpers in `hayhooks.open_webui` and yield them from your generator (see the OpenWebUI integration page for a complete example):
 
 ![open-webui-hayhooks-events](../assets/open-webui-hayhooks-events.gif)
-
-```python
-from hayhooks import send_openwebui_event
-
-class PipelineWrapper(BasePipelineWrapper):
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
-        # Send loading event
-        await send_openwebui_event(
-            event_type="loading_start",
-            data={"message": "Processing your request..."}
-        )
-
-        # Process pipeline
-        result = async_streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={"prompt": {"query": question}},
-        )
-
-        # Send completion event
-        await send_openwebui_event(
-            event_type="loading_end",
-            data={"message": "Request completed"}
-        )
-
-        return result
-```
 
 ## Streaming Responses
 

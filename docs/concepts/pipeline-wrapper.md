@@ -43,6 +43,7 @@ def setup(self) -> None:
 **Common initialization patterns:**
 
 1. **From YAML file:**
+
 ```python
 def setup(self) -> None:
     pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
@@ -50,6 +51,7 @@ def setup(self) -> None:
 ```
 
 2. **From Haystack template:**
+
 ```python
 def setup(self) -> None:
     from haystack.pipelines import TemplatePipeline
@@ -57,6 +59,7 @@ def setup(self) -> None:
 ```
 
 3. **Inline code:**
+
 ```python
 def setup(self) -> None:
     from haystack.components import Fetcher, PromptBuilder, OpenAIGenerator
@@ -128,6 +131,7 @@ def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> U
 ```
 
 **Fixed signature:**
+
 - `model`: The pipeline name
 - `messages`: OpenAI-format message list
 - `body`: Full request body (for additional parameters)
@@ -174,6 +178,7 @@ hayhooks pipeline deploy-files -n my_pipeline --overwrite ./path/to/pipeline
 ```
 
 **Development workflow:**
+
 1. Make changes to your pipeline wrapper
 2. Redeploy with `--overwrite`
 3. Test the changes
@@ -204,11 +209,13 @@ def run_api(self, urls: List[str], question: str) -> str:
 ```
 
 **Install dependencies:**
+
 ```bash
 pip install trafilatura
 ```
 
 **Debugging tip:** Enable tracebacks to see full error messages:
+
 ```bash
 HAYHOOKS_SHOW_TRACEBACKS=true hayhooks run
 ```

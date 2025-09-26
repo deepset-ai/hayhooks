@@ -122,6 +122,7 @@ class PipelineWrapper(BasePipelineWrapper):
 ```
 
 The tool will have:
+
 - **Name**: `pipeline_name`
 - **Description**: From method docstring
 - **Input Schema**: Generated from method arguments

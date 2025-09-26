@@ -774,30 +774,35 @@ if __name__ == "__main__":
 ## Best Practices
 
 ### 1. Async Design Patterns
+
 - Use async generators for streaming responses
 - Implement proper error handling and cancellation
 - Use semaphores to limit concurrent operations
 - Monitor resource usage and performance
 
 ### 2. Background Processing
+
 - Design idempotent operations for retries
 - Implement proper job persistence and recovery
 - Use appropriate timeouts and monitoring
 - Consider using dedicated task queues for production
 
 ### 3. Performance Optimization
+
 - Choose appropriate concurrency levels
 - Use connection pooling for external services
 - Implement caching for frequently accessed data
 - Monitor memory usage and garbage collection
 
 ### 4. Error Handling
+
 - Provide clear error messages for users
 - Implement comprehensive logging
 - Use circuit breakers for external services
 - Design graceful degradation strategies
 
 ### 5. Testing
+
 - Test both sync and async paths
 - Test error conditions and edge cases
 - Test under load and concurrency

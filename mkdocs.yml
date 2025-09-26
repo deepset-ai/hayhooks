@@ -50,11 +50,14 @@ theme:
   features:
     - navigation.tabs
     - navigation.sections
+    - navigation.instant
     - navigation.expand
     - navigation.top
     - search.suggest
     - search.highlight
     - content.code.copy
+    - content.code.annotate
+    - toc.integrate
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -73,6 +76,7 @@ theme:
 
 plugins:
   - search
+  - tags
 
 markdown_extensions:
   - admonition

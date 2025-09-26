@@ -45,7 +45,7 @@ hayhooks --version
 
 ## Server Commands
 
-### run
+### run (HTTP vs CLI example)
 
 Start the Hayhooks server:
 
@@ -69,7 +69,7 @@ hayhooks run --additional-python-path ./custom_code
 hayhooks run --reload
 ```
 
-#### Options
+#### Options for `mcp run`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -92,7 +92,7 @@ hayhooks mcp run
 hayhooks mcp run --host 0.0.0.0 --port 1417
 ```
 
-#### Options
+#### Options for `pipeline deploy-files`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -126,7 +126,7 @@ hayhooks pipeline deploy-files -n my_pipeline --skip-saving-files ./path/to/pipe
 hayhooks pipeline deploy-files -n my_pipeline --skip-mcp ./path/to/pipeline
 ```
 
-#### Options
+#### Options for `pipeline deploy-yaml`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -157,7 +157,7 @@ hayhooks pipeline deploy-yaml -n my_pipeline --overwrite pipelines/my_pipeline.y
 hayhooks pipeline deploy-yaml -n my_pipeline --no-save-file pipelines/my_pipeline.yml
 ```
 
-#### Options
+#### Options for `pipeline undeploy`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -180,7 +180,7 @@ hayhooks pipeline undeploy my_pipeline
 hayhooks pipeline undeploy my_pipeline --force
 ```
 
-#### Options
+#### Options for `pipeline run`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -207,7 +207,7 @@ hayhooks pipeline run my_pipeline --dir ./documents --param 'query="Analyze all 
 hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare documents"'
 ```
 
-#### Options
+#### Options for `status`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -239,23 +239,7 @@ hayhooks status --json
 | `--verbose` | `-v` | Show detailed information | `false` |
 | `--json` | | Output in JSON format | `false` |
 
-### health
-
-Check server health:
-
-```bash
-# Basic health check
-hayhooks health
-
-# Health check with details
-hayhooks health --detailed
-```
-
-#### Options
-
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--detailed` | | Show detailed health information | `false` |
+> Note: There is no `hayhooks health` command in the CLI. Use `hayhooks status` or call HTTP endpoints directly.
 
 ## Notes
 
@@ -354,6 +338,7 @@ pipelines:
 ### Common Errors
 
 1. **Server already running**
+
    ```bash
    # Check if server is running
    hayhooks status
@@ -363,6 +348,7 @@ pipelines:
    ```
 
 2. **Pipeline deployment failed**
+
    ```bash
    # Check server logs with your process manager or container runtime
 
@@ -371,6 +357,7 @@ pipelines:
    ```
 
 3. **Permission denied**
+
    ```bash
    # Check file permissions
    ls -la ./path/to/pipeline
@@ -397,24 +384,28 @@ hayhooks status --verbose
 ## Best Practices
 
 ### 1. Pipeline Management
+
 - Use meaningful pipeline names
 - Include descriptions for better documentation
 - Use version control for pipeline definitions
 - Test pipelines before deployment
 
 ### 2. Server Configuration
+
 - Use environment variables for configuration
 - Set appropriate worker counts for your workload
 - Monitor server health and logs
 - Use proper security settings in production
 
 ### 3. CLI Usage
+
 - Use `--help` for command documentation
 - Test commands in development environment first
 - Use `--dry-run` when available for testing
 - Keep CLI scripts in version control
 
 ### 4. Error Handling
+
 - Check return codes and error messages
 - Use `--verbose` flag for debugging
 - Monitor logs for issues

@@ -888,30 +888,35 @@ if __name__ == "__main__":
 ## Best Practices
 
 ### 1. Event Design
+
 - Use descriptive event names that indicate their purpose
 - Include relevant data in each event for better UX
 - Keep events lightweight and focused
 - Use consistent event naming conventions
 
 ### 2. User Experience
+
 - Provide clear feedback for all operations
 - Use appropriate timing for events (not too fast, not too slow)
 - Include progress indicators for long-running operations
 - Offer recovery options for errors
 
 ### 3. Performance
+
 - Use async/await for non-blocking event sending
 - Batch events when possible to reduce overhead
 - Monitor event frequency and impact on performance
 - Use appropriate timeouts for event operations
 
 ### 4. Error Handling
+
 - Handle event sending errors gracefully
 - Provide fallback behavior when events fail
 - Log event failures for debugging
 - Don't let event failures break the main functionality
 
 ### 5. Testing
+
 - Test events with different OpenWebUI versions
 - Verify event data structure and content
 - Test error scenarios and recovery

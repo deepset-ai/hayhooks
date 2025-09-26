@@ -750,28 +750,33 @@ class PersistentRAGPipelineWrapper(BasePipelineWrapper):
 ## Best Practices
 
 ### 1. Document Processing
+
 - Choose appropriate chunk sizes for your use case
 - Use overlapping chunks for better context
 - Clean and preprocess documents properly
 - Handle different file formats gracefully
 
 ### 2. Embedding Models
+
 - Choose embedding models appropriate for your domain
 - Consider model size and performance trade-offs
 - Use consistent embedding models for indexing and retrieval
 
 ### 3. Retrieval Strategy
+
 - Adjust the number of retrieved documents (top_k)
 - Consider using hybrid retrieval (dense + sparse)
 - Implement relevance scoring and filtering
 
 ### 4. Performance Optimization
+
 - Use persistent storage for large document collections
 - Implement caching for frequent queries
 - Monitor memory usage and scale accordingly
 - Consider batch processing for document ingestion
 
 ### 5. Error Handling
+
 - Provide clear error messages for users
 - Log errors for debugging and monitoring
 - Implement retry logic for transient failures
