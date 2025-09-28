@@ -8,6 +8,7 @@ from haystack import AsyncPipeline, Pipeline
 from haystack.components.agents import Agent
 from haystack.core.component import Component
 from haystack.dataclasses import StreamingChunk
+from haystack.tracing.utils import coerce_tag_value
 
 from hayhooks.open_webui import OpenWebUIEvent
 from hayhooks.server.logger import log
@@ -129,7 +130,9 @@ def _setup_streaming_callback(
         raise ValueError(msg)
 
 
-def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]) -> None:
+def _execute_pipeline_sync(
+    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]
+) -> dict[str, Any]:
     """
     Executes pipeline synchronously based on its type.
 
@@ -138,9 +141,9 @@ def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipe
         pipeline_run_args: Execution arguments
     """
     if isinstance(pipeline, Agent):
-        pipeline.run(**pipeline_run_args)
+        return pipeline.run(**pipeline_run_args)
     else:
-        pipeline.run(data=pipeline_run_args)
+        return pipeline.run(data=pipeline_run_args)
 
 
 def streaming_generator(  # noqa: C901, PLR0912
@@ -182,7 +185,9 @@ def streaming_generator(  # noqa: C901, PLR0912
 
     def run_pipeline() -> None:
         try:
-            _execute_pipeline_sync(pipeline, configured_args)
+            result = _execute_pipeline_sync(pipeline, configured_args)
+            # Send final chunk with the result
+            queue.put(StreamingChunk(content=str(coerce_tag_value(result))))
             queue.put(None)  # Signal completion
         except Exception as e:
             log.error(f"Error in pipeline execution thread for streaming_generator: {e}", exc_info=True)
