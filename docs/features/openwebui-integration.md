@@ -1,10 +1,10 @@
-# OpenWebUI Integration
+# Open WebUI Integration
 
-Hayhooks provides seamless integration with [OpenWebUI](https://openwebui.com/), enabling you to use Haystack pipelines and agents as chat completion backends with full feature support.
+Hayhooks provides seamless integration with [Open WebUI](https://openwebui.com/), enabling you to use Haystack pipelines and agents as chat completion backends with full feature support.
 
 ## Overview
 
-OpenWebUI integration allows you to:
+Open WebUI integration allows you to:
 
 - Use Haystack pipelines as OpenAI-compatible chat backends
 - Support streaming responses in real-time
@@ -16,13 +16,13 @@ OpenWebUI integration allows you to:
 
 ### Prerequisites
 
-- OpenWebUI instance running
+- Open WebUI instance running
 - Hayhooks server running
 - Pipeline with chat completion support
 
 ### Configuration (OpenAPI Tool Server)
 
-#### 1. Install OpenWebUI
+#### 1. Install Open WebUI
 
 ```bash
 # Using Docker (recommended)
@@ -33,7 +33,7 @@ pip install open-webui
 open-webui serve
 ```
 
-#### 2. Configure OpenWebUI
+#### 2. Configure Open WebUI
 
 Step 1: Disable Auto-generated Content
 
@@ -49,22 +49,13 @@ This prevents unnecessary calls to your pipelines.
 
 Step 2: Add Hayhooks Connection
 
-Go to **Settings → Connections** and add a new connection:
+Go to **Settings → Connections** (or **Admin Settings → Connections** for admin-level configuration) and add a new connection:
 
 - **API Base URL**: `http://localhost:1416/v1`
 - **API Key**: `any-value` (not used by Hayhooks)
 
 ![open-webui-settings-connections](../assets/open-webui-settings-connections.png)
 
-Alternatively, for admin-level configuration:
-
-Go to **Admin Settings → Connections** and add:
-
-- **Name**: Hayhooks
-- **API Base URL**: `http://localhost:1416/v1`
-- **API Key**: `any-value`
-
-![open-webui-admin-settings-connections](../assets/open-webui-admin-settings-connections.png)
 
 ## Pipeline Implementation
 
@@ -122,9 +113,9 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 ```
 
-## OpenWebUI Events
+## Open WebUI Events
 
-Hayhooks supports sending events to OpenWebUI for enhanced user experience:
+Hayhooks supports sending events to Open WebUI for enhanced user experience:
 
 ### Available Events
 
@@ -217,7 +208,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
 ## OpenAPI Tool Server
 
-Hayhooks can also serve as an OpenAPI Tool Server for OpenWebUI:
+Hayhooks can also serve as an OpenAPI Tool Server for Open WebUI:
 
 ### Configuration
 
@@ -296,7 +287,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
 1. **Connection Failed**
    - Verify Hayhooks server is running
-   - Check API URL in OpenWebUI settings
+   - Check API URL in Open WebUI settings
    - Ensure correct port (1416 by default)
 
 2. **No Response**
@@ -307,13 +298,13 @@ class PipelineWrapper(BasePipelineWrapper):
 3. **Streaming Not Working**
    - Ensure `streaming_callback` is set on generator
    - Check if `run_chat_completion_async` is implemented
-   - Verify OpenWebUI streaming is enabled
+   - Verify Open WebUI streaming is enabled
 
 ### Debug Commands
 
 ```bash
 # Check Hayhooks status
-hatch run docs-serve
+hayhooks status
 
 # Check deployed pipelines
 curl http://localhost:1416/status
@@ -333,7 +324,7 @@ curl -X POST http://localhost:1416/my_pipeline/run \
 - Add logging for debugging
 - Consider streaming for better UX
 
-### 2. OpenWebUI Configuration
+### 2. Open WebUI Configuration
 
 - Disable auto-generated content for simple pipelines
 - Use appropriate models for your use case
@@ -347,6 +338,6 @@ curl -X POST http://localhost:1416/my_pipeline/run \
 
 ## Next Steps
 
-- [OpenAI Compatibility](openai-compatibility.md) - Learn about OpenAI integration
+- [OpenAI Compatibility](openai-compatibility.md) - OpenAI integration
 - [MCP Support](mcp-support.md) - MCP server integration
 - [Examples](../examples/overview.md) - See working examples

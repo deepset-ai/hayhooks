@@ -1111,8 +1111,6 @@ We have some dedicated documentation for deployment:
 - Docker-based deployments: <https://docs.haystack.deepset.ai/docs/docker>
 - Kubernetes-based deployments: <https://docs.haystack.deepset.ai/docs/kubernetes>
 
-We also have some additional deployment guidelines, see [Deployment Guidelines](docs/deployment/deployment-guidelines.md).
-
 ### License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

@@ -28,8 +28,6 @@ nav:
     - Running Pipelines: advanced/running-pipelines.md
     - Advanced Configuration: advanced/advanced-configuration.md
     - Code Sharing: advanced/code-sharing.md
-  - Deployment:
-    - Deployment Guidelines: deployment/deployment-guidelines.md
   - Examples:
     - Examples Overview: examples/overview.md
     - Chat with Website: examples/chat-with-website.md
@@ -44,6 +42,7 @@ nav:
     - License: about/license.md
 
 theme:
+  logo: assets/deepset-square-logo.png
   name: material
   language: en
   features:

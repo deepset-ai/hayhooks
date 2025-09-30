@@ -18,6 +18,8 @@ export HAYHOOKS_PIPELINES_DIR=./pipelines
 hayhooks run
 ```
 
+See the [Environment Variables reference](../reference/environment-variables.md) for the canonical, up-to-date list.
+
 ### .env File
 
 Create a `.env` file in your project root:
@@ -28,7 +30,7 @@ HAYHOOKS_HOST=0.0.0.0
 HAYHOOKS_PORT=1416
 HAYHOOKS_MCP_PORT=1417
 HAYHOOKS_PIPELINES_DIR=./pipelines
-LOG_LEVEL=INFO
+LOG=INFO
 ```
 
 ### Command Line Arguments
@@ -79,6 +81,8 @@ hayhooks run --host 0.0.0.0 --port 1416 --pipelines-dir ./pipelines
 | `LOG` | Log level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
 | `HAYHOOKS_SHOW_TRACEBACKS` | Show tracebacks on errors | `false` |
 
+See [Logging reference](../reference/logging.md) for usage examples and details.
+
 ## Environment Variables Reference
 
 ### Core Variables
@@ -122,7 +126,7 @@ HAYHOOKS_PORT=1416
 HAYHOOKS_MCP_PORT=1417
 HAYHOOKS_PIPELINES_DIR=./pipelines
 HAYHOOKS_ADDITIONAL_PYTHON_PATH=./custom_code
-LOG_LEVEL=DEBUG
+LOG=DEBUG
 HAYHOOKS_SHOW_TRACEBACKS=true
 ```
 
@@ -135,7 +139,7 @@ HAYHOOKS_PORT=1416
 HAYHOOKS_MCP_PORT=1417
 HAYHOOKS_PIPELINES_DIR=/app/pipelines
 HAYHOOKS_ADDITIONAL_PYTHON_PATH=/app/custom_code
-LOG_LEVEL=INFO
+LOG=INFO
 HAYHOOKS_SHOW_TRACEBACKS=false
 HAYHOOKS_USE_HTTPS=true
 ```
@@ -149,7 +153,7 @@ HAYHOOKS_PORT=1416
 HAYHOOKS_MCP_PORT=1417
 HAYHOOKS_PIPELINES_DIR=/app/pipelines
 HAYHOOKS_ADDITIONAL_PYTHON_PATH=/app/custom_code
-LOG_LEVEL=INFO
+LOG=INFO
 ```
 
 ## Validation
@@ -168,3 +172,6 @@ After configuring Hayhooks:
 - [Quick Start](quick-start.md) - Get started with basic usage
 - [Pipeline Deployment](../concepts/pipeline-deployment.md) - Learn how to deploy pipelines
 - [Features](../features/openai-compatibility.md) - Explore advanced features
+- [Environment Variables Reference](../reference/environment-variables.md) - Canonical env var list
+- [Logging Reference](../reference/logging.md) - Log levels and usage
+- [API Reference](../reference/api-reference.md) - Full API endpoints

@@ -25,7 +25,8 @@ If you want to use the [MCP Server](../features/mcp-support.md), you need to ins
 pip install hayhooks[mcp]
 ```
 
-**NOTE: You'll need to run at least Python 3.10+ to use the MCP Server.**
+!!! warning "Python 3.10+ Required for MCP"
+    You'll need to run at least Python 3.10+ to use the MCP Server.
 
 ## Verify Installation
 
@@ -37,42 +38,11 @@ hayhooks --version
 
 # Show help
 hayhooks --help
-
-# Show available commands
-hayhooks --help
-```
-
-## Optional Dependencies
-
-Depending on your use case, you may need additional dependencies:
-
-### For OpenAI Integration
-
-```bash
-pip install openai
-```
-
-### For Web Content Processing
-
-```bash
-pip install trafilatura beautifulsoup4
-```
-
-### For Document Processing
-
-```bash
-pip install PyPDF2 python-docx
-```
-
-### For Async Operations
-
-```bash
-pip install aiohttp
 ```
 
 ## Development Installation
 
-If you want to contribute to Hayhooks or develop with the latest features:
+If you want to contribute to Hayhooks, clone the repository and install in editable mode:
 
 ```bash
 # Clone the repository
@@ -85,9 +55,6 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install in development mode
 pip install -e .
-
-# Install development dependencies
-pip install -e ".[dev]"
 ```
 
 ## Docker Installation
@@ -109,56 +76,21 @@ docker run -p 1416:1416 deepset/hayhooks:latest
 git clone https://github.com/deepset-ai/hayhooks.git
 cd hayhooks
 
-# Build the image
-docker build -t hayhooks:latest .
+# Build with Docker Buildx Bake (current platform) and load into Docker
+cd docker
+IMAGE_NAME=hayhooks IMAGE_TAG_SUFFIX=local docker buildx bake --load
 
 # Run the image
-docker run -p 1416:1416 hayhooks:latest
+docker run -p 1416:1416 hayhooks:local
 ```
 
-## Troubleshooting
-
-### Common Issues
-
-#### Permission Errors
-
-If you encounter permission errors:
+Optional (multi-arch + push to registry):
 
 ```bash
-# Install with user permissions
-pip install --user hayhooks
-
-# Or use a virtual environment
-python -m venv venv
-source venv/bin/activate
-pip install hayhooks
-```
-
-#### Module Not Found Errors
-
-If you get "Module not found" errors:
-
-```bash
-# Install with all extras
-pip install hayhooks[mcp,dev]
-
-# Or install missing dependencies manually
-pip install <missing-package>
-```
-
-#### Version Conflicts
-
-If you encounter version conflicts:
-
-```bash
-# Use a virtual environment
-python -m venv venv
-source venv/bin/activate
-pip install hayhooks
-
-# Or upgrade pip first
-pip install --upgrade pip
-pip install hayhooks
+# Build and push multi-platform image (amd64, arm64)
+# Replace <your-user> and <tag> accordingly
+cd docker
+IMAGE_NAME=<your-user>/hayhooks IMAGE_TAG_SUFFIX=<tag> HAYHOOKS_VERSION=<tag> docker buildx bake --push
 ```
 
 ### Getting Help

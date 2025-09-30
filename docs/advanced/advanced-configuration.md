@@ -183,5 +183,4 @@ LOG=DEBUG hayhooks run
 
 ## Next Steps
 
-- [Deployment Guidelines](../deployment/deployment-guidelines.md) - Production deployment
 - [Code Sharing](code-sharing.md) - Reusable components

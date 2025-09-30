@@ -116,7 +116,7 @@ curl -X POST http://localhost:1416/chat/completions \
   }'
 ```
 
-Or [integrate it with OpenWebUI](features/openai-compatibility.md#openwebui-integration) and start chatting with it!
+Or [integrate it with Open WebUI](features/openai-compatibility.md#openwebui-integration) and start chatting with it!
 
 ## Key Features
 
@@ -129,7 +129,7 @@ Or [integrate it with OpenWebUI](features/openai-compatibility.md#openwebui-inte
 ### 🌐 Multiple Integration Options
 
 - **MCP Protocol**: Expose pipelines as MCP tools for use in AI development environments
-- **OpenWebUI Integration**: Use Hayhooks as a backend for OpenWebUI with streaming support
+- **Open WebUI Integration**: Use Hayhooks as a backend for Open WebUI with streaming support
 - **OpenAI Compatibility**: Seamless integration with OpenAI-compatible tools and frameworks
 
 ### 🔧 Developer Friendly

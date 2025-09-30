@@ -159,4 +159,3 @@ class PipelineWrapper(BasePipelineWrapper):
 
 - [API Reference](api-reference.md) - Complete API documentation
 - [Environment Variables](environment-variables.md) - Configuration options
-- [Deployment Guidelines](../deployment/deployment-guidelines.md) - Production deployment

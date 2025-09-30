@@ -69,8 +69,8 @@ Use tabs to pick your preferred interface:
       }'
     ```
 
-=== "OpenAI Chat Completion (OpenWebUI)"
-    Please refer to the [OpenWebUI Integration](../features/openwebui-integration.md) page for more information.
+=== "OpenAI Chat Completion (Open WebUI)"
+    Please refer to the [Open WebUI Integration](../features/openwebui-integration.md) page for more information.
 
 ## CLI Execution
 
@@ -78,34 +78,35 @@ Use tabs to pick your preferred interface:
 
 Execute a pipeline with simple parameters:
 
-    ```bash
-    # Run with JSON-compatible parameters
-    hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
+```bash
+# Run with JSON-compatible parameters
+hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
 
-    # Run with multiple parameters
-    hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"' --param 'temperature=0.7'
+# Run with multiple parameters
+hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"' --param 'temperature=0.7'
 
-    # Run with complex JSON
-    hayhooks pipeline run my_pipeline --param 'urls=["https://example.com"]' --param 'question="What is this about?"'
-    ```
+# Run with complex JSON
+hayhooks pipeline run my_pipeline --param 'urls=["https://example.com"]' --param 'question="What is this about?"'
+```
 
 ### File Upload Execution
 
 Run pipelines with file uploads:
 
-    ```bash
-    # Upload single file
-    hayhooks pipeline run rag_pipeline --file document.pdf --param 'query="Summarize this document"'
+```bash
 
-    # Upload directory
-    hayhooks pipeline run rag_pipeline --dir ./documents --param 'query="Analyze all documents"'
+# Upload single file to an indexing pipeline
+hayhooks pipeline run indexing_pipeline --file document.pdf
 
-    # Upload multiple files
-    hayhooks pipeline run rag_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare these documents"'
+# Upload single file with parameters
+hayhooks pipeline run rag_pipeline --file document.pdf --param 'query="Summarize this document"'
 
-    # Upload with additional parameters
-    hayhooks pipeline run rag_pipeline --file document.pdf --param 'query="Analyze"' --param 'temperature=0.5'
-    ```
+# Upload directory
+hayhooks pipeline run rag_pipeline --dir ./documents --param 'query="Analyze all documents"'
+
+# Upload multiple files with parameters
+hayhooks pipeline run rag_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare these documents"'
+```
 
 ## HTTP API Execution
 
@@ -180,26 +181,26 @@ curl -X POST \
 
 ### Python (requests)
 
-    ```python
-    import requests
+```python
+import requests
 
-    # Simple pipeline run
-    resp = requests.post(
-        "http://localhost:1416/my_pipeline/run",
-        json={"query": "What is Haystack?"}
-    )
-    print(resp.json())
+# Simple pipeline run
+resp = requests.post(
+    "http://localhost:1416/my_pipeline/run",
+    json={"query": "What is Haystack?"}
+)
+print(resp.json())
 
-    # Chat completion
-    resp = requests.post(
-        "http://localhost:1416/v1/chat/completions",
-        json={
-            "model": "chat_pipeline",
-            "messages": [{"role": "user", "content": "What is Haystack?"}]
-        }
-    )
-    print(resp.json())
-    ```
+# Chat completion
+resp = requests.post(
+    "http://localhost:1416/v1/chat/completions",
+    json={
+        "model": "chat_pipeline",
+        "messages": [{"role": "user", "content": "What is Haystack?"}]
+    }
+)
+print(resp.json())
+```
 
 ### Async Python (httpx)
 
@@ -239,43 +240,43 @@ For OpenAI-compatible streaming (aligned with README), implement `run_chat_compl
 
 Implement robust error handling:
 
-    ```python
-    import requests
-    from requests.exceptions import RequestException
+```python
+import requests
+from requests.exceptions import RequestException
 
-    class PipelineExecutionError(Exception):
-        pass
+class PipelineExecutionError(Exception):
+    pass
 
-    def run_pipeline_with_retry(pipeline_name, params, max_retries=3):
-        """Run pipeline with retry logic"""
-        url = f"http://localhost:1416/{pipeline_name}/run"
+def run_pipeline_with_retry(pipeline_name, params, max_retries=3):
+    """Run pipeline with retry logic"""
+    url = f"http://localhost:1416/{pipeline_name}/run"
 
-        for attempt in range(max_retries):
-            try:
-                response = requests.post(url, json=params)
-                response.raise_for_status()
-                return response.json()
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, json=params)
+            response.raise_for_status()
+            return response.json()
 
-            except RequestException as e:
-                if attempt == max_retries - 1:
-                    raise PipelineExecutionError(f"Failed after {max_retries} attempts: {e}")
+        except RequestException as e:
+            if attempt == max_retries - 1:
+                raise PipelineExecutionError(f"Failed after {max_retries} attempts: {e}")
 
-                print(f"Attempt {attempt + 1} failed, retrying...")
-                import time
-                time.sleep(2 ** attempt)  # Exponential backoff
+            print(f"Attempt {attempt + 1} failed, retrying...")
+            import time
+            time.sleep(2 ** attempt)  # Exponential backoff
 
-        raise PipelineExecutionError("Max retries exceeded")
+    raise PipelineExecutionError("Max retries exceeded")
 
-    # Usage
-    try:
-        result = run_pipeline_with_retry(
-            "my_pipeline",
-            {"query": "What is Haystack?"}
-        )
-        print(result)
-    except PipelineExecutionError as e:
-        print(f"Pipeline execution failed: {e}")
-    ```
+# Usage
+try:
+    result = run_pipeline_with_retry(
+        "my_pipeline",
+        {"query": "What is Haystack?"}
+    )
+    print(result)
+except PipelineExecutionError as e:
+    print(f"Pipeline execution failed: {e}")
+```
 
 ## File Upload Processing
 
@@ -287,7 +288,7 @@ import requests
 # Upload one or more files
 files = [
     ('files', open('document.pdf', 'rb')),
-    # ('files', open('another.txt', 'rb')),
+    # ...
 ]
 try:
     resp = requests.post(
@@ -303,23 +304,23 @@ finally:
 
 ### Upload a directory
 
-    ```python
-    from pathlib import Path
-    import requests
+```python
+from pathlib import Path
+import requests
 
-    dir_path = Path('./documents')
-    file_list = [('files', open(str(p), 'rb')) for p in dir_path.rglob('*') if p.is_file()]
-    try:
-        resp = requests.post(
-            'http://localhost:1416/rag_pipeline/run',
-            files=file_list,
-            data={'query': 'Analyze all documents'}
-        )
-        print(resp.json())
-    finally:
-        for _, fh in file_list:
-            fh.close()
-    ```
+dir_path = Path('./documents')
+file_list = [('files', open(str(p), 'rb')) for p in dir_path.rglob('*') if p.is_file()]
+try:
+    resp = requests.post(
+        'http://localhost:1416/rag_pipeline/run',
+        files=file_list,
+        data={'query': 'Analyze all documents'}
+    )
+    print(resp.json())
+finally:
+    for _, fh in file_list:
+        fh.close()
+```
 
 ## Monitoring and Logging
 
@@ -327,34 +328,34 @@ finally:
 
 Use Hayhooks' logger in your `PipelineWrapper` for consistent, structured logs:
 
-    ```python
-    import time
-    from hayhooks import log
+```python
+import time
+from hayhooks import log
 
-    class PipelineWrapper(BasePipelineWrapper):
-        def run_api(self, query: str) -> str:
-            start_time = time.time()
-            log.info({"event": "pipeline_start", "pipeline": "my_pipeline", "query_len": len(query)})
+class PipelineWrapper(BasePipelineWrapper):
+    def run_api(self, query: str) -> str:
+        start_time = time.time()
+        log.info({"event": "pipeline_start", "pipeline": "my_pipeline", "query_len": len(query)})
 
-            try:
-                result = self.pipeline.run({"prompt": {"query": query}})
-                duration = time.time() - start_time
-                log.info({
-                    "event": "pipeline_complete",
-                    "pipeline": "my_pipeline",
-                    "duration_s": round(duration, 3)
-                })
-                return result["llm"]["replies"][0]
-            except Exception as e:
-                duration = time.time() - start_time
-                log.error({
-                    "event": "pipeline_error",
-                    "pipeline": "my_pipeline",
-                    "duration_s": round(duration, 3),
-                    "error": str(e)
-                })
-                raise
-    ```
+        try:
+            result = self.pipeline.run({"prompt": {"query": query}})
+            duration = time.time() - start_time
+            log.info({
+                "event": "pipeline_complete",
+                "pipeline": "my_pipeline",
+                "duration_s": round(duration, 3)
+            })
+            return result["llm"]["replies"][0]
+        except Exception as e:
+            duration = time.time() - start_time
+            log.error({
+                "event": "pipeline_error",
+                "pipeline": "my_pipeline",
+                "duration_s": round(duration, 3),
+                "error": str(e)
+            })
+            raise
+```
 
 ## Best Practices
 

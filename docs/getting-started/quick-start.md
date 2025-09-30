@@ -19,7 +19,8 @@ If you want to use the [MCP Server](../features/mcp-support.md), you need to ins
 pip install hayhooks[mcp]
 ```
 
-**NOTE: You'll need to run at least Python 3.10+ to use the MCP Server.**
+!!! warning "Python 3.10+ Required for MCP"
+    You'll need to run at least Python 3.10+ to use the MCP Server.
 
 ## Basic Usage
 
@@ -60,15 +61,9 @@ curl -X POST \
 
 ## Quick Start with Docker Compose
 
-For the fastest setup, use our Docker Compose configuration with pre-configured OpenWebUI integration:
+For the fastest setup, see [Quick Start with Docker Compose](../getting-started/quick-start-docker.md) for full instructions.
 
-```bash
-git clone https://github.com/deepset-ai/hayhooks-open-webui-docker-compose.git
-cd hayhooks-open-webui-docker-compose
-docker-compose up -d
-```
-
-This will start both Hayhooks and OpenWebUI with all necessary configurations.
+This provides a ready-to-use setup with Open WebUI integration.
 
 ## Next Steps
 

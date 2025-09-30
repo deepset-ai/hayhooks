@@ -4,7 +4,7 @@ Hayhooks provides seamless OpenAI-compatible endpoints for Haystack pipelines an
 
 ## Overview
 
-Hayhooks can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` method in your pipeline wrapper. This makes Hayhooks compatible with fully-featured chat interfaces like [open-webui](https://openwebui.com/), so you can use it as a backend for your chat interface.
+Hayhooks can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` method in your pipeline wrapper. This makes Hayhooks compatible with fully-featured chat interfaces like [Open WebUI](https://openwebui.com/), so you can use it as a backend for your chat interface.
 
 ## Key Features
 
@@ -140,11 +140,11 @@ The endpoints are automatically documented in the OpenAPI schema:
         description: Successful response
 ```
 
-## OpenWebUI Integration
+## Open WebUI Integration
 
 ### Configuration
 
-1. **Install OpenWebUI**
+1. **Install Open WebUI**
 
 2. **Configure Connection**
    - Go to Settings → Connections
@@ -159,15 +159,15 @@ hayhooks pipeline deploy-files -n chat_agent ./path/to/pipeline
 ```
 
 1. **Test Integration**
-   - Start a conversation in OpenWebUI
+   - Start a conversation in Open WebUI
    - Select your Hayhooks backend
-   - The pipeline will respond through OpenWebUI
+   - The pipeline will respond through Open WebUI
 
 ![chat-completion-example](../assets/chat-completion.gif)
 
-### OpenWebUI Events
+### Open WebUI Events
 
-Hayhooks supports sending event objects that OpenWebUI can render alongside streaming chunks. Use the helpers in `hayhooks.open_webui` and yield them from your generator (see the OpenWebUI integration page for a complete example):
+Hayhooks supports sending event objects that Open WebUI can render alongside streaming chunks. Use the helpers in `hayhooks.open_webui` and yield them from your generator (see the Open WebUI integration page for a complete example):
 
 ![open-webui-hayhooks-events](../assets/open-webui-hayhooks-events.gif)
 
@@ -302,5 +302,5 @@ class AdvancedStreamingWrapper(BasePipelineWrapper):
 ## Next Steps
 
 - [MCP Support](mcp-support.md) - Learn about MCP integration
-- [OpenWebUI Integration](openwebui-integration.md) - Deep dive into OpenWebUI
+- [Open WebUI Integration](openwebui-integration.md) - Deep dive into Open WebUI
 - [Examples](../examples/overview.md) - See working examples

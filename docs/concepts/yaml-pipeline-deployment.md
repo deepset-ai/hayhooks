@@ -11,6 +11,9 @@ YAML pipeline deployment is ideal for:
 - Automatic schema generation
 - CI/CD pipeline deployments
 
+!!! tip "Converting Existing Pipelines"
+    If you already have a Haystack `Pipeline` instance, you can serialize it with `pipeline.dumps()` and then manually add the required `inputs` and `outputs` sections before deploying.
+
 ## Requirements
 
 ### YAML Structure
@@ -221,20 +224,21 @@ with open("pipeline.yml", "w") as f:
     f.write(yaml_content)
 ```
 
-**Note:** You'll need to manually add the `inputs` and `outputs` sections to the generated YAML.
+!!! note
+    You'll need to manually add the `inputs` and `outputs` sections to the generated YAML.
 
 ## Limitations
 
-### Current Limitations
+!!! warning "YAML Pipeline Limitations"
+    YAML-deployed pipelines have the following limitations:
 
-1. **No OpenAI Compatibility**: YAML-deployed pipelines don't support OpenAI-compatible chat endpoints
-2. **No Streaming**: Streaming responses are not supported
-3. **No File Uploads**: File upload handling is not available
-4. **Async Only**: Pipelines are run as `AsyncPipeline` instances
+    1. **No OpenAI Compatibility**: Don't support OpenAI-compatible chat endpoints
+    2. **No Streaming**: Streaming responses are not supported
+    3. **No File Uploads**: File upload handling is not available
+    4. **Async Only**: Pipelines are run as `AsyncPipeline` instances
 
-### Workarounds
-
-For advanced features, use `PipelineWrapper` instead:
+!!! tip "Using PipelineWrapper for Advanced Features"
+    For advanced features, use `PipelineWrapper` instead:
 
 ```python
 # For OpenAI compatibility
@@ -309,44 +313,6 @@ components:
       model: gpt-3.5-turbo  # Faster and cheaper
       max_tokens: 1000     # Reasonable limit
 ```
-
-## Migration from PipelineWrapper
-
-To migrate from `PipelineWrapper` to YAML deployment:
-
-1. **Extract Pipeline Logic**:
-
-   ```python
-   # From PipelineWrapper.setup()
-   pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
-   self.pipeline = Pipeline.loads(pipeline_yaml)
-   ```
-
-2. **Create YAML File**:
-
-   ```yaml
-   # pipeline.yml
-   components:
-     # ... your components ...
-
-   connections:
-     # ... your connections ...
-
-   inputs:
-     # Map run_api parameters to component inputs
-     urls: fetcher.urls
-     question: prompt_builder.query
-
-   outputs:
-     # Map component outputs to response fields
-     replies: llm.replies
-   ```
-
-3. **Deploy with YAML**:
-
-   ```bash
-   hayhooks pipeline deploy-yaml -n my_pipeline pipeline.yml
-   ```
 
 ## Examples
 

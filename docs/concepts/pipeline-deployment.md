@@ -8,6 +8,13 @@ Hayhooks provides flexible options for deploying Haystack pipelines and agents. 
 
 The most flexible approach is to create a `PipelineWrapper` class that encapsulates your pipeline logic.
 
+See also:
+
+- [PipelineWrapper Details](pipeline-wrapper.md)
+- [OpenAI Compatibility](../features/openai-compatibility.md)
+- [CLI Commands](../features/cli-commands.md)
+- [API Reference](../reference/api-reference.md)
+
 **Key Features:**
 
 - Maximum flexibility for initialization
@@ -40,6 +47,11 @@ class PipelineWrapper(BasePipelineWrapper):
 
 Deploy pipelines directly from YAML definitions with automatic schema generation.
 
+See also:
+
+- [YAML Pipeline Deployment](yaml-pipeline-deployment.md)
+- [API Reference](../reference/api-reference.md)
+
 **Key Features:**
 
 - Simple deployment from YAML files
@@ -52,32 +64,10 @@ Deploy pipelines directly from YAML definitions with automatic schema generation
 - YAML must include `inputs` and `outputs` sections
 - Pipeline components must be properly defined
 
-**Example YAML:**
+For a complete YAML example and detailed requirements, see [YAML Pipeline Deployment](yaml-pipeline-deployment.md).
 
-```yaml
-components:
-  fetcher:
-    type: haystack.components.fetchers.LinkContentFetcher
-  prompt_builder:
-    type: haystack.components.builders.PromptBuilder
-    init_parameters:
-      template: "Answer this question: {{query}} based on this content: {{documents}}"
-  llm:
-    type: haystack.components.generators.OpenAIGenerator
-
-connections:
-  - sender: fetcher.content
-    receiver: prompt_builder.documents
-  - sender: prompt_builder
-    receiver: llm
-
-inputs:
-  urls: fetcher.urls
-  query: prompt_builder.query
-
-outputs:
-  replies: llm.replies
-```
+!!! warning "YAML Pipeline Limitations"
+    YAML-deployed pipelines do not support OpenAI-compatible chat endpoints or streaming. For chat/streaming (e.g., Open WebUI), use a `PipelineWrapper` and implement `run_chat_completion`/`run_chat_completion_async` (see [OpenAI Compatibility](../features/openai-compatibility.md)).
 
 ## Core Components
 
@@ -101,11 +91,11 @@ All pipeline wrappers inherit from `BasePipelineWrapper`:
   - Better performance for concurrent requests
   - Supports async pipeline execution
 
-- **`run_chat_completion()`**: OpenAI-compatible chat endpoint
-  - Enable OpenWebUI integration
+- **`run_chat_completion()`**: OpenAI-compatible chat endpoint (see [OpenAI Compatibility](../features/openai-compatibility.md))
+  - Enable Open WebUI integration
   - Support chat completion format
 
-- **`run_chat_completion_async()`**: Async chat completion
+- **`run_chat_completion_async()`**: Async chat completion (see [OpenAI Compatibility](../features/openai-compatibility.md))
   - Streaming support for chat interfaces
   - Better performance for concurrent chat requests
 
@@ -117,6 +107,11 @@ Hayhooks automatically handles:
 - **Response Serialization**: JSON serialization of responses
 - **File Uploads**: Automatic handling of multipart/form-data requests
 - **Type Conversion**: Automatic type conversion between JSON and Python types
+
+References:
+
+- [API Reference](../reference/api-reference.md)
+- [File Upload Support](../features/file-upload-support.md)
 
 ## Lifecycle Management
 
@@ -130,6 +125,8 @@ When you deploy a pipeline, Hayhooks:
 4. **Generates** API endpoints and schemas
 5. **Creates** OpenAI-compatible endpoints (if implemented)
 
+See also: [API Reference](../reference/api-reference.md), [Logging](../reference/logging.md)
+
 ### Pipeline Execution
 
 For each request:
@@ -138,6 +135,8 @@ For each request:
 2. **Calls** the appropriate method (`run_api`, `run_chat_completion`, etc.)
 3. **Handles** errors and exceptions
 4. **Returns** the response in the correct format
+
+See also: [API Reference](../reference/api-reference.md)
 
 ### Pipeline Undeployment
 
@@ -148,17 +147,7 @@ When you undeploy a pipeline:
 3. **Unregisters** all API endpoints
 4. **Cleans up** resources
 
-## Configuration Options
-
-### Deployment Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--name, -n` | Pipeline name | Directory name |
-| `--description` | Human-readable description | Pipeline name |
-| `--overwrite, -o` | Overwrite existing pipeline | `false` |
-| `--skip-saving-files` | Don't save pipeline files | `false` |
-| `--skip-mcp` | Skip MCP tool registration | `false` |
+See also: [API Reference](../reference/api-reference.md)
 
 ### MCP Integration
 
@@ -167,6 +156,8 @@ All deployed pipelines can be exposed as MCP tools:
 - **Automatic Discovery**: Pipelines are automatically listed as available tools
 - **Schema Generation**: Input schemas are generated from method signatures
 - **Tool Execution**: Tools can be called from MCP clients
+
+See also: [MCP Support](../features/mcp-support.md)
 
 ## Best Practices
 

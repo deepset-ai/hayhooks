@@ -1,6 +1,6 @@
 # Quick Start with Docker Compose
 
-To quickly get started with Hayhooks, we provide a ready-to-use Docker Compose 🐳 setup with pre-configured integration with [open-webui](https://openwebui.com/).
+To quickly get started with Hayhooks, we provide a ready-to-use Docker Compose 🐳 setup with pre-configured integration with [Open WebUI](https://openwebui.com/).
 
 It's available in the [Hayhooks + Open WebUI Docker Compose repository](https://github.com/deepset-ai/hayhooks-open-webui-docker-compose).
 
@@ -44,12 +44,12 @@ This will start:
 
 - Hayhooks server on port 1416
 - Hayhooks MCP server on port 1417
-- OpenWebUI on port 3000
+- Open WebUI on port 3000
 
 ### 4. Access the Services
 
 - **Hayhooks API**: <http://localhost:1416>
-- **OpenWebUI**: <http://localhost:3000>
+- **Open WebUI**: <http://localhost:3000>
 - **Hayhooks API Documentation**: <http://localhost:1416/docs>
 
 ### 5. Deploy Example Pipelines
@@ -73,7 +73,7 @@ The following environment variables can be configured in `.env`:
 | `HAYHOOKS_PORT` | Port for Hayhooks API | `1416` |
 | `HAYHOOKS_MCP_PORT` | Port for Hayhooks MCP server | `1417` |
 | `HAYHOOKS_PIPELINES_DIR` | Directory for pipeline definitions | `/app/pipelines` |
-| `OPENWEBUI_PORT` | Port for OpenWebUI | `3000` |
+| `OPENWEBUI_PORT` | Port for Open WebUI | `3000` |
 
 ### Volume Mounts
 
@@ -83,13 +83,13 @@ The Docker Compose setup includes the following volume mounts:
 - **Custom Code**: `/app/custom_code` - For shared Python modules
 - **Data**: `/app/data` - For persistent data storage
 
-## Integrating with OpenWebUI
+## Integrating with Open WebUI
 
-The Docker Compose setup comes pre-configured to integrate Hayhooks with OpenWebUI:
+The Docker Compose setup comes pre-configured to integrate Hayhooks with Open WebUI:
 
-### 1. Configure OpenWebUI
+### 1. Configure Open WebUI
 
-1. Access OpenWebUI at <http://localhost:3000>
+1. Access Open WebUI at <http://localhost:3000>
 2. Go to **Settings → Connections**
 3. Add a new connection with:
    - **API Base URL**: `http://hayhooks:1416/v1`
@@ -105,9 +105,9 @@ docker-compose exec hayhooks hayhooks pipeline deploy-files -n chat_agent /app/e
 
 ### 3. Test the Integration
 
-1. In OpenWebUI, select the Hayhooks backend
+1. In Open WebUI, select the Hayhooks backend
 2. Start a conversation with your deployed pipeline
-3. The pipeline will respond through the OpenWebUI interface
+3. The pipeline will respond through the Open WebUI interface
 
 ## Troubleshooting
 
@@ -125,7 +125,7 @@ Check logs for troubleshooting:
 # Hayhooks logs
 docker-compose logs -f hayhooks
 
-# OpenWebUI logs
+# Open WebUI logs
 docker-compose logs -f openwebui
 ```
 
@@ -141,4 +141,4 @@ docker-compose down -v
 
 - [Configuration](../getting-started/configuration.md) - Learn about advanced configuration
 - [Examples](../examples/overview.md) - Explore more examples
-- [OpenWebUI Integration](../features/openwebui-integration.md) - Deep dive into OpenWebUI integration
+- [Open WebUI Integration](../features/openwebui-integration.md) - Deep dive into Open WebUI integration

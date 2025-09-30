@@ -413,5 +413,5 @@ class ResearchAssistantWrapper(BasePipelineWrapper):
 ## Next Steps
 
 - [OpenAI Compatibility](openai-compatibility.md) - OpenAI integration
-- [OpenWebUI Integration](openwebui-integration.md) - Chat interface integration
+- [Open WebUI Integration](openwebui-integration.md) - Chat interface integration
 - [Examples](../examples/overview.md) - See working examples

@@ -69,7 +69,7 @@ hayhooks run --additional-python-path ./custom_code
 hayhooks run --reload
 ```
 
-#### Options for `mcp run`
+#### Options for `run`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -79,6 +79,7 @@ hayhooks run --reload
 | `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
 | `--additional-python-path` | | Additional Python path | `None` |
 | `--root-path` | | Root path for API | `/` |
+| `--reload` | | Reload on code changes (development) | `false` |
 
 ### mcp run
 
@@ -92,16 +93,14 @@ hayhooks mcp run
 hayhooks mcp run --host 0.0.0.0 --port 1417
 ```
 
-#### Options for `pipeline deploy-files`
+#### Options for `mcp run`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--host` | `-h` | MCP server host | `127.0.0.1` |
-| `--port` | `-p` | MCP server port | `1417` |
-| `--pipelines-dir` | `-d` | Directory for pipeline definitions | `./pipelines` |
+| `--host` | | MCP server host | `127.0.0.1` |
+| `--port` | | MCP server port | `1417` |
+| `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
 | `--additional-python-path` | | Additional Python path | `None` |
-| `--json-response` | `-j` | Use JSON responses instead of SSE | `false` |
-| `--debug` | `-d` | Return tracebacks on errors | `false` |
 
 ## Pipeline Management Commands
 
@@ -126,7 +125,7 @@ hayhooks pipeline deploy-files -n my_pipeline --skip-saving-files ./path/to/pipe
 hayhooks pipeline deploy-files -n my_pipeline --skip-mcp ./path/to/pipeline
 ```
 
-#### Options for `pipeline deploy-yaml`
+#### Options for `pipeline deploy-files`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -157,7 +156,7 @@ hayhooks pipeline deploy-yaml -n my_pipeline --overwrite pipelines/my_pipeline.y
 hayhooks pipeline deploy-yaml -n my_pipeline --no-save-file pipelines/my_pipeline.yml
 ```
 
-#### Options for `pipeline undeploy`
+#### Options for `pipeline deploy-yaml`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -180,11 +179,11 @@ hayhooks pipeline undeploy my_pipeline
 hayhooks pipeline undeploy my_pipeline --force
 ```
 
-#### Options for `pipeline run`
+#### Options for `pipeline undeploy`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--force` | | Force undeploy | `false` |
+| `--force` | | Force undeploy (if needed) | `false` |
 
 ### pipeline run
 
@@ -207,7 +206,7 @@ hayhooks pipeline run my_pipeline --dir ./documents --param 'query="Analyze all 
 hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare documents"'
 ```
 
-#### Options for `status`
+#### Options for `pipeline run`
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -224,32 +223,16 @@ Check server and pipeline status:
 ```bash
 # Check server status
 hayhooks status
-
-# Check status with verbose output
-hayhooks status --verbose
-
-# Check status with JSON output
-hayhooks status --json
 ```
 
-#### Options
+!!! note
+    There is no `hayhooks health` command in the CLI. Use `hayhooks status` or call HTTP endpoints directly.
 
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--verbose` | `-v` | Show detailed information | `false` |
-| `--json` | | Output in JSON format | `false` |
-
-> Note: There is no `hayhooks health` command in the CLI. Use `hayhooks status` or call HTTP endpoints directly.
-
-## Notes
-
-Configuration is managed via environment variables and CLI flags. See [Configuration](../getting-started/configuration.md).
-
-Development flows (testing, linting) are not exposed as CLI commands.
-
-Use your process manager or container logs to view logs; Hayhooks uses standard output.
-
-Advanced export/import/migrate commands are not provided by the Hayhooks CLI at this time.
+!!! info "CLI Limitations"
+    - Configuration is managed via environment variables and CLI flags. See [Configuration](../getting-started/configuration.md).
+    - Development flows (testing, linting) are not exposed as CLI commands.
+    - Use your process manager or container logs to view logs; Hayhooks uses standard output.
+    - Advanced export/import/migrate commands are not provided by the Hayhooks CLI at this time.
 
 ## HTTP API Commands
 
@@ -313,24 +296,7 @@ HAYHOOKS_HOST=0.0.0.0
 HAYHOOKS_PORT=1416
 HAYHOOKS_MCP_PORT=1417
 HAYHOOKS_PIPELINES_DIR=./pipelines
-LOG_LEVEL=INFO
-```
-
-### pipelines.yaml
-
-Define pipelines in YAML:
-
-```yaml
-pipelines:
-  - name: chat_pipeline
-    type: files
-    path: ./pipelines/chat_pipeline
-    description: "Chat with AI"
-
-  - name: rag_pipeline
-    type: yaml
-    path: ./pipelines/rag_pipeline.yml
-    description: "RAG system"
+LOG=INFO
 ```
 
 ## Error Handling
@@ -353,7 +319,7 @@ pipelines:
    # Check server logs with your process manager or container runtime
 
    # Enable debug logging
-   hayhooks env set LOG_LEVEL DEBUG
+   LOG=DEBUG hayhooks run
    ```
 
 3. **Permission denied**
@@ -372,13 +338,10 @@ Enable debug mode for troubleshooting:
 
 ```bash
 # Set debug logging
-export LOG_LEVEL=DEBUG
+export LOG=DEBUG
 
-# Start server with debug output
-hayhooks run --verbose
-
-# Check detailed status
-hayhooks status --verbose
+# Start server with debug logging
+hayhooks run
 ```
 
 ## Best Practices
@@ -438,8 +401,7 @@ hayhooks pipeline run chat_pipeline --param 'query="Hello!"'
 # 1. Set environment variables
 export HAYHOOKS_HOST=0.0.0.0
 export HAYHOOKS_PORT=1416
-export HAYHOOKS_WORKERS=4
-export LOG_LEVEL=INFO
+export LOG=INFO
 
 # 2. Start server with multiple workers
 hayhooks run --workers 4
@@ -447,12 +409,11 @@ hayhooks run --workers 4
 # 3. Deploy pipelines
 hayhooks pipeline deploy-files -n production_pipeline ./pipelines/production
 
-# 4. Monitor health
-hayhooks health --detailed
+# 4. Monitor status
+hayhooks status
 ```
 
 ## Next Steps
 
 - [Configuration](../getting-started/configuration.md) - Configuration options
-- [Deployment Guidelines](../deployment/deployment-guidelines.md) - Production deployment
 - [Examples](../examples/overview.md) - Working examples

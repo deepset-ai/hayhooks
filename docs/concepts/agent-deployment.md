@@ -13,10 +13,10 @@ Agents are deployed using the same `PipelineWrapper` mechanism as pipelines. Imp
 
 ## Relevant examples
 
-- Agent with a simple tool and OpenWebUI status events:
+- Agent with a simple tool and Open WebUI status events:
   - Folder: `examples/pipeline_wrappers/open_webui_agent_events/`
   - Source: [open_webui_agent_events/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_events/pipeline_wrapper.py)
-- Agent with tool-call interception and OpenWebUI events:
+- Agent with tool-call interception and Open WebUI events:
   - Folder: `examples/pipeline_wrappers/open_webui_agent_on_tool_calls/`
   - Source: [open_webui_agent_on_tool_calls/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls/pipeline_wrapper.py)
 
@@ -24,11 +24,11 @@ These examples show:
 
 - Minimal `PipelineWrapper` structure for an agent
 - Where to implement `run_chat_completion`/`run_chat_completion_async`
-- How to wire tools and send OpenWebUI status events
+- How to wire tools and send Open WebUI status events
 
 ## Examples (code)
 
-### Agent with OpenWebUI status events
+### Agent with Open WebUI status events
 
 See the full file: [open_webui_agent_events/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_events/pipeline_wrapper.py)
 
@@ -81,7 +81,7 @@ class PipelineWrapper(BasePipelineWrapper):
         return main_async_generator()
 ```
 
-### Agent with a simple tool + OpenWebUI tool-call events
+### Agent with a simple tool + Open WebUI tool-call events
 
 See the full file: [open_webui_agent_on_tool_calls/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls/pipeline_wrapper.py)
 
@@ -183,6 +183,6 @@ class PipelineWrapper(BasePipelineWrapper):
 - [PipelineWrapper](pipeline-wrapper.md)
 - [Examples](../examples/overview.md)
 - [OpenAI Compatibility](../features/openai-compatibility.md)
-- [OpenWebUI Integration](../features/openwebui-integration.md)
-- [OpenWebUI Events example](../examples/openwebui-events.md)
+- [Open WebUI Integration](../features/openwebui-integration.md)
+- [Open WebUI Events example](../examples/openwebui-events.md)
 - [Hooks in README (intercept tool calls)](https://github.com/deepset-ai/hayhooks#hooks)

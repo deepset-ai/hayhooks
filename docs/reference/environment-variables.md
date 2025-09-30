@@ -102,7 +102,8 @@ These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.A
 - Default: `INFO`
 - Description: Global log level (consumed by Loguru). Example: `LOG=DEBUG hayhooks run`
 
-Note: Format/handlers are configured internally; Hayhooks does not expose `HAYHOOKS_LOG_FORMAT` or `HAYHOOKS_LOG_FILE` env vars at this time.
+!!! info "Logging Configuration"
+    Format/handlers are configured internally; Hayhooks does not expose `HAYHOOKS_LOG_FORMAT` or `HAYHOOKS_LOG_FILE` env vars at this time.
 
 ## Usage Examples
 
@@ -118,7 +119,8 @@ docker run -d \
   deepset/hayhooks:latest
 ```
 
-Note: Without mounting a pipelines directory (or baking pipelines into the image), the server will start but no pipelines will be deployed.
+!!! warning "Pipeline Directory Required"
+    Without mounting a pipelines directory (or baking pipelines into the image), the server will start but no pipelines will be deployed.
 
 ### Development
 
@@ -156,13 +158,11 @@ HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 LOG=INFO
 ```
 
-## Notes
-
-- Worker count, timeouts, and other server process settings are CLI flags (e.g., `hayhooks run --workers 4`).
-- YAML/file saving and MCP exposure are controlled per-deploy via API/CLI flags, not global env vars.
+!!! info "Configuration Note"
+    - Worker count, timeouts, and other server process settings are CLI flags (e.g., `hayhooks run --workers 4`).
+    - YAML/file saving and MCP exposure are controlled per-deploy via API/CLI flags, not global env vars.
 
 ## Next Steps
 
 - [Configuration](../getting-started/configuration.md)
 - [Logging](logging.md)
-- [Deployment Guidelines](../deployment/deployment-guidelines.md)

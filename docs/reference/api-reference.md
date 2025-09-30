@@ -232,21 +232,6 @@ Currently, Hayhooks does not include built-in rate limiting. Consider implementi
 - Custom middleware
 - Request throttling
 
-<!-- WebSocket section removed: not supported by Hayhooks server at this time -->
-
-## Webhook Support
-
-Configure webhooks for pipeline events:
-
-```json
-{
-  "webhooks": {
-    "on_deploy": "https://your-webhook.com/deploy",
-    "on_error": "https://your-webhook.com/error"
-  }
-}
-```
-
 ## Examples
 
 ### Deploy via cURL
@@ -290,4 +275,3 @@ curl -X POST http://localhost:1416/v1/chat/completions \
 
 - [Environment Variables](environment-variables.md) - Configuration options
 - [Logging](logging.md) - Logging configuration
-- [Deployment Guidelines](../deployment/deployment-guidelines.md) - Production deployment
