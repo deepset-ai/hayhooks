@@ -75,12 +75,11 @@ def setup(self) -> None:
     self.pipeline.connect("prompt.prompt", "llm.prompt")
 ```
 
-**Benefits:**
-
-- Full IDE support with autocomplete and type checking
-- Easier debugging and testing
-- Better refactoring capabilities
-- Dynamic component configuration based on runtime conditions
+!!! success "Benefits of Programmatic Initialization"
+    - :material-code-braces: Full IDE support with autocomplete and type checking
+    - :material-bug: Easier debugging and testing
+    - :material-pencil: Better refactoring capabilities
+    - :material-cog: Dynamic component configuration based on runtime conditions
 
 ### 2. Load from YAML
 

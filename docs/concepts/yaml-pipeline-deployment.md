@@ -249,10 +249,10 @@ with open("pipeline.yml", "w") as f:
 !!! warning "YAML Pipeline Limitations"
     YAML-deployed pipelines have the following limitations:
 
-    1. **No OpenAI Compatibility**: Don't support OpenAI-compatible chat endpoints
-    2. **No Streaming**: Streaming responses are not supported
-    3. **No File Uploads**: File upload handling is not available
-    4. **Async Only**: Pipelines are run as `AsyncPipeline` instances
+    - :octicons-x-circle-16: **No OpenAI Compatibility**: Don't support OpenAI-compatible chat endpoints
+    - :octicons-x-circle-16: **No Streaming**: Streaming responses are not supported
+    - :octicons-x-circle-16: **No File Uploads**: File upload handling is not available
+    - :material-lightning-bolt: **Async Only**: Pipelines are run as `AsyncPipeline` instances
 
 !!! tip "Using PipelineWrapper for Advanced Features"
     For advanced features, use `PipelineWrapper` instead:

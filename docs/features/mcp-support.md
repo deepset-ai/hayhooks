@@ -204,8 +204,33 @@ For more information about MCP in Cursor, see the [Cursor MCP Documentation](htt
 
 Configure Claude Desktop to connect to Hayhooks MCP Server:
 
-- **Free Tier**: Use [supergateway](https://github.com/supercorp-ai/supergateway) to bridge the connection
-- **Pro/Max/Teams/Enterprise**: Direct connection via Streamable HTTP or SSE
+!!! info "Claude Desktop Tiers"
+    === "Free Tier"
+        Use [supergateway](https://github.com/supercorp-ai/supergateway) to bridge the connection
+
+        ```json
+        {
+          "mcpServers": {
+            "hayhooks": {
+              "command": "npx",
+              "args": ["-y", "supergateway", "--streamableHttp", "http://localhost:1417/mcp"]
+            }
+          }
+        }
+        ```
+
+    === "Pro/Max/Teams/Enterprise"
+        Direct connection via Streamable HTTP or SSE
+
+        ```json
+        {
+          "mcpServers": {
+            "hayhooks": {
+              "url": "http://localhost:1417/mcp"
+            }
+          }
+        }
+        ```
 
 For complete configuration examples and step-by-step setup, see the [README MCP Section](https://github.com/deepset-ai/hayhooks#using-hayhooks-mcp-server-with-claude-desktop).
 

@@ -60,7 +60,7 @@ weather_tool = Tool(
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.agent = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-5-mini"),
+            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
             system_prompt="You're a helpful agent",
             tools=[weather_tool],
         )
