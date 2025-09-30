@@ -52,12 +52,37 @@ hayhooks status
 
 Run your pipeline via the API:
 
-```bash
-curl -X POST \
-  http://localhost:1416/chat_with_website/run \
-  -H 'Content-Type: application/json' \
-  -d '{"urls": ["https://haystack.deepset.ai"], "question": "What is Haystack?"}'
-```
+=== "cURL"
+
+    ```bash
+    curl -X POST \
+      http://localhost:1416/chat_with_website/run \
+      -H 'Content-Type: application/json' \
+      -d '{"urls": ["https://haystack.deepset.ai"], "question": "What is Haystack?"}'
+    ```
+
+=== "Python"
+
+    ```python
+    import requests
+
+    response = requests.post(
+        "http://localhost:1416/chat_with_website/run",
+        json={
+            "urls": ["https://haystack.deepset.ai"],
+            "question": "What is Haystack?"
+        }
+    )
+    print(response.json())
+    ```
+
+=== "Hayhooks CLI"
+
+    ```bash
+    hayhooks pipeline run chat_with_website \
+      --param 'urls=["https://haystack.deepset.ai"]' \
+      --param 'question="What is Haystack?"'
+    ```
 
 ## Quick Start with Docker Compose
 

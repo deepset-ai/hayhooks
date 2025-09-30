@@ -13,14 +13,12 @@ Agents are deployed using the same `PipelineWrapper` mechanism as pipelines. Imp
 
 ## Relevant examples
 
-- Agent with a simple tool and Open WebUI status events:
-  - Folder: `examples/pipeline_wrappers/open_webui_agent_events/`
-  - Source: [open_webui_agent_events/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_events/pipeline_wrapper.py)
-- Agent with tool-call interception and Open WebUI events:
-  - Folder: `examples/pipeline_wrappers/open_webui_agent_on_tool_calls/`
-  - Source: [open_webui_agent_on_tool_calls/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls/pipeline_wrapper.py)
+| Example | Code | Description |
+|---------|------|-------------|
+| Open WebUI Agent Events | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_events) | Agent with status events and UI feedback |
+| Open WebUI Agent on Tool Calls | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls) | Agent with tool call interception and real-time notifications |
 
-These examples show:
+These examples demonstrate:
 
 - Minimal `PipelineWrapper` structure for an agent
 - Where to implement `run_chat_completion`/`run_chat_completion_async`

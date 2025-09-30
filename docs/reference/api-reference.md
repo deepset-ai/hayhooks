@@ -234,42 +234,84 @@ Currently, Hayhooks does not include built-in rate limiting. Consider implementi
 
 ## Examples
 
-### Deploy via cURL
+### Running a Pipeline
 
-```bash
-curl -X POST http://localhost:1416/deploy_files \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "chat_pipeline",
-    "files": [
-      {
-        "name": "pipeline_wrapper.py",
-        "content": "'$(base64 -w 0 pipeline_wrapper.py)'"
-      }
-    ]
-  }'
-```
+=== "cURL"
 
-### Run Pipeline via cURL
+    ```bash
+    curl -X POST http://localhost:1416/chat_pipeline/run \
+      -H 'Content-Type: application/json' \
+      -d '{"query": "Hello!"}'
+    ```
 
-```bash
-curl -X POST http://localhost:1416/chat_pipeline/run \
-  -H 'Content-Type: application/json' \
-  -d '{"query": "Hello!"}'
-```
+=== "Python"
 
-### OpenAI-Compatible Request
+    ```python
+    import requests
 
-```bash
-curl -X POST http://localhost:1416/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "chat_pipeline",
-    "messages": [
-      {"role": "user", "content": "Hello!"}
-    ]
-  }'
-```
+    response = requests.post(
+        "http://localhost:1416/chat_pipeline/run",
+        json={"query": "Hello!"}
+    )
+    print(response.json())
+    ```
+
+=== "Hayhooks CLI"
+
+    ```bash
+    hayhooks pipeline run chat_pipeline --param 'query="Hello!"'
+    ```
+
+### OpenAI-Compatible Chat Completion
+
+=== "cURL"
+
+    ```bash
+    curl -X POST http://localhost:1416/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "model": "chat_pipeline",
+        "messages": [
+          {"role": "user", "content": "Hello!"}
+        ]
+      }'
+    ```
+
+=== "Python"
+
+    ```python
+    import requests
+
+    response = requests.post(
+        "http://localhost:1416/v1/chat/completions",
+        json={
+            "model": "chat_pipeline",
+            "messages": [
+                {"role": "user", "content": "Hello!"}
+            ]
+        }
+    )
+    print(response.json())
+    ```
+
+=== "OpenAI Python SDK"
+
+    ```python
+    from openai import OpenAI
+
+    client = OpenAI(
+        base_url="http://localhost:1416/v1",
+        api_key="not-needed"  # Hayhooks doesn't require auth by default
+    )
+
+    response = client.chat.completions.create(
+        model="chat_pipeline",
+        messages=[
+            {"role": "user", "content": "Hello!"}
+        ]
+    )
+    print(response.choices[0].message.content)
+    ```
 
 ## Next Steps
 

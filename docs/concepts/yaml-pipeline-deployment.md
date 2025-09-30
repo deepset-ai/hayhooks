@@ -54,35 +54,52 @@ outputs:
 
 ## Deployment Methods
 
-### CLI Deployment
+=== "CLI"
 
-```bash
-# Deploy with default settings
-hayhooks pipeline deploy-yaml pipelines/chat_pipeline.yml
+    ```bash
+    # Deploy with default settings
+    hayhooks pipeline deploy-yaml pipelines/chat_pipeline.yml
 
-# Deploy with custom name
-hayhooks pipeline deploy-yaml -n my_chat_pipeline pipelines/chat_pipeline.yml
+    # Deploy with custom name
+    hayhooks pipeline deploy-yaml -n my_chat_pipeline pipelines/chat_pipeline.yml
 
-# Deploy with description
-hayhooks pipeline deploy-yaml -n my_chat_pipeline --description "Chat pipeline for Q&A" pipelines/chat_pipeline.yml
+    # Deploy with description
+    hayhooks pipeline deploy-yaml -n my_chat_pipeline --description "Chat pipeline for Q&A" pipelines/chat_pipeline.yml
 
-# Overwrite existing pipeline
-hayhooks pipeline deploy-yaml -n my_chat_pipeline --overwrite pipelines/chat_pipeline.yml
-```
+    # Overwrite existing pipeline
+    hayhooks pipeline deploy-yaml -n my_chat_pipeline --overwrite pipelines/chat_pipeline.yml
+    ```
 
-### HTTP API Deployment
+=== "HTTP API"
 
-```bash
-curl -X POST \
-  http://localhost:1416/deploy-yaml \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "my_chat_pipeline",
-    "description": "Chat pipeline for Q&A",
-    "yaml_content": "...",
-    "overwrite": false
-  }'
-```
+    ```bash
+    curl -X POST \
+      http://localhost:1416/deploy-yaml \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "name": "my_chat_pipeline",
+        "description": "Chat pipeline for Q&A",
+        "yaml_content": "...",
+        "overwrite": false
+      }'
+    ```
+
+=== "Python"
+
+    ```python
+    import requests
+
+    response = requests.post(
+        "http://localhost:1416/deploy-yaml",
+        json={
+            "name": "my_chat_pipeline",
+            "description": "Chat pipeline for Q&A",
+            "yaml_content": "...",  # Your YAML content as string
+            "overwrite": False
+        }
+    )
+    print(response.json())
+    ```
 
 ## CLI Options
 

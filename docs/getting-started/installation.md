@@ -11,22 +11,34 @@ This guide covers how to install Hayhooks and its dependencies.
 
 ## Install from PyPI
 
-### Standard Installation
+=== "Standard Installation"
 
-```bash
-pip install hayhooks
-```
+    ```bash
+    pip install hayhooks
+    ```
 
-### Installation with MCP Support
+    This includes all core features for deploying and running pipelines.
 
-If you want to use the [MCP Server](../features/mcp-support.md), you need to install the `hayhooks[mcp]` package:
+=== "With MCP Support"
 
-```bash
-pip install hayhooks[mcp]
-```
+    ```bash
+    pip install hayhooks[mcp]
+    ```
 
-!!! warning "Python 3.10+ Required for MCP"
-    You'll need to run at least Python 3.10+ to use the MCP Server.
+    Includes all standard features plus [MCP Server](../features/mcp-support.md) support for integration with AI development tools like Cursor and Claude Desktop.
+
+    !!! warning "Python 3.10+ Required"
+        You'll need to run at least Python 3.10+ to use the MCP Server.
+
+=== "From Source"
+
+    ```bash
+    git clone https://github.com/deepset-ai/hayhooks.git
+    cd hayhooks
+    pip install -e .
+    ```
+
+    Useful for development or testing the latest unreleased features.
 
 ## Verify Installation
 
