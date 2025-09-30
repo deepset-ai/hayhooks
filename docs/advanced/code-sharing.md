@@ -1,37 +1,41 @@
-# Sharing code between pipeline wrappers
+# Code Sharing Between Wrappers
 
-Keep shared logic in a separate folder and add it to the Hayhooks Python Path so your wrappers can import it directly. This page mirrors the guidance in the README and the example in `examples/shared_code_between_wrappers`.
+Share common code between pipeline wrappers by adding a folder to the Hayhooks Python path.
 
-## Add a folder to Hayhooks Python Path
+## Configuration
 
-You can point Hayhooks to a folder containing shared code using any of the following. Both absolute and relative paths are supported (relative paths are resolved from the current working directory).
+Set `HAYHOOKS_ADDITIONAL_PYTHON_PATH` to point to your shared code directory:
 
-### Option 1: Environment variable
+=== "Environment Variable"
+    ```bash
+    export HAYHOOKS_ADDITIONAL_PYTHON_PATH='./common'
+    hayhooks run
+    ```
 
-```bash
-export HAYHOOKS_ADDITIONAL_PYTHON_PATH='./common'
-hayhooks run
-```
+=== ".env File"
+    ```bash
+    # .env
+    HAYHOOKS_ADDITIONAL_PYTHON_PATH=./common
+    ```
 
-### Option 2: .env file
+=== "CLI Flag"
+    ```bash
+    hayhooks run --additional-python-path ./common
+    ```
 
-```bash
-echo "HAYHOOKS_ADDITIONAL_PYTHON_PATH='./common'" >> .env
-hayhooks run
-```
+## Usage
 
-### Option 3: CLI flag
-
-```bash
-hayhooks run --additional-python-path ./common
-```
-
-Once set, code inside that folder can be imported in your wrappers. For example, assuming you have a `my_custom_lib.py` module in the `common` folder which contains the `sum_two_numbers` function, you can import it in your wrappers like this:
+Once configured, import shared code in your wrappers:
 
 ```python
+# In your pipeline_wrapper.py
 from my_custom_lib import sum_two_numbers
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_api(self, a: int, b: int) -> int:
+        return sum_two_numbers(a, b)
 ```
 
-## Quick start with the included example
+## Example
 
-The repository includes a minimal, working example: [examples/shared_code_between_wrappers/README.md](https://github.com/deepset-ai/hayhooks/blob/main/examples/shared_code_between_wrappers/README.md).
+See [examples/shared_code_between_wrappers](https://github.com/deepset-ai/hayhooks/tree/main/examples/shared_code_between_wrappers) for a complete working example.

@@ -40,41 +40,69 @@ def setup(self) -> None:
     pass
 ```
 
-**Common initialization patterns:**
+**Initialization patterns:**
 
-1. **From YAML file:**
+### 1. Programmatic Initialization (Recommended)
+
+Define your pipeline directly in code for maximum flexibility and control:
 
 ```python
 def setup(self) -> None:
+    from haystack import Pipeline
+    from haystack.components.fetchers import LinkContentFetcher
+    from haystack.components.converters import HTMLToDocument
+    from haystack.components.builders import PromptBuilder
+    from haystack.components.generators import OpenAIGenerator
+
+    # Create components
+    fetcher = LinkContentFetcher()
+    converter = HTMLToDocument()
+    prompt_builder = PromptBuilder(
+        template="Based on: {{documents}}\nAnswer: {{query}}"
+    )
+    llm = OpenAIGenerator(model="gpt-4o-mini")
+
+    # Build pipeline
+    self.pipeline = Pipeline()
+    self.pipeline.add_component("fetcher", fetcher)
+    self.pipeline.add_component("converter", converter)
+    self.pipeline.add_component("prompt", prompt_builder)
+    self.pipeline.add_component("llm", llm)
+
+    # Connect components
+    self.pipeline.connect("fetcher.streams", "converter.sources")
+    self.pipeline.connect("converter.documents", "prompt.documents")
+    self.pipeline.connect("prompt.prompt", "llm.prompt")
+```
+
+**Benefits:**
+
+- Full IDE support with autocomplete and type checking
+- Easier debugging and testing
+- Better refactoring capabilities
+- Dynamic component configuration based on runtime conditions
+
+### 2. Load from YAML
+
+Load an existing YAML pipeline file:
+
+```python
+def setup(self) -> None:
+    from pathlib import Path
+    from haystack import Pipeline
+
     pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
     self.pipeline = Pipeline.loads(pipeline_yaml)
 ```
 
-2. **From Haystack template:**
+**When to use:**
 
-```python
-def setup(self) -> None:
-    from haystack.pipelines import TemplatePipeline
-    self.pipeline = TemplatePipeline.from_template("rag")
-```
+- You already have a YAML pipeline definition
+- You want to version control pipeline structure separately
+- You need to share pipeline definitions across different deployments
 
-3. **Inline code:**
-
-```python
-def setup(self) -> None:
-    from haystack.components import Fetcher, PromptBuilder, OpenAIGenerator
-
-    fetcher = Fetcher()
-    prompt_builder = PromptBuilder(template="Answer: {{query}}")
-    llm = OpenAIGenerator()
-
-    self.pipeline = Pipeline()
-    self.pipeline.add_component("fetcher", fetcher)
-    self.pipeline.add_component("prompt_builder", prompt_builder)
-    self.pipeline.add_component("llm", llm)
-    self.pipeline.connect("fetcher.content", "prompt_builder.documents")
-    self.pipeline.connect("prompt_builder", "llm")
-```
+!!! tip "Consider YAML-only deployment"
+    If your pipeline is simple and doesn't need custom logic, consider using [YAML Pipeline Deployment](yaml-pipeline-deployment.md) instead, which doesn't require a wrapper at all.
 
 ### run_api()
 
@@ -332,54 +360,13 @@ def run_api(self, urls: List[str], question: str) -> str:
 
 ## Examples
 
-### Simple Q&A Pipeline
+For complete, working examples see:
 
-```python
-class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        from haystack.components import PromptBuilder, OpenAIGenerator
-
-        prompt_builder = PromptBuilder(template="Answer: {{query}}")
-        llm = OpenAIGenerator()
-
-        self.pipeline = Pipeline()
-        self.pipeline.add_component("prompt_builder", prompt_builder)
-        self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("prompt_builder", "llm")
-
-    def run_api(self, query: str) -> str:
-        result = self.pipeline.run({"prompt_builder": {"query": query}})
-        return result["llm"]["replies"][0]
-```
-
-### Streaming Chat Pipeline
-
-```python
-from typing import AsyncGenerator
-from hayhooks import async_streaming_generator, get_last_user_message
-
-class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        from haystack.components import PromptBuilder, OpenAIChatGenerator
-
-        prompt_builder = PromptBuilder(template="Answer: {{query}}")
-        llm = OpenAIChatGenerator(model="gpt-4", streaming_callback=lambda x: None)
-
-        self.pipeline = Pipeline()
-        self.pipeline.add_component("prompt_builder", prompt_builder)
-        self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("prompt_builder", "llm")
-
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
-        question = get_last_user_message(messages)
-        return async_streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={"prompt_builder": {"query": question}},
-        )
-```
+- **[Chat with Website (Streaming)](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_streaming)** - Pipeline with streaming chat completion support
+- **[Async Question Answer](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer)** - Async pipeline patterns with streaming
+- **[RAG Indexing & Query](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query)** - Complete RAG system with file uploads and Elasticsearch
 
 ## Next Steps
 
 - [YAML Pipeline Deployment](yaml-pipeline-deployment.md) - Alternative deployment method
 - [Agent Deployment](agent-deployment.md) - Deploy Haystack agents
-- [Examples](../examples/overview.md) - See working examples

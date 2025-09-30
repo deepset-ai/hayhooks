@@ -11,75 +11,18 @@ Agents are deployed using the same `PipelineWrapper` mechanism as pipelines. Imp
 - See the README section “Deploy an Agent” for the up-to-date, minimal implementation and streaming guidance.
 - Review the examples below for working agent setups.
 
-## Relevant examples
+## Example
 
-| Example | Code | Description |
-|---------|------|-------------|
-| Open WebUI Agent Events | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_events) | Agent with status events and UI feedback |
-| Open WebUI Agent on Tool Calls | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls) | Agent with tool call interception and real-time notifications |
+An agent deployment with tools, streaming, and Open WebUI events:
 
-These examples demonstrate:
+### Agent with tool call interception and Open WebUI events
 
-- Minimal `PipelineWrapper` structure for an agent
-- Where to implement `run_chat_completion`/`run_chat_completion_async`
-- How to wire tools and send Open WebUI status events
+This example demonstrates:
 
-## Examples (code)
-
-### Agent with Open WebUI status events
-
-See the full file: [open_webui_agent_events/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_events/pipeline_wrapper.py)
-
-```python
-from collections.abc import AsyncGenerator
-from typing import Union
-
-from haystack.components.agents import Agent
-from haystack.components.generators.chat import OpenAIChatGenerator
-from haystack.dataclasses import ChatMessage, StreamingChunk
-
-from hayhooks import BasePipelineWrapper, async_streaming_generator
-from hayhooks.open_webui import OpenWebUIEvent, create_details_tag, create_status_event
-
-
-class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        self.agent = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
-            system_prompt="You're a helpful agent",
-        )
-
-    async def run_chat_completion_async(
-        self,
-        model: str,  # noqa: ARG002
-        messages: list[dict],
-        body: dict,  # noqa: ARG002
-    ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
-        chat_messages = [ChatMessage.from_openai_dict_format(message) for message in messages]
-
-        async def main_async_generator():
-            # Start status
-            yield create_status_event(description="Running the pipeline!", done=False)
-
-            # Stream agent output
-            async for chunk in async_streaming_generator(
-                pipeline=self.agent,
-                pipeline_run_args={"messages": chat_messages},
-            ):
-                yield chunk
-
-            # End status + details
-            yield create_status_event(description="Pipeline completed!", done=True)
-            yield "\n" + create_details_tag(
-                tool_name="Pipeline",
-                summary="Pipeline completed!",
-                content="Pipeline successfully completed!",
-            )
-
-        return main_async_generator()
-```
-
-### Agent with a simple tool + Open WebUI tool-call events
+- Agent setup with tools
+- Async streaming chat completion
+- Tool call lifecycle hooks (`on_tool_call_start`, `on_tool_call_end`)
+- Open WebUI status events and notifications
 
 See the full file: [open_webui_agent_on_tool_calls/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls/pipeline_wrapper.py)
 
@@ -178,9 +121,5 @@ class PipelineWrapper(BasePipelineWrapper):
 
 ## Next Steps
 
-- [PipelineWrapper](pipeline-wrapper.md)
-- [Examples](../examples/overview.md)
-- [OpenAI Compatibility](../features/openai-compatibility.md)
-- [Open WebUI Integration](../features/openwebui-integration.md)
-- [Open WebUI Events example](../examples/openwebui-events.md)
-- [Hooks in README (intercept tool calls)](https://github.com/deepset-ai/hayhooks#hooks)
+- [PipelineWrapper Guide](pipeline-wrapper.md) - Detailed implementation patterns
+- [Open WebUI Events Example](../examples/openwebui-events.md) - Interactive agent features

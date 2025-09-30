@@ -142,34 +142,7 @@ The endpoints are automatically documented in the OpenAPI schema:
 
 ## Open WebUI Integration
 
-### Configuration
-
-1. **Install Open WebUI**
-
-2. **Configure Connection**
-   - Go to Settings → Connections
-   - Add new connection:
-     - API Base URL: `http://localhost:1416/v1`
-     - API Key: `any-value` (not used by Hayhooks)
-
-3. **Deploy Chat Pipeline**
-
-```bash
-hayhooks pipeline deploy-files -n chat_agent ./path/to/pipeline
-```
-
-1. **Test Integration**
-   - Start a conversation in Open WebUI
-   - Select your Hayhooks backend
-   - The pipeline will respond through Open WebUI
-
-![chat-completion-example](../assets/chat-completion.gif)
-
-### Open WebUI Events
-
-Hayhooks supports sending event objects that Open WebUI can render alongside streaming chunks. Use the helpers in `hayhooks.open_webui` and yield them from your generator (see the Open WebUI integration page for a complete example):
-
-![open-webui-hayhooks-events](../assets/open-webui-hayhooks-events.gif)
+For detailed Open WebUI setup and integration, see the [Open WebUI Integration](openwebui-integration.md) guide.
 
 ## Streaming Responses
 
@@ -203,31 +176,6 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
 
 ![chat-completion-streaming-example](../assets/chat-completion-streaming.gif)
 
-## Tool Call Interception
-
-Hayhooks supports intercepting tool calls when using streaming responses:
-
-![open-webui-hayhooks-agent-on-tool-calls](../assets/open-webui-hayhooks-agent-on-tool-calls.gif)
-
-```python
-def on_tool_call_start(tool_name: str, arguments: dict, tool_id: str):
-    """Called when a tool call starts"""
-    print(f"Tool call started: {tool_name}")
-
-def on_tool_call_end(tool_name: str, arguments: dict, result: dict, error: bool):
-    """Called when a tool call ends"""
-    print(f"Tool call ended: {tool_name}, Error: {error}")
-
-class PipelineWrapper(BasePipelineWrapper):
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
-        return streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={"messages": messages},
-            on_tool_call_start=on_tool_call_start,
-            on_tool_call_end=on_tool_call_end,
-        )
-```
-
 ## OpenAIChatGenerator Integration
 
 Hayhooks works seamlessly with Haystack's OpenAIChatGenerator:
@@ -257,7 +205,8 @@ class PipelineWrapper(BasePipelineWrapper):
 ```python
 class SimpleChatWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        from haystack.components import PromptBuilder, OpenAIChatGenerator
+        from haystack.components.builders import PromptBuilder
+        from haystack.components.generators.chat import OpenAIChatGenerator
 
         prompt_builder = PromptBuilder(template="Answer: {{query}}")
         llm = OpenAIChatGenerator(model="gpt-4o-mini")
@@ -278,7 +227,8 @@ class SimpleChatWrapper(BasePipelineWrapper):
 ```python
 class AdvancedStreamingWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        from haystack.components import PromptBuilder, OpenAIChatGenerator
+        from haystack.components.builders import PromptBuilder
+        from haystack.components.generators.chat import OpenAIChatGenerator
 
         prompt_builder = PromptBuilder(template="Answer: {{query}}")
         llm = OpenAIChatGenerator(
@@ -301,6 +251,5 @@ class AdvancedStreamingWrapper(BasePipelineWrapper):
 
 ## Next Steps
 
-- [MCP Support](mcp-support.md) - Learn about MCP integration
-- [Open WebUI Integration](openwebui-integration.md) - Deep dive into Open WebUI
+- [Open WebUI Integration](openwebui-integration.md) - Complete Open WebUI setup and advanced features
 - [Examples](../examples/overview.md) - See working examples

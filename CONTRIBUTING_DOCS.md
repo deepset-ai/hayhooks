@@ -64,7 +64,7 @@ mkdocs build
 
 ## Documentation Structure
 
-```
+```text
 docs/
 ├── mkdocs.yml                 # Main configuration
 ├── index.md                   # Homepage
@@ -128,6 +128,23 @@ mv screenshot.png docs/assets/
 - Provide step-by-step instructions
 - Use proper Markdown formatting
 
+### Avoiding Redundancy
+
+To maintain consistency and reduce maintenance burden:
+
+- **Single Source of Truth**: Each topic should have one canonical location
+  - README.md: Quick overview and getting started examples
+  - docs/concepts/: Detailed conceptual explanations
+  - docs/reference/: Complete API and configuration references
+
+- **Cross-Referencing**: Link to the canonical source instead of duplicating content
+  - Good: "For complete configuration options, see [Environment Variables Reference](../reference/environment-variables.md)"
+  - Bad: Copying all environment variables into multiple pages
+
+- **Next Steps**: Keep to 2-3 most relevant links per page
+  - Focus on logical next actions for the reader
+  - Avoid circular references (page A → page B → page A)
+
 ### Code Examples
 
 Use proper code block formatting:
@@ -145,9 +162,10 @@ hatch run docs-serve
 
 ### Links
 
-- Use relative links for internal documentation
-- Use absolute links for external resources
-- Test all links before committing
+- **Internal Documentation**: Use relative links (e.g., `../concepts/pipeline-wrapper.md`)
+- **External Resources**: Use absolute links (e.g., `https://haystack.deepset.ai/`)
+- **README Links**: When linking from docs to README, use absolute GitHub URLs
+- **Test Links**: Always verify links work before committing
 
 ## Testing Documentation
 

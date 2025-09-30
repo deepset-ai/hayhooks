@@ -9,18 +9,13 @@ This guide will help you get started with Hayhooks quickly.
 
 ## Installation
 
+See [Installation](installation.md) for detailed setup instructions.
+
+Quick install:
+
 ```bash
 pip install hayhooks
 ```
-
-If you want to use the [MCP Server](../features/mcp-support.md), you need to install the `hayhooks[mcp]` package:
-
-```bash
-pip install hayhooks[mcp]
-```
-
-!!! warning "Python 3.10+ Required for MCP"
-    You'll need to run at least Python 3.10+ to use the MCP Server.
 
 ## Basic Usage
 
@@ -86,12 +81,9 @@ Run your pipeline via the API:
 
 ## Quick Start with Docker Compose
 
-For the fastest setup, see [Quick Start with Docker Compose](../getting-started/quick-start-docker.md) for full instructions.
-
-This provides a ready-to-use setup with Open WebUI integration.
+For the fastest setup with Open WebUI integration, see [Quick Start with Docker Compose](quick-start-docker.md).
 
 ## Next Steps
 
-- [Configuration](../getting-started/configuration.md) - Learn about configuration options
+- [Pipeline Deployment](../concepts/pipeline-deployment.md) - Learn deployment methods
 - [Examples](../examples/overview.md) - Explore example implementations
-- [Features](../features/openai-compatibility.md) - Discover advanced features

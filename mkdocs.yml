@@ -21,7 +21,7 @@ nav:
   - Features:
     - OpenAI Compatibility: features/openai-compatibility.md
     - MCP Support: features/mcp-support.md
-    - OpenWebUI Integration: features/openwebui-integration.md
+    - Open WebUI Integration: features/openwebui-integration.md
     - File Upload Support: features/file-upload-support.md
     - CLI Commands: features/cli-commands.md
   - Advanced Usage:
@@ -33,7 +33,7 @@ nav:
     - Chat with Website: examples/chat-with-website.md
     - RAG System: examples/rag-system.md
     - Async Operations: examples/async-operations.md
-    - OpenWebUI Events: examples/openwebui-events.md
+    - Open WebUI Events: examples/openwebui-events.md
   - Reference:
     - API Reference: reference/api-reference.md
     - Environment Variables: reference/environment-variables.md

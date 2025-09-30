@@ -105,14 +105,6 @@ cd docker
 IMAGE_NAME=<your-user>/hayhooks IMAGE_TAG_SUFFIX=<tag> HAYHOOKS_VERSION=<tag> docker buildx bake --push
 ```
 
-### Getting Help
-
-If you encounter issues during installation:
-
-1. Check the [GitHub Issues](https://github.com/deepset-ai/hayhooks/issues)
-2. Search existing issues for similar problems
-3. Create a new issue with detailed information about your environment
-
 ## Next Steps
 
 After successful installation:

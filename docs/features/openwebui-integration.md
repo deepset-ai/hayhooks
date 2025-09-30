@@ -56,62 +56,9 @@ Go to **Settings → Connections** (or **Admin Settings → Connections** for ad
 
 ![open-webui-settings-connections](../assets/open-webui-settings-connections.png)
 
-
 ## Pipeline Implementation
 
-### Basic Chat Pipeline
-
-```python
-from typing import List, Union, Generator
-from haystack import Pipeline
-from hayhooks import get_last_user_message, BasePipelineWrapper, streaming_generator
-
-class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        from haystack.components import PromptBuilder, OpenAIChatGenerator
-
-        prompt_builder = PromptBuilder(template="Answer: {{query}}")
-        llm = OpenAIChatGenerator(model="gpt-4o-mini")
-
-        self.pipeline = Pipeline()
-        self.pipeline.add_component("prompt_builder", prompt_builder)
-        self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("prompt_builder", "llm")
-
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
-        question = get_last_user_message(messages)
-        result = self.pipeline.run({"prompt_builder": {"query": question}})
-        return result["llm"]["replies"][0].content
-```
-
-### Streaming Chat Pipeline
-
-```python
-from typing import AsyncGenerator
-from hayhooks import async_streaming_generator, get_last_user_message
-
-class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        from haystack.components import PromptBuilder, OpenAIChatGenerator
-
-        prompt_builder = PromptBuilder(template="Answer: {{query}}")
-        llm = OpenAIChatGenerator(
-            model="gpt-4o",
-            streaming_callback=lambda x: None
-        )
-
-        self.pipeline = Pipeline()
-        self.pipeline.add_component("prompt_builder", prompt_builder)
-        self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("prompt_builder", "llm")
-
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
-        question = get_last_user_message(messages)
-        return async_streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={"prompt_builder": {"query": question}},
-        )
-```
+To make your pipeline work with Open WebUI, implement the `run_chat_completion` or `run_chat_completion_async` method in your `PipelineWrapper`. See the [OpenAI Compatibility](openai-compatibility.md) guide for detailed implementation examples.
 
 ## Open WebUI Events
 
@@ -317,27 +264,12 @@ curl -X POST http://localhost:1416/my_pipeline/run \
 
 ## Best Practices
 
-### 1. Pipeline Design
-
-- Implement both sync and async methods for compatibility
-- Use proper error handling
-- Add logging for debugging
-- Consider streaming for better UX
-
-### 2. Open WebUI Configuration
-
-- Disable auto-generated content for simple pipelines
-- Use appropriate models for your use case
-- Configure timeouts appropriately
-
-### 3. Performance
-
-- Use async pipelines for better performance
-- Implement proper error handling
-- Monitor resource usage
+- **Pipeline Design**: Implement async methods for better streaming performance
+- **Error Handling**: Add proper error handling and logging for debugging
+- **Configuration**: Disable auto-generated content in Open WebUI for simple pipelines
+- **Performance**: Use async pipelines and monitor resource usage
 
 ## Next Steps
 
-- [OpenAI Compatibility](openai-compatibility.md) - OpenAI integration
-- [MCP Support](mcp-support.md) - MCP server integration
-- [Examples](../examples/overview.md) - See working examples
+- [OpenAI Compatibility](openai-compatibility.md) - Implementation details for chat completion methods
+- [Open WebUI Events Example](../examples/openwebui-events.md) - Advanced UI integration patterns

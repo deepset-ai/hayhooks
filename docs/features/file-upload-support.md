@@ -33,7 +33,7 @@ class PipelineWrapper(BasePipelineWrapper):
         return "No files received"
 ```
 
-### Complete File Processing Example
+### Processing Pattern
 
 ```python
 from fastapi import UploadFile
@@ -43,113 +43,37 @@ import tempfile
 import os
 
 class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        # Initialize your pipeline
-        from haystack.components import PromptBuilder, OpenAIGenerator
-
-        self.prompt_builder = PromptBuilder(
-            template="Analyze this content: {{documents}}\n\nQuestion: {{query}}"
-        )
-        self.llm = OpenAIGenerator()
-
-        # Build pipeline
-        self.pipeline = Pipeline()
-        self.pipeline.add_component("prompt_builder", self.prompt_builder)
-        self.pipeline.add_component("llm", self.llm)
-        self.pipeline.connect("prompt_builder", "llm")
-
     def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
         if not files:
-            return "No files provided. Please upload files to analyze."
+            return "No files provided"
 
-        documents = []
-
-        # Process each uploaded file
+        file_info = []
         for file in files:
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp.write(file.file.read())
+                tmp_path = tmp.name
+
             try:
-                # Save file temporarily
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as tmp_file:
-                    content = file.file.read()
-                    tmp_file.write(content)
-                    tmp_file_path = tmp_file.name
+                # Here you can process the file based on your needs
+                # Use Haystack converters, custom logic, etc.
 
-                # Process file based on type
-                file_ext = Path(file.filename).suffix.lower()
+                # ...
 
-                if file_ext == '.pdf':
-                    doc_text = self._process_pdf(tmp_file_path)
-                elif file_ext == '.txt':
-                    doc_text = self._process_text(tmp_file_path)
-                elif file_ext in ['.docx', '.doc']:
-                    doc_text = self._process_docx(tmp_file_path)
-                else:
-                    doc_text = f"Unsupported file type: {file_ext}"
-
-                documents.append({
-                    "filename": file.filename,
-                    "content": doc_text
+                # Add file info to the list to return it to the user
+                file_info.append({
+                    "name": file.filename,
+                    "size": file.size,
+                    "type": Path(file.filename).suffix
                 })
+            finally:
+                # Always clean up temporary file to avoid memory leaks
+                os.unlink(tmp_path)
 
-                # Clean up temporary file
-                os.unlink(tmp_file_path)
-
-            except Exception as e:
-                documents.append({
-                    "filename": file.filename,
-                    "content": f"Error processing file: {str(e)}"
-                })
-
-        # Run analysis pipeline
-        result = self.pipeline.run({
-            "prompt_builder": {
-                "documents": "\n\n".join([f"{doc['filename']}: {doc['content']}" for doc in documents]),
-                "query": query
-            }
-        })
-
-        return result["llm"]["replies"][0]
-
-    def _process_pdf(self, file_path: str) -> str:
-        """Process PDF file"""
-        try:
-            import PyPDF2
-
-            with open(file_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                text = ""
-                for page in reader.pages:
-                    text += page.extract_text() + "\n"
-                return text[:5000]  # Limit text length
-
-        except ImportError:
-            return "PDF processing requires PyPDF2: pip install PyPDF2"
-        except Exception as e:
-            return f"Error processing PDF: {str(e)}"
-
-    def _process_text(self, file_path: str) -> str:
-        """Process text file"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return file.read()[:5000]  # Limit text length
-        except Exception as e:
-            return f"Error processing text file: {str(e)}"
-
-    def _process_docx(self, file_path: str) -> str:
-        """Process DOCX file"""
-        try:
-            import docx
-
-            doc = docx.Document(file_path)
-            text = ""
-            for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
-            return text[:5000]  # Limit text length
-
-        except ImportError:
-            return "DOCX processing requires python-docx: pip install python-docx"
-        except Exception as e:
-            return f"Error processing DOCX: {str(e)}"
+        return f"Received {len(files)} files: {file_info}"
 ```
+
+For a complete RAG example with file uploads and Haystack converters, see [RAG System Example](../examples/rag-system.md).
 
 ## API Usage
 
@@ -228,7 +152,7 @@ hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Analyze"' 
 
 | File Type | Extension | Processing Library | Dependencies |
 |-----------|-----------|-------------------|--------------|
-| PDF | .pdf | PyPDF2 | `pip install PyPDF2` |
+| PDF | .pdf | PyPDFToDocument (Haystack) | `pip install pypdf` |
 | Text | .txt | Built-in | None |
 | Word | .docx, .doc | python-docx | `pip install python-docx` |
 | Markdown | .md | Built-in | None |
@@ -293,25 +217,9 @@ class PipelineWrapper(BasePipelineWrapper):
         # Continue with processing...
 ```
 
-### Virus Scanning
-
-```python
-import clamd
-
-def _scan_file(self, file_path: str) -> bool:
-    """Scan file for viruses"""
-    try:
-        cd = clamd.ClamdUnixSocket()
-        scan_result = cd.scan_file(file_path)
-        return scan_result is None  # None means no virus found
-    except Exception:
-        # If scanning fails, you might want to block the file or log it
-        return False
-```
-
 ## Error Handling
 
-### Comprehensive Error Handling
+Handle errors gracefully when processing uploaded files:
 
 ```python
 from fastapi import HTTPException
@@ -319,83 +227,24 @@ from hayhooks import log
 
 class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
+        if not files:
+            raise HTTPException(status_code=400, detail="No files provided")
+
         try:
-            if not files:
-                return "No files provided"
-
-            processed_files = []
+            # Validate files
             for file in files:
-                try:
-                    # Validate file
-                    self._validate_file(file)
+                self._validate_file(file)
 
-                    # Process file
-                    content = self._process_file(file)
-                    processed_files.append({
-                        "filename": file.filename,
-                        "status": "success",
-                        "content": content[:1000]  # Preview
-                    })
-
-                except Exception as e:
-                    log.error(f"Error processing file {file.filename}: {e}")
-                    processed_files.append({
-                        "filename": file.filename,
-                        "status": "error",
-                        "error": str(e)
-                    })
-
-            # Generate summary
-            successful_files = [f for f in processed_files if f["status"] == "success"]
-            if not successful_files:
-                raise HTTPException(status_code=400, detail="No files could be processed")
-
-            return f"Processed {len(successful_files)} files successfully"
+            # Process files (your custom logic here)
+            filenames = [f.filename for f in files]
+            return f"Successfully received {len(files)} files: {', '.join(filenames)}"
 
         except Exception as e:
-            log.error(f"Pipeline execution failed: {e}")
+            log.error(f"Error processing files: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 ```
 
-## Performance Optimization
-
-### File Processing Optimization
-
-```python
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-class PipelineWrapper(BasePipelineWrapper):
-    def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=4)
-
-    def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
-        if not files:
-            return "No files provided"
-
-        # Process files in parallel
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            tasks = [loop.run_in_executor(self.executor, self._process_file_async, file) for file in files]
-            results = loop.run_until_complete(asyncio.gather(*tasks))
-
-            return f"Processed {len(files)} files: {results}"
-        finally:
-            loop.close()
-
-    async def _process_file_async(self, file: UploadFile) -> dict:
-        """Process file asynchronously"""
-        try:
-            content = await asyncio.to_thread(file.file.read)
-            # Process content...
-            return {"filename": file.filename, "status": "success"}
-        except Exception as e:
-            return {"filename": file.filename, "status": "error", "error": str(e)}
-```
-
-## Examples
+## Complete Example
 
 ### RAG System with File Upload
 
@@ -403,14 +252,12 @@ class PipelineWrapper(BasePipelineWrapper):
 class RAGPipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         # Initialize RAG pipeline components
-        from haystack.components import (
-            DocumentSplitter,
-            SentenceTransformersDocumentEmbedder,
-            InMemoryDocumentStore,
-            InMemoryEmbeddingRetriever,
-            PromptBuilder,
-            OpenAIGenerator
-        )
+        from haystack.components.preprocessors import DocumentSplitter
+        from haystack.components.embedders import SentenceTransformersDocumentEmbedder
+        from haystack.document_stores.in_memory import InMemoryDocumentStore
+        from haystack.components.retrievers.in_memory import InMemoryEmbeddingRetriever
+        from haystack.components.builders import PromptBuilder
+        from haystack.components.generators import OpenAIGenerator
 
         self.document_store = InMemoryDocumentStore()
         self.splitter = DocumentSplitter()
@@ -455,33 +302,26 @@ class RAGPipelineWrapper(BasePipelineWrapper):
 
 ## Best Practices
 
-### 1. File Management
+### 1. File Validation
+
+- Validate file types (extensions)
+- Enforce file size limits
+- Sanitize file names
+- Check for required file formats
+
+### 2. File Management
 
 - Use temporary files for processing
 - Clean up files after processing
-- Implement file size limits
-- Validate file types and names
+- Handle multiple files efficiently
+- Store files securely if needed
 
-### 2. Security
+### 3. Error Handling
 
-- Scan uploaded files for malware
-- Validate file contents
-- Implement rate limiting
-- Use secure file storage
-
-### 3. Performance
-
-- Process files in parallel when possible
-- Use streaming for large files
-- Implement caching where appropriate
-- Monitor resource usage
-
-### 4. Error Handling
-
+- Validate files before processing
 - Provide clear error messages
 - Log errors for debugging
-- Implement graceful degradation
-- Validate inputs before processing
+- Handle partial failures gracefully
 
 ## Next Steps
 

@@ -278,119 +278,45 @@ class PipelineWrapper(BasePipelineWrapper):
 
 ### 1. YAML Structure
 
-```yaml
-# Good structure
-components:
-  fetcher:
-    type: haystack.components.fetchers.LinkContentFetcher
-    init_parameters:
-      timeout: 30
-
-connections:
-  - sender: fetcher.content
-    receiver: prompt_builder.documents
-
-inputs:
-  urls: fetcher.urls
-  query: prompt_builder.query
-
-outputs:
-  replies: llm.replies
-```
+- Organize components logically
+- Include `init_parameters` for component configuration
+- Define clear `inputs` and `outputs` mappings
+- Use proper component type paths (e.g., `haystack.components.generators.OpenAIGenerator`)
 
 ### 2. Naming Conventions
 
-```yaml
-# Use descriptive names
-inputs:
-  website_urls: fetcher.urls      # Clear purpose
-  user_question: prompt_builder.query  # Clear intent
-
-outputs:
-  ai_response: llm.replies        # Clear meaning
-  source_documents: fetcher.content  # Clear source
-```
+- Use descriptive input/output names that clearly indicate purpose
+- Map inputs to intuitive parameter names (e.g., `website_urls` instead of just `urls`)
+- Name outputs to reflect their content (e.g., `ai_response`, `source_documents`)
 
 ### 3. Error Handling
 
-While YAML pipelines don't allow custom error handling, you can:
+YAML pipelines use component-level error handling:
 
-- Use component-level error handling
-- Set proper default values
-- Validate inputs in the pipeline
+- Configure component timeouts and retries in `init_parameters`
+- Set sensible default values where possible
+- Rely on Haystack component validation
 
-### 4. Performance Considerations
+### 4. Performance
 
-```yaml
-# Use efficient components
-components:
-  llm:
-    type: haystack.components.generators.OpenAIChatGenerator
-    init_parameters:
-      model: gpt-3.5-turbo  # Faster and cheaper
-      max_tokens: 1000     # Reasonable limit
-```
+- Choose efficient component models (e.g., `gpt-4o-mini` vs `gpt-4`)
+- Set reasonable limits (`max_tokens`, `timeout`)
+- Use async-compatible components when available
 
-## Examples
+## Example
 
-### Simple Q&A Pipeline
+For a complete working example of a YAML pipeline with proper `inputs` and `outputs`, see:
 
-```yaml
-components:
-  prompt_builder:
-    type: haystack.components.builders.PromptBuilder
-    init_parameters:
-      template: "Answer: {{query}}"
-  llm:
-    type: haystack.components.generators.OpenAIGenerator
+- [tests/test_files/yaml/inputs_outputs_pipeline.yml](https://github.com/deepset-ai/hayhooks/blob/main/tests/test_files/yaml/inputs_outputs_pipeline.yml)
 
-connections:
-  - sender: prompt_builder
-    receiver: llm
+This example demonstrates:
 
-inputs:
-  query: prompt_builder.query
-
-outputs:
-  replies: llm.replies
-```
-
-### Web Content Analysis
-
-```yaml
-components:
-  fetcher:
-    type: haystack.components.fetchers.LinkContentFetcher
-    init_parameters:
-      timeout: 30
-  converter:
-    type: haystack.components.converters.HTMLToDocument
-  prompt_builder:
-    type: haystack.components.builders.PromptBuilder
-    init_parameters:
-      template: "Based on this content: {{documents}}\nAnswer: {{query}}"
-  llm:
-    type: haystack.components.generators.OpenAIGenerator
-
-connections:
-  - sender: fetcher.content
-    receiver: converter
-  - sender: converter.documents
-    receiver: prompt_builder.documents
-  - sender: prompt_builder
-    receiver: llm
-
-inputs:
-  urls: fetcher.urls
-  query: prompt_builder.query
-
-outputs:
-  replies: llm.replies
-  documents: converter.documents
-```
+- Complete pipeline structure with components and connections
+- Proper `inputs` mapping to component fields
+- Proper `outputs` mapping from component results
+- Real-world usage with `LinkContentFetcher`, `HTMLToDocument`, `PromptBuilder`, and `OpenAIGenerator`
 
 ## Next Steps
 
-- [PipelineWrapper](pipeline-wrapper.md) - For advanced features
-- [Agent Deployment](agent-deployment.md) - Deploy Haystack agents
+- [PipelineWrapper](pipeline-wrapper.md) - For advanced features like streaming and chat completion
 - [Examples](../examples/overview.md) - See working examples

@@ -6,14 +6,7 @@ Hayhooks provides flexible options for deploying Haystack pipelines and agents. 
 
 ### 1. PipelineWrapper Deployment (Recommended)
 
-The most flexible approach is to create a `PipelineWrapper` class that encapsulates your pipeline logic.
-
-See also:
-
-- [PipelineWrapper Details](pipeline-wrapper.md)
-- [OpenAI Compatibility](../features/openai-compatibility.md)
-- [CLI Commands](../features/cli-commands.md)
-- [API Reference](../reference/api-reference.md)
+The most flexible approach using a `PipelineWrapper` class that encapsulates your pipeline logic.
 
 **Key Features:**
 
@@ -23,34 +16,11 @@ See also:
 - Streaming support
 - File upload handling
 
-**Basic Structure:**
-
-```python
-from pathlib import Path
-from typing import List
-from haystack import Pipeline
-from hayhooks import BasePipelineWrapper
-
-class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        # Initialize your pipeline
-        pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
-        self.pipeline = Pipeline.loads(pipeline_yaml)
-
-    def run_api(self, urls: List[str], question: str) -> str:
-        # Custom execution logic
-        result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
-        return result["llm"]["replies"][0]
-```
+See [PipelineWrapper Details](pipeline-wrapper.md) for complete implementation guide and examples.
 
 ### 2. YAML Pipeline Deployment
 
 Deploy pipelines directly from YAML definitions with automatic schema generation.
-
-See also:
-
-- [YAML Pipeline Deployment](yaml-pipeline-deployment.md)
-- [API Reference](../reference/api-reference.md)
 
 **Key Features:**
 
@@ -105,13 +75,8 @@ Hayhooks automatically handles:
 
 - **Request Validation**: Pydantic models for input validation
 - **Response Serialization**: JSON serialization of responses
-- **File Uploads**: Automatic handling of multipart/form-data requests
+- **File Uploads**: Automatic handling of multipart/form-data requests (see [File Upload Support](../features/file-upload-support.md))
 - **Type Conversion**: Automatic type conversion between JSON and Python types
-
-References:
-
-- [API Reference](../reference/api-reference.md)
-- [File Upload Support](../features/file-upload-support.md)
 
 ## Lifecycle Management
 
@@ -125,8 +90,6 @@ When you deploy a pipeline, Hayhooks:
 4. **Generates** API endpoints and schemas
 5. **Creates** OpenAI-compatible endpoints (if implemented)
 
-See also: [API Reference](../reference/api-reference.md), [Logging](../reference/logging.md)
-
 ### Pipeline Execution
 
 For each request:
@@ -135,8 +98,6 @@ For each request:
 2. **Calls** the appropriate method (`run_api`, `run_chat_completion`, etc.)
 3. **Handles** errors and exceptions
 4. **Returns** the response in the correct format
-
-See also: [API Reference](../reference/api-reference.md)
 
 ### Pipeline Undeployment
 
@@ -147,17 +108,13 @@ When you undeploy a pipeline:
 3. **Unregisters** all API endpoints
 4. **Cleans up** resources
 
-See also: [API Reference](../reference/api-reference.md)
-
 ### MCP Integration
 
 All deployed pipelines can be exposed as MCP tools:
 
 - **Automatic Discovery**: Pipelines are automatically listed as available tools
 - **Schema Generation**: Input schemas are generated from method signatures
-- **Tool Execution**: Tools can be called from MCP clients
-
-See also: [MCP Support](../features/mcp-support.md)
+- **Tool Execution**: Tools can be called from MCP clients (see [MCP Support](../features/mcp-support.md))
 
 ## Best Practices
 
@@ -222,5 +179,3 @@ def run_api(self, query: str) -> str:
 
 - [PipelineWrapper Details](pipeline-wrapper.md) - Learn about PipelineWrapper implementation
 - [YAML Pipeline Deployment](yaml-pipeline-deployment.md) - Deploy from YAML files
-- [Agent Deployment](agent-deployment.md) - Deploy Haystack agents
-- [Examples](../examples/overview.md) - See working examples

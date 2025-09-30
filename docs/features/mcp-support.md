@@ -111,57 +111,59 @@ result = await client.call_tool("undeploy_pipeline", {"pipeline_name": "my_pipel
 
 ### PipelineWrapper as MCP Tool
 
-When you deploy a pipeline with `PipelineWrapper`, it's automatically exposed as an MCP tool:
+When you deploy a pipeline with `PipelineWrapper`, it's automatically exposed as an MCP tool.
+
+**MCP Tool Requirements:**
+
+A [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools) requires:
+
+- `name`: The name of the tool
+- `description`: The description of the tool
+- `inputSchema`: JSON Schema describing the tool's input parameters
+
+**How Hayhooks Creates MCP Tools:**
+
+For each deployed pipeline, Hayhooks will:
+
+- Use the pipeline wrapper `name` as MCP Tool `name` (always present)
+- Parse **`run_api` method docstring**:
+  - If you use Google-style or reStructuredText-style docstrings, use the first line as MCP Tool `description` and the rest as `parameters` (if present)
+  - Each parameter description will be used as the `description` of the corresponding Pydantic model field (if present)
+- Generate a Pydantic model from the `inputSchema` using the **`run_api` method arguments as fields**
+
+**Example:**
 
 ```python
+from pathlib import Path
+from typing import List
+from haystack import Pipeline
+from hayhooks import BasePipelineWrapper
+
+
 class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
+        self.pipeline = Pipeline.loads(pipeline_yaml)
+
     def run_api(self, urls: List[str], question: str) -> str:
-        """Ask questions about website content"""
+        #
+        # NOTE: The following docstring will be used as MCP Tool description
+        #
+        """
+        Ask a question about one or more websites using a Haystack pipeline.
+        """
         result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
         return result["llm"]["replies"][0]
 ```
 
-The tool will have:
-
-- **Name**: `pipeline_name`
-- **Description**: From method docstring
-- **Input Schema**: Generated from method arguments
-
 ### YAML Pipeline as MCP Tool
 
-YAML-deployed pipelines are also exposed as MCP tools:
+YAML-deployed pipelines are also automatically exposed as MCP tools. When you deploy via `hayhooks pipeline deploy-yaml`, the pipeline becomes available as an MCP tool with its input schema derived from the YAML `inputs` section.
 
-```yaml
-# pipeline.yml
-components:
-  fetcher:
-    type: haystack.components.fetchers.LinkContentFetcher
-  prompt_builder:
-    type: haystack.components.builders.PromptBuilder
-    init_parameters:
-      template: "Answer: {{query}}"
-  llm:
-    type: haystack.components.generators.OpenAIGenerator
+For complete examples and detailed information, see:
 
-connections:
-  - sender: fetcher.content
-    receiver: prompt_builder.documents
-  - sender: prompt_builder
-    receiver: llm
-
-inputs:
-  urls: fetcher.urls
-  query: prompt_builder.query
-
-outputs:
-  replies: llm.replies
-```
-
-Deploy with MCP tool support:
-
-```bash
-hayhooks pipeline deploy-yaml -n web_qa --description "Answer questions about websites" pipeline.yml
-```
+- [YAML Pipeline Deployment](../concepts/yaml-pipeline-deployment.md) - Full YAML structure details
+- [README MCP Section](https://github.com/deepset-ai/hayhooks#expose-a-yaml-pipeline-as-a-mcp-tool) - Complete example with sample YAML
 
 ### Skip MCP Tool Listing
 
@@ -182,9 +184,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
 ### Cursor Integration
 
-1. **Open Cursor Settings**
-2. **Go to MCP Section**
-3. **Add Hayhooks Server**:
+Add Hayhooks MCP Server in Cursor Settings → MCP:
 
 ```json
 {
@@ -196,81 +196,29 @@ class PipelineWrapper(BasePipelineWrapper):
 }
 ```
 
-After adding the MCP Server, you should see the Hayhooks Core MCP Tools in the list of available tools:
+Once configured, you can deploy, manage, and run pipelines directly from Cursor chat using the Core MCP Tools.
 
-![cursor-mcp-settings](../assets/cursor-mcp-settings.png)
-
-4. **Use Core Tools**:
-   - Deploy pipelines directly from Cursor chat
-   - Manage pipeline lifecycle
-   - Run pipelines with custom parameters
-
-### Development and deployment of Haystack pipelines directly from Cursor
-
-Here's a video example of how to develop and deploy a Haystack pipeline directly from Cursor:
-
-![hayhooks-cursor-dev-deploy-overwrite.gif](../assets/hayhooks-cursor-dev-deploy-overwrite.gif)
+For more information about MCP in Cursor, see the [Cursor MCP Documentation](https://cursor.com/docs/context/mcp).
 
 ### Claude Desktop Integration
 
-For Claude Desktop users:
+Configure Claude Desktop to connect to Hayhooks MCP Server:
 
-#### Using supergateway (Free Tier)
+- **Free Tier**: Use [supergateway](https://github.com/supercorp-ai/supergateway) to bridge the connection
+- **Pro/Max/Teams/Enterprise**: Direct connection via Streamable HTTP or SSE
 
-```json
-{
-  "mcpServers": {
-    "hayhooks": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "supergateway",
-        "--streamableHttp",
-        "http://localhost:1417/mcp"
-      ]
-    }
-  }
-}
-```
-
-#### Direct Connection (Pro/Max/Teams/Enterprise)
-
-```json
-{
-  "mcpServers": {
-    "hayhooks": {
-      "url": "http://localhost:1417/mcp"
-    }
-  }
-}
-```
+For complete configuration examples and step-by-step setup, see the [README MCP Section](https://github.com/deepset-ai/hayhooks#using-hayhooks-mcp-server-with-claude-desktop).
 
 ## Development Workflow
 
-### 1. Start Hayhooks Server
+**Basic workflow:**
 
-```bash
-# Start main Hayhooks server
-hayhooks run --port 1416
+1. Start Hayhooks server: `hayhooks run`
+2. Start MCP server: `hayhooks mcp run` (in another terminal)
+3. Configure your IDE to connect to the MCP server
+4. Deploy and manage pipelines through your IDE using natural language
 
-# Start MCP server in another terminal
-hayhooks mcp run --port 1417
-```
-
-### 2. Deploy a Pipeline
-
-```bash
-hayhooks pipeline deploy-files -n web_qa ./examples/pipeline_wrappers/chat_with_website
-```
-
-### 3. Use in IDE
-
-Configure your IDE to connect to the MCP server, then use natural language to:
-
-- Deploy new pipelines
-- Modify existing pipelines
-- Run pipelines with custom inputs
-- Check pipeline status
+For detailed development examples including deployment from Cursor, see the [README MCP Section](https://github.com/deepset-ai/hayhooks#development-and-deployment-of-haystack-pipelines-directly-from-cursor).
 
 ## Tool Development
 
@@ -305,9 +253,9 @@ Hayhooks automatically validates inputs based on your method signature:
 def run_api(
     self,
     urls: List[str],           # Required: List of URLs
-    question: str,            # Required: User question
+    question: str,             # Required: User question
     temperature: float = 0.7,  # Optional: Temperature (0.0-1.0)
-    max_tokens: int = 1000    # Optional: Max tokens
+    max_tokens: int = 1000     # Optional: Max tokens
 ) -> str:
     ...
 ```
@@ -322,12 +270,6 @@ Currently, Hayhooks MCP server doesn't include built-in authentication. Consider
 - Using network-level security (firewalls, VPNs)
 - Implementing custom middleware for authentication
 
-### Input Validation
-
-- Use proper type hints in method signatures
-- Implement custom validation in your pipeline wrappers
-- Sanitize inputs before processing
-
 ### Resource Management
 
 - Monitor tool execution for resource usage
@@ -338,80 +280,46 @@ Currently, Hayhooks MCP server doesn't include built-in authentication. Consider
 
 ### Common Issues
 
-1. **Connection Refused**
-   - Ensure MCP server is running
-   - Check port configuration
-   - Verify network connectivity
+#### Connection Refused
 
-2. **Tool Not Found**
-   - Verify pipeline deployment
-   - Check `skip_mcp` setting
-   - Ensure proper method implementation
+If you cannot connect to the MCP server, ensure the MCP server is running with `hayhooks mcp run`. Check that the port configuration matches (default is `1417`), and verify network connectivity between the client and server.
 
-3. **Input Validation Errors**
-   - Check method signatures
-   - Verify data types
-   - Review required parameters
+#### Tool Not Found
+
+If an MCP tool is not showing up, verify that the pipeline is properly deployed using `hayhooks status`. Check if the `skip_mcp` class attribute is set to `True` in your `PipelineWrapper`, which would prevent it from being listed. Ensure the `run_api` method is properly implemented with correct type hints.
+
+#### Input Validation Errors
+
+If you're getting validation errors when calling tools, check that your method signatures match the expected input types. Verify that all required parameters are being passed and that data types match the type hints in your `run_api` method signature. Review the MCP tool's `inputSchema` to ensure parameter names and types are correct.
 
 ### Debug Commands
 
-The MCP server exposes:
+The MCP server exposes the following endpoints:
 
-- Streamable HTTP endpoint at `http://localhost:1417/mcp`
-- SSE endpoint at `http://localhost:1417/sse`
-- Simple status at `http://localhost:1417/status`
+- **Streamable HTTP endpoint**: `http://localhost:1417/mcp` - Main MCP protocol endpoint
+- **SSE endpoint**: `http://localhost:1417/sse` - Server-Sent Events transport (deprecated)
+- **Status/Health Check**: `http://localhost:1417/status` - Returns `{"status": "ok"}` for health monitoring
 
-Use an MCP-capable client (e.g., supergateway, Cursor, Claude Desktop) to list and call tools. Example supergateway usage is shown above.
+#### Testing the health endpoint
 
-## Examples
+```bash
+# Check if MCP server is running
+curl http://localhost:1417/status
 
-### Research Assistant
-
-```python
-class ResearchAssistantWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        from haystack.components import PromptBuilder, OpenAIChatGenerator
-        from haystack.components.fetchers import LinkContentFetcher
-        from haystack.components.converters import HTMLToDocument
-
-        fetcher = LinkContentFetcher()
-        converter = HTMLToDocument()
-        prompt_builder = PromptBuilder(
-            template="Research this content and answer: {{query}}\n\nContent: {{documents}}"
-        )
-        llm = OpenAIChatGenerator(model="gpt-4o")
-
-        self.pipeline = Pipeline()
-        self.pipeline.add_component("fetcher", fetcher)
-        self.pipeline.add_component("converter", converter)
-        self.pipeline.add_component("prompt_builder", prompt_builder)
-        self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("fetcher.content", "converter")
-        self.pipeline.connect("converter.documents", "prompt_builder.documents")
-        self.pipeline.connect("prompt_builder", "llm")
-
-    def run_api(self, urls: List[str], query: str) -> str:
-        """
-        Research websites and provide detailed answers.
-
-        Perfect for academic research, competitive analysis, and content research.
-
-        Args:
-            urls: List of websites to research
-            query: Research question or topic
-
-        Returns:
-            Detailed research response with citations
-        """
-        result = self.pipeline.run({
-            "fetcher": {"urls": urls},
-            "prompt_builder": {"query": query}
-        })
-        return result["llm"]["replies"][0].content
+# Expected response:
+# {"status":"ok"}
 ```
+
+This status endpoint is useful for:
+
+- Container health checks in Docker/Kubernetes deployments
+- Load balancer health probes
+- Monitoring and alerting systems
+- Verifying the MCP server is running before connecting clients
+
+Use an MCP-capable client like [supergateway](https://github.com/supercorp-ai/supergateway), [Cursor](https://cursor.com), or [Claude Desktop](https://claude.ai/download) to list and call tools. Example supergateway usage is shown above.
 
 ## Next Steps
 
-- [OpenAI Compatibility](openai-compatibility.md) - OpenAI integration
-- [Open WebUI Integration](openwebui-integration.md) - Chat interface integration
-- [Examples](../examples/overview.md) - See working examples
+- [PipelineWrapper Guide](../concepts/pipeline-wrapper.md) - Learn how to create MCP-compatible pipeline wrappers
+- [Examples](../examples/overview.md) - See working examples of deployed pipelines
