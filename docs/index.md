@@ -116,7 +116,7 @@ curl -X POST http://localhost:1416/chat/completions \
   }'
 ```
 
-Or [integrate it with Open WebUI](features/openai-compatibility.md#openwebui-integration) and start chatting with it!
+Or [integrate it with Open WebUI](features/openai-compatibility.md#open-webui-integration) and start chatting with it!
 
 ## Key Features
 
