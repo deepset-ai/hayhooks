@@ -61,7 +61,9 @@ If you embed Hayhooks programmatically and want custom logging, set up logging i
 
 ## Pipeline Logging
 
-### Logging in Pipeline Wrappers
+The `log` object in Hayhooks is a [Loguru](https://loguru.readthedocs.io/) logger instance. You can use all Loguru features and capabilities in your pipeline code.
+
+### Basic Usage
 
 ```python
 from hayhooks import log
@@ -82,37 +84,6 @@ class PipelineWrapper(BasePipelineWrapper):
             raise
 ```
 
-### Structured Logging
-
-```python
-import json
-from hayhooks import log
-
-class PipelineWrapper(BasePipelineWrapper):
-    def run_api(self, query: str) -> str:
-        log.info({
-            "event": "pipeline_start",
-            "query": query,
-            "timestamp": "2024-01-01T00:00:00Z"
-        })
-
-        result = self.pipeline.run({"prompt": {"query": query}})
-
-        log.info({
-            "event": "pipeline_complete",
-            "query_length": len(query),
-            "result_length": len(result["llm"]["replies"][0])
-        })
-
-        return result["llm"]["replies"][0]
-```
-
-### Log Aggregation
-
-For production deployments, consider shipping stdout to your logging stack (e.g., container runtime, sidecar, or agent).
-
-## Performance Logging
-
 ### Execution Time Logging
 
 ```python
@@ -131,29 +102,7 @@ class PipelineWrapper(BasePipelineWrapper):
         return result["llm"]["replies"][0]
 ```
 
-### Request Logging
-
-```python
-from hayhooks import log
-
-class PipelineWrapper(BasePipelineWrapper):
-    def run_api(self, query: str) -> str:
-        log.info({
-            "event": "request_start",
-            "pipeline": self.__class__.__name__,
-            "query_length": len(query),
-            "timestamp": time.time()
-        })
-
-        # ... execute pipeline
-
-        log.info({
-            "event": "request_complete",
-            "pipeline": self.__class__.__name__,
-            "status": "success",
-            "duration": execution_time
-        })
-```
+For more advanced logging patterns (structured logging, custom sinks, formatting, etc.), refer to the [Loguru documentation](https://loguru.readthedocs.io/).
 
 ## Next Steps
 
