@@ -96,15 +96,6 @@ IMAGE_NAME=hayhooks IMAGE_TAG_SUFFIX=local docker buildx bake --load
 docker run -p 1416:1416 hayhooks:local
 ```
 
-Optional (multi-arch + push to registry):
-
-```bash
-# Build and push multi-platform image (amd64, arm64)
-# Replace <your-user> and <tag> accordingly
-cd docker
-IMAGE_NAME=<your-user>/hayhooks IMAGE_TAG_SUFFIX=<tag> HAYHOOKS_VERSION=<tag> docker buildx bake --push
-```
-
 ## Next Steps
 
 After successful installation:

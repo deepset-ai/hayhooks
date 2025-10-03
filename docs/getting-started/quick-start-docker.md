@@ -54,12 +54,21 @@ This will start:
 
 ### 5. Deploy Example Pipelines
 
-The Docker Compose setup includes example pipelines that can be deployed automatically:
+Install Hayhooks locally to use the CLI:
+
+```bash
+pip install hayhooks
+```
+
+Then deploy example pipelines:
 
 ```bash
 # Deploy a sample pipeline
-docker-compose exec hayhooks hayhooks pipeline deploy-files -n chat_with_website /app/examples/pipeline_wrappers/chat_with_website_streaming
+hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/chat_with_website_streaming
 ```
+
+!!! tip "Alternative: Deploy via API"
+    You can also deploy pipelines using the HTTP API endpoints: `POST /deploy_files` (PipelineWrapper files) or `POST /deploy-yaml` (YAML pipeline definition). See the [API Reference](../reference/api-reference.md#pipeline-management) for details.
 
 ## Configuration Options
 
@@ -79,9 +88,7 @@ The following environment variables can be configured in `.env`:
 
 The Docker Compose setup includes the following volume mounts:
 
-- **Pipeline Directory**: `/app/pipelines` - For storing pipeline definitions
-- **Custom Code**: `/app/custom_code` - For shared Python modules
-- **Data**: `/app/data` - For persistent data storage
+- **Pipeline Directory**: `/app/pipelines` – Directory mounted inside the Hayhooks container where your pipeline wrappers or YAML files live. Hayhooks auto-deploys anything it finds here at startup.
 
 ## Integrating with Open WebUI
 
@@ -100,8 +107,10 @@ The Docker Compose setup comes pre-configured to integrate Hayhooks with Open We
 Deploy a pipeline that supports chat completion:
 
 ```bash
-docker-compose exec hayhooks hayhooks pipeline deploy-files -n chat_agent /app/examples/pipeline_wrappers/open_webui_agent_events
+hayhooks pipeline deploy-files -n chat_agent examples/pipeline_wrappers/open_webui_agent_events
 ```
+
+Alternatively, use the [API endpoints](../reference/api-reference.md#pipeline-management) (`POST /deploy_files` or `POST /deploy-yaml`).
 
 ### 3. Test the Integration
 

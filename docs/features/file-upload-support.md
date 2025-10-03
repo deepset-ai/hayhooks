@@ -9,71 +9,26 @@ File upload support enables you to:
 - Accept file uploads through REST APIs
 - Process multiple files in a single request
 - Combine file uploads with other parameters
-- Support various file formats (PDF, DOCX, images, etc.)
-- Integrate with document processing pipelines
+- Build document processing and RAG pipelines
 
 ## Basic Implementation
 
-### Adding File Upload Support
-
-Add a `files` parameter to your `run_api` method:
+To accept file uploads in your pipeline, add a `files` parameter to your `run_api` method:
 
 ```python
 from fastapi import UploadFile
 from typing import Optional, List
-
-class PipelineWrapper(BasePipelineWrapper):
-    def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
-        if files and len(files) > 0:
-            filenames = [f.filename for f in files if f.filename is not None]
-            file_contents = [f.file.read() for f in files]
-
-            return f"Received {len(files)} files: {', '.join(filenames)}"
-
-        return "No files received"
-```
-
-### Processing Pattern
-
-```python
-from fastapi import UploadFile
-from typing import Optional, List
-from pathlib import Path
-import tempfile
-import os
 
 class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
         if not files:
             return "No files provided"
 
-        file_info = []
-        for file in files:
-            # Save to temporary file
-            with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                tmp.write(file.file.read())
-                tmp_path = tmp.name
-
-            try:
-                # Here you can process the file based on your needs
-                # Use Haystack converters, custom logic, etc.
-
-                # ...
-
-                # Add file info to the list to return it to the user
-                file_info.append({
-                    "name": file.filename,
-                    "size": file.size,
-                    "type": Path(file.filename).suffix
-                })
-            finally:
-                # Always clean up temporary file to avoid memory leaks
-                os.unlink(tmp_path)
-
-        return f"Received {len(files)} files: {file_info}"
+        # Process files here...
+        return f"Processed {len(files)} files"
 ```
 
-For a complete RAG example with file uploads and Haystack converters, see [RAG System Example](../examples/rag-system.md).
+For a complete implementation, see the [RAG System Example](../examples/rag-system.md).
 
 ## API Usage
 
@@ -146,159 +101,38 @@ hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query
 hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Analyze"' --param 'temperature=0.7'
 ```
 
-## File Type Support
+## Combining Files with Other Parameters
 
-### Supported File Types
-
-| File Type | Extension | Processing Library | Dependencies |
-|-----------|-----------|-------------------|--------------|
-| PDF | .pdf | PyPDFToDocument (Haystack) | `pip install pypdf` |
-| Text | .txt | Built-in | None |
-| Word | .docx, .doc | python-docx | `pip install python-docx` |
-| Markdown | .md | Built-in | None |
-| Images | .jpg, .png | PIL/Pillow | `pip install Pillow` |
-| CSV | .csv | pandas | `pip install pandas` |
-
-### Adding Custom File Types
+You can handle both files and parameters in the same request by adding them as arguments to the `run_api` method:
 
 ```python
-def _process_custom_file(self, file_path: str) -> str:
-    """Process custom file type"""
-    file_ext = Path(file_path).suffix.lower()
-
-    if file_ext == '.json':
-        return self._process_json(file_path)
-    elif file_ext == '.xml':
-        return self._process_xml(file_path)
-    else:
-        return f"Unsupported file type: {file_ext}"
-
-def _process_json(self, file_path: str) -> str:
-    """Process JSON file"""
-    import json
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    return str(data)[:5000]
-```
-
-## Security Considerations
-
-### File Validation
-
-```python
-from fastapi import UploadFile, HTTPException
-from pathlib import Path
+from fastapi import UploadFile
+from typing import Optional, List
 
 class PipelineWrapper(BasePipelineWrapper):
-    def _validate_file(self, file: UploadFile) -> bool:
-        """Validate uploaded file"""
-        # Check file size (e.g., max 10MB)
-        max_size = 10 * 1024 * 1024  # 10MB
-        if file.size and file.size > max_size:
-            raise HTTPException(status_code=413, detail="File too large")
+    def run_api(
+        self,
+        files: Optional[List[UploadFile]] = None,
+        query: str = "",
+        additional_param: str = "default"
+    ) -> str:
+        if files and len(files) > 0:
+            filenames = [f.filename for f in files if f.filename is not None]
+            return f"Received files: {', '.join(filenames)} with query: {query}"
 
-        # Check file extension
-        allowed_extensions = {'.pdf', '.txt', '.docx', '.md'}
-        file_ext = Path(file.filename).suffix.lower()
-        if file_ext not in allowed_extensions:
-            raise HTTPException(status_code=400, detail="File type not supported")
-
-        # Check filename for security
-        if '..' in file.filename or '/' in file.filename:
-            raise HTTPException(status_code=400, detail="Invalid filename")
-
-        return True
-
-    def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
-        if files:
-            for file in files:
-                self._validate_file(file)
-
-        # Continue with processing...
+        return "No files received"
 ```
 
-## Error Handling
+## Complete Example: RAG System with File Upload
 
-Handle errors gracefully when processing uploaded files:
+For a complete, production-ready example of a RAG system with file uploads, including document indexing and querying with Elasticsearch, see:
 
-```python
-from fastapi import HTTPException
-from hayhooks import log
-
-class PipelineWrapper(BasePipelineWrapper):
-    def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
-        if not files:
-            raise HTTPException(status_code=400, detail="No files provided")
-
-        try:
-            # Validate files
-            for file in files:
-                self._validate_file(file)
-
-            # Process files (your custom logic here)
-            filenames = [f.filename for f in files]
-            return f"Successfully received {len(files)} files: {', '.join(filenames)}"
-
-        except Exception as e:
-            log.error(f"Error processing files: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-```
-
-## Complete Example
-
-### RAG System with File Upload
-
-```python
-class RAGPipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        # Initialize RAG pipeline components
-        from haystack.components.preprocessors import DocumentSplitter
-        from haystack.components.embedders import SentenceTransformersDocumentEmbedder
-        from haystack.document_stores.in_memory import InMemoryDocumentStore
-        from haystack.components.retrievers.in_memory import InMemoryEmbeddingRetriever
-        from haystack.components.builders import PromptBuilder
-        from haystack.components.generators import OpenAIGenerator
-
-        self.document_store = InMemoryDocumentStore()
-        self.splitter = DocumentSplitter()
-        self.embedder = SentenceTransformersDocumentEmbedder()
-        self.retriever = InMemoryEmbeddingRetriever(document_store=self.document_store)
-        self.prompt_builder = PromptBuilder(
-            template="Answer this question: {{query}}\n\nContext: {{documents}}"
-        )
-        self.generator = OpenAIGenerator()
-
-        # Build pipeline
-        self.pipeline = Pipeline()
-        self.pipeline.add_component("splitter", self.splitter)
-        self.pipeline.add_component("embedder", self.embedder)
-        self.pipeline.add_component("retriever", self.retriever)
-        self.pipeline.add_component("prompt_builder", self.prompt_builder)
-        self.pipeline.add_component("generator", self.generator)
-        self.pipeline.connect("splitter", "embedder")
-        self.pipeline.connect("embedder", "retriever")
-        self.pipeline.connect("retriever", "prompt_builder.documents")
-        self.pipeline.connect("prompt_builder", "generator")
-
-    def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
-        if files:
-            # Index uploaded documents
-            documents = []
-            for file in files:
-                doc_content = self._process_file(file)
-                documents.append({"content": doc_content, "meta": {"source": file.filename}})
-
-            # Add to document store
-            self.pipeline.run({"splitter": {"documents": documents}})
-
-        # Query the indexed documents
-        result = self.pipeline.run({
-            "retriever": {"query": query},
-            "prompt_builder": {"query": query}
-        })
-
-        return result["generator"]["replies"][0]
-```
+- [RAG System Example](../examples/rag-system.md) - Full RAG implementation guide
+- [examples/rag_indexing_query](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query) - Complete working code with:
+  - Document indexing pipeline with file upload support
+  - Query pipeline for retrieving and generating answers
+  - Elasticsearch integration
+  - Support for PDF, Markdown, and text files
 
 ## Next Steps
 

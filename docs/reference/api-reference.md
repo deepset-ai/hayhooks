@@ -193,6 +193,13 @@ Use the same endpoints with `"stream": true`. Hayhooks streams chunks in OpenAI-
 
 > MCP runs in a separate Starlette app when invoked via `hayhooks mcp run`. Use the configured Streamable HTTP endpoint `/mcp` or SSE `/sse` depending on your client. See the MCP feature page for details.
 
+### Interactive API Documentation
+
+Hayhooks provides interactive API documentation for exploring and testing endpoints:
+
+- **Swagger UI**: `http://localhost:1416/docs` - Interactive API explorer with built-in request testing
+- **ReDoc**: `http://localhost:1416/redoc` - Clean, responsive API documentation
+
 ### OpenAPI Schema
 
 #### Get OpenAPI Schema
@@ -202,7 +209,7 @@ GET /openapi.json
 GET /openapi.yaml
 ```
 
-Get the complete OpenAPI specification.
+Get the complete OpenAPI specification for programmatic access or tooling integration.
 
 ## Error Handling
 

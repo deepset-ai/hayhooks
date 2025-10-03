@@ -157,7 +157,12 @@ LOG=debug
 The `hayhooks` package provides a CLI to manage the server and the pipelines.
 Any command can be run with `hayhooks <command> --help` to get more information.
 
-CLI commands are basically wrappers around the HTTP API of the server. The full API reference is available at [//HAYHOOKS_HOST:HAYHOOKS_PORT/docs](http://HAYHOOKS_HOST:HAYHOOKS_PORT/docs) or [//HAYHOOKS_HOST:HAYHOOKS_PORT/redoc](http://HAYHOOKS_HOST:HAYHOOKS_PORT/redoc).
+CLI commands are basically wrappers around the HTTP API of the server. The full API reference is available interactively at:
+
+- **Swagger UI**: `http://localhost:1416/docs` - Interactive API explorer with built-in request testing
+- **ReDoc**: `http://localhost:1416/redoc` - Clean, responsive API documentation
+
+You can also access the OpenAPI schema at `http://localhost:1416/openapi.json`.
 
 ```shell
 hayhooks run     # Start the server
@@ -726,9 +731,7 @@ Or if you need to use the SSE transport:
 }
 ```
 
-After adding the MCP Server, you should see the Hayhooks Core MCP Tools in the list of available tools:
-
-![cursor-mcp-settings](./docs/assets/cursor-mcp-settings.png)
+After adding the MCP Server, you should see the Hayhooks Core MCP Tools in the list of available tools.
 
 Now in the Cursor chat interface you can use the Hayhooks Core MCP Tools by mentioning them in your messages.
 

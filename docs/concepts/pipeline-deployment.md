@@ -6,33 +6,13 @@ Hayhooks provides flexible options for deploying Haystack pipelines and agents. 
 
 ### 1. PipelineWrapper Deployment (Recommended)
 
-The most flexible approach using a `PipelineWrapper` class that encapsulates your pipeline logic.
-
-**Key Features:**
-
-- Maximum flexibility for initialization
-- Custom execution logic
-- OpenAI-compatible endpoint support
-- Streaming support
-- File upload handling
+The most flexible approach using a `PipelineWrapper` class that encapsulates your pipeline logic. This method provides maximum flexibility for initialization, custom execution logic, OpenAI-compatible endpoint support, streaming capabilities, and file upload handling.
 
 See [PipelineWrapper Details](pipeline-wrapper.md) for complete implementation guide and examples.
 
 ### 2. YAML Pipeline Deployment
 
-Deploy pipelines directly from YAML definitions with automatic schema generation.
-
-**Key Features:**
-
-- Simple deployment from YAML files
-- Automatic request/response schema generation
-- No wrapper code required
-- Perfect for straightforward pipelines
-
-**Requirements:**
-
-- YAML must include `inputs` and `outputs` sections
-- Pipeline components must be properly defined
+Deploy pipelines directly from YAML definitions with automatic schema generation. This approach offers simple deployment from YAML files with automatic request/response schema generation, no wrapper code required, making it perfect for straightforward pipelines. The YAML must include `inputs` and `outputs` sections with properly defined pipeline components.
 
 For a complete YAML example and detailed requirements, see [YAML Pipeline Deployment](yaml-pipeline-deployment.md).
 
@@ -47,74 +27,39 @@ All pipeline wrappers inherit from `BasePipelineWrapper`:
 
 #### Required Methods
 
-- **`setup()`**: Called once when the pipeline is deployed
-  - Initialize your pipeline instance
-  - Set up any required resources
+**`setup()`** is called once when the pipeline is deployed to initialize your pipeline instance and set up any required resources.
 
-- **`run_api()`**: Called for each API request
-  - Define your custom execution logic
-  - Return the pipeline result
+**`run_api()`** is called for each API request to define your custom execution logic and return the pipeline result.
 
 #### Optional Methods
 
-- **`run_api_async()`**: Async version of `run_api()`
-  - Better performance for concurrent requests
-  - Supports async pipeline execution
+**`run_api_async()`** is the async version of `run_api()`, providing better performance for concurrent requests and supporting async pipeline execution.
 
-- **`run_chat_completion()`**: OpenAI-compatible chat endpoint (see [OpenAI Compatibility](../features/openai-compatibility.md))
-  - Enable Open WebUI integration
-  - Support chat completion format
+**`run_chat_completion()`** enables OpenAI-compatible chat endpoints for Open WebUI integration with chat completion format support (see [OpenAI Compatibility](../features/openai-compatibility.md)).
 
-- **`run_chat_completion_async()`**: Async chat completion (see [OpenAI Compatibility](../features/openai-compatibility.md))
-  - Streaming support for chat interfaces
-  - Better performance for concurrent chat requests
+**`run_chat_completion_async()`** provides async chat completion with streaming support for chat interfaces and better performance for concurrent chat requests (see [OpenAI Compatibility](../features/openai-compatibility.md)).
 
 ### Input/Output Handling
 
-Hayhooks automatically handles:
-
-- **Request Validation**: Pydantic models for input validation
-- **Response Serialization**: JSON serialization of responses
-- **File Uploads**: Automatic handling of multipart/form-data requests (see [File Upload Support](../features/file-upload-support.md))
-- **Type Conversion**: Automatic type conversion between JSON and Python types
+Hayhooks automatically handles request validation using Pydantic models, JSON serialization of responses, multipart/form-data requests for file uploads (see [File Upload Support](../features/file-upload-support.md)), and automatic type conversion between JSON and Python types.
 
 ## Lifecycle Management
 
 ### Pipeline Registration
 
-When you deploy a pipeline, Hayhooks:
-
-1. **Validates** the wrapper implementation
-2. **Creates** the pipeline instance using `setup()`
-3. **Registers** the pipeline with the server
-4. **Generates** API endpoints and schemas
-5. **Creates** OpenAI-compatible endpoints (if implemented)
+When you deploy a pipeline, Hayhooks validates the wrapper implementation, creates the pipeline instance using `setup()`, registers the pipeline with the server, generates API endpoints and schemas, and creates OpenAI-compatible endpoints if implemented.
 
 ### Pipeline Execution
 
-For each request:
-
-1. **Validates** the request against the schema
-2. **Calls** the appropriate method (`run_api`, `run_chat_completion`, etc.)
-3. **Handles** errors and exceptions
-4. **Returns** the response in the correct format
+For each request, Hayhooks validates the request against the schema, calls the appropriate method (`run_api`, `run_chat_completion`, etc.), handles errors and exceptions, and returns the response in the correct format.
 
 ### Pipeline Undeployment
 
-When you undeploy a pipeline:
-
-1. **Removes** the pipeline from the registry
-2. **Deletes** the pipeline files (if saved)
-3. **Unregisters** all API endpoints
-4. **Cleans up** resources
+When you undeploy a pipeline, Hayhooks removes the pipeline from the registry, deletes the pipeline files if saved, unregisters all API endpoints, and cleans up resources.
 
 ### MCP Integration
 
-All deployed pipelines can be exposed as MCP tools:
-
-- **Automatic Discovery**: Pipelines are automatically listed as available tools
-- **Schema Generation**: Input schemas are generated from method signatures
-- **Tool Execution**: Tools can be called from MCP clients (see [MCP Support](../features/mcp-support.md))
+All deployed pipelines can be exposed as MCP tools. Pipelines are automatically listed as available tools with input schemas generated from method signatures. Tools can be called from MCP clients (see [MCP Support](../features/mcp-support.md)).
 
 ## Next Steps
 

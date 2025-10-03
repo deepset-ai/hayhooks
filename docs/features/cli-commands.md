@@ -236,7 +236,17 @@ hayhooks status
 
 ## HTTP API Commands
 
-All CLI commands have corresponding HTTP API endpoints:
+All CLI commands have corresponding HTTP API endpoints.
+
+!!! tip "Interactive API Documentation"
+    Explore and test all HTTP API endpoints interactively:
+
+    - **Swagger UI**: `http://localhost:1416/docs`
+    - **ReDoc**: `http://localhost:1416/redoc`
+
+    See the [API Reference](../reference/api-reference.md) for complete documentation.
+
+**Common HTTP API equivalents:**
 
 ### deploy-files
 
