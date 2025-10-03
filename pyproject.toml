@@ -64,6 +64,21 @@ dependencies = [
 fmt = "ruff check --fix {args} && ruff format {args}"
 fmt-check = "ruff check {args} && ruff format --check {args}"
 
+[tool.hatch.envs.docs]
+detached = true
+dependencies = [
+  "mkdocs-material",
+  "mkdocstrings",
+  "mkdocs-mermaid2-plugin",
+  "mkdocs-minify-plugin",
+  "mkdocs-git-revision-date-localized-plugin",
+]
+
+[tool.hatch.envs.docs.scripts]
+serve = "mkdocs serve {args}"
+build = "mkdocs build {args}"
+deploy = "mkdocs gh-deploy --remote-name origin --force --no-history -m \"Deploy docs via automation\" {args}"
+
 [tool.hatch.envs.test]
 features = ["mcp"]
 extra-dependencies = [
