@@ -54,7 +54,37 @@ hayhooks --help
 
 ## Development Installation
 
-If you want to contribute to Hayhooks, clone the repository and install in editable mode:
+If you want to contribute to Hayhooks, we recommend using [Hatch](https://hatch.pypa.io/), the project's build and environment management tool:
+
+```bash
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Install Hatch (if not already installed)
+pip install hatch
+
+# Run unit tests
+hatch run test:unit
+
+# Run integration tests
+hatch run test:integration
+
+# Run tests
+hatch run test:all
+
+# Format code
+hatch run fmt
+
+# Serve documentation locally
+hatch run docs:serve
+```
+
+Hatch automatically manages virtual environments and dependencies for you. See available commands in `pyproject.toml`.
+
+### Alternative: Manual Installation
+
+If you prefer manual setup:
 
 ```bash
 # Clone the repository
