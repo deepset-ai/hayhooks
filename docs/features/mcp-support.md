@@ -160,10 +160,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
 YAML-deployed pipelines are also automatically exposed as MCP tools. When you deploy via `hayhooks pipeline deploy-yaml`, the pipeline becomes available as an MCP tool with its input schema derived from the YAML `inputs` section.
 
-For complete examples and detailed information, see:
-
-- [YAML Pipeline Deployment](../concepts/yaml-pipeline-deployment.md) - Full YAML structure details
-- [README MCP Section](https://github.com/deepset-ai/hayhooks#expose-a-yaml-pipeline-as-a-mcp-tool) - Complete example with sample YAML
+For complete examples and detailed information, see [YAML Pipeline Deployment](../concepts/yaml-pipeline-deployment.md).
 
 ### Skip MCP Tool Listing
 
@@ -232,8 +229,6 @@ Configure Claude Desktop to connect to Hayhooks MCP Server:
         }
         ```
 
-For complete configuration examples and step-by-step setup, see the [README MCP Section](https://github.com/deepset-ai/hayhooks#using-hayhooks-mcp-server-with-claude-desktop).
-
 ## Development Workflow
 
 **Basic workflow:**
@@ -242,8 +237,6 @@ For complete configuration examples and step-by-step setup, see the [README MCP 
 2. Start MCP server: `hayhooks mcp run` (in another terminal)
 3. Configure your IDE to connect to the MCP server
 4. Deploy and manage pipelines through your IDE using natural language
-
-For detailed development examples including deployment from Cursor, see the [README MCP Section](https://github.com/deepset-ai/hayhooks#development-and-deployment-of-haystack-pipelines-directly-from-cursor).
 
 ## Tool Development
 

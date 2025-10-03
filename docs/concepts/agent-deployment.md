@@ -6,10 +6,11 @@ This page summarizes how to deploy Haystack Agents with Hayhooks and points you 
 
 Agents are deployed using the same `PipelineWrapper` mechanism as pipelines. Implement `run_chat_completion` or `run_chat_completion_async` to expose OpenAI-compatible chat endpoints (with streaming support).
 
-## Start here
+## Quick Start
 
-- See the README section “Deploy an Agent” for the up-to-date, minimal implementation and streaming guidance.
-- Review the examples below for working agent setups.
+Deploy agents using the same `PipelineWrapper` mechanism as pipelines. The key is implementing `run_chat_completion` or `run_chat_completion_async` for OpenAI-compatible chat endpoints with streaming support.
+
+See the example below for a complete agent setup with tools, streaming, and Open WebUI events.
 
 ## Example
 

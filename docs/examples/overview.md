@@ -1,6 +1,6 @@
 # Examples Overview
 
-This page lists maintained examples. For the full table and descriptions, see the repository's [examples/README.md](https://github.com/deepset-ai/hayhooks/tree/main/examples).
+This page lists all maintained Hayhooks examples with detailed descriptions and links to the source code.
 
 ## Pipeline wrapper examples
 
@@ -22,8 +22,11 @@ This page lists maintained examples. For the full table and descriptions, see th
 
 ## How to use examples
 
+**Prerequisites:**
 - Install Hayhooks: `pip install hayhooks` (additional deps per example may apply)
-- Pipeline wrappers: deploy directly with `hayhooks pipeline deploy-files -n <name> <example_dir>` and run via API (`POST /<name>/run`) or OpenAI-compatible chat endpoints if implemented
-- End-to-end examples: follow the example's README for full setup (services like Elasticsearch, multi-pipeline deployment, datasets, etc.)
 
-See the top-level [Main docs](../index.md) for general usage and CLI.
+**Deployment:**
+- Pipeline wrappers: deploy directly with `hayhooks pipeline deploy-files -n <name> <example_dir>` and run via API (`POST /<name>/run`) or OpenAI-compatible chat endpoints if implemented
+- End-to-end examples: follow the example's documentation for full setup (services like Elasticsearch, multi-pipeline deployment, datasets, etc.)
+
+For general usage and CLI commands, see the [Getting Started Guide](../getting-started/quick-start.md).

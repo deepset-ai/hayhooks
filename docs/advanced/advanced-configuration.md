@@ -1,53 +1,8 @@
 # Advanced Configuration
 
-This guide covers performance tuning, custom routes/middleware, and deployment optimization.
+This guide covers programmatic customization, custom routes, and middleware for advanced Hayhooks usage.
 
-For basic configuration, see [Configuration](../getting-started/configuration.md). For all environment variables, see [Environment Variables Reference](../reference/environment-variables.md).
-
-## Performance Tuning
-
-### Multiple Workers
-
-Scale vertically for CPU-bound or high-concurrency workloads:
-
-```bash
-hayhooks run --workers 4
-```
-
-### Async Pipelines
-
-Use async methods for I/O-bound operations:
-
-```python
-from haystack import AsyncPipeline
-
-class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        self.pipeline = AsyncPipeline.loads((Path(__file__).parent / "pipeline.yml").read_text())
-
-    async def run_api_async(self, query: str) -> str:
-        result = await self.pipeline.run_async({"prompt": {"query": query}})
-        return result["llm"]["replies"][0]
-```
-
-### Streaming
-
-Use streaming for chat endpoints to reduce latency:
-
-```python
-from hayhooks import async_streaming_generator, get_last_user_message
-
-async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict):
-    question = get_last_user_message(messages)
-    return async_streaming_generator(
-        pipeline=self.pipeline,
-        pipeline_run_args={"prompt": {"query": question}},
-    )
-```
-
-### Horizontal Scaling
-
-Scale horizontally behind a load balancer:
+For basic configuration, see [Configuration](../getting-started/configuration.md). For deployment and performance tuning, see [Deployment Guidelines](../deployment/deployment_guidelines.md).
 
 ## Custom Routes and Middleware
 
@@ -65,8 +20,6 @@ Scale horizontally behind a load balancer:
 - Enforce security controls (authn/z, rate limiting, quotas)
 - Control headers, CORS, compression, and caching
 - Normalize inputs/outputs and error handling consistently
-
-For implementation examples of adding routes or middleware, see the README section “Run Hayhooks programmatically”.
 
 ## Programmatic Customization
 
@@ -97,8 +50,9 @@ if __name__ == "__main__":
     uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
 ```
 
-See the README section "Run Hayhooks programmatically" for more details.
+This allows you to build custom applications with Hayhooks as the core engine while adding your own business logic and integrations.
 
 ## Next Steps
 
-- [Code Sharing](code-sharing.md) - Reusable components
+- [Deployment Guidelines](../deployment/deployment_guidelines.md) - Performance tuning, workers, scaling, and deployment strategies
+- [Code Sharing](code-sharing.md) - Reusable components across pipelines

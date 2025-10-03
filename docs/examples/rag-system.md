@@ -4,8 +4,9 @@ Build a Retrieval-Augmented Generation flow: ingest documents, embed and store t
 
 ## Where is the code?
 
-- End-to-end example: [examples/rag_indexing_query](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query) (see its `README.md`)
-  - `indexing_pipeline/` and `query_pipeline/`
+- End-to-end example: [examples/rag_indexing_query](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query)
+  - `indexing_pipeline/` - Handles document upload and indexing
+  - `query_pipeline/` - Retrieves and generates answers
 
 ## Quick Start (from repository root)
 
