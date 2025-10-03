@@ -300,29 +300,6 @@ class RAGPipelineWrapper(BasePipelineWrapper):
         return result["generator"]["replies"][0]
 ```
 
-## Best Practices
-
-### 1. File Validation
-
-- Validate file types (extensions)
-- Enforce file size limits
-- Sanitize file names
-- Check for required file formats
-
-### 2. File Management
-
-- Use temporary files for processing
-- Clean up files after processing
-- Handle multiple files efficiently
-- Store files securely if needed
-
-### 3. Error Handling
-
-- Validate files before processing
-- Provide clear error messages
-- Log errors for debugging
-- Handle partial failures gracefully
-
 ## Next Steps
 
 - [PipelineWrapper](../concepts/pipeline-wrapper.md) - Learn about wrapper implementation

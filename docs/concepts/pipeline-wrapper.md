@@ -312,51 +312,6 @@ def run_api(self, urls: List[str], question: str) -> str:
     return result["llm"]["replies"][0]
 ```
 
-## Best Practices
-
-### 1. Use Type Hints
-
-```python
-from typing import List, Optional, Dict, Any
-
-def run_api(
-    self,
-    urls: List[str],
-    question: str,
-    temperature: Optional[float] = 0.7,
-    additional_params: Optional[Dict[str, Any]] = None
-) -> str:
-    ...
-```
-
-### 2. Add Logging
-
-```python
-from hayhooks import log
-
-def run_api(self, urls: List[str], question: str) -> str:
-    log.info(f"Processing question: {question}")
-    log.debug(f"URLs: {urls}")
-
-    result = self.pipeline.run(...)
-    log.info(f"Pipeline completed successfully")
-    return result["llm"]["replies"][0]
-```
-
-### 3. Validate Inputs
-
-```python
-def run_api(self, urls: List[str], question: str) -> str:
-    if not urls:
-        raise ValueError("At least one URL is required")
-
-    if not question or not question.strip():
-        raise ValueError("Question cannot be empty")
-
-    # Continue with pipeline execution
-    ...
-```
-
 ## Examples
 
 For complete, working examples see:

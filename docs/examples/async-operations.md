@@ -4,7 +4,7 @@ Patterns for async pipelines in Hayhooks: streaming responses, concurrency, and 
 
 ## Where is the code?
 
-- Async wrappers: [async_question_answer](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer), [chat_with_website_streaming](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_streaming)
+- Async wrapper: [async_question_answer](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer)
 - See main docs for async `run_api_async` and `run_chat_completion_async`
 
 ## Deploy (example)

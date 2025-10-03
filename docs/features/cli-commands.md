@@ -344,36 +344,6 @@ export LOG=DEBUG
 hayhooks run
 ```
 
-## Best Practices
-
-### 1. Pipeline Management
-
-- Use meaningful pipeline names
-- Include descriptions for better documentation
-- Use version control for pipeline definitions
-- Test pipelines before deployment
-
-### 2. Server Configuration
-
-- Use environment variables for configuration
-- Set appropriate worker counts for your workload
-- Monitor server health and logs
-- Use proper security settings in production
-
-### 3. CLI Usage
-
-- Use `--help` for command documentation
-- Test commands in development environment first
-- Use `--dry-run` when available for testing
-- Keep CLI scripts in version control
-
-### 4. Error Handling
-
-- Check return codes and error messages
-- Use `--verbose` flag for debugging
-- Monitor logs for issues
-- Implement proper error handling in scripts
-
 ## Examples
 
 ### Basic Workflow

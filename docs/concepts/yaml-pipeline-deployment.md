@@ -274,35 +274,6 @@ class PipelineWrapper(BasePipelineWrapper):
         ...
 ```
 
-## Best Practices
-
-### 1. YAML Structure
-
-- Organize components logically
-- Include `init_parameters` for component configuration
-- Define clear `inputs` and `outputs` mappings
-- Use proper component type paths (e.g., `haystack.components.generators.OpenAIGenerator`)
-
-### 2. Naming Conventions
-
-- Use descriptive input/output names that clearly indicate purpose
-- Map inputs to intuitive parameter names (e.g., `website_urls` instead of just `urls`)
-- Name outputs to reflect their content (e.g., `ai_response`, `source_documents`)
-
-### 3. Error Handling
-
-YAML pipelines use component-level error handling:
-
-- Configure component timeouts and retries in `init_parameters`
-- Set sensible default values where possible
-- Rely on Haystack component validation
-
-### 4. Performance
-
-- Choose efficient component models (e.g., `gpt-4o-mini` vs `gpt-4`)
-- Set reasonable limits (`max_tokens`, `timeout`)
-- Use async-compatible components when available
-
 ## Example
 
 For a complete working example of a YAML pipeline with proper `inputs` and `outputs`, see:

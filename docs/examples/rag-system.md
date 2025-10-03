@@ -38,7 +38,7 @@ hayhooks pipeline run query --param 'question="is this recipe vegan?"'
 ```
 
 !!! info "Additional Information"
-    - See `README.md` → "Support file uploads" for wrapper signature and request format
+    - See [File Upload Support](../features/file-upload-support.md) for wrapper signature and request format
     - Choose appropriate embedding models and document stores for your scale
 
 ## Related

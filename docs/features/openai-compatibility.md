@@ -2,6 +2,9 @@
 
 Hayhooks provides seamless OpenAI-compatible endpoints for Haystack pipelines and agents, enabling integration with OpenAI-compatible tools and frameworks.
 
+!!! tip "Open WebUI Integration"
+    Looking to integrate with Open WebUI? Check out the complete [Open WebUI Integration](openwebui-integration.md) guide for detailed setup instructions, event handling, and advanced features.
+
 ## Overview
 
 Hayhooks can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` or `run_chat_completion_async` method in your pipeline wrapper. This makes Hayhooks compatible with any OpenAI-compatible client or tool, including chat interfaces, agent frameworks, and custom applications.
@@ -12,6 +15,7 @@ Hayhooks can automatically generate OpenAI-compatible endpoints if you implement
 - **Streaming Support**: Real-time streaming responses for chat interfaces
 - **Async Support**: High-performance async chat completion
 - **Multiple Integration Options**: Works with various OpenAI-compatible clients
+- **Open WebUI Ready**: Full support for [Open WebUI](openwebui-integration.md) with events and tool call interception
 
 ## Implementation
 

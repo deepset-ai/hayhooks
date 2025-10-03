@@ -10,7 +10,7 @@ Build a pipeline that answers questions about one or more websites. Uses fetchin
 ## Deploy
 
 ```bash
-hayhooks pipeline deploy-files -n chat-with-website examples/pipeline_wrappers/chat_with_website_streaming
+hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/chat_with_website_streaming
 ```
 
 ## Run
@@ -18,7 +18,7 @@ hayhooks pipeline deploy-files -n chat-with-website examples/pipeline_wrappers/c
 - API mode:
 
 ```bash
-curl -X POST http://localhost:1416/chat-with-website/run \
+curl -X POST http://localhost:1416/chat_with_website/run \
   -H 'Content-Type: application/json' \
   -d '{"query": "What is this website about?", "urls": ["https://python.org"]}'
 ```
@@ -29,13 +29,13 @@ curl -X POST http://localhost:1416/chat-with-website/run \
 curl -X POST http://localhost:1416/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "chat-with-website",
+    "model": "chat_with_website",
     "messages": [{"role": "user", "content": "Tell me about https://github.com"}]
   }'
 ```
 
 !!! tip "Development Tips"
-    - For development, use `--overwrite` to redeploy a changed wrapper: `hayhooks pipeline deploy-files -n chat-with-website --overwrite <dir>`
+    - For development, use `--overwrite` to redeploy a changed wrapper: `hayhooks pipeline deploy-files -n chat_with_website --overwrite <dir>`
     - Some examples may require extra Python packages (e.g., `trafilatura`). Install as needed.
 
 ## Related

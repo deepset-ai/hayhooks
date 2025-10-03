@@ -10,7 +10,7 @@ Send status updates and UI events to Open WebUI during streaming, and optionally
 ## Deploy (example)
 
 ```bash
-hayhooks pipeline deploy-files -n openwebui-agent-events examples/pipeline_wrappers/open_webui_agent_events
+hayhooks pipeline deploy-files -n agent_events examples/pipeline_wrappers/open_webui_agent_events
 ```
 
 ## Run
@@ -21,15 +21,15 @@ hayhooks pipeline deploy-files -n openwebui-agent-events examples/pipeline_wrapp
 curl -X POST http://localhost:1416/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "openwebui-agent-events",
+    "model": "agent_events",
     "messages": [{"role": "user", "content": "Tell me about machine learning"}]
   }'
 ```
 
 !!! tip "Working with Events"
-    - Use `send_openwebui_event(...)` to emit UI updates (loading, progress, messages)
+    - Use helpers from `hayhooks.open_webui`: `create_status_event`, `create_message_event`, `create_replace_event`, `create_source_event`, `create_notification_event`, `create_details_tag`
     - Intercept tool calls via `on_tool_call_start`/`on_tool_call_end` with `streaming_generator`/`async_streaming_generator`
-    - For recommended Open WebUI settings, see the main `README.md`
+    - For recommended Open WebUI settings, see the [Open WebUI Integration](../features/openwebui-integration.md) guide
 
 ## Related
 
