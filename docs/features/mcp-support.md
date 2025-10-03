@@ -272,7 +272,6 @@ def run_api(
     self,
     urls: List[str],           # Required: List of URLs
     question: str,             # Required: User question
-    temperature: float = 0.7,  # Optional: Temperature (0.0-1.0)
     max_tokens: int = 1000     # Optional: Max tokens
 ) -> str:
     ...

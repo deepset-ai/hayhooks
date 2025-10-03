@@ -54,8 +54,7 @@ curl -X POST \
 curl -X POST \
   http://localhost:1416/my_pipeline/run \
   -F 'files=@document.pdf' \
-  -F 'query="Analyze this document"' \
-  -F 'temperature=0.7'
+  -F 'query="Analyze this document"'
 ```
 
 ### Python Client Example
@@ -70,8 +69,7 @@ files = [
 ]
 
 data = {
-    'query': 'Analyze these documents',
-    'temperature': '0.7'
+    'query': 'Analyze these documents'
 }
 
 response = requests.post(
@@ -98,7 +96,7 @@ hayhooks pipeline run my_pipeline --dir ./documents --param 'query="Analyze all 
 hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare documents"'
 
 # Upload with parameters
-hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Analyze"' --param 'temperature=0.7'
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Analyze"'
 ```
 
 ## Combining Files with Other Parameters

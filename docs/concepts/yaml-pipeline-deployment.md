@@ -123,7 +123,6 @@ inputs:
   # friendly_name: component.field
   urls: fetcher.urls
   query: prompt_builder.query
-  temperature: llm.temperature
 ```
 
 **Mapping rules:**
@@ -170,8 +169,7 @@ curl -X POST \
   -H 'Content-Type: application/json' \
   -d '{
     "urls": ["https://haystack.deepset.ai"],
-    "query": "What is Haystack?",
-    "temperature": 0.7
+    "query": "What is Haystack?"
   }'
 ```
 
@@ -199,11 +197,7 @@ Hayhooks automatically generates:
       "type": "array",
       "items": {"type": "string"}
     },
-    "query": {"type": "string"},
-    "temperature": {
-      "type": "number",
-      "default": 0.7
-    }
+    "query": {"type": "string"}
   },
   "required": ["urls", "query"]
 }

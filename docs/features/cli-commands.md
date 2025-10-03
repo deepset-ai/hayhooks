@@ -194,7 +194,7 @@ Run a deployed pipeline:
 hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
 
 # Run with multiple parameters
-hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"' --param 'temperature=0.7'
+hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"' --param 'max_results=5'
 
 # Upload files
 hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Summarize this"'

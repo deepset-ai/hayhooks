@@ -117,10 +117,7 @@ Execute a deployed pipeline.
 
 ```json
 {
-  "query": "What is the capital of France?",
-  "params": {
-    "temperature": 0.7
-  }
+  "query": "What is the capital of France?"
 }
 ```
 
@@ -154,8 +151,7 @@ OpenAI-compatible chat completion endpoint.
       "content": "Hello, how are you?"
     }
   ],
-  "stream": false,
-  "temperature": 0.7
+  "stream": false
 }
 ```
 
