@@ -63,10 +63,9 @@ dependencies = [
 [tool.hatch.envs.default.scripts]
 fmt = "ruff check --fix {args} && ruff format {args}"
 fmt-check = "ruff check {args} && ruff format --check {args}"
-docs-serve = "mkdocs serve {args}"
-docs-build = "mkdocs build {args}"
 
 [tool.hatch.envs.docs]
+detached = true
 dependencies = [
   "mkdocs-material",
   "mkdocstrings",
