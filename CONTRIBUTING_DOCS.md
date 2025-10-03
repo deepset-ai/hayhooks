@@ -23,9 +23,6 @@ hatch run docs:serve
 
 # With custom options
 hatch run docs:serve --open --dirty
-
-# Or using default environment (requires mkdocs to be installed)
-hatch run docs-serve
 ```
 
 The server will be available at `http://localhost:8000/hayhooks/`
@@ -41,11 +38,23 @@ hatch run docs:build
 # Clean build (removes old files first)
 hatch run docs:build --clean
 
-# Or using default environment (requires mkdocs to be installed)
-hatch run docs-build
+# Strict build (fails on warnings)
+hatch run docs:build --strict
 ```
 
 The built site will be available in the `site/` directory.
+
+#### Deploy Documentation
+
+Deploy the documentation to GitHub Pages:
+
+```bash
+# Deploy to GitHub Pages
+hatch run docs:deploy
+
+# With custom options
+hatch run docs:deploy --force
+```
 
 ### Direct MkDocs Usage
 
@@ -174,7 +183,7 @@ hatch run docs-serve
 Always test the documentation builds successfully:
 
 ```bash
-hatch run docs-build --strict
+hatch run docs:build --strict
 ```
 
 ### Link Verification
@@ -183,7 +192,7 @@ Check for broken links:
 
 ```bash
 # Test locally
-hatch run docs-serve
+hatch run docs:serve
 
 # Or use a link checker tool
 pip install linkchecker
@@ -195,23 +204,25 @@ linkchecker http://localhost:8000/hayhooks/
 Preview your changes in the browser:
 
 ```bash
-hatch run docs-serve --open
+hatch run docs:serve --open
 ```
 
 ## Deployment
 
 ### GitHub Pages
 
-The documentation is automatically deployed to GitHub Pages via GitHub Actions when changes are merged to the main branch.
+> **Note:** Automatic deployment via GitHub Actions is not yet configured. For now, documentation must be deployed manually. A GitHub Actions workflow will be added in the future.
 
 ### Manual Deployment
 
 To deploy manually:
 
 ```bash
-# Build the documentation
-hatch run docs-build
+# Deploy to GitHub Pages (builds and deploys in one command)
+hatch run docs:deploy
 
+# Or build only without deploying
+hatch run docs:build
 # The site is now ready in the site/ directory
 ```
 
@@ -236,16 +247,16 @@ hatch run docs-build
 
 ### Getting Help
 
-- Check MkDocs documentation: https://www.mkdocs.org/
-- Review Material theme docs: https://squidfunk.github.io/mkdocs-material/
-- Open an issue on GitHub: https://github.com/deepset-ai/hayhooks/issues
+- Check MkDocs documentation: <https://www.mkdocs.org/>
+- Review Material theme docs: <https://squidfunk.github.io/mkdocs-material/>
+- Open an issue on GitHub: <https://github.com/deepset-ai/hayhooks/issues>
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your documentation changes
-4. Test locally with `hatch run docs-serve`
+4. Test locally with `hatch run docs:serve`
 5. Submit a pull request
 
 Thank you for contributing to Hayhooks documentation!
