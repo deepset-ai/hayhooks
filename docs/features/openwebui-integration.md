@@ -215,30 +215,33 @@ from typing import AsyncGenerator, List
 from haystack import Pipeline
 from haystack.components.fetchers import LinkContentFetcher
 from haystack.components.converters import HTMLToDocument
-from haystack.components.builders import PromptBuilder
-from haystack.components.generators import OpenAIChatGenerator
+from haystack.components.builders import ChatPromptBuilder
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage
 from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_user_message
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         fetcher = LinkContentFetcher()
         converter = HTMLToDocument()
-        prompt_builder = PromptBuilder(
-            template="Based on this content: {{documents}}\nAnswer: {{query}}"
-        )
-        llm = OpenAIChatGenerator(
-            model="gpt-4o",
-            streaming_callback=lambda x: None
-        )
+
+        template = [
+            ChatMessage.from_user(
+                "Based on this content: {{documents}}\nAnswer: {{query}}"
+            )
+        ]
+        chat_prompt_builder = ChatPromptBuilder(template=template)
+
+        llm = OpenAIChatGenerator(model="gpt-4o")
 
         self.pipeline = Pipeline()
         self.pipeline.add_component("fetcher", fetcher)
         self.pipeline.add_component("converter", converter)
-        self.pipeline.add_component("prompt_builder", prompt_builder)
+        self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
         self.pipeline.add_component("llm", llm)
         self.pipeline.connect("fetcher.content", "converter")
-        self.pipeline.connect("converter.documents", "prompt_builder.documents")
-        self.pipeline.connect("prompt_builder", "llm")
+        self.pipeline.connect("converter.documents", "chat_prompt_builder.documents")
+        self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
 
     async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
         question = get_last_user_message(messages)
@@ -250,7 +253,7 @@ class PipelineWrapper(BasePipelineWrapper):
             pipeline=self.pipeline,
             pipeline_run_args={
                 "fetcher": {"urls": urls},
-                "prompt_builder": {"query": question}
+                "chat_prompt_builder": {"query": question}
             },
         )
 ```

@@ -201,20 +201,22 @@ This enables powerful use cases:
 ```python
 class SimpleChatWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        from haystack.components.builders import PromptBuilder
+        from haystack.components.builders import ChatPromptBuilder
         from haystack.components.generators.chat import OpenAIChatGenerator
+        from haystack.dataclasses import ChatMessage
 
-        prompt_builder = PromptBuilder(template="Answer: {{query}}")
+        template = [ChatMessage.from_user("Answer: {{query}}")]
+        chat_prompt_builder = ChatPromptBuilder(template=template)
         llm = OpenAIChatGenerator(model="gpt-4o-mini")
 
         self.pipeline = Pipeline()
-        self.pipeline.add_component("prompt_builder", prompt_builder)
+        self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
         self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("prompt_builder", "llm")
+        self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
 
     def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> str:
         question = get_last_user_message(messages)
-        result = self.pipeline.run({"prompt_builder": {"query": question}})
+        result = self.pipeline.run({"chat_prompt_builder": {"query": question}})
         return result["llm"]["replies"][0].content
 ```
 
@@ -223,25 +225,24 @@ class SimpleChatWrapper(BasePipelineWrapper):
 ```python
 class AdvancedStreamingWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        from haystack.components.builders import PromptBuilder
+        from haystack.components.builders import ChatPromptBuilder
         from haystack.components.generators.chat import OpenAIChatGenerator
+        from haystack.dataclasses import ChatMessage
 
-        prompt_builder = PromptBuilder(template="Answer: {{query}}")
-        llm = OpenAIChatGenerator(
-            model="gpt-4o",
-            streaming_callback=lambda chunk: None
-        )
+        template = [ChatMessage.from_user("Answer: {{query}}")]
+        chat_prompt_builder = ChatPromptBuilder(template=template)
+        llm = OpenAIChatGenerator(model="gpt-4o")
 
         self.pipeline = Pipeline()
-        self.pipeline.add_component("prompt_builder", prompt_builder)
+        self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
         self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("prompt_builder", "llm")
+        self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
 
     async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
         question = get_last_user_message(messages)
         return async_streaming_generator(
             pipeline=self.pipeline,
-            pipeline_run_args={"prompt_builder": {"query": question}},
+            pipeline_run_args={"chat_prompt_builder": {"query": question}},
         )
 ```
 
