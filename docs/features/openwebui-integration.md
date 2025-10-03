@@ -10,7 +10,6 @@ Open WebUI integration allows you to:
 - Support streaming responses in real-time
 - Send status events to enhance user experience
 - Intercept tool calls for better feedback
-- Use file uploads with your pipelines
 
 ## Getting Started
 
@@ -20,45 +19,74 @@ Open WebUI integration allows you to:
 - Hayhooks server running
 - Pipeline with chat completion support
 
-### Configuration (OpenAPI Tool Server)
+### Configuration
 
 #### 1. Install Open WebUI
 
-```bash
-# Using Docker (recommended)
-docker run -d -p 3000:8080 --name open-webui --restart always ghcr.io/open-webui/open-webui:main
+Please follow the [Open WebUI installation guide](https://docs.openwebui.com/getting-started/quick-start) to install Open WebUI.
 
-# Or install locally
-pip install open-webui
-open-webui serve
+We recommend [using Docker to install Open WebUI](https://docs.openwebui.com/getting-started/quick-start/#quick-start-with-docker-).
+
+A quick command to install Open WebUI using Docker is:
+
+```bash
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -e WEBUI_AUTH=False -v open-webui:/app/backend/data --name open-webui ghcr.io/open-webui/open-webui:main
 ```
 
-#### 2. Configure Open WebUI
+This will start Open WebUI on local port 3000, with no authentication, and with the data stored in the `open-webui` volume. It's the easiest way to get started.
 
-Step 1: Disable Auto-generated Content
+#### 2. Disable Auto-generated Content
 
-Go to **Admin Settings → Interface** and turn off:
+Open WebUI automatically generates content for your pipelines. More precisely, it calls your pipelines to generate tags, title and follow-up messages. Depending on your pipeline, this may not be suitable for this use case.
 
-- Tags generation
-- Title generation
-- Follow-up message generation
+We recommend disabling those features as a starting point, then you can enable them if you need them.
 
-![open-webui-settings](../assets/open-webui-settings.png)
+Go to **Admin Settings → Interface** and turn off the following features:
 
-This prevents unnecessary calls to your pipelines.
+![open-webui-disable-generated-content](../assets/open-webui-disable-generated-content.png)
 
-Step 2: Add Hayhooks Connection
+#### 3. Add Hayhooks as an OpenAI compatible API endpoint
 
-Go to **Settings → Connections** (or **Admin Settings → Connections** for admin-level configuration) and add a new connection:
+You have two options to connect Hayhooks to Open WebUI:
 
-- **API Base URL**: `http://localhost:1416/v1`
-- **API Key**: `any-value` (not used by Hayhooks)
+##### Option 1: Direct Connection (Recommended)
+
+First, enable **Direct Connections** in Open WebUI.
+
+Go to **Admin Settings → Connections** and enable **Direct Connections**:
+
+![open-webui-enable-direct-connections](../assets/open-webui-enable-direct-connections.png)
+
+Then go to **Settings → Connections** and add a new connection:
+
+- **API Base URL**: `http://localhost:1416`
+- **API Key**: `any-value` (or leave it empty, it's not used by Hayhooks)
 
 ![open-webui-settings-connections](../assets/open-webui-settings-connections.png)
+
+##### Option 2: OpenAI API Connection
+
+Alternatively, you can add Hayhooks as an additional **OpenAI API Connection** from **Admin Settings → Connections**:
+
+![open-webui-admin-settings-connections](../assets/open-webui-admin-settings-connections.png)
+
+In both cases, remember to **fill a random value as API key** (Hayhooks doesn't require authentication).
 
 ## Pipeline Implementation
 
 To make your pipeline work with Open WebUI, implement the `run_chat_completion` or `run_chat_completion_async` method in your `PipelineWrapper`. See the [OpenAI Compatibility](openai-compatibility.md) guide for detailed implementation examples.
+
+### Non-Streaming Example
+
+Here's how a non-streaming chat completion looks in Open WebUI:
+
+![chat-completion-example](../assets/chat-completion.gif)
+
+### Streaming Example
+
+With streaming enabled, responses appear in real-time:
+
+![chat-completion-streaming-example](../assets/chat-completion-streaming.gif)
 
 ## Open WebUI Events
 
@@ -66,10 +94,11 @@ Hayhooks supports sending events to Open WebUI for enhanced user experience:
 
 ### Available Events
 
-- **loading_start**: Show loading spinner
-- **loading_end**: Hide loading spinner
-- **message_update**: Update chat messages
-- **toast_notification**: Show toast notifications
+- **status**: Show progress updates and loading indicators
+- **message**: Append content to the current message
+- **replace**: Replace the current message content entirely
+- **notification**: Show toast notifications (info, success, warning, error)
+- **source**: Add references, citations, or code execution results
 
 ### Event Implementation
 
@@ -105,6 +134,10 @@ class PipelineWrapper(BasePipelineWrapper):
             raise
 ```
 
+Here's how Open WebUI events enhance the user experience:
+
+![open-webui-hayhooks-events](../assets/open-webui-hayhooks-events.gif)
+
 ## Tool Call Interception
 
 For agent pipelines, you can intercept tool calls to provide real-time feedback:
@@ -130,54 +163,48 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 ```
 
-## File Upload Support
+Here's an example of tool call interception in action:
 
-OpenWebUI can send files to your pipelines:
-
-```python
-from fastapi import UploadFile
-from typing import Optional, List
-
-class PipelineWrapper(BasePipelineWrapper):
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> str:
-        # Access uploaded files through the body
-        files = body.get("files", [])
-
-        if files:
-            # Process uploaded files
-            filenames = [f.get("filename", "unknown") for f in files]
-            return f"Received {len(files)} files: {', '.join(filenames)}"
-
-        question = get_last_user_message(messages)
-        result = self.pipeline.run({"prompt_builder": {"query": question}})
-        return result["llm"]["replies"][0].content
-```
+![open-webui-hayhooks-agent-on-tool-calls](../assets/open-webui-hayhooks-agent-on-tool-calls.gif)
 
 ## OpenAPI Tool Server
 
-Hayhooks can also serve as an OpenAPI Tool Server for Open WebUI:
+Hayhooks can serve as an [OpenAPI Tool Server](https://docs.openwebui.com/openapi-servers/) for Open WebUI, exposing its core API endpoints as tools that can be used directly from the chat interface.
 
-### Configuration
+[OpenAPI Tool Servers](https://docs.openwebui.com/openapi-servers/) are a standard way to integrate external tools and data sources into LLM agents using the widely-adopted OpenAPI specification. This approach offers several advantages:
 
-1. Go to **Settings → Tools**
+- **Standard Protocol**: Uses the established OpenAPI specification - no proprietary protocols to learn
+- **Easy Integration**: If you build REST APIs today, you're already familiar with the approach
+- **Secure**: Built on HTTP/REST with standard authentication methods (OAuth, JWT, API Keys)
+- **Flexible Deployment**: Can be hosted locally or externally without vendor lock-in
+
+Since Hayhooks exposes its OpenAPI schema at `/openapi.json`, Open WebUI can automatically discover and integrate all available Hayhooks endpoints as tools.
+
+### Setup
+
+1. Go to **Settings → Tools** in Open WebUI
 2. Add OpenAPI Tool Server:
    - **Name**: Hayhooks
    - **URL**: `http://localhost:1416/openapi.json`
 
 ![open-webui-settings](../assets/open-webui-openapi-tools.png)
 
+### Available Tools
+
+Once configured, the following Hayhooks operations become available as tools in your Open WebUI chat:
+
+- **Deploy Pipeline**: Deploy new pipelines from your chat interface
+- **Undeploy Pipeline**: Remove existing pipelines
+- **Run Pipeline**: Execute deployed pipelines with parameters
+- **Get Status**: Check the status and list of all deployed pipelines
+
+This enables you to manage your entire Hayhooks deployment directly through natural language conversations.
+
 ### Example: Deploy a Haystack pipeline from `open-webui` chat interface
 
 Here's a video example of how to deploy a Haystack pipeline from the `open-webui` chat interface:
 
 ![open-webui-deploy-pipeline-from-chat-example](../assets/open-webui-deploy-pipeline-from-chat.gif)
-
-### Available Tools
-
-- **Deploy Pipeline**: Deploy new pipelines
-- **Undeploy Pipeline**: Remove existing pipelines
-- **Run Pipeline**: Execute deployed pipelines
-- **Get Status**: Check pipeline status
 
 ## Example: Chat with Website
 
@@ -190,7 +217,7 @@ from haystack.components.fetchers import LinkContentFetcher
 from haystack.components.converters import HTMLToDocument
 from haystack.components.builders import PromptBuilder
 from haystack.components.generators import OpenAIChatGenerator
-from hayhooks import async_streaming_generator, get_last_user_message
+from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_user_message
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
@@ -256,18 +283,24 @@ hayhooks status
 # Check deployed pipelines
 curl http://localhost:1416/status
 
-# Test pipeline directly
-curl -X POST http://localhost:1416/my_pipeline/run \
+# Test chat completion endpoint (OpenAI-compatible)
+curl -X POST http://localhost:1416/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"query": "test"}'
+  -d '{
+    "model": "my_pipeline",
+    "messages": [{"role": "user", "content": "test message"}],
+    "stream": false
+  }'
+
+# Test streaming chat completion
+curl -X POST http://localhost:1416/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "my_pipeline",
+    "messages": [{"role": "user", "content": "test message"}],
+    "stream": true
+  }'
 ```
-
-## Best Practices
-
-- **Pipeline Design**: Implement async methods for better streaming performance
-- **Error Handling**: Add proper error handling and logging for debugging
-- **Configuration**: Disable auto-generated content in Open WebUI for simple pipelines
-- **Performance**: Use async pipelines and monitor resource usage
 
 ## Next Steps
 

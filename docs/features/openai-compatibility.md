@@ -4,7 +4,7 @@ Hayhooks provides seamless OpenAI-compatible endpoints for Haystack pipelines an
 
 ## Overview
 
-Hayhooks can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` method in your pipeline wrapper. This makes Hayhooks compatible with fully-featured chat interfaces like [Open WebUI](https://openwebui.com/), so you can use it as a backend for your chat interface.
+Hayhooks can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` or `run_chat_completion_async` method in your pipeline wrapper. This makes Hayhooks compatible with any OpenAI-compatible client or tool, including chat interfaces, agent frameworks, and custom applications.
 
 ## Key Features
 
@@ -108,41 +108,29 @@ When you implement chat completion methods, Hayhooks automatically creates:
 
 ### Chat Endpoints
 
-- `/{pipeline_name}/chat` - Direct chat endpoint
-- `/chat/completions` - OpenAI-compatible endpoint
-- `/v1/chat/completions` - OpenAI API compatible endpoint
+- `/{pipeline_name}/chat` - Direct chat endpoint for a specific pipeline
+- `/chat/completions` - OpenAI-compatible endpoint (routes to the model specified in request)
+- `/v1/chat/completions` - OpenAI API v1 compatible endpoint
 
-### OpenAPI Schema
+All endpoints support the standard OpenAI chat completion request format:
 
-The endpoints are automatically documented in the OpenAPI schema:
-
-```yaml
-/chat/completions:
-  post:
-    summary: OpenAI-compatible chat completion
-    requestBody:
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              model:
-                type: string
-              messages:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ChatMessage'
-              stream:
-                type: boolean
-                default: false
-    responses:
-      '200':
-        description: Successful response
+```json
+{
+  "model": "pipeline_name",
+  "messages": [
+    {"role": "user", "content": "Your message"}
+  ],
+  "stream": false
+}
 ```
 
-## Open WebUI Integration
+### Available Models
 
-For detailed Open WebUI setup and integration, see the [Open WebUI Integration](openwebui-integration.md) guide.
+Use the `/v1/models` endpoint to list all deployed pipelines that support chat completion:
+
+```bash
+curl http://localhost:1416/v1/models
+```
 
 ## Streaming Responses
 
@@ -174,29 +162,33 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
     )
 ```
 
-![chat-completion-streaming-example](../assets/chat-completion-streaming.gif)
+## Using Hayhooks with Haystack's OpenAIChatGenerator
 
-## OpenAIChatGenerator Integration
-
-Hayhooks works seamlessly with Haystack's OpenAIChatGenerator:
+Hayhooks' OpenAI-compatible endpoints can be used as a backend for Haystack's `OpenAIChatGenerator`, enabling you to create pipelines that consume other Hayhooks-deployed pipelines:
 
 ```python
 from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.utils import Secret
+from haystack.dataclasses import ChatMessage
 
-class PipelineWrapper(BasePipelineWrapper):
-    def setup(self) -> None:
-        self.llm = OpenAIChatGenerator(
-            model="gpt-4o-mini",
-            streaming_callback=lambda chunk: print(chunk)
-        )
-        # ... rest of pipeline setup
+# Connect to a Hayhooks-deployed pipeline
+client = OpenAIChatGenerator(
+    model="chat_with_website",  # Your deployed pipeline name
+    api_key=Secret.from_token("not-used"),  # Hayhooks doesn't require authentication
+    api_base_url="http://localhost:1416/v1/",
+    streaming_callback=lambda chunk: print(chunk.content, end="")
+)
 
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
-        return async_streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={"messages": messages},
-        )
+# Use it like any OpenAI client
+result = client.run([ChatMessage.from_user("What is Haystack?")])
+print(result["replies"][0].content)
 ```
+
+This enables powerful use cases:
+
+- **Pipeline Composition**: Chain multiple Hayhooks pipelines together
+- **Testing**: Test your pipelines using Haystack's testing tools
+- **Hybrid Deployments**: Mix local and remote pipeline execution
 
 ## Examples
 
@@ -249,7 +241,41 @@ class AdvancedStreamingWrapper(BasePipelineWrapper):
         )
 ```
 
+## Request Parameters
+
+The OpenAI-compatible endpoints support standard parameters from the `body` argument:
+
+```python
+def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> str:
+    # Access additional parameters
+    temperature = body.get("temperature", 0.7)
+    max_tokens = body.get("max_tokens", 150)
+    stream = body.get("stream", False)
+
+    # Use them in your pipeline
+    result = self.pipeline.run({
+        "llm": {
+            "generation_kwargs": {
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+        }
+    })
+    return result["llm"]["replies"][0].content
+```
+
+**Common parameters include:**
+
+- `temperature`: Controls randomness (0.0 to 2.0)
+- `max_tokens`: Maximum number of tokens to generate
+- `stream`: Enable streaming responses
+- `stop`: Stop sequences
+- `top_p`: Nucleus sampling parameter
+
+See the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create) for the complete list of parameters.
+
 ## Next Steps
 
-- [Open WebUI Integration](openwebui-integration.md) - Complete Open WebUI setup and advanced features
-- [Examples](../examples/overview.md) - See working examples
+- [Open WebUI Integration](openwebui-integration.md) - Use Hayhooks with Open WebUI chat interface
+- [Examples](../examples/overview.md) - Working examples and use cases
+- [File Upload Support](file-upload-support.md) - Handle file uploads in pipelines
