@@ -1,6 +1,6 @@
 # OpenAI Compatibility
 
-Hayhooks provides seamless OpenAI-compatible endpoints for Haystack pipelines and agents, enabling integration with OpenAI-compatible tools and frameworks.
+Hayhooks provides OpenAI-compatible endpoints for Haystack pipelines and agents, enabling integration with OpenAI-compatible tools and frameworks.
 
 !!! tip "Open WebUI Integration"
     Looking to integrate with Open WebUI? Check out the complete [Open WebUI Integration](openwebui-integration.md) guide for detailed setup instructions, event handling, and advanced features.
