@@ -196,10 +196,10 @@ This enables powerful use cases:
 
 ## Examples
 
-### Simple Chat Pipeline
+### Sync Chat Pipeline (Non-Streaming)
 
 ```python
-class SimpleChatWrapper(BasePipelineWrapper):
+class SyncChatWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         from haystack.components.builders import ChatPromptBuilder
         from haystack.components.generators.chat import OpenAIChatGenerator
@@ -220,10 +220,10 @@ class SimpleChatWrapper(BasePipelineWrapper):
         return result["llm"]["replies"][0].content
 ```
 
-### Advanced Streaming Pipeline
+### Async Streaming Pipeline
 
 ```python
-class AdvancedStreamingWrapper(BasePipelineWrapper):
+class AsyncStreamingWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         from haystack.components.builders import ChatPromptBuilder
         from haystack.components.generators.chat import OpenAIChatGenerator
