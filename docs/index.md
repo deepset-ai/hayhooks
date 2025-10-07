@@ -14,10 +14,6 @@ With Hayhooks, you can:
 [![Docker image release](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml)
 [![Tests](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml)
 
-## Documentation
-
-> 📚 **For detailed guides, examples, and API reference, check out our [comprehensive documentation](https://deepset-ai.github.io/hayhooks/).**
-
 ## Quick Start
 
 ### 1. Install Hayhooks

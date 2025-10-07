@@ -24,10 +24,10 @@ class AppSettings(BaseSettings):
     # Additional Python path to be added to the Python path
     additional_python_path: str = ""
 
-    # Host for the FastAPI app
+    # Hayhooks Host
     host: str = "localhost"
 
-    # Port for the FastAPI app
+    # Hayhooks Port
     port: int = 1416
 
     # Whether to use HTTPS when running CLI commands
