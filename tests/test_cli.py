@@ -136,3 +136,45 @@ def test_cli_undeploy_command(monkeypatch):
     result = runner.invoke(hayhooks_cli, ["pipeline", "undeploy", "nonexistent_pipeline"])
     assert result.exit_code != 0
     assert "error" in result.stdout.lower()
+
+
+def test_pipeline_run_with_dir_uploads(monkeypatch, tmp_path):
+    import hayhooks.cli.utils as utils_module
+    from hayhooks.cli.base import hayhooks_cli
+
+    # Create directory and files
+    upload_dir = tmp_path / "files_to_index"
+    (upload_dir / "nested").mkdir(parents=True)
+    contents = {"a.txt": b"hello A", "b.md": b"hello B", "nested/c.log": b"hello C"}
+    for rel_path, data in contents.items():
+        p = upload_dir / rel_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+
+    expected_by_name = {rel.split("/")[-1]: data for rel, data in contents.items()}
+    expected_names = set(expected_by_name.keys())
+    received_names: list[str] = []
+
+    def fake_post(url, data=None, files=None, verify=True, **kwargs):
+        assert url.endswith("/indexing/run")
+        assert verify is True
+        received_names.clear()
+        for _, (filename, file_obj, _ctype) in files:
+            assert file_obj.read() == expected_by_name[filename]
+            received_names.append(filename)
+
+        class _R:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"result": {"files": received_names}}
+
+        return _R()
+
+    monkeypatch.setattr(utils_module.requests, "post", fake_post)
+
+    result = runner.invoke(hayhooks_cli, ["pipeline", "run", "indexing", "--dir", str(upload_dir)])
+    assert result.exit_code == 0
+    assert set(received_names) == expected_names
+    assert "executed successfully" in result.stdout.lower()

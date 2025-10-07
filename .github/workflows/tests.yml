@@ -11,7 +11,7 @@ on:
       - synchronize
 
 env:
-  HATCH_VERSION: "1.14.1"
+  HATCH_VERSION: "1.14.2"
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 jobs:
