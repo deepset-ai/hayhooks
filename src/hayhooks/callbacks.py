@@ -1,5 +1,7 @@
 from typing import Any, Optional, Union
 
+from haystack.tracing.utils import coerce_tag_value
+
 from hayhooks.open_webui import OpenWebUIEvent, create_details_tag, create_notification_event, create_status_event
 
 
@@ -80,3 +82,18 @@ def default_on_tool_call_end(
             content=(f"```\nArguments:\n{arguments}\n\nResponse:\n{result}\n```"),
         ),
     ]
+
+def default_on_pipeline_end(result: Any) -> str:
+    """
+    Default callback function when a pipeline run ends.
+
+    This callback coerces the pipeline result to a string format suitable for display
+    in the Open WebUI interface.
+
+    Args:
+        result (Any): The result produced by the pipeline run.
+
+    Returns:
+        str: The coerced string representation of the pipeline result.
+    """
+    return str(coerce_tag_value(result))

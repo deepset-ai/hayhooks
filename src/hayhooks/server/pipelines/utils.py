@@ -190,8 +190,8 @@ def streaming_generator(  # noqa: C901, PLR0912
         try:
             result = _execute_pipeline_sync(pipeline, configured_args)
             # Send final chunk with the result
-            final_content = on_pipeline_end(result) if on_pipeline_end else str(coerce_tag_value(result))
-            queue.put(StreamingChunk(content=final_content))
+            if on_pipeline_end:
+                queue.put(StreamingChunk(content=on_pipeline_end(result)))
             # Signal completion
             queue.put(None)
         except Exception as e:

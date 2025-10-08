@@ -185,7 +185,9 @@ def test_streaming_generator_with_existing_component_args(mocked_pipeline_with_s
 
     pipeline_run_args = {"streaming_component": {"existing": "args"}}
 
-    generator = streaming_generator(pipeline, pipeline_run_args=pipeline_run_args)
+    generator = streaming_generator(
+        pipeline, pipeline_run_args=pipeline_run_args, on_pipeline_end=callbacks.default_on_pipeline_end
+    )
     chunks = list(generator)
 
     assert chunks == [
@@ -216,7 +218,7 @@ def test_streaming_generator_empty_output(mocked_pipeline_with_streaming_compone
     # Mock the run method without calling streaming callback
     pipeline.run.return_value = {"result": "Final result"}
 
-    generator = streaming_generator(pipeline)
+    generator = streaming_generator(pipeline, on_pipeline_end=callbacks.default_on_pipeline_end)
     chunks = list(generator)
 
     assert chunks == [StreamingChunk(content='{"result": "Final result"}')]
@@ -393,6 +395,7 @@ def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeli
         pipeline,
         on_tool_call_start=callbacks.default_on_tool_call_start,
         on_tool_call_end=callbacks.default_on_tool_call_end,
+        on_pipeline_end=callbacks.default_on_pipeline_end,
     )
     chunks = list(generator)
 
@@ -437,7 +440,10 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
     on_tool_call_end_spy = mocker.spy(callbacks, "default_on_tool_call_end")
 
     generator = streaming_generator(
-        pipeline, on_tool_call_start=on_tool_call_start_spy, on_tool_call_end=on_tool_call_end_spy
+        pipeline,
+        on_tool_call_start=on_tool_call_start_spy,
+        on_tool_call_end=on_tool_call_end_spy,
+        on_pipeline_end=callbacks.default_on_pipeline_end
     )
     chunks = list(generator)
 
@@ -614,7 +620,10 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
     on_tool_call_end_spy = mocker.Mock(side_effect=custom_on_tool_call_end)
 
     generator = streaming_generator(
-        pipeline, on_tool_call_start=on_tool_call_start_spy, on_tool_call_end=on_tool_call_end_spy
+        pipeline,
+        on_tool_call_start=on_tool_call_start_spy,
+        on_tool_call_end=on_tool_call_end_spy,
+        on_pipeline_end=callbacks.default_on_pipeline_end
     )
     chunks = list(generator)
 
@@ -750,7 +759,7 @@ def test_streaming_generator_with_tool_calls_and_no_callbacks(mocked_pipeline_wi
 
     pipeline.run.side_effect = mock_run
 
-    generator = streaming_generator(pipeline)
+    generator = streaming_generator(pipeline, on_pipeline_end=callbacks.default_on_pipeline_end)
     chunks = list(generator)
 
     assert chunks == mock_chunks_from_pipeline + [StreamingChunk(content='{"result": "Final result"}')]
