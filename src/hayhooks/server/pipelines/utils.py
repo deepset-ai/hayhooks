@@ -186,6 +186,7 @@ def streaming_generator(  # noqa: C901, PLR0912
     def run_pipeline() -> None:
         try:
             result = _execute_pipeline_sync(pipeline, configured_args)
+            # TODO Could make this configurable via a callback (e.g. on_pipeline_end)
             # Send final chunk with the result
             queue.put(StreamingChunk(content=str(coerce_tag_value(result))))
             queue.put(None)  # Signal completion
