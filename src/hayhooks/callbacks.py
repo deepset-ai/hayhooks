@@ -83,6 +83,7 @@ def default_on_tool_call_end(
         ),
     ]
 
+
 def default_on_pipeline_end(result: Any) -> str:
     """
     Default callback function when a pipeline run ends.

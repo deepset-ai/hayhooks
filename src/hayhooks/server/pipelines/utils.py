@@ -8,7 +8,6 @@ from haystack import AsyncPipeline, Pipeline
 from haystack.components.agents import Agent
 from haystack.core.component import Component
 from haystack.dataclasses import StreamingChunk
-from haystack.tracing.utils import coerce_tag_value
 
 from hayhooks.open_webui import OpenWebUIEvent
 from hayhooks.server.logger import log
