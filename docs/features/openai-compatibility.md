@@ -194,6 +194,9 @@ This enables powerful use cases:
 - **Testing**: Test your pipelines using Haystack's testing tools
 - **Hybrid Deployments**: Mix local and remote pipeline execution
 
+!!! warning "Limitations"
+    If you customize your Pipeline wrapper to emit [Open WebUI Events](../features/openwebui-integration.md#open-webui-events), it may break out-of-the-box compatibility with Haystack's `OpenAIChatGenerator`.
+
 ## Examples
 
 ### Sync Chat Pipeline (Non-Streaming)

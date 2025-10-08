@@ -100,6 +100,10 @@ Hayhooks supports sending events to Open WebUI for enhanced user experience:
 - **notification**: Show toast notifications (info, success, warning, error)
 - **source**: Add references, citations, or code execution results
 
+!!! warning "Limitations"
+    Customizing your Pipeline wrapper to emit Open WebUI Events may break out-of-the-box compatibility with [Haystack's `OpenAIChatGenerator`](../features/openai-compatibility.md#using-hayhooks-with-haystacks-openaichatgenerator).
+    Your pipeline will still function normally, but it may not be directly consumable through `OpenAIChatGenerator`.
+
 ### Event Implementation
 
 ```python
