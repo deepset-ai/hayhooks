@@ -116,7 +116,7 @@ docker run -d \
   -e HAYHOOKS_PIPELINES_DIR=/app/pipelines \
   -v "$PWD/pipelines:/app/pipelines:ro" \
   -p 1416:1416 \
-  deepset/hayhooks:latest
+  deepset/hayhooks:main
 ```
 
 !!! warning "Pipeline Directory Required"
