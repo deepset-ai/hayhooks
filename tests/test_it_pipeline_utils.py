@@ -762,7 +762,7 @@ def test_streaming_generator_with_tool_calls_and_no_callbacks(mocked_pipeline_wi
     generator = streaming_generator(pipeline, on_pipeline_end=callbacks.default_on_pipeline_end)
     chunks = list(generator)
 
-    assert chunks == mock_chunks_from_pipeline + [StreamingChunk(content='{"result": "Final result"}')]
+    assert chunks == [*mock_chunks_from_pipeline, StreamingChunk(content='{"result": "Final result"}')]
 
 
 @pytest.mark.asyncio
