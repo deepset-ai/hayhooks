@@ -17,6 +17,7 @@ from hayhooks.server.routers.openai import Message
 ToolCallbackReturn = Union[OpenWebUIEvent, str, None, list[Union[OpenWebUIEvent, str]]]
 OnToolCallStart = Optional[Callable[[str, Optional[str], Optional[str]], ToolCallbackReturn]]
 OnToolCallEnd = Optional[Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn]]
+OnPipelineEnd = Optional[Callable[[Any], str]]
 
 
 def is_user_message(msg: Union[Message, dict]) -> bool:
@@ -152,6 +153,7 @@ def streaming_generator(  # noqa: C901, PLR0912
     pipeline_run_args: Optional[dict[str, Any]] = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
+    on_pipeline_end: OnPipelineEnd = None,
 ) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
@@ -163,6 +165,7 @@ def streaming_generator(  # noqa: C901, PLR0912
         pipeline_run_args: Arguments for execution
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
+        on_pipeline_end: Callback for pipeline end
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -186,10 +189,11 @@ def streaming_generator(  # noqa: C901, PLR0912
     def run_pipeline() -> None:
         try:
             result = _execute_pipeline_sync(pipeline, configured_args)
-            # TODO Could make this configurable via a callback (e.g. on_pipeline_end)
             # Send final chunk with the result
-            queue.put(StreamingChunk(content=str(coerce_tag_value(result))))
-            queue.put(None)  # Signal completion
+            final_content = on_pipeline_end(result) if on_pipeline_end else str(coerce_tag_value(result))
+            queue.put(StreamingChunk(content=final_content))
+            # Signal completion
+            queue.put(None)
         except Exception as e:
             log.error(f"Error in pipeline execution thread for streaming_generator: {e}", exc_info=True)
             queue.put(e)  # Signal error
