@@ -179,6 +179,7 @@ def test_streaming_generator_with_existing_component_args(mocked_pipeline_with_s
         if streaming_component.streaming_callback:
             streaming_component.streaming_callback(StreamingChunk(content="chunk1"))
             streaming_component.streaming_callback(StreamingChunk(content="chunk2"))
+        return {"result": "Final result"}
 
     pipeline.run.side_effect = mock_run
 
@@ -187,7 +188,11 @@ def test_streaming_generator_with_existing_component_args(mocked_pipeline_with_s
     generator = streaming_generator(pipeline, pipeline_run_args=pipeline_run_args)
     chunks = list(generator)
 
-    assert chunks == [StreamingChunk(content="chunk1"), StreamingChunk(content="chunk2")]
+    assert chunks == [
+        StreamingChunk(content="chunk1"),
+        StreamingChunk(content="chunk2"),
+        StreamingChunk(content='{"result": "Final result"}')
+    ]
     # Verify original args were preserved and copied
     assert pipeline_run_args == {"streaming_component": {"existing": "args"}}
 
@@ -209,12 +214,12 @@ def test_streaming_generator_empty_output(mocked_pipeline_with_streaming_compone
     _, pipeline = mocked_pipeline_with_streaming_component
 
     # Mock the run method without calling streaming callback
-    pipeline.run.return_value = None
+    pipeline.run.return_value = {"result": "Final result"}
 
     generator = streaming_generator(pipeline)
     chunks = list(generator)
 
-    assert chunks == []
+    assert chunks == [StreamingChunk(content='{"result": "Final result"}')]
 
 
 @pytest.mark.asyncio
@@ -380,6 +385,7 @@ def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeli
         if streaming_component.streaming_callback:
             for chunk in mock_chunks_from_pipeline:
                 streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
 
     pipeline.run.side_effect = mock_run
 
@@ -390,7 +396,7 @@ def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeli
     )
     chunks = list(generator)
 
-    assert len(chunks) == 6
+    assert len(chunks) == 7
     assert isinstance(chunks[0], OpenWebUIEvent)
     assert chunks[0].type == "status"
     assert "Calling 'test_tool' tool..." in chunks[0].data.description
@@ -422,6 +428,7 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
         if streaming_component.streaming_callback:
             for chunk in mock_chunks_from_pipeline:
                 streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
 
     pipeline.run.side_effect = mock_run
 
@@ -435,7 +442,7 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
     chunks = list(generator)
 
     # Verify the chunks contain the expected results from the real callbacks
-    assert len(chunks) == 5
+    assert len(chunks) == 6
 
     # First chunk should be the result from default_on_tool_call_start
     assert isinstance(chunks[0], OpenWebUIEvent)
@@ -456,6 +463,9 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
 
     # Fifth chunk is the original streaming chunk
     assert chunks[4] == mock_chunks_from_pipeline[1]
+
+    # Sixth chunk is the final result from pipeline.run
+    assert chunks[5] == StreamingChunk(content='{"result": "Final result"}')
 
     # Verify the spies were called correctly
     on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
@@ -582,6 +592,7 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
         if streaming_component.streaming_callback:
             for chunk in mock_chunks_from_pipeline:
                 streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
 
     pipeline.run.side_effect = mock_run
 
@@ -608,7 +619,7 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
     chunks = list(generator)
 
     # Verify the chunks contain the expected results from the real callbacks
-    assert len(chunks) == 6
+    assert len(chunks) == 7
 
     # First two chunks should be the results from custom_on_tool_call_start
     assert isinstance(chunks[0], OpenWebUIEvent)
@@ -633,6 +644,9 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
 
     # Sixth chunk is the original streaming chunk
     assert chunks[5] == mock_chunks_from_pipeline[1]
+
+    # Seventh chunk is the final result from pipeline.run
+    assert chunks[6] == StreamingChunk(content='{"result": "Final result"}')
 
     # Verify the spies were called correctly
     on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
@@ -732,13 +746,14 @@ def test_streaming_generator_with_tool_calls_and_no_callbacks(mocked_pipeline_wi
         if streaming_component.streaming_callback:
             for chunk in mock_chunks_from_pipeline:
                 streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
 
     pipeline.run.side_effect = mock_run
 
     generator = streaming_generator(pipeline)
     chunks = list(generator)
 
-    assert chunks == mock_chunks_from_pipeline
+    assert chunks == mock_chunks_from_pipeline + [StreamingChunk(content='{"result": "Final result"}')]
 
 
 @pytest.mark.asyncio
