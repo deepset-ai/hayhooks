@@ -340,6 +340,7 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
     pipeline_run_args: Optional[dict[str, Any]] = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
+    on_pipeline_end: OnPipelineEnd = None,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
@@ -351,6 +352,7 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
         pipeline_run_args: Arguments for execution
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
+        on_pipeline_end: Callback for pipeline end
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -408,6 +410,8 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
             yield chunk
 
         await pipeline_task
+        if on_pipeline_end:
+            yield StreamingChunk(content=on_pipeline_end(pipeline_task.result()))
 
     except Exception as e:
         log.error(f"Unexpected error in async streaming generator: {e}")
