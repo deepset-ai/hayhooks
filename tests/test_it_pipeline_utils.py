@@ -193,7 +193,7 @@ def test_streaming_generator_with_existing_component_args(mocked_pipeline_with_s
     assert chunks == [
         StreamingChunk(content="chunk1"),
         StreamingChunk(content="chunk2"),
-        StreamingChunk(content='{"result": "Final result"}')
+        StreamingChunk(content='{"result": "Final result"}'),
     ]
     # Verify original args were preserved and copied
     assert pipeline_run_args == {"streaming_component": {"existing": "args"}}
@@ -249,7 +249,8 @@ async def test_async_streaming_generator_with_existing_component_args(mocker, mo
     pipeline_run_args = {"streaming_component": {"existing": "args"}}
 
     chunks = [
-        chunk async for chunk in async_streaming_generator(
+        chunk
+        async for chunk in async_streaming_generator(
             pipeline, pipeline_run_args=pipeline_run_args, on_pipeline_end=callbacks.default_on_pipeline_end
         )
     ]
@@ -448,7 +449,7 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
         pipeline,
         on_tool_call_start=on_tool_call_start_spy,
         on_tool_call_end=on_tool_call_end_spy,
-        on_pipeline_end=callbacks.default_on_pipeline_end
+        on_pipeline_end=callbacks.default_on_pipeline_end,
     )
     chunks = list(generator)
 
@@ -563,7 +564,7 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
         pipeline,
         on_tool_call_start=on_tool_call_start_spy,
         on_tool_call_end=on_tool_call_end_spy,
-        on_pipeline_end=callbacks.default_on_pipeline_end
+        on_pipeline_end=callbacks.default_on_pipeline_end,
     )
     chunks = [chunk async for chunk in generator]
 
@@ -639,7 +640,7 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
         pipeline,
         on_tool_call_start=on_tool_call_start_spy,
         on_tool_call_end=on_tool_call_end_spy,
-        on_pipeline_end=callbacks.default_on_pipeline_end
+        on_pipeline_end=callbacks.default_on_pipeline_end,
     )
     chunks = list(generator)
 
@@ -722,7 +723,7 @@ async def test_async_streaming_generator_with_custom_callbacks_returning_list(
         pipeline,
         on_tool_call_start=on_tool_call_start_spy,
         on_tool_call_end=on_tool_call_end_spy,
-        on_pipeline_end=callbacks.default_on_pipeline_end
+        on_pipeline_end=callbacks.default_on_pipeline_end,
     )
     chunks = [chunk async for chunk in generator]
 
