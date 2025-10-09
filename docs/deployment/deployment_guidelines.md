@@ -173,7 +173,7 @@ docker run -d \
   -e HAYHOOKS_HOST=0.0.0.0 \
   -e HAYHOOKS_PIPELINES_DIR=/app/pipelines \
   -v "$PWD/pipelines:/app/pipelines:ro" \
-  deepset/hayhooks:latest
+  deepset/hayhooks:main
 ```
 
 ### Docker Compose
@@ -182,7 +182,7 @@ docker run -d \
 version: '3.8'
 services:
   hayhooks:
-    image: deepset/hayhooks:latest
+    image: deepset/hayhooks:main
     ports:
       - "1416:1416"
     environment:
@@ -203,7 +203,7 @@ Add health checks to monitor container health:
 ```yaml
 services:
   hayhooks:
-    image: deepset/hayhooks:latest
+    image: deepset/hayhooks:main
     ports:
       - "1416:1416"
     environment:

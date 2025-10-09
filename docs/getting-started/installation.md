@@ -104,12 +104,14 @@ pip install -e .
 ### Using Docker Hub
 
 ```bash
-# Pull the latest image
-docker pull deepset/hayhooks:latest
+# Pull the image corresponding to Hayhooks main branch
+docker pull deepset/hayhooks:main
 
 # Run Hayhooks
-docker run -p 1416:1416 deepset/hayhooks:latest
+docker run -p 1416:1416 deepset/hayhooks:main
 ```
+
+You can inspect all available images on [Docker Hub](https://hub.docker.com/r/deepset/hayhooks/tags).
 
 ### Building from Source
 
