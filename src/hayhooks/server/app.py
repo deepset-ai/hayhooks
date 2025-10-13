@@ -27,7 +27,7 @@ def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
         dict: Deployment result containing pipeline name
     """
     name = pipeline_file_path.stem
-    with open(pipeline_file_path) as pipeline_file:
+    with open(pipeline_file_path, encoding="utf-8") as pipeline_file:
         source_code = pipeline_file.read()
 
     deployed_pipeline = deploy_pipeline_yaml(pipeline_name=name, source_code=source_code, app=app)
