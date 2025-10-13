@@ -71,7 +71,7 @@ def deploy_yaml(  # noqa: PLR0913
 
     payload = {
         "name": name,
-        "source_code": pipeline_file.read_text(),
+        "source_code": pipeline_file.read_text(encoding="utf-8"),
         "overwrite": overwrite,
         "save_file": save_file,
         "skip_mcp": skip_mcp,

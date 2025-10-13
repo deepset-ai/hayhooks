@@ -421,3 +421,65 @@ def test_deploy_pipeline_files_without_return_type(test_settings, mocker):
         PipelineWrapperError, match=re.escape("Pipeline wrapper is missing a return type for 'run_api' method")
     ):
         deploy_pipeline_files(app=mock_app, pipeline_name="test_pipeline_no_return_type", files=files, save_files=False)
+
+
+def test_deploy_pipeline_files_with_utf8_characters(test_settings):
+    """Test that pipeline files with UTF-8 characters are loaded and deployed correctly."""
+    test_file_path = Path("tests/test_files/files/utf8_pipeline/pipeline_wrapper.py")
+    files = {"pipeline_wrapper.py": test_file_path.read_text(encoding="utf-8")}
+
+    # Verify UTF-8 characters are present in the file contents
+    assert "你好世界" in files["pipeline_wrapper.py"]
+    assert "🌍" in files["pipeline_wrapper.py"]
+    assert "こんにちは" in files["pipeline_wrapper.py"]
+    assert "мир" in files["pipeline_wrapper.py"]
+
+    # Deploy the pipeline without an app (no routes added)
+    result = deploy_pipeline_files(pipeline_name="utf8_test_pipeline", files=files, save_files=False)
+    assert result == {"name": "utf8_test_pipeline"}
+
+    # Verify the pipeline was deployed successfully
+    assert registry.get("utf8_test_pipeline") is not None
+
+    # Verify the pipeline can be called and returns UTF-8 characters
+    pipeline_wrapper = registry.get("utf8_test_pipeline")
+    response = pipeline_wrapper.run_api(test_param="test")
+    assert "你好世界" in response["message"]
+    assert "🌍" in response["message"]
+    assert "мир" in response["message"]
+
+
+def test_save_pipeline_files_with_utf8_characters(test_settings):
+    """Test that pipeline files with UTF-8 characters can be saved and loaded correctly."""
+    files = {
+        "pipeline_wrapper.py": """# -*- coding: utf-8 -*-
+# Test UTF-8: 你好世界 🌍 こんにちは мир
+from haystack import Pipeline
+from hayhooks import BasePipelineWrapper
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self):
+        self.pipeline = Pipeline()
+
+    def run_api(self, param: str) -> dict:
+        return {"result": f"UTF-8 test: {param} 你好 🌍"}
+""",
+        "config.txt": "Configuration with UTF-8: 测试 🚀 привет",
+    }
+
+    saved_paths = save_pipeline_files("utf8_pipeline_save_test", files, pipelines_dir=test_settings.pipelines_dir)
+
+    assert len(saved_paths) == 2
+    for filename, path in saved_paths.items():
+        assert Path(path).exists()
+        # Read back with UTF-8 encoding and verify contents
+        content = Path(path).read_text(encoding="utf-8")
+        assert content == files[filename]
+
+        # Verify UTF-8 characters are preserved
+        if filename == "pipeline_wrapper.py":
+            assert "你好世界" in content
+            assert "🌍" in content
+        elif filename == "config.txt":
+            assert "测试" in content
+            assert "🚀" in content

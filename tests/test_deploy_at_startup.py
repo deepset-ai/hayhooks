@@ -89,7 +89,7 @@ def test_app_loads_pipeline_from_yaml_directory(test_client_yaml, test_yaml_pipe
     assert response.status_code == 200
 
     pipelines = response.json()["pipelines"]
-    assert len(pipelines) == 2
+    assert len(pipelines) == 3
 
 
 def test_app_loads_pipeline_from_mixed_directory(test_client_mixed, test_mixed_pipelines_dir):
@@ -97,7 +97,7 @@ def test_app_loads_pipeline_from_mixed_directory(test_client_mixed, test_mixed_p
     assert response.status_code == 200
 
     pipelines = response.json()["pipelines"]
-    assert len(pipelines) == 2  # 1 file, 1 yaml
+    assert len(pipelines) == 2
 
 
 def test_app_version_is_pep440_compliant():
@@ -109,3 +109,17 @@ def test_app_version_is_pep440_compliant():
     except InvalidVersion as e:
         msg = f"App version '{app.version}' is not a valid PEP 440 version"
         raise AssertionError(msg) from e
+
+
+def test_app_loads_yaml_pipeline_with_utf8_characters(test_settings, monkeypatch):
+    utf8_yaml_dir = Path("tests/test_files/yaml")
+    monkeypatch.setattr(test_settings, "pipelines_dir", str(utf8_yaml_dir))
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/status")
+        assert response.status_code == 200
+
+        pipelines = response.json()["pipelines"]
+        # The utf8_pipeline.yml should be loaded
+        assert "utf8_pipeline" in pipelines

@@ -73,3 +73,27 @@ def test_yaml_pipeline_is_async_pipeline():
 
     pipeline_instance = registry.get(pipeline_name)
     assert isinstance(pipeline_instance, AsyncPipeline)
+
+
+def test_deploy_yaml_pipeline_with_utf8_characters():
+    pipeline_file = Path(__file__).parent / "test_files/yaml/utf8_pipeline.yml"
+    pipeline_data = {
+        "name": pipeline_file.stem,
+        "source_code": pipeline_file.read_text(encoding="utf-8"),
+    }
+
+    # Verify UTF-8 characters are present in the source code
+    assert "你好世界" in pipeline_data["source_code"]
+    assert "🌍" in pipeline_data["source_code"]
+    assert "こんにちは" in pipeline_data["source_code"]
+    assert "мир" in pipeline_data["source_code"]
+
+    add_yaml_pipeline_to_registry(
+        pipeline_name=pipeline_data["name"],
+        source_code=pipeline_data["source_code"],
+    )
+
+    assert registry.get(pipeline_data["name"]) is not None
+
+    metadata = registry.get_metadata(pipeline_data["name"])
+    assert metadata is not None

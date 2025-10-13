@@ -1,0 +1,23 @@
+components:
+  first_addition:
+    init_parameters:
+      add: 2
+    type: haystack.testing.sample_components.add_value.AddFixedValue
+  double:
+    init_parameters: {}
+    type: haystack.testing.sample_components.double.Double
+
+connections:
+- receiver: double.value
+  sender: first_addition.result
+
+metadata:
+  # Test UTF-8 characters: 你好世界 🌍 こんにちは мир
+  description: "Pipeline with UTF-8: 你好世界 🌍 こんにちは мир Δοκιμή"
+  author: "测试 🚀"
+
+inputs:
+  value: first_addition.value
+
+outputs:
+  result: double.value
