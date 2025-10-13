@@ -3,6 +3,7 @@ import os
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
+from loguru import logger
 import pytest
 from haystack import AsyncPipeline, Pipeline
 from haystack.components.builders import ChatPromptBuilder, PromptBuilder
@@ -915,3 +916,62 @@ async def test_async_streaming_generator_on_pipeline_end_callback_no_return(
     assert len(chunks) == 2
     assert chunks[0] == mock_chunks_from_pipeline[0]
     assert chunks[1] == mock_chunks_from_pipeline[1]
+
+
+def test_sync_streaming_generator_on_pipeline_end_callback_raises(mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="Chunk 1", index=0),
+        StreamingChunk(content="Chunk 2", index=0),
+    ]
+
+    def mock_run(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
+
+    pipeline.run.side_effect = mock_run
+
+    # Custom callback that raises an exception
+    def custom_on_pipeline_end(output):
+        raise ValueError("Callback error")
+
+    generator = streaming_generator(pipeline, on_pipeline_end=custom_on_pipeline_end)
+
+    messages = []
+    logger.add(lambda msg: messages.append(msg), level="ERROR")
+    _ = list(generator)
+    assert "Callback error" in messages[0]
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_on_pipeline_end_callback_raises(
+    mocker, mocked_pipeline_with_streaming_component
+):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="Chunk 1", index=0),
+        StreamingChunk(content="Chunk 2", index=0),
+    ]
+
+    async def mock_run_async(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                await streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    # Custom callback that raises an exception
+    def custom_on_pipeline_end(output):
+        raise ValueError("Callback error")
+
+    generator = async_streaming_generator(pipeline, on_pipeline_end=custom_on_pipeline_end)
+
+    messages = []
+    logger.add(lambda msg: messages.append(msg), level="ERROR")
+    _ = [chunk async for chunk in generator]
+    assert "Callback error" in messages[0]
