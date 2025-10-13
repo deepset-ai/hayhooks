@@ -180,22 +180,15 @@ def test_streaming_generator_with_existing_component_args(mocked_pipeline_with_s
         if streaming_component.streaming_callback:
             streaming_component.streaming_callback(StreamingChunk(content="chunk1"))
             streaming_component.streaming_callback(StreamingChunk(content="chunk2"))
-        return {"result": "Final result"}
 
     pipeline.run.side_effect = mock_run
 
     pipeline_run_args = {"streaming_component": {"existing": "args"}}
 
-    generator = streaming_generator(
-        pipeline, pipeline_run_args=pipeline_run_args, on_pipeline_end=callbacks.default_on_pipeline_end
-    )
+    generator = streaming_generator(pipeline, pipeline_run_args=pipeline_run_args)
     chunks = list(generator)
 
-    assert chunks == [
-        StreamingChunk(content="chunk1"),
-        StreamingChunk(content="chunk2"),
-        StreamingChunk(content='{"result": "Final result"}'),
-    ]
+    assert chunks == [StreamingChunk(content="chunk1"), StreamingChunk(content="chunk2")]
     # Verify original args were preserved and copied
     assert pipeline_run_args == {"streaming_component": {"existing": "args"}}
 
@@ -215,9 +208,6 @@ def test_streaming_generator_pipeline_exception(mocked_pipeline_with_streaming_c
 
 def test_streaming_generator_empty_output(mocked_pipeline_with_streaming_component):
     _, pipeline = mocked_pipeline_with_streaming_component
-
-    # Mock the run method without calling streaming callback
-    pipeline.run.return_value = {"result": "Final result"}
 
     generator = streaming_generator(pipeline)
     chunks = list(generator)
@@ -244,18 +234,15 @@ async def test_async_streaming_generator_with_existing_component_args(mocker, mo
         if streaming_component.streaming_callback:
             await streaming_component.streaming_callback(mock_chunks[0])
             await streaming_component.streaming_callback(mock_chunks[1])
-        return {"result": "Final result"}
 
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
     pipeline_run_args = {"streaming_component": {"existing": "args"}}
 
     chunks = [
         chunk
-        async for chunk in async_streaming_generator(
-            pipeline, pipeline_run_args=pipeline_run_args, on_pipeline_end=callbacks.default_on_pipeline_end
-        )
+        async for chunk in async_streaming_generator(pipeline, pipeline_run_args=pipeline_run_args)
     ]
-    assert chunks == [*mock_chunks, StreamingChunk(content='{"result": "Final result"}')]
+    assert chunks == mock_chunks
 
     # Verify original args were preserved and copied
     assert pipeline_run_args == {"streaming_component": {"existing": "args"}}
