@@ -3,7 +3,6 @@ import os
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
-from loguru import logger
 import pytest
 from haystack import AsyncPipeline, Pipeline
 from haystack.components.builders import ChatPromptBuilder, PromptBuilder
@@ -11,6 +10,7 @@ from haystack.components.generators import OpenAIGenerator
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall, ToolCallDelta, ToolCallResult
 from haystack.utils import Secret
+from loguru import logger
 
 from hayhooks import callbacks
 from hayhooks.open_webui import OpenWebUIEvent, create_notification_event
@@ -936,7 +936,8 @@ def test_sync_streaming_generator_on_pipeline_end_callback_raises(mocked_pipelin
 
     # Custom callback that raises an exception
     def custom_on_pipeline_end(output):
-        raise ValueError("Callback error")
+        msg = "Callback error"
+        raise ValueError(msg)
 
     generator = streaming_generator(pipeline, on_pipeline_end=custom_on_pipeline_end)
 
@@ -967,7 +968,8 @@ async def test_async_streaming_generator_on_pipeline_end_callback_raises(
 
     # Custom callback that raises an exception
     def custom_on_pipeline_end(output):
-        raise ValueError("Callback error")
+        msg = "Callback error"
+        raise ValueError(msg)
 
     generator = async_streaming_generator(pipeline, on_pipeline_end=custom_on_pipeline_end)
 
