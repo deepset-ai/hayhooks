@@ -805,3 +805,113 @@ async def test_async_streaming_generator_with_tool_calls_and_no_callbacks(
     chunks = [chunk async for chunk in generator]
 
     assert chunks == mock_chunks_from_pipeline
+
+
+def test_sync_streaming_generator_on_pipeline_end_callback(mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="Chunk 1", index=0),
+        StreamingChunk(content="Chunk 2", index=0),
+    ]
+
+    def mock_run(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline, on_pipeline_end=callbacks.default_on_pipeline_end)
+    chunks = list(generator)
+
+    assert len(chunks) == 3
+    assert chunks[0] == mock_chunks_from_pipeline[0]
+    assert chunks[1] == mock_chunks_from_pipeline[1]
+    assert chunks[2] == StreamingChunk(content='{"result": "Final result"}')
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_on_pipeline_end_callback(mocker, mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="Chunk 1", index=0),
+        StreamingChunk(content="Chunk 2", index=0),
+    ]
+
+    async def mock_run_async(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                await streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    generator = async_streaming_generator(pipeline, on_pipeline_end=callbacks.default_on_pipeline_end)
+    chunks = [chunk async for chunk in generator]
+
+    assert len(chunks) == 3
+    assert chunks[0] == mock_chunks_from_pipeline[0]
+    assert chunks[1] == mock_chunks_from_pipeline[1]
+    assert chunks[2] == StreamingChunk(content='{"result": "Final result"}')
+
+
+def test_sync_streaming_generator_on_pipeline_end_callback_no_return(mocked_pipeline_with_streaming_component):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="Chunk 1", index=0),
+        StreamingChunk(content="Chunk 2", index=0),
+    ]
+
+    def mock_run(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
+
+    pipeline.run.side_effect = mock_run
+
+    # Custom callback that returns None
+    def custom_on_pipeline_end(output):
+        pass
+
+    generator = streaming_generator(pipeline, on_pipeline_end=custom_on_pipeline_end)
+    chunks = list(generator)
+
+    assert len(chunks) == 2
+    assert chunks[0] == mock_chunks_from_pipeline[0]
+    assert chunks[1] == mock_chunks_from_pipeline[1]
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_on_pipeline_end_callback_no_return(
+    mocker, mocked_pipeline_with_streaming_component
+):
+    streaming_component, pipeline = mocked_pipeline_with_streaming_component
+
+    mock_chunks_from_pipeline = [
+        StreamingChunk(content="Chunk 1", index=0),
+        StreamingChunk(content="Chunk 2", index=0),
+    ]
+
+    async def mock_run_async(data):
+        if streaming_component.streaming_callback:
+            for chunk in mock_chunks_from_pipeline:
+                await streaming_component.streaming_callback(chunk)
+        return {"result": "Final result"}
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    # Custom callback that returns None
+    def custom_on_pipeline_end(output):
+        pass
+
+    generator = async_streaming_generator(pipeline, on_pipeline_end=custom_on_pipeline_end)
+    chunks = [chunk async for chunk in generator]
+
+    assert len(chunks) == 2
+    assert chunks[0] == mock_chunks_from_pipeline[0]
+    assert chunks[1] == mock_chunks_from_pipeline[1]

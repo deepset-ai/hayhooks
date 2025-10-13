@@ -417,7 +417,12 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
 
         await pipeline_task
         if on_pipeline_end:
-            yield StreamingChunk(content=on_pipeline_end(pipeline_task.result()))
+            try:
+                on_pipeline_end_result = on_pipeline_end(pipeline_task.result())
+                if on_pipeline_end_result:
+                    yield StreamingChunk(content=on_pipeline_end_result)
+            except Exception as e:
+                log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
 
     except Exception as e:
         log.error(f"Unexpected error in async streaming generator: {e}")
