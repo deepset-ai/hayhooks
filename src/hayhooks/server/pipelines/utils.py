@@ -16,7 +16,7 @@ from hayhooks.server.routers.openai import Message
 ToolCallbackReturn = Union[OpenWebUIEvent, str, None, list[Union[OpenWebUIEvent, str]]]
 OnToolCallStart = Optional[Callable[[str, Optional[str], Optional[str]], ToolCallbackReturn]]
 OnToolCallEnd = Optional[Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn]]
-OnPipelineEnd = Optional[Callable[[Any], str]]
+OnPipelineEnd = Optional[Callable[[Any], Optional[str]]]
 
 
 def is_user_message(msg: Union[Message, dict]) -> bool:
@@ -188,9 +188,15 @@ def streaming_generator(  # noqa: C901, PLR0912
     def run_pipeline() -> None:
         try:
             result = _execute_pipeline_sync(pipeline, configured_args)
-            # Send final chunk with the result
+            # Call on_pipeline_end if provided
             if on_pipeline_end:
-                queue.put(StreamingChunk(content=on_pipeline_end(result)))
+                try:
+                    on_pipeline_end_result = on_pipeline_end(result)
+                    # Send final chunk if on_pipeline_end returned content
+                    if on_pipeline_end_result:
+                        queue.put(StreamingChunk(content=on_pipeline_end_result))
+                except Exception as e:
+                    log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
             # Signal completion
             queue.put(None)
         except Exception as e:
