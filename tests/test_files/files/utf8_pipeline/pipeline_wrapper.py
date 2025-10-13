@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 """
 Pipeline wrapper with UTF-8 characters for testing.
 测试 UTF-8 字符支持 🌍 こんにちは мир
 """
+
 from haystack import Pipeline
 
 from hayhooks import BasePipelineWrapper
@@ -34,5 +34,5 @@ class PipelineWrapper(BasePipelineWrapper):
         return {
             "result": f"Response: {test_param}",
             "greeting": self.greeting,
-            "message": "UTF-8 test: 你好世界 🌍 こんにちは мир Δοκιμή"
+            "message": "UTF-8 test: 你好世界 🌍 こんにちは мир Δοκιμή",
         }
