@@ -366,3 +366,54 @@ def test_deploy_async_pipeline_wrapper(status_pipeline, client, deploy_files) ->
     )
     assert response.status_code == 200
     assert response.json() == {"result": "This is a mock response from the pipeline"}
+
+
+def test_deploy_files_with_utf8_characters(status_pipeline, client, deploy_files) -> None:
+    utf8_pipeline_dir = TEST_FILES_DIR / "utf8_pipeline"
+    utf8_pipeline_files = {
+        "pipeline_wrapper.py": (utf8_pipeline_dir / "pipeline_wrapper.py").read_text(encoding="utf-8"),
+    }
+
+    # Verify UTF-8 characters are present in the files
+    assert "你好世界" in utf8_pipeline_files["pipeline_wrapper.py"]
+    assert "🌍" in utf8_pipeline_files["pipeline_wrapper.py"]
+    assert "こんにちは" in utf8_pipeline_files["pipeline_wrapper.py"]
+    assert "мир" in utf8_pipeline_files["pipeline_wrapper.py"]
+
+    # Deploy the pipeline
+    response = deploy_files(client, pipeline_name="utf8_pipeline", pipeline_files=utf8_pipeline_files)
+    assert response.status_code == 200
+    assert (
+        response.json()
+        == DeployResponse(name="utf8_pipeline", success=True, endpoint="/utf8_pipeline/run").model_dump()
+    )
+
+    # Check status
+    status_response = status_pipeline(client, "utf8_pipeline")
+    assert status_response.status_code == 200
+
+    status_body = PipelineStatusResponse(**status_response.json())
+    assert status_body.pipeline == "utf8_pipeline"
+
+    # Test if /{pipeline_name}/run endpoint works with UTF-8 data
+    response = client.post(
+        "/utf8_pipeline/run",
+        json={"test_param": "测试参数 🔧"},
+    )
+    assert response.status_code == 200
+
+    response_data = response.json()
+    assert "result" in response_data
+
+    # The actual result is nested inside the "result" key
+    result = response_data["result"]
+    assert "result" in result
+    assert "greeting" in result
+    assert "message" in result
+
+    # Verify UTF-8 characters are returned correctly
+    assert "世界" in result["greeting"]
+    assert "🌍" in result["greeting"]
+    assert "你好世界" in result["message"]
+    assert "мир" in result["message"]
+    assert "测试参数 🔧" in result["result"]
