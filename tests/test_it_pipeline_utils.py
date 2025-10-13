@@ -238,10 +238,7 @@ async def test_async_streaming_generator_with_existing_component_args(mocker, mo
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
     pipeline_run_args = {"streaming_component": {"existing": "args"}}
 
-    chunks = [
-        chunk
-        async for chunk in async_streaming_generator(pipeline, pipeline_run_args=pipeline_run_args)
-    ]
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline, pipeline_run_args=pipeline_run_args)]
     assert chunks == mock_chunks
 
     # Verify original args were preserved and copied
