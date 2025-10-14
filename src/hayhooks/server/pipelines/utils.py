@@ -196,6 +196,7 @@ def streaming_generator(  # noqa: C901, PLR0912
                     if on_pipeline_end_result:
                         queue.put(StreamingChunk(content=on_pipeline_end_result))
                 except Exception as e:
+                    # We don't put the error into the queue to avoid breaking the stream
                     log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
             # Signal completion
             queue.put(None)
