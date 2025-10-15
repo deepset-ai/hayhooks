@@ -120,7 +120,7 @@ curl -X POST http://localhost:1416/chat/completions \
   }'
 ```
 
-Or [integrate it with Open WebUI](features/openai-compatibility.md#open-webui-integration) and start chatting with it!
+Or [integrate it with Open WebUI](docs/features/openwebui-integration.md) and start chatting with it!
 
 ## Key Features
 
@@ -150,10 +150,10 @@ Or [integrate it with Open WebUI](features/openai-compatibility.md#open-webui-in
 
 ## Next Steps
 
-- [Quick Start Guide](getting-started/quick-start.md) - Get started with Hayhooks
-- [Installation](getting-started/installation.md) - Install Hayhooks and dependencies
-- [Configuration](getting-started/configuration.md) - Configure Hayhooks for your needs
-- [Examples](examples/overview.md) - Explore example implementations
+- [Quick Start Guide](docs/getting-started/quick-start.md) - Get started with Hayhooks
+- [Installation](docs/getting-started/installation.md) - Install Hayhooks and dependencies
+- [Configuration](docs/getting-started/configuration.md) - Configure Hayhooks for your needs
+- [Examples](docs/examples/overview.md) - Explore example implementations
 
 ## Community & Support
 
