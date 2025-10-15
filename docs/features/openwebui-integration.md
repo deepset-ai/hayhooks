@@ -171,6 +171,41 @@ Here's an example of tool call interception in action:
 
 ![open-webui-hayhooks-agent-on-tool-calls](../assets/open-webui-hayhooks-agent-on-tool-calls.gif)
 
+
+## Streaming the Final Pipeline Output
+
+The `on_pipeline_end` callback lets you customize what happens after a pipeline finishes running when using `streaming_generator` or `async_streaming_generator`.
+You can use it to return the final output of the pipeline, or add additional information (e.g. adding sources).
+
+Here’s how you can define and use `on_pipeline_end`:
+
+```python
+def on_pipeline_end(result: dict):
+    """Called after the pipeline completes. Can format or summarize results."""
+    documents = result.get("documents", [])
+    references_str = "\n\n### All Sources:\n"
+    if documents:
+        for idx, doc in enumerate(documents):
+            references_str += f"- [{idx + 1}] {doc.meta['url']}\n"
+    return references_str
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"messages": messages},
+            on_pipeline_end=on_pipeline_end,
+        )
+```
+
+With this setup, after the pipeline finishes, the `on_pipeline_end` function is called with the pipeline’s result.
+You can use it to append a list of sources, add a summary, or perform any other final formatting.
+This final output is then sent to Open WebUI as part of the chat response.
+
+Here’s an example of post-processing with `on_pipeline_end` in action:
+
+![open-webui-hayhooks-on-pipeline-end](../assets/open-webui-hayhooks-on-pipeline-end.gif)
+
 ## OpenAPI Tool Server
 
 Hayhooks can serve as an [OpenAPI Tool Server](https://docs.openwebui.com/openapi-servers/) for Open WebUI, exposing its core API endpoints as tools that can be used directly from the chat interface.

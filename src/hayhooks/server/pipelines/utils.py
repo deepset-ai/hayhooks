@@ -16,6 +16,7 @@ from hayhooks.server.routers.openai import Message
 ToolCallbackReturn = Union[OpenWebUIEvent, str, None, list[Union[OpenWebUIEvent, str]]]
 OnToolCallStart = Optional[Callable[[str, Optional[str], Optional[str]], ToolCallbackReturn]]
 OnToolCallEnd = Optional[Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn]]
+OnPipelineEnd = Optional[Callable[[Any], Optional[str]]]
 
 
 def is_user_message(msg: Union[Message, dict]) -> bool:
@@ -129,7 +130,9 @@ def _setup_streaming_callback(
         raise ValueError(msg)
 
 
-def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]) -> None:
+def _execute_pipeline_sync(
+    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]
+) -> dict[str, Any]:
     """
     Executes pipeline synchronously based on its type.
 
@@ -138,9 +141,9 @@ def _execute_pipeline_sync(pipeline: Union[Pipeline, AsyncPipeline, Agent], pipe
         pipeline_run_args: Execution arguments
     """
     if isinstance(pipeline, Agent):
-        pipeline.run(**pipeline_run_args)
+        return pipeline.run(**pipeline_run_args)
     else:
-        pipeline.run(data=pipeline_run_args)
+        return pipeline.run(data=pipeline_run_args)
 
 
 def streaming_generator(  # noqa: C901, PLR0912
@@ -149,6 +152,7 @@ def streaming_generator(  # noqa: C901, PLR0912
     pipeline_run_args: Optional[dict[str, Any]] = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
+    on_pipeline_end: OnPipelineEnd = None,
 ) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
@@ -160,6 +164,7 @@ def streaming_generator(  # noqa: C901, PLR0912
         pipeline_run_args: Arguments for execution
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
+        on_pipeline_end: Callback for pipeline end
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -182,8 +187,19 @@ def streaming_generator(  # noqa: C901, PLR0912
 
     def run_pipeline() -> None:
         try:
-            _execute_pipeline_sync(pipeline, configured_args)
-            queue.put(None)  # Signal completion
+            result = _execute_pipeline_sync(pipeline, configured_args)
+            # Call on_pipeline_end if provided
+            if on_pipeline_end:
+                try:
+                    on_pipeline_end_result = on_pipeline_end(result)
+                    # Send final chunk if on_pipeline_end returned content
+                    if on_pipeline_end_result:
+                        queue.put(StreamingChunk(content=on_pipeline_end_result))
+                except Exception as e:
+                    # We don't put the error into the queue to avoid breaking the stream
+                    log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
+            # Signal completion
+            queue.put(None)
         except Exception as e:
             log.error(f"Error in pipeline execution thread for streaming_generator: {e}", exc_info=True)
             queue.put(e)  # Signal error
@@ -331,6 +347,7 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
     pipeline_run_args: Optional[dict[str, Any]] = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
+    on_pipeline_end: OnPipelineEnd = None,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
@@ -342,6 +359,7 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
         pipeline_run_args: Arguments for execution
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
+        on_pipeline_end: Callback for pipeline end
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -399,6 +417,13 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
             yield chunk
 
         await pipeline_task
+        if on_pipeline_end:
+            try:
+                on_pipeline_end_result = on_pipeline_end(pipeline_task.result())
+                if on_pipeline_end_result:
+                    yield StreamingChunk(content=on_pipeline_end_result)
+            except Exception as e:
+                log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
 
     except Exception as e:
         log.error(f"Unexpected error in async streaming generator: {e}")

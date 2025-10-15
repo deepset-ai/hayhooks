@@ -1,4 +1,4 @@
-from hayhooks.callbacks import default_on_tool_call_end, default_on_tool_call_start
+from hayhooks.callbacks import default_on_pipeline_end, default_on_tool_call_end, default_on_tool_call_start
 from hayhooks.server.app import create_app
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.utils import (
@@ -13,6 +13,7 @@ __all__ = [
     "BasePipelineWrapper",
     "async_streaming_generator",
     "create_app",
+    "default_on_pipeline_end",
     "default_on_tool_call_end",
     "default_on_tool_call_start",
     "get_last_user_message",
