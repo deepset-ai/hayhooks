@@ -176,6 +176,49 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
     )
 ```
 
+## Streaming from Multiple Components
+
+!!! info "Automatic Multi-Component Streaming"
+    Hayhooks automatically enables streaming for **all** streaming-capable components in your pipeline - no special configuration needed!
+
+When your pipeline contains multiple components that support streaming (e.g., multiple LLMs), all of them stream their outputs automatically as the pipeline executes.
+
+### Example: Sequential LLMs with Streaming
+
+```python
+class MultiLLMWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        from haystack.components.builders import ChatPromptBuilder
+        from haystack.components.generators.chat import OpenAIChatGenerator
+
+        self.pipeline = Pipeline()
+
+        # First LLM - initial answer
+        self.pipeline.add_component("prompt_1", ChatPromptBuilder(...))
+        self.pipeline.add_component("llm_1", OpenAIChatGenerator(model="gpt-4o-mini"))
+
+        # Second LLM - refines the answer
+        self.pipeline.add_component("prompt_2", ChatPromptBuilder(...))
+        self.pipeline.add_component("llm_2", OpenAIChatGenerator(model="gpt-4o-mini"))
+
+        self.pipeline.connect("prompt_1", "llm_1")
+        self.pipeline.connect("llm_1.replies", "prompt_2.replies")
+        self.pipeline.connect("prompt_2", "llm_2")
+
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+        question = get_last_user_message(messages)
+
+        # Both LLMs will stream automatically!
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt_1": {"template_variables": {"query": question}}}
+        )
+```
+
+**What happens:** Both LLMs **automatically stream** their responses token by token as the pipeline executes. **No special configuration** is needed - streaming works for any number of components.
+
+See the [Multi-LLM Streaming Example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/multi_llm_streaming) for a complete working implementation.
+
 ## File Upload Support
 
 Hayhooks can handle file uploads by adding a `files` parameter:

@@ -1,0 +1,129 @@
+from collections.abc import Generator
+from typing import Any, List, Union  # noqa: UP035
+
+from haystack import Pipeline
+from haystack.components.builders import ChatPromptBuilder
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage, StreamingChunk
+from haystack.utils import Secret
+
+from hayhooks import BasePipelineWrapper, get_last_user_message, streaming_generator
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    """
+    A pipeline with two sequential LLM components that both stream.
+
+    The first LLM (low reasoning) provides a concise answer, and the second LLM
+    (medium reasoning) refines and expands it with more detail.
+    Both automatically stream their responses - this is the default behavior in hayhooks.
+    """
+
+    def setup(self) -> None:
+        """Initialize the pipeline with two streaming LLM components."""
+        self.pipeline = Pipeline()
+
+        # First stage: Initial answer
+        self.pipeline.add_component(
+            "prompt_builder_1",
+            ChatPromptBuilder(
+                template=[
+                    ChatMessage.from_system(
+                        "You are a helpful assistant. \n"
+                        "Answer the user's question in a short and concise manner."
+                    ),
+                    ChatMessage.from_user("{{query}}"),
+                ]
+            ),
+        )
+        self.pipeline.add_component(
+            "llm_1",
+            OpenAIChatGenerator(
+                api_key=Secret.from_env_var("OPENAI_API_KEY"),
+                model="gpt-5-nano",
+                generation_kwargs={
+                    "reasoning_effort": "low",
+                }
+            ),
+        )
+
+        # Second stage: Refinement
+        # This prompt builder takes the previous conversation (from llm_1.replies) as template
+        # and adds a message to guide the refinement
+        self.pipeline.add_component(
+            "prompt_builder_2",
+            ChatPromptBuilder(
+                template=[
+                    ChatMessage.from_system("You are a helpful assistant that refines and improves responses."),
+                    ChatMessage.from_user(
+                        "Please refine and improve the previous response. \n"
+                        "Make it a lot more detailed, clear, detailed, and professional. "
+                    ),
+                ]
+            ),
+        )
+        self.pipeline.add_component(
+            "llm_2",
+            OpenAIChatGenerator(
+                api_key=Secret.from_env_var("OPENAI_API_KEY"),
+                model="gpt-5-nano",
+                generation_kwargs={
+                    "reasoning_effort": "medium",
+                }
+            ),
+        )
+
+        # Connect the components
+        self.pipeline.connect("prompt_builder_1.prompt", "llm_1.messages")
+        self.pipeline.connect("llm_1.replies", "prompt_builder_2.template")
+        self.pipeline.connect("prompt_builder_2.prompt", "llm_2.messages")
+
+    def run_api(self, query: str) -> dict[str, Any]:
+        """Run the pipeline in non-streaming mode."""
+        result = self.pipeline.run(
+            {
+                "prompt_builder_1": {"template_variables": {"query": query}},
+            }
+        )
+        return {"reply": result["llm_2"]["replies"][0].text if result["llm_2"]["replies"] else ""}
+
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:  # noqa: ARG002, UP006
+        """
+        Run the pipeline in streaming mode.
+
+        Both LLMs will automatically stream their responses thanks to
+        hayhooks' built-in multi-component streaming support.
+
+        We inject a visual separator between LLM 1 and LLM 2 outputs.
+        """
+        question = get_last_user_message(messages)
+
+        def custom_streaming():
+            """
+            Enhanced streaming that injects a visual separator between LLM outputs.
+
+            Uses StreamingChunk.component_info.name to reliably detect which component
+            is streaming, avoiding fragile chunk counting or heuristics.
+
+            NOTE: This is simply a workaround to inject a visual separator between LLM outputs.
+            """
+            llm2_started = False
+
+            for chunk in streaming_generator(
+                pipeline=self.pipeline,
+                pipeline_run_args={
+                    "prompt_builder_1": {"template_variables": {"query": question}},
+                },
+            ):
+                # Use component_info to detect which LLM is streaming
+                if hasattr(chunk, "component_info") and chunk.component_info:
+                    component_name = chunk.component_info.name
+
+                    # When we see llm_2 for the first time, inject a visual separator
+                    if component_name == "llm_2" and not llm2_started:
+                        llm2_started = True
+                        yield StreamingChunk(content="\n\n**[LLM 2 - Refining the response]**\n\n")
+
+                yield chunk
+
+        return custom_streaming()

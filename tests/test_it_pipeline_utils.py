@@ -14,7 +14,11 @@ from loguru import logger
 
 from hayhooks import callbacks
 from hayhooks.open_webui import OpenWebUIEvent, create_notification_event
-from hayhooks.server.pipelines.utils import async_streaming_generator, find_streaming_component, streaming_generator
+from hayhooks.server.pipelines.utils import (
+    async_streaming_generator,
+    find_all_streaming_components,
+    streaming_generator,
+)
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
@@ -141,33 +145,10 @@ def mocked_pipeline_with_streaming_component(mocker):
     return streaming_component, pipeline
 
 
-def test_find_streaming_component_no_streaming_component():
-    pipeline = Pipeline()
-
-    with pytest.raises(ValueError, match="No streaming-capable component found in the pipeline"):
-        find_streaming_component(pipeline)
-
-
-def test_find_streaming_component_finds_streaming_component(mocker):
-    streaming_component = MockComponent(has_streaming=True)
-    non_streaming_component = MockComponent(has_streaming=False)
-
-    pipeline = mocker.Mock(spec=Pipeline)
-    pipeline.walk.return_value = [
-        ("component1", non_streaming_component),
-        ("streaming_component", streaming_component),
-        ("component2", non_streaming_component),
-    ]
-
-    component, name = find_streaming_component(pipeline)
-    assert component == streaming_component
-    assert name == "streaming_component"
-
-
 def test_streaming_generator_no_streaming_component():
     pipeline = Pipeline()
 
-    with pytest.raises(ValueError, match="No streaming-capable component found in the pipeline"):
+    with pytest.raises(ValueError, match="No streaming-capable components found in the pipeline"):
         list(streaming_generator(pipeline))
 
 
@@ -219,7 +200,7 @@ def test_streaming_generator_empty_output(mocked_pipeline_with_streaming_compone
 async def test_async_streaming_generator_no_streaming_component():
     pipeline = Pipeline()
 
-    with pytest.raises(ValueError, match="No streaming-capable component found in the pipeline"):
+    with pytest.raises(ValueError, match="No streaming-capable components found in the pipeline"):
         _ = [chunk async for chunk in async_streaming_generator(pipeline)]
 
 
@@ -961,3 +942,116 @@ async def test_async_streaming_generator_on_pipeline_end_callback_raises(
     logger.add(lambda msg: messages.append(msg), level="ERROR")
     _ = [chunk async for chunk in generator]
     assert "Callback error" in messages[0]
+
+
+def test_find_all_streaming_components_finds_multiple(mocker):
+    streaming_component1 = MockComponent(has_streaming=True)
+    streaming_component2 = MockComponent(has_streaming=True)
+    non_streaming_component = MockComponent(has_streaming=False)
+
+    pipeline = mocker.Mock(spec=Pipeline)
+    pipeline.walk.return_value = [
+        ("component1", streaming_component1),
+        ("non_streaming", non_streaming_component),
+        ("component2", streaming_component2),
+    ]
+
+    components = find_all_streaming_components(pipeline)
+    assert len(components) == 2
+    assert components[0] == (streaming_component1, "component1")
+    assert components[1] == (streaming_component2, "component2")
+
+
+def test_find_all_streaming_components_raises_when_none_found():
+    pipeline = Pipeline()
+
+    with pytest.raises(ValueError, match="No streaming-capable components found in the pipeline"):
+        find_all_streaming_components(pipeline)
+
+
+@pytest.fixture
+def pipeline_with_multiple_streaming_components(mocker):
+    streaming_component1 = MockComponent(has_streaming=True)
+    streaming_component2 = MockComponent(has_streaming=True)
+    non_streaming_component = MockComponent(has_streaming=False)
+
+    pipeline = mocker.Mock(spec=AsyncPipeline)
+    pipeline._spec_class = AsyncPipeline
+    pipeline.walk.return_value = [
+        ("component1", streaming_component1),
+        ("non_streaming", non_streaming_component),
+        ("component2", streaming_component2),
+    ]
+
+    def mock_get_component(name):
+        if name == "component1":
+            return streaming_component1
+        elif name == "component2":
+            return streaming_component2
+        return non_streaming_component
+
+    pipeline.get_component.side_effect = mock_get_component
+
+    return streaming_component1, streaming_component2, pipeline
+
+
+def test_streaming_generator_with_multiple_components(pipeline_with_multiple_streaming_components):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    mock_chunks = [
+        StreamingChunk(content="chunk1_from_component1"),
+        StreamingChunk(content="chunk2_from_component1"),
+        StreamingChunk(content="chunk1_from_component2"),
+        StreamingChunk(content="chunk2_from_component2"),
+    ]
+
+    def mock_run(data):
+        # Simulate both components streaming
+        if streaming_component1.streaming_callback:
+            streaming_component1.streaming_callback(mock_chunks[0])
+            streaming_component1.streaming_callback(mock_chunks[1])
+        if streaming_component2.streaming_callback:
+            streaming_component2.streaming_callback(mock_chunks[2])
+            streaming_component2.streaming_callback(mock_chunks[3])
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline)
+    chunks = list(generator)
+
+    assert chunks == mock_chunks
+    # Verify both components had their callbacks set
+    assert streaming_component1.streaming_callback is not None
+    assert streaming_component2.streaming_callback is not None
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_with_multiple_components(
+    mocker, pipeline_with_multiple_streaming_components
+):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    mock_chunks = [
+        StreamingChunk(content="async_chunk1_from_component1"),
+        StreamingChunk(content="async_chunk2_from_component1"),
+        StreamingChunk(content="async_chunk1_from_component2"),
+        StreamingChunk(content="async_chunk2_from_component2"),
+    ]
+
+    async def mock_run_async(data):
+        # Simulate both components streaming
+        if streaming_component1.streaming_callback:
+            await streaming_component1.streaming_callback(mock_chunks[0])
+            await streaming_component1.streaming_callback(mock_chunks[1])
+        if streaming_component2.streaming_callback:
+            await streaming_component2.streaming_callback(mock_chunks[2])
+            await streaming_component2.streaming_callback(mock_chunks[3])
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline)]
+
+    assert chunks == mock_chunks
+    # Verify both components had their callbacks set
+    assert streaming_component1.streaming_callback is not None
+    assert streaming_component2.streaming_callback is not None

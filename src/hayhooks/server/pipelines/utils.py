@@ -40,33 +40,32 @@ def get_last_user_message(messages: list[Union[Message, dict]]) -> Union[str, No
     return None
 
 
-def find_streaming_component(pipeline: Union[Pipeline, AsyncPipeline]) -> tuple[Component, str]:
+def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> list[tuple[Component, str]]:
     """
-    Finds the component in the pipeline that supports streaming_callback
+    Finds all components in the pipeline that support streaming_callback.
 
     Returns:
-        The first component that supports streaming
+        A list of tuples containing (component, component_name) for all streaming components
     """
-    streaming_component = None
-    streaming_component_name = ""
+    streaming_components = []
 
     for name, component in pipeline.walk():
         if hasattr(component, "streaming_callback"):
             log.trace(f"Streaming component found in '{name}' with type {type(component)}")
-            streaming_component = component
-            streaming_component_name = name
-    if not streaming_component:
-        msg = "No streaming-capable component found in the pipeline"
+            streaming_components.append((component, name))
+
+    if not streaming_components:
+        msg = "No streaming-capable components found in the pipeline"
         raise ValueError(msg)
 
-    return streaming_component, streaming_component_name
+    return streaming_components
 
 
 def _setup_streaming_callback_for_pipeline(
     pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: dict[str, Any], streaming_callback: Any
 ) -> dict[str, Any]:
     """
-    Sets up streaming callback for pipeline components.
+    Sets up streaming callbacks for all streaming-capable components in the pipeline.
 
     Args:
         pipeline: The pipeline to configure
@@ -76,16 +75,17 @@ def _setup_streaming_callback_for_pipeline(
     Returns:
         Updated pipeline run arguments
     """
-    _, streaming_component_name = find_streaming_component(pipeline)
+    streaming_components = find_all_streaming_components(pipeline)
 
-    # Ensure component args exist in pipeline run args
-    if streaming_component_name not in pipeline_run_args:
-        pipeline_run_args[streaming_component_name] = {}
+    for _, component_name in streaming_components:
+        # Ensure component args exist in pipeline run args
+        if component_name not in pipeline_run_args:
+            pipeline_run_args[component_name] = {}
 
-    # Set the streaming callback on the component
-    streaming_component = pipeline.get_component(streaming_component_name)
-    assert hasattr(streaming_component, "streaming_callback")
-    streaming_component.streaming_callback = streaming_callback
+        # Set the streaming callback on the component
+        streaming_component = pipeline.get_component(component_name)
+        assert hasattr(streaming_component, "streaming_callback")
+        streaming_component.streaming_callback = streaming_callback
 
     return pipeline_run_args
 
@@ -157,7 +157,8 @@ def streaming_generator(  # noqa: C901, PLR0912
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
 
-    Automatically finds the streaming-capable component in pipelines or uses the agent's streaming callback.
+    Automatically finds all streaming-capable components in pipelines and sets up streaming for all of them.
+    For agents, uses the agent's streaming callback.
 
     Args:
         pipeline: The Pipeline, AsyncPipeline, or Agent to execute
@@ -171,8 +172,9 @@ def streaming_generator(  # noqa: C901, PLR0912
         OpenWebUIEvent: Event for tool call
         str: Tool name or stream content
 
-    NOTE: This generator works with sync/async pipelines and agents, but pipeline components
-          which support streaming must have a _sync_ `streaming_callback`.
+    NOTE: This generator works with sync/async pipelines and agents. Pipeline components
+          which support streaming must have a _sync_ `streaming_callback`. All streaming-capable
+          components in the pipeline will stream their outputs serially as the pipeline executes.
     """
     if pipeline_run_args is None:
         pipeline_run_args = {}
@@ -247,26 +249,27 @@ def streaming_generator(  # noqa: C901, PLR0912
 
 def _validate_async_streaming_support(pipeline: Union[Pipeline, AsyncPipeline]) -> None:
     """
-    Validates that the pipeline supports async streaming callbacks.
+    Validates that all streaming components in the pipeline support async streaming callbacks.
 
     Args:
         pipeline: The pipeline to validate
 
     Raises:
-        ValueError: If the pipeline doesn't support async streaming
+        ValueError: If any streaming component doesn't support async streaming
     """
-    streaming_component, streaming_component_name = find_streaming_component(pipeline)
+    streaming_components = find_all_streaming_components(pipeline)
 
-    # Check if the streaming component supports async streaming callbacks
-    # We check for run_async method as an indicator of async support
-    if not hasattr(streaming_component, "run_async"):
-        component_type = type(streaming_component).__name__
-        msg = (
-            f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async streaming "
-            "callbacks. Use the sync 'streaming_generator' function instead, or switch to a component that supports "
-            "async streaming callbacks (e.g., OpenAIChatGenerator instead of OpenAIGenerator)."
-        )
-        raise ValueError(msg)
+    for streaming_component, streaming_component_name in streaming_components:
+        # Check if the streaming component supports async streaming callbacks
+        # We check for run_async method as an indicator of async support
+        if not hasattr(streaming_component, "run_async"):
+            component_type = type(streaming_component).__name__
+            msg = (
+                f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async "
+                "streaming callbacks. Use the sync 'streaming_generator' function instead, or switch to a component "
+                "that supports async streaming callbacks (e.g., OpenAIChatGenerator instead of OpenAIGenerator)."
+            )
+            raise ValueError(msg)
 
 
 async def _execute_pipeline_async(
@@ -352,7 +355,8 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
 
-    Automatically finds the streaming-capable component in pipelines or uses the agent's streaming callback.
+    Automatically finds all streaming-capable components in pipelines and sets up streaming for all of them.
+    For agents, uses the agent's streaming callback.
 
     Args:
         pipeline: The Pipeline, AsyncPipeline, or Agent to execute
@@ -366,8 +370,9 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
         OpenWebUIEvent: Event for tool call
         str: Tool name or stream content
 
-    NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming component
+    NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming components
           must support an _async_ `streaming_callback`. Agents have built-in async streaming support.
+          All streaming-capable components in the pipeline will stream their outputs serially as the pipeline executes.
     """
     # Validate async streaming support for pipelines (not needed for agents)
     if pipeline_run_args is None:
