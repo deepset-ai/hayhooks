@@ -1,29 +1,13 @@
 from collections.abc import Generator
 from typing import Any, List, Union  # noqa: UP035
 
-from haystack import Pipeline, component
+from haystack import Pipeline
 from haystack.components.builders import ChatPromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
 from haystack.utils import Secret
 
 from hayhooks import BasePipelineWrapper, get_last_user_message, streaming_generator
-
-
-@component
-class MessageExtractor:
-    """
-    Custom component that extracts the text content from ChatMessage replies.
-
-    This component takes the replies from an LLM (list[ChatMessage]) and
-    extracts the text to pass it as a variable to the next prompt builder.
-    """
-
-    @component.output_types(response_text=str)
-    def run(self, replies: list[ChatMessage]) -> dict[str, str]:
-        if replies and len(replies) > 0:
-            return {"response_text": replies[0].text or ""}
-        return {"response_text": ""}
 
 
 class PipelineWrapper(BasePipelineWrapper):
@@ -63,17 +47,14 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 
         # Second stage: Refinement
-        # Extract the text from llm_1's response to pass as a variable
-        self.pipeline.add_component("message_extractor", MessageExtractor())
-
-        # This prompt builder uses the extracted response as a variable
+        # The prompt builder can directly access ChatMessage attributes via Jinja2
         self.pipeline.add_component(
             "prompt_builder_2",
             ChatPromptBuilder(
                 template=[
                     ChatMessage.from_system("You are a helpful assistant that refines and improves responses."),
                     ChatMessage.from_user(
-                        "Here is the previous response:\n\n{{previous_response}}\n\n"
+                        "Here is the previous response:\n\n{{previous_response[0].text}}\n\n"
                         "Please refine and improve this response. "
                         "Make it a bit more detailed, clear, and professional. "
                         "Please state that you're refining the response in the beginning of your answer."
@@ -94,8 +75,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
         # Connect the components
         self.pipeline.connect("prompt_builder_1.prompt", "llm_1.messages")
-        self.pipeline.connect("llm_1.replies", "message_extractor.replies")
-        self.pipeline.connect("message_extractor.response_text", "prompt_builder_2.previous_response")
+        self.pipeline.connect("llm_1.replies", "prompt_builder_2.previous_response")
         self.pipeline.connect("prompt_builder_2.prompt", "llm_2.messages")
 
     def run_api(self, query: str) -> dict[str, Any]:

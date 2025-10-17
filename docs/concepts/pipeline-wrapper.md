@@ -190,20 +190,40 @@ class MultiLLMWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         from haystack.components.builders import ChatPromptBuilder
         from haystack.components.generators.chat import OpenAIChatGenerator
+        from haystack.dataclasses import ChatMessage
 
         self.pipeline = Pipeline()
 
         # First LLM - initial answer
-        self.pipeline.add_component("prompt_1", ChatPromptBuilder(...))
+        self.pipeline.add_component(
+            "prompt_1",
+            ChatPromptBuilder(
+                template=[
+                    ChatMessage.from_system("You are a helpful assistant."),
+                    ChatMessage.from_user("{{query}}")
+                ]
+            )
+        )
         self.pipeline.add_component("llm_1", OpenAIChatGenerator(model="gpt-4o-mini"))
 
-        # Second LLM - refines the answer
-        self.pipeline.add_component("prompt_2", ChatPromptBuilder(...))
+        # Second LLM - refines the answer using Jinja2 to access ChatMessage attributes
+        self.pipeline.add_component(
+            "prompt_2",
+            ChatPromptBuilder(
+                template=[
+                    ChatMessage.from_system("You are a helpful assistant that refines responses."),
+                    ChatMessage.from_user(
+                        "Previous response: {{previous_response[0].text}}\n\nRefine this."
+                    )
+                ]
+            )
+        )
         self.pipeline.add_component("llm_2", OpenAIChatGenerator(model="gpt-4o-mini"))
 
-        self.pipeline.connect("prompt_1", "llm_1")
-        self.pipeline.connect("llm_1.replies", "prompt_2.replies")
-        self.pipeline.connect("prompt_2", "llm_2")
+        # Connect components - LLM 1's replies go directly to prompt_2
+        self.pipeline.connect("prompt_1.prompt", "llm_1.messages")
+        self.pipeline.connect("llm_1.replies", "prompt_2.previous_response")
+        self.pipeline.connect("prompt_2.prompt", "llm_2.messages")
 
     def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
         question = get_last_user_message(messages)
@@ -215,7 +235,7 @@ class MultiLLMWrapper(BasePipelineWrapper):
         )
 ```
 
-**What happens:** Both LLMs **automatically stream** their responses token by token as the pipeline executes. **No special configuration** is needed - streaming works for any number of components.
+**What happens:** Both LLMs **automatically stream** their responses token by token as the pipeline executes. The second prompt builder uses Jinja2 syntax (`{{previous_response[0].text}}`) to access the text content from the first LLM's `ChatMessage` response. **No custom extraction components needed** - streaming works for any number of components.
 
 See the [Multi-LLM Streaming Example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/multi_llm_streaming) for a complete working implementation.
 

@@ -17,6 +17,8 @@ Both LLMs automatically stream their responses - no special configuration needed
 
 Hayhooks automatically enables streaming for **all** streaming-capable components. Both LLMs stream their responses serially (one after another) without any special configuration.
 
+The pipeline connects LLM 1's replies directly to the second prompt builder. Using Jinja2 template syntax, the second prompt builder can access the `ChatMessage` attributes directly: `{{previous_response[0].text}}`. This approach is simple and doesn't require any custom extraction components.
+
 This example also demonstrates injecting a visual separator (`**[LLM 2 - Refining the response]**`) between the two LLM outputs using `StreamingChunk.component_info` to detect component transitions.
 
 ## Usage
@@ -44,11 +46,28 @@ curl -X POST http://localhost:1416/v1/chat/completions \
 
 ```python
 from haystack import Pipeline
+from haystack.components.builders import ChatPromptBuilder
+from haystack.dataclasses import ChatMessage
 from hayhooks import streaming_generator
 
 # Create your pipeline with multiple streaming components
 pipeline = Pipeline()
-# ... add components ...
+# ... add LLM 1 and prompt_builder_1 ...
+
+# Add second prompt builder that accesses ChatMessage attributes via Jinja2
+pipeline.add_component(
+    "prompt_builder_2",
+    ChatPromptBuilder(
+        template=[
+            ChatMessage.from_system("You are a helpful assistant."),
+            ChatMessage.from_user("Previous: {{previous_response[0].text}}\n\nRefine this.")
+        ]
+    )
+)
+# ... add LLM 2 ...
+
+# Connect: LLM 1 replies directly to prompt_builder_2
+pipeline.connect("llm_1.replies", "prompt_builder_2.previous_response")
 
 # streaming_generator automatically streams from ALL components
 for chunk in streaming_generator(
@@ -69,6 +88,10 @@ This pipeline works seamlessly with OpenWebUI:
 
 ## Technical Details
 
+- **Pipeline Flow**: `LLM 1 → Prompt Builder 2 → LLM 2`
+- **Jinja2 Templates**: `ChatPromptBuilder` uses Jinja2, allowing direct access to `ChatMessage` attributes in templates
+- **Template Variables**: LLM 1's `List[ChatMessage]` replies are passed directly as `previous_response` to the second prompt builder
+- **Accessing ChatMessage Content**: Use `{{previous_response[0].text}}` in templates to access the text content
 - **Streaming**: Serial execution with automatic callback management for all components
 - **Transition Detection**: Uses `StreamingChunk.component_info.name` to detect when LLM 2 starts
 - **Visual Separator**: Injects a `StreamingChunk` between LLM outputs
