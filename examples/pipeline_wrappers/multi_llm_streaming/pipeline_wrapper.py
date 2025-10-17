@@ -29,8 +29,7 @@ class PipelineWrapper(BasePipelineWrapper):
             ChatPromptBuilder(
                 template=[
                     ChatMessage.from_system(
-                        "You are a helpful assistant. \n"
-                        "Answer the user's question in a short and concise manner."
+                        "You are a helpful assistant. \nAnswer the user's question in a short and concise manner."
                     ),
                     ChatMessage.from_user("{{query}}"),
                 ]
@@ -43,7 +42,7 @@ class PipelineWrapper(BasePipelineWrapper):
                 model="gpt-5-nano",
                 generation_kwargs={
                     "reasoning_effort": "low",
-                }
+                },
             ),
         )
 
@@ -69,7 +68,7 @@ class PipelineWrapper(BasePipelineWrapper):
                 model="gpt-5-nano",
                 generation_kwargs={
                     "reasoning_effort": "medium",
-                }
+                },
             ),
         )
 

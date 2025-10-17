@@ -1026,9 +1026,7 @@ def test_streaming_generator_with_multiple_components(pipeline_with_multiple_str
 
 
 @pytest.mark.asyncio
-async def test_async_streaming_generator_with_multiple_components(
-    mocker, pipeline_with_multiple_streaming_components
-):
+async def test_async_streaming_generator_with_multiple_components(mocker, pipeline_with_multiple_streaming_components):
     streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
 
     mock_chunks = [
