@@ -95,7 +95,7 @@ def _setup_streaming_callback_for_pipeline(
     pipeline: Union[Pipeline, AsyncPipeline],
     pipeline_run_args: dict[str, Any],
     streaming_callback: Any,
-    streaming_components: Optional[Union[dict[str, bool], str]] = None,
+    streaming_components: Optional[Union[dict[str, bool], Literal["all"]] = None,
 ) -> dict[str, Any]:
     """
     Sets up streaming callbacks for streaming-capable components in the pipeline.
