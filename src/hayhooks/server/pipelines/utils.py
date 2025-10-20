@@ -62,7 +62,7 @@ def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> l
     return streaming_components
 
 
-def _parse_streaming_components_setting(setting_value: str) -> Union[dict[str, bool], str, None]:
+def _parse_streaming_components_setting(setting_value: str) -> Union[dict[str, bool], Literal["all"], None]:
     """
     Parse the HAYHOOKS_STREAMING_COMPONENTS environment variable.
 
@@ -125,31 +125,38 @@ def _setup_streaming_callback_for_pipeline(
     # Determine which components should stream
     components_to_stream = []
 
+    # Stream all capable components
     if streaming_components == "all":
-        # Stream all capable components
         components_to_stream = all_streaming_components
         log.trace("Streaming enabled for all components via 'all' keyword")
+
+    # Default behavior: stream only the last capable component
     elif streaming_components is None:
-        # Default behavior: stream only the last capable component
         if all_streaming_components:
             components_to_stream = [all_streaming_components[-1]]
             log.trace(f"Streaming enabled for last component only: {all_streaming_components[-1][1]}")
+
+    # Use explicit configuration for specific components
     elif isinstance(streaming_components, dict):
-        # Use explicit configuration
         for component, component_name in all_streaming_components:
             if streaming_components.get(component_name, False):
                 components_to_stream.append((component, component_name))
         log.trace(f"Streaming enabled for components: {[name for _, name in components_to_stream]}")
 
     for _, component_name in components_to_stream:
-        # Ensure component args exist in pipeline run args
-        if component_name not in pipeline_run_args:
-            pipeline_run_args[component_name] = {}
-
-        # Set the streaming callback on the component
+        # Pass the streaming callback as a parameter instead of mutating the component
+        # This ensures thread-safety for concurrent requests
         streaming_component = pipeline.get_component(component_name)
         assert hasattr(streaming_component, "streaming_callback")
-        streaming_component.streaming_callback = streaming_callback
+
+        # Ensure component args exist and make a copy to avoid mutating original
+        if component_name not in pipeline_run_args:
+            pipeline_run_args[component_name] = {}
+        else:
+            # Create a copy of the existing component args to avoid modifying the original
+            pipeline_run_args[component_name] = pipeline_run_args[component_name].copy()
+
+        pipeline_run_args[component_name]["streaming_callback"] = streaming_callback
         log.trace(f"Streaming callback set for component '{component_name}'")
 
     return pipeline_run_args
@@ -174,7 +181,7 @@ def _setup_streaming_callback(
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     pipeline_run_args: dict[str, Any],
     streaming_callback: Any,
-    streaming_components: Optional[Union[dict[str, bool], str]] = None,
+    streaming_components: Optional[Union[dict[str, bool], Literal["all"]]] = None,
 ) -> dict[str, Any]:
     """
     Configures streaming callback for the given pipeline or agent.
@@ -225,7 +232,7 @@ def streaming_generator(  # noqa: C901, PLR0912, PLR0913
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
-    streaming_components: Optional[Union[dict[str, bool], str]] = None,
+    streaming_components: Optional[Union[dict[str, bool], Literal["all"]]] = None,
 ) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
@@ -429,7 +436,7 @@ async def async_streaming_generator(  # noqa: C901, PLR0912, PLR0913
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
-    streaming_components: Optional[Union[dict[str, bool], str]] = None,
+    streaming_components: Optional[Union[dict[str, bool], Literal["all"]]] = None,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.

@@ -119,7 +119,7 @@ class PipelineWrapper(BasePipelineWrapper):
                 pipeline_run_args={
                     "prompt_builder_1": {"template_variables": {"query": question}},
                 },
-                streaming_components={"llm_1": False, "llm_2": True},  # Stream both components
+                streaming_components={"llm_1": True, "llm_2": True},  # Or use streaming_components="all"
             ):
                 # Use component_info to detect which LLM is streaming
                 if hasattr(chunk, "component_info") and chunk.component_info:
