@@ -30,9 +30,9 @@ streaming_generator(
 **Available options:**
 
 - **Default behavior** (no `streaming_components` or `None`): Only the last streaming component streams
-- **Stream all components**: `streaming_components={"llm_1": True, "llm_2": True}`
-- **Stream only first**: `streaming_components={"llm_1": True, "llm_2": False}`
-- **Stream only last** (same as default): `streaming_components={"llm_1": False, "llm_2": True}`
+- **Stream all components**: `streaming_components={"llm_1": True, "llm_2": True}` (same as `streaming_components="all"`)
+- **Stream only first**: `streaming_components={"llm_1": True, "llm_2": False}` (same as `streaming_components={"llm_1": True}`)
+- **Stream only last** (same as default): `streaming_components={"llm_1": False, "llm_2": True}` (same as `streaming_components={"llm_2": True}`)
 
 ### Pipeline Architecture
 
@@ -101,19 +101,7 @@ for chunk in streaming_generator(
 
 This pipeline works seamlessly with OpenWebUI:
 
-1. Configure OpenWebUI to connect to hayhooks (see [OpenWebUI Integration docs](../../../docs/features/openwebui-integration.md))
+1. Configure OpenWebUI to connect to hayhooks (see [OpenWebUI Integration docs](https://deepset-ai.github.io/hayhooks/features/openwebui-integration))
 2. Deploy this pipeline
 3. Select it as a model in OpenWebUI
 4. Watch both LLMs stream their responses in real-time
-
-## Technical Details
-
-- **Pipeline Flow**: `LLM 1 → Prompt Builder 2 → LLM 2`
-- **Jinja2 Templates**: `ChatPromptBuilder` uses Jinja2, allowing direct access to `ChatMessage` attributes in templates
-- **Template Variables**: LLM 1's `List[ChatMessage]` replies are passed directly as `previous_response` to the second prompt builder
-- **Accessing ChatMessage Content**: Use `{{previous_response[0].text}}` in templates to access the text content
-- **Streaming Config**: `{"llm_1": True, "llm_2": True}` enables streaming for both components (default would be last only)
-- **Streaming**: Serial execution with automatic callback management for configured components
-- **Transition Detection**: Uses `StreamingChunk.component_info.name` to detect when LLM 2 starts
-- **Visual Separator**: Injects a `StreamingChunk` between LLM outputs
-- **Error Handling**: Stream terminates gracefully if any component fails
