@@ -2,7 +2,7 @@ import asyncio
 import threading
 from collections.abc import AsyncGenerator, Generator
 from queue import Queue
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Literal, Optional, Union
 
 from haystack import AsyncPipeline, Pipeline
 from haystack.components.agents import Agent
@@ -95,7 +95,7 @@ def _setup_streaming_callback_for_pipeline(
     pipeline: Union[Pipeline, AsyncPipeline],
     pipeline_run_args: dict[str, Any],
     streaming_callback: Any,
-    streaming_components: Optional[Union[dict[str, bool], Literal["all"]] = None,
+    streaming_components: Optional[Union[dict[str, bool], Literal["all"]]] = None,
 ) -> dict[str, Any]:
     """
     Sets up streaming callbacks for streaming-capable components in the pipeline.
