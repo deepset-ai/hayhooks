@@ -12,6 +12,7 @@ from haystack.dataclasses import StreamingChunk
 from hayhooks.open_webui import OpenWebUIEvent
 from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
+from hayhooks.settings import settings
 
 ToolCallbackReturn = Union[OpenWebUIEvent, str, None, list[Union[OpenWebUIEvent, str]]]
 OnToolCallStart = Optional[Callable[[str, Optional[str], Optional[str]], ToolCallbackReturn]]
@@ -61,23 +62,86 @@ def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> l
     return streaming_components
 
 
+def _parse_streaming_components_setting(setting_value: str) -> Union[dict[str, bool], str, None]:
+    """
+    Parse the HAYHOOKS_STREAMING_COMPONENTS environment variable.
+
+    Args:
+        setting_value: The raw setting value from environment variable
+
+    Returns:
+        - None if empty string (use default behavior)
+        - "all" if the value is "all"
+        - dict[str, bool] if it's a comma-separated list
+    """
+    if not setting_value or setting_value.strip() == "":
+        return None
+
+    setting_value = setting_value.strip()
+
+    # Check for "all" keyword
+    if setting_value.lower() == "all":
+        return "all"
+
+    # Parse as comma-separated list (enable all listed components)
+    components = [c.strip() for c in setting_value.split(",") if c.strip()]
+    if components:
+        return dict.fromkeys(components, True)
+
+    return None
+
+
 def _setup_streaming_callback_for_pipeline(
-    pipeline: Union[Pipeline, AsyncPipeline], pipeline_run_args: dict[str, Any], streaming_callback: Any
+    pipeline: Union[Pipeline, AsyncPipeline],
+    pipeline_run_args: dict[str, Any],
+    streaming_callback: Any,
+    streaming_components: Optional[Union[dict[str, bool], str]] = None,
 ) -> dict[str, Any]:
     """
-    Sets up streaming callbacks for all streaming-capable components in the pipeline.
+    Sets up streaming callbacks for streaming-capable components in the pipeline.
+
+    By default, only the last streaming-capable component will stream. You can customize this
+    behavior using the streaming_components parameter or HAYHOOKS_STREAMING_COMPONENTS env var.
 
     Args:
         pipeline: The pipeline to configure
         pipeline_run_args: Arguments for pipeline execution
         streaming_callback: The callback function to set
+        streaming_components: Optional config for which components should stream.
+                             Can be:
+                             - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
+                             - "all": stream all capable components
+                             - dict: {"llm_1": True, "llm_2": False} for fine-grained control
 
     Returns:
         Updated pipeline run arguments
     """
-    streaming_components = find_all_streaming_components(pipeline)
+    all_streaming_components = find_all_streaming_components(pipeline)
 
-    for _, component_name in streaming_components:
+    # If streaming_components not provided, check environment variable
+    if streaming_components is None:
+        streaming_components = _parse_streaming_components_setting(settings.streaming_components)
+
+    # Determine which components should stream
+    components_to_stream = []
+
+    if streaming_components == "all":
+        # Stream all capable components
+        components_to_stream = all_streaming_components
+        log.trace("Streaming enabled for all components via 'all' keyword")
+    elif streaming_components is None:
+        # Default behavior: stream only the last capable component
+        if all_streaming_components:
+            components_to_stream = [all_streaming_components[-1]]
+            log.trace(f"Streaming enabled for last component only: {all_streaming_components[-1][1]}")
+    elif isinstance(streaming_components, dict):
+        # Use explicit configuration
+        for component, component_name in all_streaming_components:
+            if streaming_components.get(component_name, False):
+                components_to_stream.append((component, component_name))
+        log.trace(f"Streaming enabled for components: {[name for _, name in components_to_stream]}")
+
+    for _, component_name in components_to_stream:
         # Ensure component args exist in pipeline run args
         if component_name not in pipeline_run_args:
             pipeline_run_args[component_name] = {}
@@ -86,6 +150,7 @@ def _setup_streaming_callback_for_pipeline(
         streaming_component = pipeline.get_component(component_name)
         assert hasattr(streaming_component, "streaming_callback")
         streaming_component.streaming_callback = streaming_callback
+        log.trace(f"Streaming callback set for component '{component_name}'")
 
     return pipeline_run_args
 
@@ -106,7 +171,10 @@ def _setup_streaming_callback_for_agent(pipeline_run_args: dict[str, Any], strea
 
 
 def _setup_streaming_callback(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any], streaming_callback: Any
+    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    pipeline_run_args: dict[str, Any],
+    streaming_callback: Any,
+    streaming_components: Optional[Union[dict[str, bool], str]] = None,
 ) -> dict[str, Any]:
     """
     Configures streaming callback for the given pipeline or agent.
@@ -115,6 +183,7 @@ def _setup_streaming_callback(
         pipeline: The pipeline or agent to configure
         pipeline_run_args: Execution arguments
         streaming_callback: The callback function
+        streaming_components: Optional config - dict, "all", or None (pipelines only)
 
     Returns:
         Updated pipeline run arguments
@@ -122,12 +191,15 @@ def _setup_streaming_callback(
     pipeline_run_args = pipeline_run_args.copy()
 
     if isinstance(pipeline, (Pipeline, AsyncPipeline)):
-        return _setup_streaming_callback_for_pipeline(pipeline, pipeline_run_args, streaming_callback)
-    elif isinstance(pipeline, Agent):
+        return _setup_streaming_callback_for_pipeline(
+            pipeline, pipeline_run_args, streaming_callback, streaming_components
+        )
+
+    if isinstance(pipeline, Agent):
         return _setup_streaming_callback_for_agent(pipeline_run_args, streaming_callback)
-    else:
-        msg = f"Unsupported pipeline type: {type(pipeline)}"
-        raise ValueError(msg)
+
+    msg = f"Unsupported pipeline type: {type(pipeline)}"
+    raise ValueError(msg)
 
 
 def _execute_pipeline_sync(
@@ -146,19 +218,20 @@ def _execute_pipeline_sync(
         return pipeline.run(data=pipeline_run_args)
 
 
-def streaming_generator(  # noqa: C901, PLR0912
+def streaming_generator(  # noqa: C901, PLR0912, PLR0913
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
     pipeline_run_args: Optional[dict[str, Any]] = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
+    streaming_components: Optional[Union[dict[str, bool], str]] = None,
 ) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
 
-    Automatically finds all streaming-capable components in pipelines and sets up streaming for all of them.
-    For agents, uses the agent's streaming callback.
+    By default, only the last streaming-capable component in pipelines will stream.
+    You can control which components stream using streaming_components or HAYHOOKS_STREAMING_COMPONENTS.
 
     Args:
         pipeline: The Pipeline, AsyncPipeline, or Agent to execute
@@ -166,6 +239,11 @@ def streaming_generator(  # noqa: C901, PLR0912
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
         on_pipeline_end: Callback for pipeline end
+        streaming_components: Optional config for which components should stream.
+                             Can be:
+                             - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
+                             - "all": stream all capable components
+                             - dict: {"llm_1": True, "llm_2": False}
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -173,8 +251,8 @@ def streaming_generator(  # noqa: C901, PLR0912
         str: Tool name or stream content
 
     NOTE: This generator works with sync/async pipelines and agents. Pipeline components
-          which support streaming must have a _sync_ `streaming_callback`. All streaming-capable
-          components in the pipeline will stream their outputs serially as the pipeline executes.
+          which support streaming must have a _sync_ `streaming_callback`. By default,
+          only the last streaming-capable component will stream.
     """
     if pipeline_run_args is None:
         pipeline_run_args = {}
@@ -184,7 +262,7 @@ def streaming_generator(  # noqa: C901, PLR0912
         queue.put(chunk)
 
     # Configure streaming callback
-    configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, streaming_callback)
+    configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, streaming_callback, streaming_components)
     log.trace(f"Streaming pipeline run args: {configured_args}")
 
     def run_pipeline() -> None:
@@ -344,19 +422,20 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
             raise e
 
 
-async def async_streaming_generator(  # noqa: C901, PLR0912
+async def async_streaming_generator(  # noqa: C901, PLR0912, PLR0913
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
     pipeline_run_args: Optional[dict[str, Any]] = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
+    streaming_components: Optional[Union[dict[str, bool], str]] = None,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
 
-    Automatically finds all streaming-capable components in pipelines and sets up streaming for all of them.
-    For agents, uses the agent's streaming callback.
+    By default, only the last streaming-capable component in pipelines will stream.
+    You can control which components stream using streaming_components or HAYHOOKS_STREAMING_COMPONENTS.
 
     Args:
         pipeline: The Pipeline, AsyncPipeline, or Agent to execute
@@ -364,6 +443,11 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
         on_pipeline_end: Callback for pipeline end
+        streaming_components: Optional config for which components should stream.
+                             Can be:
+                             - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
+                             - "all": stream all capable components
+                             - dict: {"llm_1": True, "llm_2": False}
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -372,7 +456,7 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
 
     NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming components
           must support an _async_ `streaming_callback`. Agents have built-in async streaming support.
-          All streaming-capable components in the pipeline will stream their outputs serially as the pipeline executes.
+          By default, only the last streaming-capable component will stream.
     """
     # Validate async streaming support for pipelines (not needed for agents)
     if pipeline_run_args is None:
@@ -387,7 +471,7 @@ async def async_streaming_generator(  # noqa: C901, PLR0912
         await queue.put(chunk)
 
     # Configure streaming callback
-    configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, streaming_callback)
+    configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, streaming_callback, streaming_components)
 
     # Start pipeline execution
     pipeline_task = await _execute_pipeline_async(pipeline, configured_args)

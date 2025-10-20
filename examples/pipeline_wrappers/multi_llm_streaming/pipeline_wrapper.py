@@ -12,11 +12,13 @@ from hayhooks import BasePipelineWrapper, get_last_user_message, streaming_gener
 
 class PipelineWrapper(BasePipelineWrapper):
     """
-    A pipeline with two sequential LLM components that both stream.
+    A pipeline with two sequential LLM components that can both stream.
 
     The first LLM (low reasoning) provides a concise answer, and the second LLM
     (medium reasoning) refines and expands it with more detail.
-    Both automatically stream their responses - this is the default behavior in hayhooks.
+
+    This example demonstrates the streaming_components parameter which controls which
+    components should stream their responses.
     """
 
     def setup(self) -> None:
@@ -91,8 +93,9 @@ class PipelineWrapper(BasePipelineWrapper):
         """
         Run the pipeline in streaming mode.
 
-        Both LLMs will automatically stream their responses thanks to
-        hayhooks' built-in multi-component streaming support.
+        This demonstrates the streaming_components parameter which controls which components stream.
+        By default (streaming_components=None), only the last streaming-capable component (llm_2) streams.
+        To enable streaming for both LLMs, use: streaming_components={"llm_1": True, "llm_2": True}
 
         We inject a visual separator between LLM 1 and LLM 2 outputs.
         """
@@ -109,11 +112,14 @@ class PipelineWrapper(BasePipelineWrapper):
             """
             llm2_started = False
 
+            # Enable streaming for both LLM components
+            # To stream only the last component (default), omit streaming_components or set to None
             for chunk in streaming_generator(
                 pipeline=self.pipeline,
                 pipeline_run_args={
                     "prompt_builder_1": {"template_variables": {"query": question}},
                 },
+                streaming_components={"llm_1": False, "llm_2": True},  # Stream both components
             ):
                 # Use component_info to detect which LLM is streaming
                 if hasattr(chunk, "component_info") and chunk.component_info:

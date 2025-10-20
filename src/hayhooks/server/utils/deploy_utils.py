@@ -531,11 +531,19 @@ def add_yaml_pipeline_to_registry(
         clog.error(f"Failed creating request/response models for YAML pipeline '{pipeline_name}': {e!s}")
         raise
 
+    # Extract streaming components configuration if present
+    from hayhooks.server.utils.yaml_utils import get_streaming_components_from_yaml
+
+    streaming_components = get_streaming_components_from_yaml(source_code)
+    if streaming_components:
+        clog.debug(f"Found streaming_components in YAML: {streaming_components}")
+
     metadata = {
         "description": description or pipeline_name,
         "request_model": request_model,
         "response_model": response_model,
         "skip_mcp": bool(skip_mcp),
+        "streaming_components": streaming_components,
     }
 
     clog.debug(f"Adding YAML pipeline to registry with metadata: {metadata}")

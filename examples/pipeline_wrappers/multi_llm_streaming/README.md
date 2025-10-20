@@ -1,6 +1,6 @@
 # Multi-LLM Streaming Example
 
-This example demonstrates hayhooks' automatic multi-component streaming support.
+This example demonstrates hayhooks' configurable multi-component streaming support.
 
 ## Overview
 
@@ -9,13 +9,32 @@ The pipeline contains **two LLM components in sequence**:
 1. **LLM 1** (`gpt-5-nano` with `reasoning_effort: low`): Provides a short, concise initial answer to the user's question
 2. **LLM 2** (`gpt-5-nano` with `reasoning_effort: medium`): Refines and expands the answer into a detailed, professional response
 
-Both LLMs automatically stream their responses - no special configuration needed!
+This example uses `streaming_components` to enable streaming for **both** LLMs. By default, only the last component would stream.
 
 ![Multi-LLM Streaming Example](./multi_stream.gif)
 
 ## How It Works
 
-Hayhooks automatically enables streaming for **all** streaming-capable components. Both LLMs stream their responses serially (one after another) without any special configuration.
+### Streaming Configuration
+
+By default, hayhooks streams only the **last** streaming-capable component (in this case, LLM 2). However, this example demonstrates using the `streaming_components` parameter to enable streaming for both components:
+
+```python
+streaming_generator(
+    pipeline=self.pipeline,
+    pipeline_run_args={...},
+    streaming_components={"llm_1": True, "llm_2": True}  # Stream both LLMs
+)
+```
+
+**Available options:**
+
+- **Default behavior** (no `streaming_components` or `None`): Only the last streaming component streams
+- **Stream all components**: `streaming_components={"llm_1": True, "llm_2": True}`
+- **Stream only first**: `streaming_components={"llm_1": True, "llm_2": False}`
+- **Stream only last** (same as default): `streaming_components={"llm_1": False, "llm_2": True}`
+
+### Pipeline Architecture
 
 The pipeline connects LLM 1's replies directly to the second prompt builder. Using Jinja2 template syntax, the second prompt builder can access the `ChatMessage` attributes directly: `{{previous_response[0].text}}`. This approach is simple and doesn't require any custom extraction components.
 
@@ -69,10 +88,11 @@ pipeline.add_component(
 # Connect: LLM 1 replies directly to prompt_builder_2
 pipeline.connect("llm_1.replies", "prompt_builder_2.previous_response")
 
-# streaming_generator automatically streams from ALL components
+# Enable streaming for both LLMs (by default, only the last would stream)
 for chunk in streaming_generator(
     pipeline=pipeline,
-    pipeline_run_args={"prompt_builder_1": {"template_variables": {"query": "Your question"}}}
+    pipeline_run_args={"prompt_builder_1": {"template_variables": {"query": "Your question"}}},
+    streaming_components={"llm_1": True, "llm_2": True}  # Stream both components
 ):
     print(chunk.content, end="", flush=True)
 ```
@@ -92,7 +112,8 @@ This pipeline works seamlessly with OpenWebUI:
 - **Jinja2 Templates**: `ChatPromptBuilder` uses Jinja2, allowing direct access to `ChatMessage` attributes in templates
 - **Template Variables**: LLM 1's `List[ChatMessage]` replies are passed directly as `previous_response` to the second prompt builder
 - **Accessing ChatMessage Content**: Use `{{previous_response[0].text}}` in templates to access the text content
-- **Streaming**: Serial execution with automatic callback management for all components
+- **Streaming Config**: `{"llm_1": True, "llm_2": True}` enables streaming for both components (default would be last only)
+- **Streaming**: Serial execution with automatic callback management for configured components
 - **Transition Detection**: Uses `StreamingChunk.component_info.name` to detect when LLM 2 starts
 - **Visual Separator**: Injects a `StreamingChunk` between LLM outputs
 - **Error Handling**: Stream terminates gracefully if any component fails

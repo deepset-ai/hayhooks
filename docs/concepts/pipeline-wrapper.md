@@ -178,12 +178,16 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
 
 ## Streaming from Multiple Components
 
-!!! info "Automatic Multi-Component Streaming"
-    Hayhooks automatically enables streaming for **all** streaming-capable components in your pipeline - no special configuration needed!
+!!! info "Smart Streaming Behavior"
+    By default, Hayhooks streams only the **last** streaming-capable component in your pipeline. This is usually what you want - the final output streaming to users.
 
-When your pipeline contains multiple components that support streaming (e.g., multiple LLMs), all of them stream their outputs automatically as the pipeline executes.
+For advanced use cases, you can control which components stream using the `streaming_components` parameter.
 
-### Example: Sequential LLMs with Streaming
+When your pipeline contains multiple components that support streaming (e.g., multiple LLMs), you can control which ones stream their outputs as the pipeline executes.
+
+### Default Behavior: Stream Only the Last Component
+
+By default, only the last streaming-capable component will stream:
 
 ```python
 class MultiLLMWrapper(BasePipelineWrapper):
@@ -228,14 +232,119 @@ class MultiLLMWrapper(BasePipelineWrapper):
     def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
         question = get_last_user_message(messages)
 
-        # Both LLMs will stream automatically!
+        # By default, only llm_2 (the last streaming component) will stream
         return streaming_generator(
             pipeline=self.pipeline,
             pipeline_run_args={"prompt_1": {"template_variables": {"query": question}}}
         )
 ```
 
-**What happens:** Both LLMs **automatically stream** their responses token by token as the pipeline executes. The second prompt builder uses Jinja2 syntax (`{{previous_response[0].text}}`) to access the text content from the first LLM's `ChatMessage` response. **No custom extraction components needed** - streaming works for any number of components.
+**What happens:** Only `llm_2` (the last streaming-capable component) streams its responses token by token. The first LLM (`llm_1`) executes normally without streaming, and only the final refined output streams to the user.
+
+### Advanced: Stream Multiple Components with `streaming_components`
+
+For advanced use cases where you want to see outputs from multiple components, use the `streaming_components` parameter:
+
+```python
+def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+    question = get_last_user_message(messages)
+
+    # Enable streaming for BOTH LLMs
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt_1": {"template_variables": {"query": question}}},
+        streaming_components={"llm_1": True, "llm_2": True}  # Stream both components
+    )
+```
+
+**What happens:** Both LLMs stream their responses token by token. First you'll see the initial answer from `llm_1` streaming, then the refined answer from `llm_2` streaming.
+
+You can also selectively enable streaming for specific components:
+
+```python
+# Stream only the first LLM
+streaming_components={"llm_1": True, "llm_2": False}
+
+# Stream only the second LLM (same as default)
+streaming_components={"llm_1": False, "llm_2": True}
+
+# Stream ALL capable components (shorthand)
+streaming_components="all"
+```
+
+### Using the "all" Keyword
+
+The `"all"` keyword is a convenient shorthand to enable streaming for all capable components:
+
+```python
+return streaming_generator(
+    pipeline=self.pipeline,
+    pipeline_run_args={...},
+    streaming_components="all"  # Enable all streaming components
+)
+```
+
+This is equivalent to explicitly enabling every streaming-capable component in your pipeline.
+
+### Global Configuration via Environment Variable
+
+You can set a global default using the `HAYHOOKS_STREAMING_COMPONENTS` environment variable. This applies to all pipelines unless overridden:
+
+```bash
+# Stream all components by default
+export HAYHOOKS_STREAMING_COMPONENTS="all"
+
+# Stream specific components (comma-separated)
+export HAYHOOKS_STREAMING_COMPONENTS="llm_1,llm_2"
+```
+
+**Priority order:**
+
+1. Explicit `streaming_components` parameter (highest priority)
+2. `HAYHOOKS_STREAMING_COMPONENTS` environment variable
+3. Default behavior: stream only last component (lowest priority)
+
+!!! tip "When to Use Each Approach"
+    - **Default (last component only)**: Best for most use cases - users see only the final output
+    - **"all" keyword**: Useful for debugging, demos, or transparent multi-step workflows
+    - **Comma-separated list**: Enable multiple specific components
+    - **Fine-grained dict (code/YAML only)**: When you need to explicitly disable some components
+    - **Environment variable**: For deployment-wide defaults without code changes
+
+!!! note "Async Streaming"
+    All streaming_components options work identically with `async_streaming_generator()` for async pipelines.
+
+### YAML Pipeline Streaming Configuration
+
+You can also specify streaming configuration in YAML pipeline definitions:
+
+```yaml
+components:
+  llm_1:
+    type: haystack.components.generators.OpenAIGenerator
+  llm_2:
+    type: haystack.components.generators.OpenAIGenerator
+
+connections:
+  - sender: llm_1.replies
+    receiver: llm_2.prompt
+
+inputs:
+  prompt: llm_1.prompt
+
+outputs:
+  replies: llm_2.replies
+
+# Option 1: Fine-grained control
+streaming_components:
+  llm_1: true
+  llm_2: false
+
+# Option 2: Stream all components
+# streaming_components: all
+```
+
+YAML configuration follows the same priority rules: YAML setting > environment variable > default.
 
 See the [Multi-LLM Streaming Example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/multi_llm_streaming) for a complete working implementation.
 

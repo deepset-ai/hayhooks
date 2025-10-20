@@ -19,6 +19,7 @@ from hayhooks.server.pipelines.utils import (
     find_all_streaming_components,
     streaming_generator,
 )
+from hayhooks.settings import AppSettings
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
@@ -995,7 +996,42 @@ def pipeline_with_multiple_streaming_components(mocker):
     return streaming_component1, streaming_component2, pipeline
 
 
-def test_streaming_generator_with_multiple_components(pipeline_with_multiple_streaming_components):
+def test_streaming_generator_with_multiple_components_default_behavior(pipeline_with_multiple_streaming_components):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    mock_chunks = [
+        StreamingChunk(content="chunk1_from_component2"),
+        StreamingChunk(content="chunk2_from_component2"),
+    ]
+
+    def mock_run(data):
+        # Only component2 should stream (it's the last one)
+        if streaming_component2.streaming_callback:
+            streaming_component2.streaming_callback(mock_chunks[0])
+            streaming_component2.streaming_callback(mock_chunks[1])
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline)
+    chunks = list(generator)
+
+    assert chunks == mock_chunks
+    # Verify only the last component had its callback set
+    assert streaming_component1.streaming_callback is None
+    assert streaming_component2.streaming_callback is not None
+
+
+@pytest.mark.parametrize(
+    "streaming_components",
+    [
+        {"component1": True, "component2": True},  # Explicit dict
+        "all",  # "all" keyword
+    ],
+    ids=["dict_all_true", "all_keyword"],
+)
+def test_streaming_generator_with_all_components_enabled(
+    pipeline_with_multiple_streaming_components, streaming_components
+):
     streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
 
     mock_chunks = [
@@ -1006,7 +1042,6 @@ def test_streaming_generator_with_multiple_components(pipeline_with_multiple_str
     ]
 
     def mock_run(data):
-        # Simulate both components streaming
         if streaming_component1.streaming_callback:
             streaming_component1.streaming_callback(mock_chunks[0])
             streaming_component1.streaming_callback(mock_chunks[1])
@@ -1016,7 +1051,7 @@ def test_streaming_generator_with_multiple_components(pipeline_with_multiple_str
 
     pipeline.run.side_effect = mock_run
 
-    generator = streaming_generator(pipeline)
+    generator = streaming_generator(pipeline, streaming_components=streaming_components)
     chunks = list(generator)
 
     assert chunks == mock_chunks
@@ -1025,8 +1060,70 @@ def test_streaming_generator_with_multiple_components(pipeline_with_multiple_str
     assert streaming_component2.streaming_callback is not None
 
 
+def test_streaming_generator_with_multiple_components_selective(pipeline_with_multiple_streaming_components):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    mock_chunks = [
+        StreamingChunk(content="chunk1_from_component1"),
+        StreamingChunk(content="chunk2_from_component1"),
+    ]
+
+    def mock_run(data):
+        # Only component1 should stream based on config
+        if streaming_component1.streaming_callback:
+            streaming_component1.streaming_callback(mock_chunks[0])
+            streaming_component1.streaming_callback(mock_chunks[1])
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline, streaming_components={"component1": True, "component2": False})
+    chunks = list(generator)
+
+    assert chunks == mock_chunks
+    # Verify only component1 had its callback set
+    assert streaming_component1.streaming_callback is not None
+    assert streaming_component2.streaming_callback is None
+
+
 @pytest.mark.asyncio
-async def test_async_streaming_generator_with_multiple_components(mocker, pipeline_with_multiple_streaming_components):
+async def test_async_streaming_generator_with_multiple_components_default_behavior(
+    mocker, pipeline_with_multiple_streaming_components
+):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    mock_chunks = [
+        StreamingChunk(content="async_chunk1_from_component2"),
+        StreamingChunk(content="async_chunk2_from_component2"),
+    ]
+
+    async def mock_run_async(data):
+        # Only component2 should stream (it's the last one)
+        if streaming_component2.streaming_callback:
+            await streaming_component2.streaming_callback(mock_chunks[0])
+            await streaming_component2.streaming_callback(mock_chunks[1])
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline)]
+
+    assert chunks == mock_chunks
+    # Verify only the last component had its callback set
+    assert streaming_component1.streaming_callback is None
+    assert streaming_component2.streaming_callback is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "streaming_components",
+    [
+        {"component1": True, "component2": True},  # Explicit dict
+        "all",  # "all" keyword
+    ],
+    ids=["dict_all_true", "all_keyword"],
+)
+async def test_async_streaming_generator_with_all_components_enabled(
+    mocker, pipeline_with_multiple_streaming_components, streaming_components
+):
     streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
 
     mock_chunks = [
@@ -1037,7 +1134,7 @@ async def test_async_streaming_generator_with_multiple_components(mocker, pipeli
     ]
 
     async def mock_run_async(data):
-        # Simulate both components streaming
+        # Both components should stream
         if streaming_component1.streaming_callback:
             await streaming_component1.streaming_callback(mock_chunks[0])
             await streaming_component1.streaming_callback(mock_chunks[1])
@@ -1047,9 +1144,240 @@ async def test_async_streaming_generator_with_multiple_components(mocker, pipeli
 
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
-    chunks = [chunk async for chunk in async_streaming_generator(pipeline)]
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline, streaming_components=streaming_components)]
 
     assert chunks == mock_chunks
     # Verify both components had their callbacks set
     assert streaming_component1.streaming_callback is not None
     assert streaming_component2.streaming_callback is not None
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_with_multiple_components_selective(
+    mocker, pipeline_with_multiple_streaming_components
+):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    mock_chunks = [
+        StreamingChunk(content="async_chunk1_from_component1"),
+        StreamingChunk(content="async_chunk2_from_component1"),
+    ]
+
+    async def mock_run_async(data):
+        # Only component1 should stream based on config
+        if streaming_component1.streaming_callback:
+            await streaming_component1.streaming_callback(mock_chunks[0])
+            await streaming_component1.streaming_callback(mock_chunks[1])
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    chunks = [
+        chunk
+        async for chunk in async_streaming_generator(
+            pipeline, streaming_components={"component1": True, "component2": False}
+        )
+    ]
+
+    assert chunks == mock_chunks
+    # Verify only component1 had its callback set
+    assert streaming_component1.streaming_callback is not None
+    assert streaming_component2.streaming_callback is None
+
+
+@pytest.mark.parametrize(
+    "env_var_value",
+    [
+        "all",  # "all" keyword
+        "component1,component2",  # Comma-separated list
+    ],
+    ids=["env_all_keyword", "env_comma_separated"],
+)
+def test_streaming_generator_with_env_var_all_components(
+    monkeypatch, pipeline_with_multiple_streaming_components, env_var_value
+):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    # Set environment variable and reload settings
+    monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", env_var_value)
+    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+
+    mock_chunks = [
+        StreamingChunk(content="chunk1_from_component1"),
+        StreamingChunk(content="chunk2_from_component1"),
+        StreamingChunk(content="chunk1_from_component2"),
+        StreamingChunk(content="chunk2_from_component2"),
+    ]
+
+    def mock_run(data):
+        # Both components should stream
+        if streaming_component1.streaming_callback:
+            streaming_component1.streaming_callback(mock_chunks[0])
+            streaming_component1.streaming_callback(mock_chunks[1])
+        if streaming_component2.streaming_callback:
+            streaming_component2.streaming_callback(mock_chunks[2])
+            streaming_component2.streaming_callback(mock_chunks[3])
+
+    pipeline.run.side_effect = mock_run
+
+    # Don't pass streaming_components - should use env var
+    generator = streaming_generator(pipeline)
+    chunks = list(generator)
+
+    assert chunks == mock_chunks
+    assert streaming_component1.streaming_callback is not None
+    assert streaming_component2.streaming_callback is not None
+
+
+def test_streaming_generator_param_overrides_env_var(monkeypatch, pipeline_with_multiple_streaming_components):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    # Set environment variable to "all"
+    monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "all")
+    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+
+    mock_chunks = [
+        StreamingChunk(content="chunk1_from_component1"),
+        StreamingChunk(content="chunk2_from_component1"),
+    ]
+
+    def mock_run(data):
+        # Only component1 should stream (explicit param overrides env var)
+        if streaming_component1.streaming_callback:
+            streaming_component1.streaming_callback(mock_chunks[0])
+            streaming_component1.streaming_callback(mock_chunks[1])
+
+    pipeline.run.side_effect = mock_run
+
+    # Explicit parameter should override env var
+    generator = streaming_generator(pipeline, streaming_components={"component1": True, "component2": False})
+    chunks = list(generator)
+
+    assert chunks == mock_chunks
+    assert streaming_component1.streaming_callback is not None
+    assert streaming_component2.streaming_callback is None
+
+
+def test_streaming_generator_with_empty_dict(pipeline_with_multiple_streaming_components):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    def mock_run(data):
+        # Neither component should stream
+        pass
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline, streaming_components={})
+    chunks = list(generator)
+
+    assert chunks == []
+    # Verify no components had their callbacks set
+    assert streaming_component1.streaming_callback is None
+    assert streaming_component2.streaming_callback is None
+
+
+def test_streaming_generator_with_nonexistent_component_name(pipeline_with_multiple_streaming_components):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    mock_chunks = [
+        StreamingChunk(content="chunk1_from_component1"),
+        StreamingChunk(content="chunk2_from_component1"),
+    ]
+
+    def mock_run(data):
+        # Only component1 should stream (component3 doesn't exist)
+        if streaming_component1.streaming_callback:
+            streaming_component1.streaming_callback(mock_chunks[0])
+            streaming_component1.streaming_callback(mock_chunks[1])
+
+    pipeline.run.side_effect = mock_run
+
+    # Include non-existent component3
+    generator = streaming_generator(pipeline, streaming_components={"component1": True, "component3": True})
+    chunks = list(generator)
+
+    assert chunks == mock_chunks
+    assert streaming_component1.streaming_callback is not None
+    assert streaming_component2.streaming_callback is None
+
+
+def test_streaming_generator_with_single_component_comma_separated(
+    monkeypatch, pipeline_with_multiple_streaming_components
+):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    # Set environment variable with single component
+    monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "component1")
+    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+
+    mock_chunks = [
+        StreamingChunk(content="chunk1_from_component1"),
+        StreamingChunk(content="chunk2_from_component1"),
+    ]
+
+    def mock_run(data):
+        if streaming_component1.streaming_callback:
+            streaming_component1.streaming_callback(mock_chunks[0])
+            streaming_component1.streaming_callback(mock_chunks[1])
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline)
+    chunks = list(generator)
+
+    assert chunks == mock_chunks
+    assert streaming_component1.streaming_callback is not None
+    assert streaming_component2.streaming_callback is None
+
+
+def test_parse_streaming_components_with_empty_string(monkeypatch, pipeline_with_multiple_streaming_components):
+    streaming_component1, streaming_component2, pipeline = pipeline_with_multiple_streaming_components
+
+    # Set environment variable to empty string (default)
+    monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "")
+    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+
+    mock_chunks = [
+        StreamingChunk(content="chunk1_from_component2"),
+        StreamingChunk(content="chunk2_from_component2"),
+    ]
+
+    def mock_run(data):
+        # Should use default (last component only)
+        if streaming_component2.streaming_callback:
+            streaming_component2.streaming_callback(mock_chunks[0])
+            streaming_component2.streaming_callback(mock_chunks[1])
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline)
+    chunks = list(generator)
+
+    assert chunks == mock_chunks
+    assert streaming_component1.streaming_callback is None
+    assert streaming_component2.streaming_callback is not None
+
+
+def test_parse_streaming_components_setting_with_all():
+    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+
+    assert _parse_streaming_components_setting("all") == "all"
+    assert _parse_streaming_components_setting("ALL") == "all"
+    assert _parse_streaming_components_setting("  all  ") == "all"
+
+
+def test_parse_streaming_components_setting_with_comma_list():
+    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+
+    result = _parse_streaming_components_setting("llm_1,llm_2,llm_3")
+    assert result == {"llm_1": True, "llm_2": True, "llm_3": True}
+
+    # Test with spaces
+    result = _parse_streaming_components_setting("llm_1, llm_2 , llm_3")
+    assert result == {"llm_1": True, "llm_2": True, "llm_3": True}
+
+
+def test_parse_streaming_components_setting_with_empty():
+    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+
+    assert _parse_streaming_components_setting("") is None
+    assert _parse_streaming_components_setting("   ") is None
