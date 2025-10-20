@@ -209,6 +209,87 @@ def _setup_streaming_callback(
     raise ValueError(msg)
 
 
+def _yield_callback_results(result: ToolCallbackReturn) -> Generator[Union[OpenWebUIEvent, str], None, None]:
+    """
+    Yields callback results, handling both single values and lists.
+
+    Args:
+        result: The callback result to yield (can be None, single value, or list)
+
+    Yields:
+        OpenWebUIEvent or str: The callback results
+    """
+    if result:
+        if isinstance(result, list):
+            yield from result
+        else:
+            yield result
+
+
+def _process_tool_call_start(
+    chunk: StreamingChunk, on_tool_call_start: OnToolCallStart
+) -> Generator[Union[OpenWebUIEvent, str], None, None]:
+    """
+    Process tool call start events from a streaming chunk.
+
+    Args:
+        chunk: The streaming chunk that may contain tool calls
+        on_tool_call_start: Callback function for tool call start
+
+    Yields:
+        OpenWebUIEvent or str: Results from the callback
+    """
+    if on_tool_call_start and hasattr(chunk, "tool_calls") and chunk.tool_calls:
+        for tool_call in chunk.tool_calls:
+            if tool_call.tool_name:
+                result = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
+                yield from _yield_callback_results(result)
+
+
+def _process_tool_call_end(
+    chunk: StreamingChunk, on_tool_call_end: OnToolCallEnd
+) -> Generator[Union[OpenWebUIEvent, str], None, None]:
+    """
+    Process tool call end events from a streaming chunk.
+
+    Args:
+        chunk: The streaming chunk that may contain tool call results
+        on_tool_call_end: Callback function for tool call end
+
+    Yields:
+        OpenWebUIEvent or str: Results from the callback
+    """
+    if on_tool_call_end and hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
+        result = on_tool_call_end(
+            chunk.tool_call_result.origin.tool_name,
+            chunk.tool_call_result.origin.arguments,
+            chunk.tool_call_result.result,
+            bool(chunk.tool_call_result.error),
+        )
+        yield from _yield_callback_results(result)
+
+
+def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd) -> Optional[StreamingChunk]:
+    """
+    Process pipeline end callback and return a StreamingChunk if there's content.
+
+    Args:
+        result: The pipeline execution result
+        on_pipeline_end: Optional callback function for pipeline end
+
+    Returns:
+        StreamingChunk with content from callback, or None
+    """
+    if on_pipeline_end:
+        try:
+            on_pipeline_end_result = on_pipeline_end(result)
+            if on_pipeline_end_result:
+                return StreamingChunk(content=on_pipeline_end_result)
+        except Exception as e:
+            log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
+    return None
+
+
 def _execute_pipeline_sync(
     pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]
 ) -> dict[str, Any]:
@@ -225,7 +306,7 @@ def _execute_pipeline_sync(
         return pipeline.run(data=pipeline_run_args)
 
 
-def streaming_generator(  # noqa: C901, PLR0912, PLR0913
+def streaming_generator(  # noqa: PLR0913
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
     pipeline_run_args: Optional[dict[str, Any]] = None,
@@ -275,16 +356,10 @@ def streaming_generator(  # noqa: C901, PLR0912, PLR0913
     def run_pipeline() -> None:
         try:
             result = _execute_pipeline_sync(pipeline, configured_args)
-            # Call on_pipeline_end if provided
-            if on_pipeline_end:
-                try:
-                    on_pipeline_end_result = on_pipeline_end(result)
-                    # Send final chunk if on_pipeline_end returned content
-                    if on_pipeline_end_result:
-                        queue.put(StreamingChunk(content=on_pipeline_end_result))
-                except Exception as e:
-                    # We don't put the error into the queue to avoid breaking the stream
-                    log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
+            # Process pipeline end callback
+            final_chunk = _process_pipeline_end(result, on_pipeline_end)
+            if final_chunk:
+                queue.put(final_chunk)
             # Signal completion
             queue.put(None)
         except Exception as e:
@@ -303,30 +378,8 @@ def streaming_generator(  # noqa: C901, PLR0912, PLR0913
                 break
 
             # Handle tool calls
-            if on_tool_call_start and hasattr(item, "tool_calls") and item.tool_calls:
-                for tool_call in item.tool_calls:
-                    if tool_call.tool_name:
-                        res = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
-                        if res:
-                            if isinstance(res, list):
-                                for r in res:
-                                    yield r
-                            else:
-                                yield res
-
-            if on_tool_call_end and hasattr(item, "tool_call_result") and item.tool_call_result:
-                res = on_tool_call_end(
-                    item.tool_call_result.origin.tool_name,
-                    item.tool_call_result.origin.arguments,
-                    item.tool_call_result.result,
-                    bool(item.tool_call_result.error),
-                )
-                if res:
-                    if isinstance(res, list):
-                        for r in res:
-                            yield r
-                    else:
-                        yield res
+            yield from _process_tool_call_start(item, on_tool_call_start)
+            yield from _process_tool_call_end(item, on_tool_call_end)
             yield item
     finally:
         thread.join()
@@ -429,7 +482,7 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
             raise e
 
 
-async def async_streaming_generator(  # noqa: C901, PLR0912, PLR0913
+async def async_streaming_generator(  # noqa: PLR0913
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
     pipeline_run_args: Optional[dict[str, Any]] = None,
@@ -486,40 +539,17 @@ async def async_streaming_generator(  # noqa: C901, PLR0912, PLR0913
     try:
         async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
             # Handle tool calls
-            if on_tool_call_start and hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                for tool_call in chunk.tool_calls:
-                    if tool_call.tool_name:
-                        res = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
-                        if res:
-                            if isinstance(res, list):
-                                for r in res:
-                                    yield r
-                            else:
-                                yield res
-
-            if on_tool_call_end and hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
-                res = on_tool_call_end(
-                    chunk.tool_call_result.origin.tool_name,
-                    chunk.tool_call_result.origin.arguments,
-                    chunk.tool_call_result.result,
-                    bool(chunk.tool_call_result.error),
-                )
-                if res:
-                    if isinstance(res, list):
-                        for r in res:
-                            yield r
-                    else:
-                        yield res
+            for result in _process_tool_call_start(chunk, on_tool_call_start):
+                yield result
+            for result in _process_tool_call_end(chunk, on_tool_call_end):
+                yield result
             yield chunk
 
         await pipeline_task
-        if on_pipeline_end:
-            try:
-                on_pipeline_end_result = on_pipeline_end(pipeline_task.result())
-                if on_pipeline_end_result:
-                    yield StreamingChunk(content=on_pipeline_end_result)
-            except Exception as e:
-                log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
+        # Process pipeline end callback
+        final_chunk = _process_pipeline_end(pipeline_task.result(), on_pipeline_end)
+        if final_chunk:
+            yield final_chunk
 
     except Exception as e:
         log.error(f"Unexpected error in async streaming generator: {e}")

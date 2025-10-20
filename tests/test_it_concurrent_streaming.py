@@ -13,6 +13,8 @@ from hayhooks.server.pipelines.utils import async_streaming_generator, streaming
 
 # Test configuration
 OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_API_KEY_SECRET = Secret.from_env_var("OPENAI_API_KEY") if os.environ.get("OPENAI_API_KEY") else None
+
 NUM_STRESS_TEST_REQUESTS = 10
 NUM_SYNC_TEST_REQUESTS = 5
 
@@ -23,14 +25,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def async_streaming_pipeline():
     pipeline = AsyncPipeline()
     pipeline.add_component("prompt_builder", ChatPromptBuilder())
     pipeline.add_component(
         "llm",
         OpenAIChatGenerator(
-            api_key=Secret.from_env_var("OPENAI_API_KEY"),
+            api_key=OPENAI_API_KEY_SECRET,
             model=OPENAI_MODEL,
         ),
     )
@@ -38,14 +40,14 @@ def async_streaming_pipeline():
     return pipeline
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def sync_streaming_pipeline():
     pipeline = Pipeline()
     pipeline.add_component("prompt_builder", ChatPromptBuilder())
     pipeline.add_component(
         "llm",
         OpenAIChatGenerator(
-            api_key=Secret.from_env_var("OPENAI_API_KEY"),
+            api_key=OPENAI_API_KEY_SECRET,
             model=OPENAI_MODEL,
         ),
     )
@@ -57,6 +59,11 @@ def _create_test_message(request_id: str) -> list[ChatMessage]:
     return [ChatMessage.from_user(f"Say only 'Response for request {request_id}' and nothing else.")]
 
 
+def _normalize_text(text: str) -> str:
+    """Normalize text for comparison by removing spaces, underscores and converting to uppercase."""
+    return text.replace(" ", "").replace("_", "").upper()
+
+
 def _verify_chunks_belong_to_request(chunks: list[str], request_id: str) -> None:
     assert chunks, f"Request {request_id} received no chunks"
 
@@ -64,11 +71,7 @@ def _verify_chunks_belong_to_request(chunks: list[str], request_id: str) -> None
     # The LLM response will contain the request_id but may be tokenized across chunks
     full_response = "".join(chunks)
 
-    # Normalize both strings for comparison (remove spaces and underscores)
-    def normalize(text: str) -> str:
-        return text.replace(" ", "").replace("_", "").upper()
-
-    assert normalize(request_id) in normalize(full_response), (
+    assert _normalize_text(request_id) in _normalize_text(full_response), (
         f"Request {request_id} did not receive its own response. "
         f"Expected to find '{request_id}' in response. Got: {full_response[:200]}..."
     )
