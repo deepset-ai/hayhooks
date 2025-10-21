@@ -322,17 +322,29 @@ You can also specify streaming configuration in YAML pipeline definitions:
 
 ```yaml
 components:
+  prompt_1:
+    type: haystack.components.builders.PromptBuilder
+    init_parameters:
+      template: "Answer this question: {{query}}"
   llm_1:
     type: haystack.components.generators.OpenAIGenerator
+  prompt_2:
+    type: haystack.components.builders.PromptBuilder
+    init_parameters:
+      template: "Refine this response: {{previous_reply}}"
   llm_2:
     type: haystack.components.generators.OpenAIGenerator
 
 connections:
+  - sender: prompt_1.prompt
+    receiver: llm_1.prompt
   - sender: llm_1.replies
+    receiver: prompt_2.previous_reply
+  - sender: prompt_2.prompt
     receiver: llm_2.prompt
 
 inputs:
-  prompt: llm_1.prompt
+  query: prompt_1.query
 
 outputs:
   replies: llm_2.replies
@@ -340,6 +352,7 @@ outputs:
 # Option 1: List specific components
 streaming_components:
   - llm_1
+  - llm_2
 
 # Option 2: Stream all components
 # streaming_components: all
