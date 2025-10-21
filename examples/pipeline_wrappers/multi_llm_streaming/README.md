@@ -23,16 +23,16 @@ By default, hayhooks streams only the **last** streaming-capable component (in t
 streaming_generator(
     pipeline=self.pipeline,
     pipeline_run_args={...},
-    streaming_components={"llm_1": True, "llm_2": True}  # Stream both LLMs
+    streaming_components=["llm_1", "llm_2"]  # or streaming_components="all"
 )
 ```
 
 **Available options:**
 
 - **Default behavior** (no `streaming_components` or `None`): Only the last streaming component streams
-- **Stream all components**: `streaming_components={"llm_1": True, "llm_2": True}` (same as `streaming_components="all"`)
-- **Stream only first**: `streaming_components={"llm_1": True, "llm_2": False}` (same as `streaming_components={"llm_1": True}`)
-- **Stream only last** (same as default): `streaming_components={"llm_1": False, "llm_2": True}` (same as `streaming_components={"llm_2": True}`)
+- **Stream all components**: `streaming_components=["llm_1", "llm_2"]` (same as `streaming_components="all"`)
+- **Stream only first**: `streaming_components=["llm_1"]`
+- **Stream only last** (same as default): `streaming_components=["llm_2"]`
 
 ### Pipeline Architecture
 
@@ -92,7 +92,7 @@ pipeline.connect("llm_1.replies", "prompt_builder_2.previous_response")
 for chunk in streaming_generator(
     pipeline=pipeline,
     pipeline_run_args={"prompt_builder_1": {"template_variables": {"query": "Your question"}}},
-    streaming_components={"llm_1": True, "llm_2": True}  # Stream both components
+    streaming_components=["llm_1", "llm_2"]  # Stream both components
 ):
     print(chunk.content, end="", flush=True)
 ```

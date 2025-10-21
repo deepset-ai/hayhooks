@@ -123,7 +123,7 @@ def test_deploy_yaml_pipeline_with_streaming_components():
     assert metadata is not None
     assert "streaming_components" in metadata
     assert metadata["streaming_components"] is not None
-    assert metadata["streaming_components"] == {"llm_1": True, "llm_2": True}
+    assert metadata["streaming_components"] == ["llm_1", "llm_2"]
 
     # Verify it's an AsyncPipeline
     pipeline_instance = registry.get(pipeline_data["name"])

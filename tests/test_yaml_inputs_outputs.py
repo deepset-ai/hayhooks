@@ -73,13 +73,12 @@ outputs:
   replies: llm_2.replies
 
 streaming_components:
-  llm_1: true
-  llm_2: false
+  - llm_1
 """
     result = get_streaming_components_from_yaml(yaml_source)
 
     assert result is not None
-    assert result == {"llm_1": True, "llm_2": False}
+    assert result == ["llm_1"]
 
 
 def test_get_streaming_components_from_yaml_without_config():
@@ -101,7 +100,7 @@ outputs:
 
 
 def test_get_streaming_components_from_yaml_with_invalid_type():
-    """Test parsing streaming_components when it's not a dict (should return None)."""
+    """Test parsing streaming_components when it's not a list (should return None)."""
     yaml_source = """
 components:
   llm:
@@ -113,15 +112,15 @@ inputs:
 outputs:
   replies: llm.replies
 
-streaming_components: "invalid"
+streaming_components: 123
 """
     result = get_streaming_components_from_yaml(yaml_source)
 
     assert result is None
 
 
-def test_get_streaming_components_from_yaml_converts_to_bool():
-    """Test that streaming_components values are converted to boolean."""
+def test_get_streaming_components_from_yaml_converts_to_str():
+    """Test that streaming_components items are converted to strings."""
     yaml_source = """
 components:
   llm_1:
@@ -136,16 +135,15 @@ outputs:
   replies: llm_2.replies
 
 streaming_components:
-  llm_1: 1
-  llm_2: 0
+  - llm_1
+  - llm_2
 """
     result = get_streaming_components_from_yaml(yaml_source)
 
     assert result is not None
-    assert result == {"llm_1": True, "llm_2": False}
-    # Ensure values are actually boolean type
-    assert isinstance(result["llm_1"], bool)
-    assert isinstance(result["llm_2"], bool)
+    assert result == ["llm_1", "llm_2"]
+    # Ensure values are actually string type
+    assert all(isinstance(item, str) for item in result)
 
 
 def test_get_streaming_components_from_yaml_with_all_keyword():

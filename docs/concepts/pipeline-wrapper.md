@@ -253,7 +253,7 @@ def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> G
     return streaming_generator(
         pipeline=self.pipeline,
         pipeline_run_args={"prompt_1": {"template_variables": {"query": question}}},
-        streaming_components={"llm_1": True, "llm_2": True}  # Stream both components
+        streaming_components=["llm_1", "llm_2"]  # Stream both components
     )
 ```
 
@@ -263,13 +263,16 @@ You can also selectively enable streaming for specific components:
 
 ```python
 # Stream only the first LLM
-streaming_components={"llm_1": True, "llm_2": False}
+streaming_components=["llm_1"]
 
 # Stream only the second LLM (same as default)
-streaming_components={"llm_1": False, "llm_2": True}
+streaming_components=["llm_2"]
 
 # Stream ALL capable components (shorthand)
 streaming_components="all"
+
+# Stream ALL capable components (specific list)
+streaming_components=["llm_1", "llm_2"]
 ```
 
 ### Using the "all" Keyword
@@ -307,8 +310,7 @@ export HAYHOOKS_STREAMING_COMPONENTS="llm_1,llm_2"
 !!! tip "When to Use Each Approach"
     - **Default (last component only)**: Best for most use cases - users see only the final output
     - **"all" keyword**: Useful for debugging, demos, or transparent multi-step workflows
-    - **Comma-separated list**: Enable multiple specific components
-    - **Fine-grained dict (code/YAML only)**: When you need to explicitly disable some components
+    - **List of components**: Enable multiple specific components by name
     - **Environment variable**: For deployment-wide defaults without code changes
 
 !!! note "Async Streaming"
@@ -335,10 +337,9 @@ inputs:
 outputs:
   replies: llm_2.replies
 
-# Option 1: Fine-grained control
+# Option 1: List specific components
 streaming_components:
-  llm_1: true
-  llm_2: false
+  - llm_1
 
 # Option 2: Stream all components
 # streaming_components: all

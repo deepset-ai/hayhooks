@@ -1041,10 +1041,10 @@ def test_streaming_generator_with_multiple_components_default_behavior(pipeline_
 @pytest.mark.parametrize(
     "streaming_components",
     [
-        {"component1": True, "component2": True},  # Explicit dict
+        ["component1", "component2"],  # Explicit list
         "all",  # "all" keyword
     ],
-    ids=["dict_all_true", "all_keyword"],
+    ids=["list_both", "all_keyword"],
 )
 def test_streaming_generator_with_all_components_enabled(
     pipeline_with_multiple_streaming_components, streaming_components
@@ -1095,7 +1095,7 @@ def test_streaming_generator_with_multiple_components_selective(pipeline_with_mu
 
     pipeline.run.side_effect = mock_run
 
-    generator = streaming_generator(pipeline, streaming_components={"component1": True, "component2": False})
+    generator = streaming_generator(pipeline, streaming_components=["component1"])
     chunks = list(generator)
 
     assert chunks == mock_chunks
@@ -1130,10 +1130,10 @@ async def test_async_streaming_generator_with_multiple_components_default_behavi
 @pytest.mark.parametrize(
     "streaming_components",
     [
-        {"component1": True, "component2": True},  # Explicit dict
+        ["component1", "component2"],  # Explicit list
         "all",  # "all" keyword
     ],
-    ids=["dict_all_true", "all_keyword"],
+    ids=["list_both", "all_keyword"],
 )
 async def test_async_streaming_generator_with_all_components_enabled(
     mocker, pipeline_with_multiple_streaming_components, streaming_components
@@ -1187,9 +1187,7 @@ async def test_async_streaming_generator_with_multiple_components_selective(
 
     chunks = [
         chunk
-        async for chunk in async_streaming_generator(
-            pipeline, streaming_components={"component1": True, "component2": False}
-        )
+        async for chunk in async_streaming_generator(pipeline, streaming_components=["component1"])
     ]
 
     assert chunks == mock_chunks
@@ -1261,13 +1259,13 @@ def test_streaming_generator_param_overrides_env_var(monkeypatch, pipeline_with_
     pipeline.run.side_effect = mock_run
 
     # Explicit parameter should override env var
-    generator = streaming_generator(pipeline, streaming_components={"component1": True, "component2": False})
+    generator = streaming_generator(pipeline, streaming_components=["component1"])
     chunks = list(generator)
 
     assert chunks == mock_chunks
 
 
-def test_streaming_generator_with_empty_dict(pipeline_with_multiple_streaming_components):
+def test_streaming_generator_with_empty_list(pipeline_with_multiple_streaming_components):
     pipeline = pipeline_with_multiple_streaming_components
 
     def mock_run(data):
@@ -1276,7 +1274,7 @@ def test_streaming_generator_with_empty_dict(pipeline_with_multiple_streaming_co
 
     pipeline.run.side_effect = mock_run
 
-    generator = streaming_generator(pipeline, streaming_components={})
+    generator = streaming_generator(pipeline, streaming_components=[])
     chunks = list(generator)
 
     assert chunks == []
@@ -1300,7 +1298,7 @@ def test_streaming_generator_with_nonexistent_component_name(pipeline_with_multi
     pipeline.run.side_effect = mock_run
 
     # Include non-existent component3
-    generator = streaming_generator(pipeline, streaming_components={"component1": True, "component3": True})
+    generator = streaming_generator(pipeline, streaming_components=["component1", "component3"])
     chunks = list(generator)
 
     assert chunks == mock_chunks
@@ -1373,11 +1371,11 @@ def test_parse_streaming_components_setting_with_comma_list():
     from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
 
     result = _parse_streaming_components_setting("llm_1,llm_2,llm_3")
-    assert result == {"llm_1": True, "llm_2": True, "llm_3": True}
+    assert result == ["llm_1", "llm_2", "llm_3"]
 
     # Test with spaces
     result = _parse_streaming_components_setting("llm_1, llm_2 , llm_3")
-    assert result == {"llm_1": True, "llm_2": True, "llm_3": True}
+    assert result == ["llm_1", "llm_2", "llm_3"]
 
 
 def test_parse_streaming_components_setting_with_empty():

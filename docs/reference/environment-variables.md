@@ -56,8 +56,8 @@ Hayhooks can be configured via environment variables (loaded with prefix `HAYHOO
 !!! note "Priority Order"
     Pipeline-specific settings (via `streaming_components` parameter or YAML) override this global default.
 
-!!! tip "Fine-Grained Control"
-    For fine-grained control (enabling some components and disabling others), use the `streaming_components` parameter in your code or YAML configuration instead of the environment variable.
+!!! tip "Component-Specific Control"
+    For component-specific control, use the `streaming_components` parameter in your code or YAML configuration instead of the environment variable to specify exactly which components should stream.
 
 **Examples:**
 

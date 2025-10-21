@@ -95,7 +95,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
         This demonstrates the streaming_components parameter which controls which components stream.
         By default (streaming_components=None), only the last streaming-capable component (llm_2) streams.
-        To enable streaming for both LLMs, use: streaming_components={"llm_1": True, "llm_2": True}
+        To enable streaming for both LLMs, use: streaming_components=["llm_1", "llm_2"]
 
         We inject a visual separator between LLM 1 and LLM 2 outputs.
         """
@@ -119,7 +119,7 @@ class PipelineWrapper(BasePipelineWrapper):
                 pipeline_run_args={
                     "prompt_builder_1": {"template_variables": {"query": question}},
                 },
-                streaming_components={"llm_1": True, "llm_2": True},  # Or use streaming_components="all"
+                streaming_components=["llm_1", "llm_2"],  # Or use streaming_components="all"
             ):
                 # Use component_info to detect which LLM is streaming
                 if hasattr(chunk, "component_info") and chunk.component_info:

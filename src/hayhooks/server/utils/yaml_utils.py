@@ -153,7 +153,7 @@ def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
     return {"inputs": input_resolutions, "outputs": output_resolutions}
 
 
-def get_streaming_components_from_yaml(yaml_source_code: str) -> Union[dict[str, bool], str, None]:
+def get_streaming_components_from_yaml(yaml_source_code: str) -> Union[list[str], str, None]:
     """
     Extract streaming components configuration from a Haystack pipeline YAML.
 
@@ -166,8 +166,8 @@ def get_streaming_components_from_yaml(yaml_source_code: str) -> Union[dict[str,
     Returns:
         - None if not specified (use default behavior)
         - "all" if streaming_components is set to "all"
-        - dict[str, bool] mapping component names to boolean values
-        Example: {"llm_1": True, "llm_2": False}
+        - list[str] of component names that should stream
+        Example: ["llm_1", "llm_2"]
     """
     yaml_dict = yaml.safe_load(yaml_source_code) or {}
     streaming_components = yaml_dict.get("streaming_components")
@@ -179,8 +179,8 @@ def get_streaming_components_from_yaml(yaml_source_code: str) -> Union[dict[str,
     if isinstance(streaming_components, str) and streaming_components.lower() == "all":
         return "all"
 
-    if not isinstance(streaming_components, dict):
+    if not isinstance(streaming_components, list):
         return None
 
-    # Ensure all values are boolean
-    return {k: bool(v) for k, v in streaming_components.items()}
+    # Ensure all items are strings
+    return [str(item) for item in streaming_components if item]

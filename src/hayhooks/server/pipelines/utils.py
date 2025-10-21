@@ -62,7 +62,7 @@ def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> l
     return streaming_components
 
 
-def _parse_streaming_components_setting(setting_value: str) -> Union[dict[str, bool], Literal["all"], None]:
+def _parse_streaming_components_setting(setting_value: str) -> Union[list[str], Literal["all"], None]:
     """
     Parse the HAYHOOKS_STREAMING_COMPONENTS environment variable.
 
@@ -72,7 +72,7 @@ def _parse_streaming_components_setting(setting_value: str) -> Union[dict[str, b
     Returns:
         - None if empty string (use default behavior)
         - "all" if the value is "all"
-        - dict[str, bool] if it's a comma-separated list
+        - list[str] if it's a comma-separated list of component names
     """
     if not setting_value or setting_value.strip() == "":
         return None
@@ -83,10 +83,10 @@ def _parse_streaming_components_setting(setting_value: str) -> Union[dict[str, b
     if setting_value.lower() == "all":
         return "all"
 
-    # Parse as comma-separated list (enable all listed components)
+    # Parse as comma-separated list
     components = [c.strip() for c in setting_value.split(",") if c.strip()]
     if components:
-        return dict.fromkeys(components, True)
+        return components
 
     return None
 
@@ -95,7 +95,7 @@ def _setup_streaming_callback_for_pipeline(
     pipeline: Union[Pipeline, AsyncPipeline],
     pipeline_run_args: dict[str, Any],
     streaming_callback: Any,
-    streaming_components: Optional[Union[dict[str, bool], Literal["all"]]] = None,
+    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
 ) -> dict[str, Any]:
     """
     Sets up streaming callbacks for streaming-capable components in the pipeline.
@@ -111,7 +111,7 @@ def _setup_streaming_callback_for_pipeline(
                              Can be:
                              - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
                              - "all": stream all capable components
-                             - dict: {"llm_1": True, "llm_2": False} for fine-grained control
+                             - list[str]: ["llm_1", "llm_2"] to enable specific components
 
     Returns:
         Updated pipeline run arguments
@@ -136,10 +136,11 @@ def _setup_streaming_callback_for_pipeline(
             components_to_stream = [all_streaming_components[-1]]
             log.trace(f"Streaming enabled for last component only: {all_streaming_components[-1][1]}")
 
-    # Use explicit configuration for specific components
-    elif isinstance(streaming_components, dict):
+    # Use explicit list of component names
+    elif isinstance(streaming_components, list):
+        enabled_component_names = set(streaming_components)
         for component, component_name in all_streaming_components:
-            if streaming_components.get(component_name, False):
+            if component_name in enabled_component_names:
                 components_to_stream.append((component, component_name))
         log.trace(f"Streaming enabled for components: {[name for _, name in components_to_stream]}")
 
@@ -181,7 +182,7 @@ def _setup_streaming_callback(
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     pipeline_run_args: dict[str, Any],
     streaming_callback: Any,
-    streaming_components: Optional[Union[dict[str, bool], Literal["all"]]] = None,
+    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
 ) -> dict[str, Any]:
     """
     Configures streaming callback for the given pipeline or agent.
@@ -190,7 +191,7 @@ def _setup_streaming_callback(
         pipeline: The pipeline or agent to configure
         pipeline_run_args: Execution arguments
         streaming_callback: The callback function
-        streaming_components: Optional config - dict, "all", or None (pipelines only)
+        streaming_components: Optional config - list[str], "all", or None (pipelines only)
 
     Returns:
         Updated pipeline run arguments
@@ -313,7 +314,7 @@ def streaming_generator(  # noqa: PLR0913
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
-    streaming_components: Optional[Union[dict[str, bool], Literal["all"]]] = None,
+    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
 ) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
@@ -331,7 +332,7 @@ def streaming_generator(  # noqa: PLR0913
                              Can be:
                              - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
                              - "all": stream all capable components
-                             - dict: {"llm_1": True, "llm_2": False}
+                             - list[str]: ["llm_1", "llm_2"] to enable specific components
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -489,7 +490,7 @@ async def async_streaming_generator(  # noqa: PLR0913
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
-    streaming_components: Optional[Union[dict[str, bool], Literal["all"]]] = None,
+    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
@@ -507,7 +508,7 @@ async def async_streaming_generator(  # noqa: PLR0913
                              Can be:
                              - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
                              - "all": stream all capable components
-                             - dict: {"llm_1": True, "llm_2": False}
+                             - list[str]: ["llm_1", "llm_2"] to enable specific components
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution

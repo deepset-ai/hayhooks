@@ -62,5 +62,5 @@ outputs:
   replies: llm_2.replies
 
 streaming_components:
-  llm_1: true
-  llm_2: true
+  - llm_1
+  - llm_2
