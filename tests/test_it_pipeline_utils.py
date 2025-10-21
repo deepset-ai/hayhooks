@@ -1185,10 +1185,7 @@ async def test_async_streaming_generator_with_multiple_components_selective(
 
     pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
-    chunks = [
-        chunk
-        async for chunk in async_streaming_generator(pipeline, streaming_components=["component1"])
-    ]
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline, streaming_components=["component1"])]
 
     assert chunks == mock_chunks
 
