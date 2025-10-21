@@ -91,7 +91,7 @@ pipeline.connect("llm_1.replies", "prompt_builder_2.previous_response")
 # Enable streaming for both LLMs (by default, only the last would stream)
 for chunk in streaming_generator(
     pipeline=pipeline,
-    pipeline_run_args={"prompt_builder_1": {"template_variables": {"query": "Your question"}}},
+    pipeline_run_args={"prompt_builder_1": {"query": "Your question"}},
     streaming_components=["llm_1", "llm_2"]  # Stream both components
 ):
     print(chunk.content, end="", flush=True)

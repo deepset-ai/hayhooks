@@ -34,7 +34,8 @@ class PipelineWrapper(BasePipelineWrapper):
                         "You are a helpful assistant. \nAnswer the user's question in a short and concise manner."
                     ),
                     ChatMessage.from_user("{{query}}"),
-                ]
+                ],
+                required_variables="*",
             ),
         )
         self.pipeline.add_component(
@@ -61,7 +62,8 @@ class PipelineWrapper(BasePipelineWrapper):
                         "Make it a bit more detailed, clear, and professional. "
                         "Please state that you're refining the response in the beginning of your answer."
                     ),
-                ]
+                ],
+                required_variables="*",
             ),
         )
         self.pipeline.add_component(
@@ -72,6 +74,7 @@ class PipelineWrapper(BasePipelineWrapper):
                 generation_kwargs={
                     "reasoning_effort": "medium",
                 },
+                streaming_callback=None,
             ),
         )
 
@@ -84,7 +87,7 @@ class PipelineWrapper(BasePipelineWrapper):
         """Run the pipeline in non-streaming mode."""
         result = self.pipeline.run(
             {
-                "prompt_builder_1": {"template_variables": {"query": query}},
+                "prompt_builder_1": {"query": query},
             }
         )
         return {"reply": result["llm_2"]["replies"][0].text if result["llm_2"]["replies"] else ""}
@@ -117,7 +120,7 @@ class PipelineWrapper(BasePipelineWrapper):
             for chunk in streaming_generator(
                 pipeline=self.pipeline,
                 pipeline_run_args={
-                    "prompt_builder_1": {"template_variables": {"query": question}},
+                    "prompt_builder_1": {"query": question},
                 },
                 streaming_components=["llm_1", "llm_2"],  # Or use streaming_components="all"
             ):

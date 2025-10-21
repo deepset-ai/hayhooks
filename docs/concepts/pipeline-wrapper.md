@@ -235,7 +235,7 @@ class MultiLLMWrapper(BasePipelineWrapper):
         # By default, only llm_2 (the last streaming component) will stream
         return streaming_generator(
             pipeline=self.pipeline,
-            pipeline_run_args={"prompt_1": {"template_variables": {"query": question}}}
+            pipeline_run_args={"prompt_1": {"query": question}}
         )
 ```
 
@@ -252,7 +252,7 @@ def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> G
     # Enable streaming for BOTH LLMs
     return streaming_generator(
         pipeline=self.pipeline,
-        pipeline_run_args={"prompt_1": {"template_variables": {"query": question}}},
+        pipeline_run_args={"prompt_1": {"query": question}},
         streaming_components=["llm_1", "llm_2"]  # Stream both components
     )
 ```
