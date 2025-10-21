@@ -50,6 +50,13 @@ class AppSettings(BaseSettings):
     # Show tracebacks on errors during pipeline execution and deployment
     show_tracebacks: bool = False
 
+    # Default streaming components configuration
+    # Can be:
+    # - Empty string (default): enable stream only for the LAST capable component
+    # - "all": enable stream for ALL capable components
+    # - Comma-separated list: "llm_1,llm_2" to enable stream for specific components
+    streaming_components: str = ""
+
     # CORS Settings
     cors_allow_origins: list[str] = ["*"]
     cors_allow_methods: list[str] = ["*"]

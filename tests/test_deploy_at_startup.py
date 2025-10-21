@@ -89,7 +89,7 @@ def test_app_loads_pipeline_from_yaml_directory(test_client_yaml, test_yaml_pipe
     assert response.status_code == 200
 
     pipelines = response.json()["pipelines"]
-    assert len(pipelines) == 3
+    assert len(pipelines) == 5
 
 
 def test_app_loads_pipeline_from_mixed_directory(test_client_mixed, test_mixed_pipelines_dir):

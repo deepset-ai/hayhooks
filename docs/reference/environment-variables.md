@@ -44,6 +44,32 @@ Hayhooks can be configured via environment variables (loaded with prefix `HAYHOO
 - Default: `false`
 - Description: Include tracebacks in error messages (server and MCP)
 
+### HAYHOOKS_STREAMING_COMPONENTS
+
+- Default: `""` (empty string)
+- Description: Global configuration for which pipeline components should stream
+- Options:
+  - `""` (empty): Stream only the last capable component (default)
+  - `"all"`: Stream all streaming-capable components
+  - Comma-separated list: `"llm_1,llm_2"` to enable specific components
+
+!!! note "Priority Order"
+    Pipeline-specific settings (via `streaming_components` parameter or YAML) override this global default.
+
+!!! tip "Component-Specific Control"
+    For component-specific control, use the `streaming_components` parameter in your code or YAML configuration instead of the environment variable to specify exactly which components should stream.
+
+**Examples:**
+
+```bash
+# Stream all components globally
+export HAYHOOKS_STREAMING_COMPONENTS="all"
+
+# Stream specific components (comma-separated, spaces are trimmed)
+export HAYHOOKS_STREAMING_COMPONENTS="llm_1,llm_2"
+export HAYHOOKS_STREAMING_COMPONENTS="llm_1, llm_2, llm_3"
+```
+
 ## MCP
 
 ### HAYHOOKS_MCP_HOST
@@ -154,6 +180,7 @@ HAYHOOKS_ADDITIONAL_PYTHON_PATH=./custom_code
 HAYHOOKS_USE_HTTPS=false
 HAYHOOKS_DISABLE_SSL=false
 HAYHOOKS_SHOW_TRACEBACKS=false
+HAYHOOKS_STREAMING_COMPONENTS=all
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 LOG=INFO
 ```

@@ -5,7 +5,12 @@ from typing import Any
 import pytest
 
 from hayhooks.server.exceptions import InvalidYamlIOError
-from hayhooks.server.utils.yaml_utils import InputResolution, OutputResolution, get_inputs_outputs_from_yaml
+from hayhooks.server.utils.yaml_utils import (
+    InputResolution,
+    OutputResolution,
+    get_inputs_outputs_from_yaml,
+    get_streaming_components_from_yaml,
+)
 
 
 def test_get_inputs_outputs_from_yaml_matches_pipeline_metadata():
@@ -46,3 +51,118 @@ def test_get_inputs_outputs_from_yaml_raises_when_missing_inputs_outputs():
         InvalidYamlIOError, match=re.escape("YAML pipeline must declare at least one of 'inputs' or 'outputs'.")
     ):
         get_inputs_outputs_from_yaml(yaml_source)
+
+
+def test_get_streaming_components_from_yaml_with_valid_config():
+    """Test parsing streaming_components from YAML with valid configuration."""
+    yaml_source = """
+components:
+  llm_1:
+    type: haystack.components.generators.OpenAIGenerator
+  llm_2:
+    type: haystack.components.generators.OpenAIGenerator
+
+connections:
+  - sender: llm_1.replies
+    receiver: llm_2.prompt
+
+inputs:
+  prompt: llm_1.prompt
+
+outputs:
+  replies: llm_2.replies
+
+streaming_components:
+  - llm_1
+"""
+    result = get_streaming_components_from_yaml(yaml_source)
+
+    assert result is not None
+    assert result == ["llm_1"]
+
+
+def test_get_streaming_components_from_yaml_without_config():
+    """Test parsing streaming_components from YAML when not specified."""
+    yaml_source = """
+components:
+  llm:
+    type: haystack.components.generators.OpenAIGenerator
+
+inputs:
+  prompt: llm.prompt
+
+outputs:
+  replies: llm.replies
+"""
+    result = get_streaming_components_from_yaml(yaml_source)
+
+    assert result is None
+
+
+def test_get_streaming_components_from_yaml_with_invalid_type():
+    """Test parsing streaming_components when it's not a list (should return None)."""
+    yaml_source = """
+components:
+  llm:
+    type: haystack.components.generators.OpenAIGenerator
+
+inputs:
+  prompt: llm.prompt
+
+outputs:
+  replies: llm.replies
+
+streaming_components: 123
+"""
+    result = get_streaming_components_from_yaml(yaml_source)
+
+    assert result is None
+
+
+def test_get_streaming_components_from_yaml_converts_to_str():
+    """Test that streaming_components items are converted to strings."""
+    yaml_source = """
+components:
+  llm_1:
+    type: haystack.components.generators.OpenAIGenerator
+  llm_2:
+    type: haystack.components.generators.OpenAIGenerator
+
+inputs:
+  prompt: llm_1.prompt
+
+outputs:
+  replies: llm_2.replies
+
+streaming_components:
+  - llm_1
+  - llm_2
+"""
+    result = get_streaming_components_from_yaml(yaml_source)
+
+    assert result is not None
+    assert result == ["llm_1", "llm_2"]
+    # Ensure values are actually string type
+    assert all(isinstance(item, str) for item in result)
+
+
+def test_get_streaming_components_from_yaml_with_all_keyword():
+    """Test parsing streaming_components when set to 'all' keyword."""
+    yaml_source = """
+components:
+  llm_1:
+    type: haystack.components.generators.OpenAIGenerator
+  llm_2:
+    type: haystack.components.generators.OpenAIGenerator
+
+inputs:
+  prompt: llm_1.prompt
+
+outputs:
+  replies: llm_2.replies
+
+streaming_components: all
+"""
+    result = get_streaming_components_from_yaml(yaml_source)
+
+    assert result == "all"
