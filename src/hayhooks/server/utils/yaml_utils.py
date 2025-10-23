@@ -6,19 +6,19 @@ from pydantic import BaseModel
 from hayhooks.server.exceptions import InvalidYamlIOError
 
 
-class BaseInputOutputResolution(BaseModel):
+class InputResolution(BaseModel):
     path: str
     component: str
     name: str
     type: Any
-
-
-class InputResolution(BaseInputOutputResolution):
     required: bool
 
 
-class OutputResolution(BaseInputOutputResolution):
-    pass
+class OutputResolution(BaseModel):
+    path: str
+    component: str
+    name: str
+    type: Any
 
 
 class ResolvedIO(TypedDict):
@@ -28,20 +28,20 @@ class ResolvedIO(TypedDict):
 
 def _normalize_declared_path(value: Any) -> Union[str, None]:
     """
-    Normalize a declared path value.
-
-    A declared IO path in YAML can be provided either as a string (e.g. "comp.field")
-    or as a one-item list of strings. This helper normalizes both cases to a single
-    string, or None if the value cannot be normalized.
+    Normalize a declared path from YAML to a string.
 
     Args:
-        value: Declared path value from YAML (string or list of strings).
+        value: The value from YAML (can be list or string)
 
     Returns:
-        The normalized "component.field" string, or None when not available.
+        Normalized string path or None if invalid
     """
-    if isinstance(value, list):
-        return value[0] if value else None
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+
+    if not isinstance(value, str):
+        return None
+
     return value
 
 
@@ -184,3 +184,16 @@ def get_streaming_components_from_yaml(yaml_source_code: str) -> Union[list[str]
 
     # Ensure all items are strings
     return [str(item) for item in streaming_components if item]
+
+
+def get_components_from_outputs(resolved_outputs: dict[str, OutputResolution]) -> set[str]:
+    """
+    Extract component names from resolved outputs.
+
+    Args:
+        resolved_outputs: Resolved outputs from get_inputs_outputs_from_yaml
+
+    Returns:
+        Set of component names referenced in the outputs
+    """
+    return {output.component for output in resolved_outputs.values()}

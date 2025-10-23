@@ -159,7 +159,15 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
         return [TextContent(text=result, type="text")]
 
     if isinstance(pipeline, AsyncPipeline):
-        result = await pipeline.run_async(data=arguments)
+        # Get include_outputs_from from metadata if available
+        metadata = registry.get_metadata(name) or {}
+        outputs_to_include = metadata.get("include_outputs_from")
+
+        if outputs_to_include is not None:
+            result = await pipeline.run_async(data=arguments, include_outputs_from=outputs_to_include)
+        else:
+            result = await pipeline.run_async(data=arguments)
+
         log.trace(f"YAML Pipeline '{name}' returned result: {result}")
         return [TextContent(text=json.dumps(result), type="text")]
 

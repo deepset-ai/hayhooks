@@ -364,7 +364,17 @@ def add_yaml_pipeline_api_route(app: FastAPI, pipeline_name: str) -> None:
 
     @handle_pipeline_exceptions()
     async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type:ignore[valid-type]
-        result = await pipeline.run_async(data=run_req.model_dump())  # type: ignore[attr-defined]
+        # Get include_outputs_from from metadata if available
+        outputs_to_include = metadata.get("include_outputs_from")
+
+        if outputs_to_include is not None:
+            result = await pipeline.run_async(
+                data=run_req.model_dump(),  # type: ignore[attr-defined]
+                include_outputs_from=outputs_to_include,
+            )
+        else:
+            result = await pipeline.run_async(data=run_req.model_dump())  # type: ignore[attr-defined]
+
         return PipelineRunResponse(result=result)
 
     # Clear existing YAML run route if it exists (old or new path)
@@ -532,11 +542,19 @@ def add_yaml_pipeline_to_registry(
         raise
 
     # Extract streaming components configuration if present
-    from hayhooks.server.utils.yaml_utils import get_streaming_components_from_yaml
+    from hayhooks.server.utils.yaml_utils import get_components_from_outputs, get_streaming_components_from_yaml
 
     streaming_components = get_streaming_components_from_yaml(source_code)
     if streaming_components:
         clog.debug(f"Found streaming_components in YAML: {streaming_components}")
+
+    # Automatically derive include_outputs_from from the outputs mapping
+    # This optimizes pipeline execution by only computing outputs for components referenced in outputs
+    # Extract component names from paths like "llm.replies" -> "llm"
+    outputs_to_include: set[str] | None = None
+    if pipeline_outputs:
+        outputs_to_include = get_components_from_outputs(pipeline_outputs)
+        clog.debug(f"Auto-derived include_outputs_from from outputs: {outputs_to_include}")
 
     metadata = {
         "description": description or pipeline_name,
@@ -544,6 +562,7 @@ def add_yaml_pipeline_to_registry(
         "response_model": response_model,
         "skip_mcp": bool(skip_mcp),
         "streaming_components": streaming_components,
+        "include_outputs_from": outputs_to_include,
     }
 
     clog.debug(f"Adding YAML pipeline to registry with metadata: {metadata}")
