@@ -8,6 +8,7 @@ from hayhooks.server.exceptions import InvalidYamlIOError
 from hayhooks.server.utils.yaml_utils import (
     InputResolution,
     OutputResolution,
+    get_components_from_outputs,
     get_inputs_outputs_from_yaml,
     get_streaming_components_from_yaml,
 )
@@ -54,7 +55,6 @@ def test_get_inputs_outputs_from_yaml_raises_when_missing_inputs_outputs():
 
 
 def test_get_streaming_components_from_yaml_with_valid_config():
-    """Test parsing streaming_components from YAML with valid configuration."""
     yaml_source = """
 components:
   llm_1:
@@ -82,7 +82,6 @@ streaming_components:
 
 
 def test_get_streaming_components_from_yaml_without_config():
-    """Test parsing streaming_components from YAML when not specified."""
     yaml_source = """
 components:
   llm:
@@ -100,7 +99,6 @@ outputs:
 
 
 def test_get_streaming_components_from_yaml_with_invalid_type():
-    """Test parsing streaming_components when it's not a list (should return None)."""
     yaml_source = """
 components:
   llm:
@@ -120,7 +118,6 @@ streaming_components: 123
 
 
 def test_get_streaming_components_from_yaml_converts_to_str():
-    """Test that streaming_components items are converted to strings."""
     yaml_source = """
 components:
   llm_1:
@@ -142,12 +139,10 @@ streaming_components:
 
     assert result is not None
     assert result == ["llm_1", "llm_2"]
-    # Ensure values are actually string type
     assert all(isinstance(item, str) for item in result)
 
 
 def test_get_streaming_components_from_yaml_with_all_keyword():
-    """Test parsing streaming_components when set to 'all' keyword."""
     yaml_source = """
 components:
   llm_1:
@@ -166,3 +161,31 @@ streaming_components: all
     result = get_streaming_components_from_yaml(yaml_source)
 
     assert result == "all"
+
+
+def test_get_components_from_outputs():
+    yaml_path = Path(__file__).parent / "test_files" / "yaml" / "inputs_outputs_pipeline.yml"
+    yaml_source = yaml_path.read_text()
+
+    result = get_inputs_outputs_from_yaml(yaml_source)
+    components = get_components_from_outputs(result["outputs"])
+
+    assert components == {"llm"}
+
+
+def test_get_components_from_outputs_multiple_components():
+    yaml_path = Path(__file__).parent / "test_files" / "yaml" / "multi_output_pipeline.yml"
+    yaml_source = yaml_path.read_text()
+
+    result = get_inputs_outputs_from_yaml(yaml_source)
+    components = get_components_from_outputs(result["outputs"])
+
+    assert isinstance(components, set)
+    assert all(isinstance(component, str) for component in components)
+    assert components == {"double", "second_addition"}
+    assert "double.value" not in components
+    assert "second_addition.result" not in components
+
+
+def test_get_components_from_outputs_empty():
+    assert get_components_from_outputs({}) == set()
