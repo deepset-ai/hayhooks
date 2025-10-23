@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 
 from fastapi.concurrency import run_in_threadpool
 from haystack import AsyncPipeline
@@ -162,11 +162,14 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
         # Get include_outputs_from from metadata if available
         metadata = registry.get_metadata(name) or {}
         outputs_to_include = metadata.get("include_outputs_from")
+        kwargs: dict[str, Any] = {
+            "data": arguments,
+        }
 
         if outputs_to_include is not None:
-            result = await pipeline.run_async(data=arguments, include_outputs_from=outputs_to_include)
-        else:
-            result = await pipeline.run_async(data=arguments)
+            kwargs["include_outputs_from"] = outputs_to_include
+
+        result = await pipeline.run_async(**kwargs)
 
         log.trace(f"YAML Pipeline '{name}' returned result: {result}")
         return [TextContent(text=json.dumps(result), type="text")]
