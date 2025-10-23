@@ -366,14 +366,14 @@ def add_yaml_pipeline_api_route(app: FastAPI, pipeline_name: str) -> None:
     async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type:ignore[valid-type]
         # Get include_outputs_from from metadata if available
         outputs_to_include = metadata.get("include_outputs_from")
+        kwargs: dict[str, Any] = {
+            "data": run_req.model_dump(),  # type: ignore[attr-defined]
+        }
 
         if outputs_to_include is not None:
-            result = await pipeline.run_async(
-                data=run_req.model_dump(),  # type: ignore[attr-defined]
-                include_outputs_from=outputs_to_include,
-            )
-        else:
-            result = await pipeline.run_async(data=run_req.model_dump())  # type: ignore[attr-defined]
+            kwargs["include_outputs_from"] = outputs_to_include
+
+        result = await pipeline.run_async(**kwargs)
 
         return PipelineRunResponse(result=result)
 
@@ -548,8 +548,9 @@ def add_yaml_pipeline_to_registry(
     if streaming_components:
         clog.debug(f"Found streaming_components in YAML: {streaming_components}")
 
-    # Automatically derive include_outputs_from from the outputs mapping
-    # This optimizes pipeline execution by only computing outputs for components referenced in outputs
+    # Automatically derive include_outputs_from from the outputs mapping (matches dc-query-api behavior)
+    # This ensures we get outputs from all components referenced in the outputs declaration,
+    # not just leaf components. Useful for debugging and getting intermediate results.
     # Extract component names from paths like "llm.replies" -> "llm"
     outputs_to_include: set[str] | None = None
     if pipeline_outputs:
