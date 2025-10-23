@@ -292,7 +292,9 @@ def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd
 
 
 def _execute_pipeline_sync(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]
+    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    pipeline_run_args: dict[str, Any],
+    include_outputs_from: Optional[set[str]] = None,
 ) -> dict[str, Any]:
     """
     Executes pipeline synchronously based on its type.
@@ -300,11 +302,16 @@ def _execute_pipeline_sync(
     Args:
         pipeline: The pipeline or agent to execute
         pipeline_run_args: Execution arguments
+        include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
     """
     if isinstance(pipeline, Agent):
         return pipeline.run(**pipeline_run_args)
-    else:
-        return pipeline.run(data=pipeline_run_args)
+
+    kwargs: dict[str, Any] = {"data": pipeline_run_args}
+    if include_outputs_from is not None:
+        kwargs["include_outputs_from"] = include_outputs_from
+
+    return pipeline.run(**kwargs)
 
 
 def streaming_generator(  # noqa: PLR0913
@@ -315,6 +322,7 @@ def streaming_generator(  # noqa: PLR0913
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
     streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
+    include_outputs_from: Optional[set[str]] = None,
 ) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
@@ -333,6 +341,7 @@ def streaming_generator(  # noqa: PLR0913
                              - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
                              - "all": stream all capable components
                              - list[str]: ["llm_1", "llm_2"] to enable specific components
+        include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -356,7 +365,7 @@ def streaming_generator(  # noqa: PLR0913
 
     def run_pipeline() -> None:
         try:
-            result = _execute_pipeline_sync(pipeline, configured_args)
+            result = _execute_pipeline_sync(pipeline, configured_args, include_outputs_from)
             # Process pipeline end callback
             final_chunk = _process_pipeline_end(result, on_pipeline_end)
             if final_chunk:
@@ -412,7 +421,9 @@ def _validate_async_streaming_support(pipeline: Union[Pipeline, AsyncPipeline]) 
 
 
 async def _execute_pipeline_async(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent], pipeline_run_args: dict[str, Any]
+    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    pipeline_run_args: dict[str, Any],
+    include_outputs_from: Optional[set[str]] = None,
 ) -> asyncio.Task:
     """
     Creates and returns an async task for pipeline execution.
@@ -420,16 +431,22 @@ async def _execute_pipeline_async(
     Args:
         pipeline: The pipeline or agent to execute
         pipeline_run_args: Execution arguments
+        include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
 
     Returns:
         Async task for pipeline execution
     """
-    if isinstance(pipeline, AsyncPipeline):
-        return asyncio.create_task(pipeline.run_async(data=pipeline_run_args))
-    elif isinstance(pipeline, Agent):
+    if isinstance(pipeline, Agent):
         return asyncio.create_task(pipeline.run_async(**pipeline_run_args))
+
+    kwargs: dict[str, Any] = {"data": pipeline_run_args}
+    if include_outputs_from is not None:
+        kwargs["include_outputs_from"] = include_outputs_from
+
+    if isinstance(pipeline, AsyncPipeline):
+        return asyncio.create_task(pipeline.run_async(**kwargs))
     else:  # Regular Pipeline
-        return asyncio.create_task(asyncio.to_thread(pipeline.run, data=pipeline_run_args))
+        return asyncio.create_task(asyncio.to_thread(pipeline.run, **kwargs))
 
 
 async def _stream_chunks_from_queue(
@@ -491,6 +508,7 @@ async def async_streaming_generator(  # noqa: PLR0913
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
     streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
+    include_outputs_from: Optional[set[str]] = None,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
@@ -509,6 +527,7 @@ async def async_streaming_generator(  # noqa: PLR0913
                              - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
                              - "all": stream all capable components
                              - list[str]: ["llm_1", "llm_2"] to enable specific components
+        include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -535,7 +554,7 @@ async def async_streaming_generator(  # noqa: PLR0913
     configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, streaming_callback, streaming_components)
 
     # Start pipeline execution
-    pipeline_task = await _execute_pipeline_async(pipeline, configured_args)
+    pipeline_task = await _execute_pipeline_async(pipeline, configured_args, include_outputs_from)
 
     try:
         async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
