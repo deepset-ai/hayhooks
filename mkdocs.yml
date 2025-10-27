@@ -44,7 +44,7 @@ nav:
     - License: about/license.md
 
 theme:
-  logo: assets/deepset-square-logo.png
+  logo: assets/haystack_icon_green.png
   name: material
   language: en
   features:
@@ -63,15 +63,15 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: teal
-      accent: teal
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: teal
-      accent: teal
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
@@ -128,6 +128,7 @@ extra:
     - icon: fontawesome/brands/twitter
       link: https://twitter.com/deepset_ai
 
-extra_css: []
+extra_css: 
+  - stylesheets/extra.css
 
 extra_javascript: []
