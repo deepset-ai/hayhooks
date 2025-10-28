@@ -129,12 +129,16 @@ class MockComponent:
 
     def __init__(self, has_streaming=True, has_async_support=True):
         if has_streaming:
+
             def run_with_streaming(streaming_callback=None):
                 pass
+
             self.run = run_with_streaming
         else:
+
             def run_without_streaming():
                 pass
+
             self.run = run_without_streaming
 
         if has_async_support:
@@ -1007,6 +1011,7 @@ def test_find_all_streaming_components_ignores_attribute_only(mocker):
 
     class ComponentWithAttributeOnly:
         """Component with streaming_callback as attribute but not in run() signature."""
+
         def __init__(self):
             self.streaming_callback = None  # Attribute only
 
