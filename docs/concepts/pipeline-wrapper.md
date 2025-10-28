@@ -179,11 +179,11 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
 ## Hybrid Streaming: Mixing Async and Sync Components
 
 !!! tip "Compatibility for Legacy Components"
-    When working with legacy pipelines or components that only support sync streaming callbacks (like `HuggingFaceLocalGenerator`), use `allow_sync_streaming_callbacks="auto"` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
+    When working with legacy pipelines or components that only support sync streaming callbacks (like `OpenAIGenerator`), use `allow_sync_streaming_callbacks="auto"` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
 
 Some Haystack components only support synchronous streaming callbacks and don't have async equivalents. Examples include:
 
-- `HuggingFaceLocalGenerator` - Local text generation (⚠️ Note: `HuggingFaceLocalChatGenerator` IS async-compatible)
+- `OpenAIGenerator` - Legacy OpenAI text generation (⚠️ Note: `OpenAIChatGenerator` IS async-compatible)
 - Other components without `run_async()` support
 
 ### The Problem
@@ -192,9 +192,9 @@ By default, `async_streaming_generator` requires all streaming components to sup
 
 ```python
 async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
-    # This will FAIL if pipeline contains HuggingFaceLocalGenerator
+    # This will FAIL if pipeline contains OpenAIGenerator
     return async_streaming_generator(
-        pipeline=self.pipeline,  # AsyncPipeline with HuggingFaceLocalGenerator
+        pipeline=self.pipeline,  # AsyncPipeline with OpenAIGenerator
         pipeline_run_args={"prompt": {"query": question}},
     )
 ```
@@ -202,7 +202,7 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
 **Error:**
 
 ```text
-ValueError: Component 'llm' of type 'HuggingFaceLocalGenerator' seems to not support
+ValueError: Component 'llm' of type 'OpenAIGenerator' seems to not support
 async streaming callbacks...
 ```
 
@@ -243,22 +243,22 @@ allow_sync_streaming_callbacks="auto"
 # → Best for: Legacy pipelines, components without async support, gradual migration
 ```
 
-### Example: HuggingFace Local Model with Async Pipeline
+### Example: Legacy OpenAI Generator with Async Pipeline
 
 ```python
 from typing import List, AsyncGenerator
 from haystack import AsyncPipeline
 from haystack.components.builders import PromptBuilder
-from haystack.components.generators import HuggingFaceLocalGenerator
+from haystack.components.generators import OpenAIGenerator
+from haystack.utils import Secret
 from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator
 
-class LocalLLMWrapper(BasePipelineWrapper):
+class LegacyOpenAIWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        # HuggingFaceLocalGenerator only supports sync streaming
-        llm = HuggingFaceLocalGenerator(
-            model="microsoft/Phi-3-mini-4k-instruct",
-            task="text-generation",
-            generation_kwargs={"max_new_tokens": 100, "num_beams": 1}
+        # OpenAIGenerator only supports sync streaming (legacy component)
+        llm = OpenAIGenerator(
+            api_key=Secret.from_env_var("OPENAI_API_KEY"),
+            model="gpt-4o-mini"
         )
 
         prompt_builder = PromptBuilder(
@@ -275,7 +275,7 @@ class LocalLLMWrapper(BasePipelineWrapper):
     ) -> AsyncGenerator:
         question = get_last_user_message(messages)
 
-        # Enable hybrid mode for HuggingFaceLocalGenerator
+        # Enable hybrid mode for OpenAIGenerator
         return async_streaming_generator(
             pipeline=self.pipeline,
             pipeline_run_args={"prompt": {"question": question}},
@@ -294,7 +294,7 @@ class LocalLLMWrapper(BasePipelineWrapper):
 
 **Use `allow_sync_streaming_callbacks="auto"` when:**
 
-- ✅ Working with legacy pipelines that use `HuggingFaceLocalGenerator`
+- ✅ Working with legacy pipelines that use `OpenAIGenerator` or other sync-only components
 - ✅ Deploying YAML pipelines with unknown/legacy component types
 - ✅ Migrating old code that doesn't have async equivalents yet
 - ✅ Third-party components without async support

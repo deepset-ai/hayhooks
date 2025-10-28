@@ -666,7 +666,7 @@ async def async_streaming_generator(  # noqa: PLR0913
                                        - False (default): Strict mode - all components must support async callbacks
                                        - "auto": Automatically detect and enable hybrid mode only if needed
                                        Hybrid mode allows components with sync-only streaming callbacks
-                                       (e.g., HuggingFaceLocalGenerator) to work in async pipelines.
+                                       (e.g., OpenAIGenerator) to work in async pipelines.
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -675,7 +675,7 @@ async def async_streaming_generator(  # noqa: PLR0913
 
     NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming components
           should support an _async_ `streaming_callback`. However, if allow_sync_streaming_callbacks="auto",
-          components with only sync callbacks (e.g., HuggingFaceLocalGenerator) will also work.
+          components with only sync callbacks (e.g., OpenAIGenerator) will also work.
           Agents have built-in async streaming support. By default, only the last streaming-capable
           component will stream.
     """

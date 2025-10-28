@@ -1,9 +1,9 @@
 from collections.abc import AsyncGenerator, Generator
+from typing import Any, Optional
 
 import pytest
-from haystack import AsyncPipeline, Pipeline
+from haystack import AsyncPipeline, Pipeline, component
 from haystack.components.builders import PromptBuilder
-from haystack.components.generators import HuggingFaceLocalGenerator
 from haystack.dataclasses import StreamingChunk
 
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator
@@ -11,14 +11,31 @@ from hayhooks.server.pipelines.utils import async_streaming_generator, streaming
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
 
+@component
+class MockSyncOnlyGenerator:
+    """
+    Mock generator component that only supports sync streaming callbacks.
+    Simulates components like OpenAIGenerator that don't have run_async() support.
+    """
+
+    @component.output_types(replies=list[str])
+    def run(self, prompt: str, streaming_callback: Optional[Any] = None) -> dict[str, Any]:
+        """Run method with streaming_callback parameter (sync only, no run_async)."""
+        # Simulate streaming output
+        chunks = ["This ", "is ", "a ", "test ", "response."]
+
+        if streaming_callback:
+            for i, chunk_text in enumerate(chunks):
+                chunk = StreamingChunk(content=chunk_text, index=i)
+                streaming_callback(chunk)
+
+        return {"replies": ["This is a test response."]}
+
+
 @pytest.fixture
-def pipeline_with_huggingface_local_generator():
+def pipeline_with_sync_only_generator():
     prompt_builder = PromptBuilder(template=QUESTION)
-    llm = HuggingFaceLocalGenerator(
-        model="hf-internal-testing/tiny-random-T5ForConditionalGeneration",
-        task="text2text-generation",
-        generation_kwargs={"max_new_tokens": 10, "num_beams": 1},  # num_beams=1 required for streaming
-    )
+    llm = MockSyncOnlyGenerator()
 
     pipe = Pipeline()
     pipe.add_component("prompt_builder", prompt_builder)
@@ -29,13 +46,9 @@ def pipeline_with_huggingface_local_generator():
 
 
 @pytest.fixture
-def async_pipeline_with_huggingface_local_generator():
+def async_pipeline_with_sync_only_generator():
     prompt_builder = PromptBuilder(template=QUESTION)
-    llm = HuggingFaceLocalGenerator(
-        model="hf-internal-testing/tiny-random-T5ForConditionalGeneration",
-        task="text2text-generation",
-        generation_kwargs={"max_new_tokens": 10, "num_beams": 1},  # num_beams=1 required for streaming
-    )
+    llm = MockSyncOnlyGenerator()
 
     pipe = AsyncPipeline()
     pipe.add_component("prompt_builder", prompt_builder)
@@ -45,8 +58,9 @@ def async_pipeline_with_huggingface_local_generator():
     return pipe
 
 
-def test_streaming_generator_with_huggingface_local_generator(pipeline_with_huggingface_local_generator):
-    pipeline = pipeline_with_huggingface_local_generator
+def test_streaming_generator_with_sync_only_generator(pipeline_with_sync_only_generator):
+    """Test that sync streaming works with sync-only generator components."""
+    pipeline = pipeline_with_sync_only_generator
 
     generator = streaming_generator(
         pipeline,
@@ -63,10 +77,11 @@ def test_streaming_generator_with_huggingface_local_generator(pipeline_with_hugg
     assert isinstance(streaming_chunks[0], StreamingChunk)
 
 
-async def test_async_streaming_generator_with_huggingface_local_generator_should_fail(
-    async_pipeline_with_huggingface_local_generator,
+async def test_async_streaming_generator_with_sync_only_generator_should_fail(
+    async_pipeline_with_sync_only_generator,
 ):
-    pipeline = async_pipeline_with_huggingface_local_generator
+    """Test that async streaming fails without hybrid mode for sync-only components."""
+    pipeline = async_pipeline_with_sync_only_generator
 
     with pytest.raises(ValueError, match="seems to not support async streaming callbacks"):
         async_generator = async_streaming_generator(
@@ -77,11 +92,11 @@ async def test_async_streaming_generator_with_huggingface_local_generator_should
         _ = [chunk async for chunk in async_generator]
 
 
-async def test_async_streaming_generator_with_huggingface_local_generator_hybrid_mode_explicit(
-    async_pipeline_with_huggingface_local_generator,
+async def test_async_streaming_generator_with_sync_only_generator_hybrid_mode_explicit(
+    async_pipeline_with_sync_only_generator,
 ):
     """Test that hybrid mode works when explicitly requested with 'auto'."""
-    pipeline = async_pipeline_with_huggingface_local_generator
+    pipeline = async_pipeline_with_sync_only_generator
 
     async_generator = async_streaming_generator(
         pipeline,
@@ -99,10 +114,11 @@ async def test_async_streaming_generator_with_huggingface_local_generator_hybrid
     assert isinstance(streaming_chunks[0], StreamingChunk)
 
 
-async def test_async_streaming_generator_with_huggingface_local_generator_auto_mode(
-    async_pipeline_with_huggingface_local_generator,
+async def test_async_streaming_generator_with_sync_only_generator_auto_mode(
+    async_pipeline_with_sync_only_generator,
 ):
-    pipeline = async_pipeline_with_huggingface_local_generator
+    """Test that auto mode correctly detects and enables hybrid mode for sync-only components."""
+    pipeline = async_pipeline_with_sync_only_generator
 
     async_generator = async_streaming_generator(
         pipeline,
