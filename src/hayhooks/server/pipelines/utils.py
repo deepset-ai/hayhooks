@@ -416,12 +416,14 @@ def _create_hybrid_streaming_callback(
     has_async_support = hasattr(component, "run_async")
 
     if has_async_support:
+
         async def async_callback(chunk: StreamingChunk) -> None:
             await queue.put(chunk)
 
         log.trace(f"Using async streaming callback for component '{component_name}'")
         return async_callback
     else:
+
         def sync_callback(chunk: StreamingChunk) -> None:
             # Bridge sync callback to async queue using thread-safe operation
             future = asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
@@ -442,7 +444,8 @@ def _create_hybrid_streaming_callback(
 
 
 def _validate_async_streaming_support(
-    pipeline: Union[Pipeline, AsyncPipeline], allow_sync_streaming_callbacks: Union[bool, Literal["auto"]] = False
+    pipeline: Union[Pipeline, AsyncPipeline],
+    allow_sync_streaming_callbacks: Union[Literal[False], Literal["auto"]] = False,
 ) -> tuple[bool, list[tuple[Component, str]]]:
     """
     Validates that all streaming components in the pipeline support async streaming callbacks.
@@ -450,9 +453,8 @@ def _validate_async_streaming_support(
     Args:
         pipeline: The pipeline to validate
         allow_sync_streaming_callbacks: Controls validation behavior:
-            - False: Strict validation - all components must support async
-            - True: Enable hybrid mode - wrap sync callbacks for all components
-            - "auto": Automatically detect if hybrid mode is needed
+            - False (default): Strict mode - all components must support async, raises error otherwise
+            - "auto": Automatically detect and enable hybrid mode only if needed
 
     Returns:
         A tuple of (use_hybrid_mode, streaming_components):
@@ -470,9 +472,6 @@ def _validate_async_streaming_support(
         needs_hybrid = any(not hasattr(component, "run_async") for component, _ in streaming_components)
         return (needs_hybrid, streaming_components)
 
-    if allow_sync_streaming_callbacks is True:
-        return (True, streaming_components)
-
     for streaming_component, streaming_component_name in streaming_components:
         if not hasattr(streaming_component, "run_async"):
             component_type = type(streaming_component).__name__
@@ -480,7 +479,7 @@ def _validate_async_streaming_support(
                 f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async "
                 "streaming callbacks. Use the sync 'streaming_generator' function instead, switch to a component "
                 "that supports async streaming callbacks (e.g., OpenAIChatGenerator instead of OpenAIGenerator), "
-                "or set allow_sync_streaming_callbacks=True or 'auto' to enable hybrid mode."
+                "or set allow_sync_streaming_callbacks='auto' to enable hybrid mode."
             )
             raise ValueError(msg)
 
@@ -634,7 +633,7 @@ async def async_streaming_generator(  # noqa: PLR0913
     on_pipeline_end: OnPipelineEnd = None,
     streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
     include_outputs_from: Optional[set[str]] = None,
-    allow_sync_streaming_callbacks: Union[bool, Literal["auto"]] = False,
+    allow_sync_streaming_callbacks: Union[Literal[False], Literal["auto"]] = False,
 ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
@@ -656,8 +655,7 @@ async def async_streaming_generator(  # noqa: PLR0913
         include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
         allow_sync_streaming_callbacks: Controls hybrid streaming mode:
                                        - False (default): Strict mode - all components must support async callbacks
-                                       - True: Always use hybrid mode - wrap sync callbacks for async use
-                                       - "auto": Automatically detect and use hybrid mode only if needed
+                                       - "auto": Automatically detect and enable hybrid mode only if needed
                                        Hybrid mode allows components with sync-only streaming callbacks
                                        (e.g., HuggingFaceLocalGenerator) to work in async pipelines.
 
@@ -667,8 +665,8 @@ async def async_streaming_generator(  # noqa: PLR0913
         str: Tool name or stream content
 
     NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming components
-          should support an _async_ `streaming_callback`. However, if allow_sync_streaming_callbacks=True
-          or "auto", components with only sync callbacks (e.g., HuggingFaceLocalGenerator) will also work.
+          should support an _async_ `streaming_callback`. However, if allow_sync_streaming_callbacks="auto",
+          components with only sync callbacks (e.g., HuggingFaceLocalGenerator) will also work.
           Agents have built-in async streaming support. By default, only the last streaming-capable
           component will stream.
     """
@@ -691,6 +689,7 @@ async def async_streaming_generator(  # noqa: PLR0913
             pipeline_run_args, queue, loop, all_streaming_components, streaming_components
         )
     else:
+
         async def streaming_callback(chunk: StreamingChunk) -> None:
             await queue.put(chunk)
 

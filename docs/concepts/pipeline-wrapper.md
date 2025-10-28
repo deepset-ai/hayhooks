@@ -176,6 +176,140 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
     )
 ```
 
+## Hybrid Streaming: Mixing Async and Sync Components
+
+!!! tip "Compatibility for Legacy Components"
+    When working with legacy pipelines or components that only support sync streaming callbacks (like `HuggingFaceLocalGenerator`), use `allow_sync_streaming_callbacks="auto"` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
+
+Some Haystack components only support synchronous streaming callbacks and don't have async equivalents. Examples include:
+
+- `HuggingFaceLocalGenerator` - Local text generation (⚠️ Note: `HuggingFaceLocalChatGenerator` IS async-compatible)
+- Other components without `run_async()` support
+
+### The Problem
+
+By default, `async_streaming_generator` requires all streaming components to support async callbacks:
+
+```python
+async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    # This will FAIL if pipeline contains HuggingFaceLocalGenerator
+    return async_streaming_generator(
+        pipeline=self.pipeline,  # AsyncPipeline with HuggingFaceLocalGenerator
+        pipeline_run_args={"prompt": {"query": question}},
+    )
+```
+
+**Error:**
+
+```text
+ValueError: Component 'llm' of type 'HuggingFaceLocalGenerator' seems to not support
+async streaming callbacks...
+```
+
+### The Solution: Hybrid Streaming Mode
+
+Enable hybrid streaming mode to automatically handle both async and sync components:
+
+```python
+async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    question = get_last_user_message(messages)
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": question}},
+        allow_sync_streaming_callbacks="auto"  # ✅ Auto-detect and enable hybrid mode
+    )
+```
+
+### How It Works
+
+When `allow_sync_streaming_callbacks="auto"`:
+
+1. **Detection**: Automatically scans pipeline components for async support
+2. **Adaptation**: For sync-only components, wraps callbacks to work with async event loop
+3. **Mixed Handling**: Async-capable components use native async callbacks, sync-only use wrapped callbacks
+4. **Performance**: No overhead for fully async pipelines - hybrid mode only activates when needed
+
+### Configuration Options
+
+```python
+# Option 1: Strict mode (Default - Recommended)
+allow_sync_streaming_callbacks=False
+# → Raises error if sync-only components found
+# → Best for: New code, ensuring proper async components, best performance
+
+# Option 2: Auto-detection (Compatibility mode)
+allow_sync_streaming_callbacks="auto"
+# → Automatically detects and enables hybrid mode only when needed
+# → Best for: Legacy pipelines, components without async support, gradual migration
+```
+
+### Example: HuggingFace Local Model with Async Pipeline
+
+```python
+from typing import List, AsyncGenerator
+from haystack import AsyncPipeline
+from haystack.components.builders import PromptBuilder
+from haystack.components.generators import HuggingFaceLocalGenerator
+from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator
+
+class LocalLLMWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        # HuggingFaceLocalGenerator only supports sync streaming
+        llm = HuggingFaceLocalGenerator(
+            model="microsoft/Phi-3-mini-4k-instruct",
+            task="text-generation",
+            generation_kwargs={"max_new_tokens": 100, "num_beams": 1}
+        )
+
+        prompt_builder = PromptBuilder(
+            template="Answer this question: {{question}}"
+        )
+
+        self.pipeline = AsyncPipeline()
+        self.pipeline.add_component("prompt", prompt_builder)
+        self.pipeline.add_component("llm", llm)
+        self.pipeline.connect("prompt.prompt", "llm.prompt")
+
+    async def run_chat_completion_async(
+        self, model: str, messages: List[dict], body: dict
+    ) -> AsyncGenerator:
+        question = get_last_user_message(messages)
+
+        # Enable hybrid mode for HuggingFaceLocalGenerator
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"question": question}},
+            allow_sync_streaming_callbacks="auto"  # ✅ Handles sync component
+        )
+```
+
+### When to Use Each Mode
+
+**Use strict mode (default) when:**
+
+- ✅ Building new pipelines (recommended default)
+- ✅ You want to ensure all components are async-compatible
+- ✅ Performance is critical (pure async is ~1-2μs faster per chunk)
+- ✅ You're building a production system with controlled dependencies
+
+**Use `allow_sync_streaming_callbacks="auto"` when:**
+
+- ✅ Working with legacy pipelines that use `HuggingFaceLocalGenerator`
+- ✅ Deploying YAML pipelines with unknown/legacy component types
+- ✅ Migrating old code that doesn't have async equivalents yet
+- ✅ Third-party components without async support
+
+### Performance Considerations
+
+- **Pure async pipeline**: No overhead
+- **Hybrid mode (auto-detected)**: Minimal overhead (~1-2 microseconds per streaming chunk for sync components)
+- **Network-bound operations**: The overhead is negligible compared to LLM generation time
+
+!!! success "Best Practice"
+    **For new code**: Use the default strict mode (`allow_sync_streaming_callbacks=False`) to ensure you're using proper async components.
+
+    **For legacy/compatibility**: Use `allow_sync_streaming_callbacks="auto"` when working with older pipelines or components that don't support async streaming yet.
+
 ## Streaming from Multiple Components
 
 !!! info "Smart Streaming Behavior"

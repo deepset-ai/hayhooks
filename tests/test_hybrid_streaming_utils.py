@@ -77,15 +77,16 @@ async def test_async_streaming_generator_with_huggingface_local_generator_should
         _ = [chunk async for chunk in async_generator]
 
 
-async def test_async_streaming_generator_with_huggingface_local_generator_hybrid_mode(
+async def test_async_streaming_generator_with_huggingface_local_generator_hybrid_mode_explicit(
     async_pipeline_with_huggingface_local_generator,
 ):
+    """Test that hybrid mode works when explicitly requested with 'auto'."""
     pipeline = async_pipeline_with_huggingface_local_generator
 
     async_generator = async_streaming_generator(
         pipeline,
         pipeline_run_args={},
-        allow_sync_streaming_callbacks=True,
+        allow_sync_streaming_callbacks="auto",
     )
 
     assert isinstance(async_generator, AsyncGenerator)
