@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import threading
 from collections.abc import AsyncGenerator, Generator
 from queue import Queue
@@ -51,7 +52,20 @@ def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> l
     streaming_components = []
 
     for name, component in pipeline.walk():
-        if hasattr(component, "streaming_callback"):
+        # Check if the component's run() or run_async() method accepts streaming_callback parameter
+        supports_streaming = False
+
+        if hasattr(component, "run"):
+            sig = inspect.signature(component.run)
+            if "streaming_callback" in sig.parameters:
+                supports_streaming = True
+
+        if not supports_streaming and hasattr(component, "run_async"):
+            sig = inspect.signature(component.run_async)
+            if "streaming_callback" in sig.parameters:
+                supports_streaming = True
+
+        if supports_streaming:
             log.trace(f"Streaming component found in '{name}' with type {type(component)}")
             streaming_components.append((component, name))
 
@@ -145,11 +159,6 @@ def _setup_streaming_callback_for_pipeline(
         log.trace(f"Streaming enabled for components: {[name for _, name in components_to_stream]}")
 
     for _, component_name in components_to_stream:
-        # Pass the streaming callback as a parameter instead of mutating the component
-        # This ensures thread-safety for concurrent requests
-        streaming_component = pipeline.get_component(component_name)
-        assert hasattr(streaming_component, "streaming_callback")
-
         # Ensure component args exist and make a copy to avoid mutating original
         if component_name not in pipeline_run_args:
             pipeline_run_args[component_name] = {}
