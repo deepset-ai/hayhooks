@@ -416,42 +416,34 @@ def _create_hybrid_streaming_callback(
     has_async_support = hasattr(component, "run_async")
 
     if has_async_support:
-        # Component supports async streaming callbacks
         async def async_callback(chunk: StreamingChunk) -> None:
             await queue.put(chunk)
 
         log.trace(f"Using async streaming callback for component '{component_name}'")
         return async_callback
     else:
-        # Component only supports sync streaming callbacks - wrap it for async use
         def sync_callback(chunk: StreamingChunk) -> None:
-            # Use asyncio.run_coroutine_threadsafe to safely put into async queue from sync context
-            # We pass the loop reference captured from the async context
-            asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
+            # Bridge sync callback to async queue using thread-safe operation
+            future = asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
+
+            def handle_error(fut: Any) -> None:
+                try:
+                    if not fut.cancelled():
+                        fut.result()
+                except Exception as e:
+                    log.error(
+                        f"Error in hybrid streaming callback for component '{component_name}': {e}", exc_info=True
+                    )
+
+            future.add_done_callback(handle_error)
 
         log.trace(f"Using sync streaming callback (hybrid mode) for component '{component_name}'")
         return sync_callback
 
 
-def _needs_hybrid_streaming(pipeline: Union[Pipeline, AsyncPipeline]) -> bool:
-    """
-    Checks if the pipeline has any streaming components that only support sync callbacks.
-
-    Args:
-        pipeline: The pipeline to check
-
-    Returns:
-        True if hybrid streaming is needed (has sync-only components), False otherwise
-    """
-    streaming_components = find_all_streaming_components(pipeline)
-
-    # Check if any component lacks async support
-    return any(not hasattr(streaming_component, "run_async") for streaming_component, _ in streaming_components)
-
-
 def _validate_async_streaming_support(
     pipeline: Union[Pipeline, AsyncPipeline], allow_sync_streaming_callbacks: Union[bool, Literal["auto"]] = False
-) -> bool:
+) -> tuple[bool, list[tuple[Component, str]]]:
     """
     Validates that all streaming components in the pipeline support async streaming callbacks.
 
@@ -459,27 +451,29 @@ def _validate_async_streaming_support(
         pipeline: The pipeline to validate
         allow_sync_streaming_callbacks: Controls validation behavior:
             - False: Strict validation - all components must support async
-            - True: Skip validation - allow all components
+            - True: Enable hybrid mode - wrap sync callbacks for all components
             - "auto": Automatically detect if hybrid mode is needed
 
     Returns:
-        True if hybrid mode should be used, False otherwise
+        A tuple of (use_hybrid_mode, streaming_components):
+            - use_hybrid_mode: True if hybrid mode should be used, False otherwise
+            - streaming_components: List of (component, component_name) tuples
 
     Raises:
         ValueError: If any streaming component doesn't support async streaming and
                    allow_sync_streaming_callbacks is False
     """
-    if allow_sync_streaming_callbacks == "auto":
-        return _needs_hybrid_streaming(pipeline)
-
-    if allow_sync_streaming_callbacks is True:
-        return True
-
+    # Get all streaming components once to avoid multiple pipeline walks
     streaming_components = find_all_streaming_components(pipeline)
 
+    if allow_sync_streaming_callbacks == "auto":
+        needs_hybrid = any(not hasattr(component, "run_async") for component, _ in streaming_components)
+        return (needs_hybrid, streaming_components)
+
+    if allow_sync_streaming_callbacks is True:
+        return (True, streaming_components)
+
     for streaming_component, streaming_component_name in streaming_components:
-        # Check if the streaming component supports async streaming callbacks
-        # We check for run_async method as an indicator of async support
         if not hasattr(streaming_component, "run_async"):
             component_type = type(streaming_component).__name__
             msg = (
@@ -490,14 +484,14 @@ def _validate_async_streaming_support(
             )
             raise ValueError(msg)
 
-    return False
+    return (False, streaming_components)
 
 
 def _setup_hybrid_streaming_callbacks_for_pipeline(
-    pipeline: Union[Pipeline, AsyncPipeline],
     pipeline_run_args: dict[str, Any],
     queue: asyncio.Queue[StreamingChunk],
     loop: asyncio.AbstractEventLoop,
+    all_streaming_components: list[tuple[Component, str]],
     streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
 ) -> dict[str, Any]:
     """
@@ -508,22 +502,18 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
     - For sync-only components: wraps sync callbacks for async context
 
     Args:
-        pipeline: The pipeline to configure
         pipeline_run_args: Arguments for pipeline execution
         queue: Asyncio queue to put chunks into
         loop: The event loop to use for thread-safe operations
+        all_streaming_components: Pre-computed list of all streaming components
         streaming_components: Optional config for which components should stream
 
     Returns:
         Updated pipeline run arguments
     """
-    all_streaming_components = find_all_streaming_components(pipeline)
-
-    # If streaming_components not provided, check environment variable
     if streaming_components is None:
         streaming_components = _parse_streaming_components_setting(settings.streaming_components)
 
-    # Determine which components should stream
     components_to_stream = []
 
     if streaming_components == "all":
@@ -541,10 +531,9 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
         log.trace(f"Hybrid streaming enabled for components: {[name for _, name in components_to_stream]}")
 
     for component, component_name in components_to_stream:
-        # Create appropriate callback (sync or async) based on component capabilities
         streaming_callback = _create_hybrid_streaming_callback(queue, component, component_name, loop)
 
-        # Ensure component args exist and make a copy to avoid mutating original
+        # Copy component args to avoid mutating the original
         if component_name not in pipeline_run_args:
             pipeline_run_args[component_name] = {}
         else:
@@ -683,40 +672,36 @@ async def async_streaming_generator(  # noqa: PLR0913
           Agents have built-in async streaming support. By default, only the last streaming-capable
           component will stream.
     """
-    # Validate async streaming support for pipelines (not needed for agents)
     if pipeline_run_args is None:
         pipeline_run_args = {}
 
     use_hybrid_mode = False
+    all_streaming_components: list[tuple[Component, str]] = []
+
     if isinstance(pipeline, (AsyncPipeline, Pipeline)):
-        use_hybrid_mode = _validate_async_streaming_support(pipeline, allow_sync_streaming_callbacks)
+        use_hybrid_mode, all_streaming_components = _validate_async_streaming_support(
+            pipeline, allow_sync_streaming_callbacks
+        )
 
-    # Create async queue and get event loop
     queue: asyncio.Queue[StreamingChunk] = asyncio.Queue()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
-    # Configure streaming callbacks based on mode
-    if use_hybrid_mode and isinstance(pipeline, (Pipeline, AsyncPipeline)):
-        # Use hybrid mode: create appropriate callbacks (sync or async) per component
+    if use_hybrid_mode:
         configured_args = _setup_hybrid_streaming_callbacks_for_pipeline(
-            pipeline, pipeline_run_args.copy(), queue, loop, streaming_components
+            pipeline_run_args, queue, loop, all_streaming_components, streaming_components
         )
     else:
-        # Standard mode: use pure async callbacks
         async def streaming_callback(chunk: StreamingChunk) -> None:
             await queue.put(chunk)
 
-        # Configure streaming callback
         configured_args = _setup_streaming_callback(
             pipeline, pipeline_run_args, streaming_callback, streaming_components
         )
 
-    # Start pipeline execution
     pipeline_task = await _execute_pipeline_async(pipeline, configured_args, include_outputs_from)
 
     try:
         async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
-            # Handle tool calls
             for result in _process_tool_call_start(chunk, on_tool_call_start):
                 yield result
             for result in _process_tool_call_end(chunk, on_tool_call_end):
@@ -724,7 +709,6 @@ async def async_streaming_generator(  # noqa: PLR0913
             yield chunk
 
         await pipeline_task
-        # Process pipeline end callback
         final_chunk = _process_pipeline_end(pipeline_task.result(), on_pipeline_end)
         if final_chunk:
             yield final_chunk
