@@ -287,17 +287,17 @@ class LegacyOpenAIWrapper(BasePipelineWrapper):
 
 **Use strict mode (default) when:**
 
-- ✅ Building new pipelines (recommended default)
-- ✅ You want to ensure all components are async-compatible
-- ✅ Performance is critical (pure async is ~1-2μs faster per chunk)
-- ✅ You're building a production system with controlled dependencies
+- Building new pipelines (recommended default)
+- You want to ensure all components are **async-compatible**
+- Performance is critical (pure async is **~1-2μs faster** per chunk)
+- You're building a production system with controlled dependencies
 
 **Use `allow_sync_streaming_callbacks="auto"` when:**
 
-- ✅ Working with legacy pipelines that use `OpenAIGenerator` or other sync-only components
-- ✅ Deploying YAML pipelines with unknown/legacy component types
-- ✅ Migrating old code that doesn't have async equivalents yet
-- ✅ Third-party components without async support
+- Working with legacy pipelines that use `OpenAIGenerator` or other sync-only components
+- Deploying YAML pipelines with unknown/legacy component types
+- Migrating old code that doesn't have async equivalents yet
+- Third-party components without async support
 
 ### Performance Considerations
 
