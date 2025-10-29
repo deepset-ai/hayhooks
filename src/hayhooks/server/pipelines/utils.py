@@ -52,22 +52,12 @@ def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> l
     streaming_components = []
 
     for name, component in pipeline.walk():
-        # Check if the component's run() or run_async() method accepts streaming_callback parameter
-        supports_streaming = False
-
+        # Check if the component's run() method accepts streaming_callback parameter
         if hasattr(component, "run"):
             sig = inspect.signature(component.run)
             if "streaming_callback" in sig.parameters:
-                supports_streaming = True
-
-        if not supports_streaming and hasattr(component, "run_async"):
-            sig = inspect.signature(component.run_async)
-            if "streaming_callback" in sig.parameters:
-                supports_streaming = True
-
-        if supports_streaming:
-            log.trace(f"Streaming component found in '{name}' with type {type(component)}")
-            streaming_components.append((component, name))
+                log.trace(f"Streaming component found in '{name}' with type {type(component)}")
+                streaming_components.append((component, name))
 
     if not streaming_components:
         msg = "No streaming-capable components found in the pipeline"
