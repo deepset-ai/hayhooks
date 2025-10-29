@@ -129,7 +129,18 @@ class MockComponent:
 
     def __init__(self, has_streaming=True, has_async_support=True):
         if has_streaming:
-            self.streaming_callback = None
+
+            def run_with_streaming(streaming_callback=None):
+                pass
+
+            self.run = run_with_streaming
+        else:
+
+            def run_without_streaming():
+                pass
+
+            self.run = run_without_streaming
+
         if has_async_support:
             self.run_async = lambda: None
 
@@ -983,6 +994,39 @@ def test_find_all_streaming_components_finds_multiple(mocker):
 def test_find_all_streaming_components_raises_when_none_found():
     pipeline = Pipeline()
 
+    with pytest.raises(ValueError, match="No streaming-capable components found in the pipeline"):
+        find_all_streaming_components(pipeline)
+
+
+def test_find_all_streaming_components_ignores_attribute_only(mocker):
+    """
+    Given a component with streaming_callback as attribute but not in run()/run_async() method signatures
+    The component should be ignored by find_all_streaming_components(), because it doesn't have
+    streaming_callback in run/run_async method signatures, and should raise ValueError.
+
+    The main reason is that we want to ensure that all streaming components support async streaming callbacks.
+    If a component has streaming_callback as attribute but not in run/run_async method signatures,
+    it means that the component is not streaming capable, and should be ignored.
+    """
+
+    class ComponentWithAttributeOnly:
+        """Component with streaming_callback as attribute but not in run() signature."""
+
+        def __init__(self):
+            self.streaming_callback = None  # Attribute only
+
+        def run(self):
+            """Run method without streaming_callback parameter."""
+            pass
+
+    component_with_attr = ComponentWithAttributeOnly()
+
+    pipeline = mocker.Mock(spec=Pipeline)
+    pipeline.walk.return_value = [
+        ("component_with_attribute", component_with_attr),
+    ]
+
+    # Should raise ValueError because the component doesn't have streaming_callback in method signature
     with pytest.raises(ValueError, match="No streaming-capable components found in the pipeline"):
         find_all_streaming_components(pipeline)
 

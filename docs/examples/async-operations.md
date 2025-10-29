@@ -28,7 +28,9 @@ curl -X POST http://localhost:1416/v1/chat/completions \
 
 !!! tip "Best Practices"
     - Prefer `run_chat_completion_async` for streaming and concurrency
-    - Ensure components support async streaming callbacks; otherwise use the sync `streaming_generator`
+    - Use async-compatible components (e.g., `OpenAIChatGenerator`) for best performance
+    - For legacy pipelines with sync-only components (like `OpenAIGenerator`), use `allow_sync_streaming_callbacks=True` to enable hybrid mode
+    - See [Hybrid Streaming](../concepts/pipeline-wrapper.md#hybrid-streaming-mixing-async-and-sync-components) for handling legacy components
 
 ## Related
 

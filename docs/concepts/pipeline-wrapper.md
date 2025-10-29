@@ -176,6 +176,146 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
     )
 ```
 
+## Hybrid Streaming: Mixing Async and Sync Components
+
+!!! tip "Compatibility for Legacy Components"
+    When working with legacy pipelines or components that only support sync streaming callbacks (like `OpenAIGenerator`), use `allow_sync_streaming_callbacks=True` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
+
+Some Haystack components only support synchronous streaming callbacks and don't have async equivalents. Examples include:
+
+- `OpenAIGenerator` - Legacy OpenAI text generation (⚠️ Note: `OpenAIChatGenerator` IS async-compatible)
+- Other components without `run_async()` support
+
+### The Problem
+
+By default, `async_streaming_generator` requires all streaming components to support async callbacks:
+
+```python
+async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    # This will FAIL if pipeline contains OpenAIGenerator
+    return async_streaming_generator(
+        pipeline=self.pipeline,  # AsyncPipeline with OpenAIGenerator
+        pipeline_run_args={"prompt": {"query": question}},
+    )
+```
+
+**Error:**
+
+```text
+ValueError: Component 'llm' of type 'OpenAIGenerator' seems to not support
+async streaming callbacks...
+```
+
+### The Solution: Hybrid Streaming Mode
+
+Enable hybrid streaming mode to automatically handle both async and sync components:
+
+```python
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+    question = get_last_user_message(messages)
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": question}},
+        allow_sync_streaming_callbacks=True  # ✅ Auto-detect and enable hybrid mode
+    )
+```
+
+### What `allow_sync_streaming_callbacks=True` Does
+
+When you set `allow_sync_streaming_callbacks=True`, the system enables **intelligent auto-detection**:
+
+1. **Scans Components**: Automatically inspects all streaming components in your pipeline
+2. **Detects Capabilities**: Checks if each component has `run_async()` support
+3. **Enables Hybrid Mode Only If Needed**:
+   - ✅ If **all components support async** → Uses pure async mode (no overhead)
+   - ✅ If **any component is sync-only** → Automatically enables hybrid mode
+4. **Bridges Sync to Async**: For sync-only components, wraps their callbacks to work seamlessly with the async event loop
+5. **Zero Configuration**: You don't need to know which components are sync/async - it figures it out automatically
+
+!!! success "Smart Behavior"
+    Setting `allow_sync_streaming_callbacks=True` does NOT force hybrid mode. It only enables it when actually needed. If your pipeline is fully async-capable, you get pure async performance with no overhead!
+
+### Configuration Options
+
+```python
+# Option 1: Strict mode (Default - Recommended)
+allow_sync_streaming_callbacks=False
+# → Raises error if sync-only components found
+# → Best for: New code, ensuring proper async components, best performance
+
+# Option 2: Auto-detection (Compatibility mode)
+allow_sync_streaming_callbacks=True
+# → Automatically detects and enables hybrid mode only when needed
+# → Best for: Legacy pipelines, components without async support, gradual migration
+```
+
+### Example: Legacy OpenAI Generator with Async Pipeline
+
+```python
+from typing import AsyncGenerator
+from haystack import AsyncPipeline
+from haystack.components.builders import PromptBuilder
+from haystack.components.generators import OpenAIGenerator
+from haystack.utils import Secret
+from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator
+
+class LegacyOpenAIWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        # OpenAIGenerator only supports sync streaming (legacy component)
+        llm = OpenAIGenerator(
+            api_key=Secret.from_env_var("OPENAI_API_KEY"),
+            model="gpt-4o-mini"
+        )
+
+        prompt_builder = PromptBuilder(
+            template="Answer this question: {{question}}"
+        )
+
+        self.pipeline = AsyncPipeline()
+        self.pipeline.add_component("prompt", prompt_builder)
+        self.pipeline.add_component("llm", llm)
+        self.pipeline.connect("prompt.prompt", "llm.prompt")
+
+    async def run_chat_completion_async(
+        self, model: str, messages: list[dict], body: dict
+    ) -> AsyncGenerator:
+        question = get_last_user_message(messages)
+
+        # Enable hybrid mode for OpenAIGenerator
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"question": question}},
+            allow_sync_streaming_callbacks=True  # ✅ Handles sync component
+        )
+```
+
+### When to Use Each Mode
+
+**Use strict mode (default) when:**
+
+- Building new pipelines (recommended default)
+- You want to ensure all components are **async-compatible**
+- Performance is critical (pure async is **~1-2μs faster** per chunk)
+- You're building a production system with controlled dependencies
+
+**Use `allow_sync_streaming_callbacks=True` when:**
+
+- Working with legacy pipelines that use `OpenAIGenerator` or other sync-only components
+- Deploying YAML pipelines with unknown/legacy component types
+- Migrating old code that doesn't have async equivalents yet
+- Third-party components without async support
+
+### Performance Considerations
+
+- **Pure async pipeline**: No overhead
+- **Hybrid mode (auto-detected)**: Minimal overhead (~1-2 microseconds per streaming chunk for sync components)
+- **Network-bound operations**: The overhead is negligible compared to LLM generation time
+
+!!! success "Best Practice"
+    **For new code**: Use the default strict mode (`allow_sync_streaming_callbacks=False`) to ensure you're using proper async components.
+
+    **For legacy/compatibility**: Use `allow_sync_streaming_callbacks=True` when working with older pipelines or components that don't support async streaming yet.
+
 ## Streaming from Multiple Components
 
 !!! info "Smart Streaming Behavior"
