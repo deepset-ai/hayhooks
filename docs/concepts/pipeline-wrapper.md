@@ -211,7 +211,7 @@ async streaming callbacks...
 Enable hybrid streaming mode to automatically handle both async and sync components:
 
 ```python
-async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
     question = get_last_user_message(messages)
     return async_streaming_generator(
         pipeline=self.pipeline,
