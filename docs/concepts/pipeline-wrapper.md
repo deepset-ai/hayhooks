@@ -246,7 +246,7 @@ allow_sync_streaming_callbacks="auto"
 ### Example: Legacy OpenAI Generator with Async Pipeline
 
 ```python
-from typing import List, AsyncGenerator
+from typing import AsyncGenerator
 from haystack import AsyncPipeline
 from haystack.components.builders import PromptBuilder
 from haystack.components.generators import OpenAIGenerator
