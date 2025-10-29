@@ -92,28 +92,6 @@ async def test_async_streaming_generator_with_sync_only_generator_should_fail(
         _ = [chunk async for chunk in async_generator]
 
 
-async def test_async_streaming_generator_with_sync_only_generator_hybrid_mode_explicit(
-    async_pipeline_with_sync_only_generator,
-):
-    """Test that hybrid mode works when explicitly requested with 'auto'."""
-    pipeline = async_pipeline_with_sync_only_generator
-
-    async_generator = async_streaming_generator(
-        pipeline,
-        pipeline_run_args={},
-        allow_sync_streaming_callbacks="auto",
-    )
-
-    assert isinstance(async_generator, AsyncGenerator)
-
-    chunks = [chunk async for chunk in async_generator]
-    assert len(chunks) > 0
-
-    streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
-    assert len(streaming_chunks) > 0
-    assert isinstance(streaming_chunks[0], StreamingChunk)
-
-
 async def test_async_streaming_generator_with_sync_only_generator_auto_mode(
     async_pipeline_with_sync_only_generator,
 ):
