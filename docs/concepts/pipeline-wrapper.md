@@ -271,7 +271,7 @@ class LegacyOpenAIWrapper(BasePipelineWrapper):
         self.pipeline.connect("prompt.prompt", "llm.prompt")
 
     async def run_chat_completion_async(
-        self, model: str, messages: List[dict], body: dict
+        self, model: str, messages: list[dict], body: dict
     ) -> AsyncGenerator:
         question = get_last_user_message(messages)
 
