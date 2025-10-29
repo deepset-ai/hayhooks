@@ -179,7 +179,7 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
 ## Hybrid Streaming: Mixing Async and Sync Components
 
 !!! tip "Compatibility for Legacy Components"
-    When working with legacy pipelines or components that only support sync streaming callbacks (like `OpenAIGenerator`), use `allow_sync_streaming_callbacks="auto"` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
+    When working with legacy pipelines or components that only support sync streaming callbacks (like `OpenAIGenerator`), use `allow_sync_streaming_callbacks=True` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
 
 Some Haystack components only support synchronous streaming callbacks and don't have async equivalents. Examples include:
 
@@ -216,18 +216,24 @@ async def run_chat_completion_async(self, model: str, messages: list[dict], body
     return async_streaming_generator(
         pipeline=self.pipeline,
         pipeline_run_args={"prompt": {"query": question}},
-        allow_sync_streaming_callbacks="auto"  # ✅ Auto-detect and enable hybrid mode
+        allow_sync_streaming_callbacks=True  # ✅ Auto-detect and enable hybrid mode
     )
 ```
 
-### How It Works
+### What `allow_sync_streaming_callbacks=True` Does
 
-When `allow_sync_streaming_callbacks="auto"`:
+When you set `allow_sync_streaming_callbacks=True`, the system enables **intelligent auto-detection**:
 
-1. **Detection**: Automatically scans pipeline components for async support
-2. **Adaptation**: For sync-only components, wraps callbacks to work with async event loop
-3. **Mixed Handling**: Async-capable components use native async callbacks, sync-only use wrapped callbacks
-4. **Performance**: No overhead for fully async pipelines - hybrid mode only activates when needed
+1. **Scans Components**: Automatically inspects all streaming components in your pipeline
+2. **Detects Capabilities**: Checks if each component has `run_async()` support
+3. **Enables Hybrid Mode Only If Needed**:
+   - ✅ If **all components support async** → Uses pure async mode (no overhead)
+   - ✅ If **any component is sync-only** → Automatically enables hybrid mode
+4. **Bridges Sync to Async**: For sync-only components, wraps their callbacks to work seamlessly with the async event loop
+5. **Zero Configuration**: You don't need to know which components are sync/async - it figures it out automatically
+
+!!! success "Smart Behavior"
+    Setting `allow_sync_streaming_callbacks=True` does NOT force hybrid mode. It only enables it when actually needed. If your pipeline is fully async-capable, you get pure async performance with no overhead!
 
 ### Configuration Options
 
@@ -238,7 +244,7 @@ allow_sync_streaming_callbacks=False
 # → Best for: New code, ensuring proper async components, best performance
 
 # Option 2: Auto-detection (Compatibility mode)
-allow_sync_streaming_callbacks="auto"
+allow_sync_streaming_callbacks=True
 # → Automatically detects and enables hybrid mode only when needed
 # → Best for: Legacy pipelines, components without async support, gradual migration
 ```
@@ -279,7 +285,7 @@ class LegacyOpenAIWrapper(BasePipelineWrapper):
         return async_streaming_generator(
             pipeline=self.pipeline,
             pipeline_run_args={"prompt": {"question": question}},
-            allow_sync_streaming_callbacks="auto"  # ✅ Handles sync component
+            allow_sync_streaming_callbacks=True  # ✅ Handles sync component
         )
 ```
 
@@ -292,7 +298,7 @@ class LegacyOpenAIWrapper(BasePipelineWrapper):
 - Performance is critical (pure async is **~1-2μs faster** per chunk)
 - You're building a production system with controlled dependencies
 
-**Use `allow_sync_streaming_callbacks="auto"` when:**
+**Use `allow_sync_streaming_callbacks=True` when:**
 
 - Working with legacy pipelines that use `OpenAIGenerator` or other sync-only components
 - Deploying YAML pipelines with unknown/legacy component types
@@ -308,7 +314,7 @@ class LegacyOpenAIWrapper(BasePipelineWrapper):
 !!! success "Best Practice"
     **For new code**: Use the default strict mode (`allow_sync_streaming_callbacks=False`) to ensure you're using proper async components.
 
-    **For legacy/compatibility**: Use `allow_sync_streaming_callbacks="auto"` when working with older pipelines or components that don't support async streaming yet.
+    **For legacy/compatibility**: Use `allow_sync_streaming_callbacks=True` when working with older pipelines or components that don't support async streaming yet.
 
 ## Streaming from Multiple Components
 
