@@ -22,7 +22,8 @@ Hayhooks can automatically generate OpenAI-compatible endpoints if you implement
 ### Basic Chat Completion
 
 ```python
-from typing import List, Union, Generator
+from pathlib import Path
+from typing import Union, Generator
 from haystack import Pipeline
 from hayhooks import get_last_user_message, BasePipelineWrapper, log
 
@@ -32,7 +33,7 @@ class PipelineWrapper(BasePipelineWrapper):
         pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
 
         question = get_last_user_message(messages)
@@ -55,7 +56,7 @@ class PipelineWrapper(BasePipelineWrapper):
         pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
         self.pipeline = AsyncPipeline.loads(pipeline_yaml)
 
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
         log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
 
         question = get_last_user_message(messages)
@@ -73,7 +74,7 @@ class PipelineWrapper(BasePipelineWrapper):
 ### run_chat_completion(...)
 
 ```python
-def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
     """
     Run the pipeline for OpenAI-compatible chat completion.
 
@@ -91,7 +92,7 @@ def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> U
 ### run_chat_completion_async(...)
 
 ```python
-async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> Union[str, AsyncGenerator]:
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> Union[str, AsyncGenerator]:
     """
     Async version of run_chat_completion.
 
@@ -143,7 +144,7 @@ curl http://localhost:1416/v1/models
 ```python
 from hayhooks import streaming_generator
 
-def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
     question = get_last_user_message(messages)
 
     return streaming_generator(
@@ -157,7 +158,7 @@ def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> G
 ```python
 from hayhooks import async_streaming_generator
 
-async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
     question = get_last_user_message(messages)
 
     return async_streaming_generator(
@@ -217,7 +218,7 @@ class SyncChatWrapper(BasePipelineWrapper):
         self.pipeline.add_component("llm", llm)
         self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
 
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> str:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str:
         question = get_last_user_message(messages)
         result = self.pipeline.run({"chat_prompt_builder": {"query": question}})
         return result["llm"]["replies"][0].content
@@ -241,7 +242,7 @@ class AsyncStreamingWrapper(BasePipelineWrapper):
         self.pipeline.add_component("llm", llm)
         self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
 
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
         question = get_last_user_message(messages)
         return async_streaming_generator(
             pipeline=self.pipeline,
@@ -254,7 +255,7 @@ class AsyncStreamingWrapper(BasePipelineWrapper):
 The OpenAI-compatible endpoints support standard parameters from the `body` argument:
 
 ```python
-def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> str:
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str:
     # Access additional parameters
     temperature = body.get("temperature", 0.7)
     max_tokens = body.get("max_tokens", 150)

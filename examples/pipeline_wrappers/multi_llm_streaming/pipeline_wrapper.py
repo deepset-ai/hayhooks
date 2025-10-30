@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from typing import Any, List, Union  # noqa: UP035
+from typing import Any, Union
 
 from haystack import Pipeline
 from haystack.components.builders import ChatPromptBuilder
@@ -92,7 +92,7 @@ class PipelineWrapper(BasePipelineWrapper):
         )
         return {"reply": result["llm_2"]["replies"][0].text if result["llm_2"]["replies"] else ""}
 
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:  # noqa: ARG002, UP006
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:  # noqa: ARG002, UP006
         """
         Run the pipeline in streaming mode.
 

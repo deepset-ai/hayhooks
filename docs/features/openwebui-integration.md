@@ -107,12 +107,12 @@ Hayhooks supports sending events to Open WebUI for enhanced user experience:
 ### Event Implementation
 
 ```python
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator
 from hayhooks import async_streaming_generator, get_last_user_message, BasePipelineWrapper
 from hayhooks.open_webui import create_status_event, create_message_event, OpenWebUIEvent
 
 class PipelineWrapper(BasePipelineWrapper):
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator[str | OpenWebUIEvent, None]:
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator[str | OpenWebUIEvent, None]:
         # Indicate loading
         yield create_status_event("Processing your request...", done=False)
 
@@ -158,7 +158,7 @@ def on_tool_call_end(tool_name: str, arguments: dict, result: dict, error: bool)
 
 
 class PipelineWrapper(BasePipelineWrapper):
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
         return streaming_generator(
             pipeline=self.pipeline,
             pipeline_run_args={"messages": messages},
@@ -250,7 +250,7 @@ Here's a video example of how to deploy a Haystack pipeline from the `open-webui
 Here's a complete example for a website chat pipeline:
 
 ```python
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator
 from haystack import Pipeline
 from haystack.components.fetchers import LinkContentFetcher
 from haystack.components.converters import HTMLToDocument
@@ -282,7 +282,7 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline.connect("converter.documents", "chat_prompt_builder.documents")
         self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
 
-    async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
         question = get_last_user_message(messages)
 
         # Extract URLs from messages or use defaults

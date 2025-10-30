@@ -135,7 +135,6 @@ For each deployed pipeline, Hayhooks will:
 
 ```python
 from pathlib import Path
-from typing import List
 from haystack import Pipeline
 from hayhooks import BasePipelineWrapper
 
@@ -145,7 +144,7 @@ class PipelineWrapper(BasePipelineWrapper):
         pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
-    def run_api(self, urls: List[str], question: str) -> str:
+    def run_api(self, urls: list[str], question: str) -> str:
         #
         # NOTE: The following docstring will be used as MCP Tool description
         #
@@ -245,7 +244,7 @@ Configure Claude Desktop to connect to Hayhooks MCP Server:
 Use docstrings to provide better tool descriptions:
 
 ```python
-def run_api(self, urls: List[str], question: str) -> str:
+def run_api(self, urls: list[str], question: str) -> str:
     """
     Ask questions about website content using AI.
 
@@ -270,7 +269,7 @@ Hayhooks automatically validates inputs based on your method signature:
 ```python
 def run_api(
     self,
-    urls: List[str],           # Required: List of URLs
+    urls: list[str],           # Required: List of URLs
     question: str,             # Required: User question
     max_tokens: int = 1000     # Optional: Max tokens
 ) -> str:
