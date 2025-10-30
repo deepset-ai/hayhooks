@@ -48,12 +48,12 @@ def default_on_tool_call_end(
 
     Args:
         tool_name (str): The name of the tool that was called.
-        arguments (Dict[str, Any]): The arguments that were passed to the tool.
+        arguments (dict[str, Any]): The arguments that were passed to the tool.
         result (str): The result or response from the tool execution.
         error (bool): Whether the tool call resulted in an error.
 
     Returns:
-        List[Union[OpenWebUIEvent, str]]: A list of events to be processed by Open WebUI.
+        list[Union[OpenWebUIEvent, str]]: A list of events to be processed by Open WebUI.
             For successful calls, returns a status event and a details tag with the tool's arguments and response.
             For failed calls, returns a hidden status event and an error notification.
             The list can contain both OpenWebUIEvent and str objects.

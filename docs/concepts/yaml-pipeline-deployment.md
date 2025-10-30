@@ -271,17 +271,17 @@ with open("pipeline.yml", "w") as f:
 ```python
 # For OpenAI compatibility
 class PipelineWrapper(BasePipelineWrapper):
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
         ...
 
 # For file uploads
 class PipelineWrapper(BasePipelineWrapper):
-    def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
+    def run_api(self, files: Optional[list[UploadFile]] = None, query: str = "") -> str:
         ...
 
 # For streaming
 class PipelineWrapper(BasePipelineWrapper):
-    def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
         ...
 ```
 

@@ -17,7 +17,7 @@ router = APIRouter()
 
 SAMPLE_PIPELINE_FILES = {
     "pipeline_wrapper.py": (
-        "from typing import Dict, Any\n\ndef process(data: Dict[str, Any]) -> Dict[str, Any]:\n    "
+        "from typing import Any\n\ndef process(data: dict[str, Any]) -> dict[str, Any]:\n    "
         ":# Your processing logic here\n    return data"
     ),
     "requirements.txt": "pandas==1.3.5\nnumpy==1.21.0",

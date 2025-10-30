@@ -14,7 +14,7 @@ The pipeline wrapper provides a flexible foundation for deploying Haystack pipel
 
 ```python
 from pathlib import Path
-from typing import List, Generator, Union, AsyncGenerator
+from typing import Generator, Union, AsyncGenerator
 from haystack import Pipeline, AsyncPipeline
 from hayhooks import BasePipelineWrapper, get_last_user_message, streaming_generator, async_streaming_generator
 
@@ -23,7 +23,7 @@ class PipelineWrapper(BasePipelineWrapper):
         pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
-    def run_api(self, urls: List[str], question: str) -> str:
+    def run_api(self, urls: list[str], question: str) -> str:
         result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
         return result["llm"]["replies"][0]
 ```
@@ -108,7 +108,7 @@ def setup(self) -> None:
 The `run_api()` method is called for each API request to the `{pipeline_name}/run` endpoint.
 
 ```python
-def run_api(self, urls: List[str], question: str) -> str:
+def run_api(self, urls: list[str], question: str) -> str:
     result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
     return result["llm"]["replies"][0]
 ```
@@ -123,9 +123,9 @@ def run_api(self, urls: List[str], question: str) -> str:
 **Input argument rules:**
 
 - Arguments must be JSON-serializable
-- Use proper type hints (`List[str]`, `Optional[int]`, etc.)
+- Use proper type hints (`list[str]`, `Optional[int]`, etc.)
 - Default values are supported
-- Complex types like `Dict[str, Any]` are allowed
+- Complex types like `dict[str, Any]` are allowed
 
 ## Optional Methods
 
@@ -134,7 +134,7 @@ def run_api(self, urls: List[str], question: str) -> str:
 The asynchronous version of `run_api()` for better performance under high load.
 
 ```python
-async def run_api_async(self, urls: List[str], question: str) -> str:
+async def run_api_async(self, urls: list[str], question: str) -> str:
     result = await self.pipeline.run_async({"fetcher": {"urls": urls}, "prompt": {"query": question}})
     return result["llm"]["replies"][0]
 ```
@@ -151,7 +151,7 @@ async def run_api_async(self, urls: List[str], question: str) -> str:
 Enable OpenAI-compatible chat endpoints for integration with chat interfaces.
 
 ```python
-def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Union[str, Generator]:
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
     question = get_last_user_message(messages)
     result = self.pipeline.run({"prompt": {"query": question}})
     return result["llm"]["replies"][0]
@@ -168,7 +168,7 @@ def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> U
 Async version of chat completion with streaming support.
 
 ```python
-async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
     question = get_last_user_message(messages)
     return async_streaming_generator(
         pipeline=self.pipeline,
@@ -191,7 +191,7 @@ Some Haystack components only support synchronous streaming callbacks and don't 
 By default, `async_streaming_generator` requires all streaming components to support async callbacks:
 
 ```python
-async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
     # This will FAIL if pipeline contains OpenAIGenerator
     return async_streaming_generator(
         pipeline=self.pipeline,  # AsyncPipeline with OpenAIGenerator
@@ -369,7 +369,7 @@ class MultiLLMWrapper(BasePipelineWrapper):
         self.pipeline.connect("llm_1.replies", "prompt_2.previous_response")
         self.pipeline.connect("prompt_2.prompt", "llm_2.messages")
 
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
         question = get_last_user_message(messages)
 
         # By default, only llm_2 (the last streaming component) will stream
@@ -386,7 +386,7 @@ class MultiLLMWrapper(BasePipelineWrapper):
 For advanced use cases where you want to see outputs from multiple components, use the `streaming_components` parameter:
 
 ```python
-def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
     question = get_last_user_message(messages)
 
     # Enable streaming for BOTH LLMs
@@ -594,9 +594,9 @@ Hayhooks can handle file uploads by adding a `files` parameter:
 
 ```python
 from fastapi import UploadFile
-from typing import Optional, List
+from typing import Optional
 
-def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
+def run_api(self, files: Optional[list[UploadFile]] = None, query: str = "") -> str:
     if files:
         # Process uploaded files
         filenames = [f.filename for f in files if f.filename]
@@ -641,7 +641,7 @@ Your pipeline wrapper may require additional dependencies:
 # pipeline_wrapper.py
 import trafilatura  # Additional dependency
 
-def run_api(self, urls: List[str], question: str) -> str:
+def run_api(self, urls: list[str], question: str) -> str:
     # Use additional library
     content = trafilatura.fetch(urls[0])
     # ... rest of pipeline logic
@@ -709,7 +709,7 @@ class PipelineWrapper(BasePipelineWrapper):
 Use docstrings to provide MCP tool descriptions:
 
 ```python
-def run_api(self, urls: List[str], question: str) -> str:
+def run_api(self, urls: list[str], question: str) -> str:
     """
     Ask questions about website content.
 

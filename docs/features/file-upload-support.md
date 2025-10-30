@@ -17,10 +17,10 @@ To accept file uploads in your pipeline, add a `files` parameter to your `run_ap
 
 ```python
 from fastapi import UploadFile
-from typing import Optional, List
+from typing import Optional
 
 class PipelineWrapper(BasePipelineWrapper):
-    def run_api(self, files: Optional[List[UploadFile]] = None, query: str = "") -> str:
+    def run_api(self, files: Optional[list[UploadFile]] = None, query: str = "") -> str:
         if not files:
             return "No files provided"
 
@@ -105,12 +105,12 @@ You can handle both files and parameters in the same request by adding them as a
 
 ```python
 from fastapi import UploadFile
-from typing import Optional, List
+from typing import Optional
 
 class PipelineWrapper(BasePipelineWrapper):
     def run_api(
         self,
-        files: Optional[List[UploadFile]] = None,
+        files: Optional[list[UploadFile]] = None,
         query: str = "",
         additional_param: str = "default"
     ) -> str:
