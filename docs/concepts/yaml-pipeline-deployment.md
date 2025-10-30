@@ -158,8 +158,6 @@ outputs:
 
     **What this means:** You don't need to configure anything extra - just declare your outputs in the YAML, and Hayhooks ensures those component outputs are available in the results!
 
-    This matches the behavior of other Haystack deployment tools like dc-query-api.
-
     !!! note "Comparison with PipelineWrapper"
         **YAML Pipelines** (this page): `include_outputs_from` is **automatic** - derived from your `outputs` section
 

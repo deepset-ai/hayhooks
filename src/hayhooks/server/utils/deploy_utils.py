@@ -548,7 +548,7 @@ def add_yaml_pipeline_to_registry(
     if streaming_components:
         clog.debug(f"Found streaming_components in YAML: {streaming_components}")
 
-    # Automatically derive include_outputs_from from the outputs mapping (matches dc-query-api behavior)
+    # Automatically derive include_outputs_from from the outputs mapping.
     # This ensures we get outputs from all components referenced in the outputs declaration,
     # not just leaf components. Useful for debugging and getting intermediate results.
     # Extract component names from paths like "llm.replies" -> "llm"
