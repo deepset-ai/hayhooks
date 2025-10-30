@@ -428,6 +428,7 @@ def _create_hybrid_streaming_callback(
         log.trace(f"Using async streaming callback for component '{component_name}'")
         return async_callback
     else:
+
         def sync_callback(chunk: StreamingChunk) -> None:
             # Bridge sync callback to async queue using thread-safe operation
             future = asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
@@ -695,6 +696,7 @@ async def async_streaming_generator(  # noqa: PLR0913
             pipeline_run_args, queue, loop, all_streaming_components, streaming_components
         )
     else:
+
         async def streaming_callback(chunk: StreamingChunk) -> None:
             await queue.put(chunk)
 
