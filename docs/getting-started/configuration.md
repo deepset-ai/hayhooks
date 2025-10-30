@@ -38,7 +38,7 @@ hayhooks run --host 0.0.0.0 --port 1416 --pipelines-dir ./pipelines
 
 The most frequently used options:
 
-- `HAYHOOKS_HOST` - Host to bind to (default: `127.0.0.1`)
+- `HAYHOOKS_HOST` - Host to bind to (default: `localhost`)
 - `HAYHOOKS_PORT` - Port to listen on (default: `1416`)
 - `HAYHOOKS_PIPELINES_DIR` - Pipeline directory for auto-deployment (default: `./pipelines`)
 - `LOG` - Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`)
@@ -51,7 +51,7 @@ For the complete list of all environment variables and detailed descriptions, se
 
 ```bash
 # .env.development
-HAYHOOKS_HOST=127.0.0.1
+HAYHOOKS_HOST=localhost
 HAYHOOKS_PORT=1416
 LOG=DEBUG
 HAYHOOKS_SHOW_TRACEBACKS=true

@@ -79,7 +79,7 @@ outputs:
       -d '{
         "name": "my_chat_pipeline",
         "description": "Chat pipeline for Q&A",
-        "yaml_content": "...",
+        "source_code": "...",
         "overwrite": false
       }'
     ```
@@ -94,7 +94,7 @@ outputs:
         json={
             "name": "my_chat_pipeline",
             "description": "Chat pipeline for Q&A",
-            "yaml_content": "...",  # Your YAML content as string
+            "source_code": "...",  # Your YAML content as string
             "overwrite": False
         }
     )
@@ -150,6 +150,23 @@ outputs:
 - Field must exist in the component
 - Response fields are serialized to JSON
 - Complex objects are automatically serialized
+
+!!! success "Automatic `include_outputs_from` Derivation"
+    Hayhooks **automatically** derives the `include_outputs_from` parameter from your `outputs` section. This ensures that all components referenced in the outputs are included in the pipeline results, even if they're not leaf components.
+
+    **Example:** If your outputs reference `retriever.documents` and `llm.replies`, Hayhooks automatically sets `include_outputs_from={"retriever", "llm"}` when running the pipeline.
+
+    **What this means:** You don't need to configure anything extra - just declare your outputs in the YAML, and Hayhooks ensures those component outputs are available in the results!
+
+    !!! note "Comparison with PipelineWrapper"
+        **YAML Pipelines** (this page): `include_outputs_from` is **automatic** - derived from your `outputs` section
+
+        **PipelineWrapper**: `include_outputs_from` must be **manually passed**:
+
+        - For streaming: Pass to `streaming_generator()` / `async_streaming_generator()`
+        - For non-streaming: Pass to `pipeline.run()` / `pipeline.run_async()`
+
+        See [PipelineWrapper: include_outputs_from](pipeline-wrapper.md#accessing-intermediate-outputs-with-include_outputs_from) for examples.
 
 ## API Usage
 

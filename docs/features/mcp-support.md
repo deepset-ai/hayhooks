@@ -30,15 +30,15 @@ pip install hayhooks[mcp]
 hayhooks mcp run
 ```
 
-This starts the MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT` (default: `127.0.0.1:1417`).
+This starts the MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT` (default: `localhost:1417`).
 
 ### Configuration
 
 Environment variables for MCP server:
 
 ```bash
-HAYHOOKS_MCP_HOST=127.0.0.1    # MCP server host
-HAYHOOKS_MCP_PORT=1417        # MCP server port
+HAYHOOKS_MCP_HOST=localhost    # MCP server host
+HAYHOOKS_MCP_PORT=1417         # MCP server port
 ```
 
 ## Transports

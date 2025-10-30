@@ -502,6 +502,92 @@ YAML configuration follows the same priority rules: YAML setting > environment v
 
 See the [Multi-LLM Streaming Example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/multi_llm_streaming) for a complete working implementation.
 
+## Accessing Intermediate Outputs with `include_outputs_from`
+
+!!! info "Understanding Pipeline Outputs"
+    By default, Haystack pipelines only return outputs from **leaf components** (final components with no downstream connections). Use `include_outputs_from` to also get outputs from intermediate components like retrievers, preprocessors, or parallel branches.
+
+### Streaming with `on_pipeline_end` Callback
+
+For streaming responses, pass `include_outputs_from` to `streaming_generator()` or `async_streaming_generator()`, and use the `on_pipeline_end` callback to access intermediate outputs. For example:
+
+```python
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+        question = get_last_user_message(messages)
+
+        # Store retrieved documents for citations
+        self.retrieved_docs = []
+
+        def on_pipeline_end(result: dict[str, Any]) -> None:
+            # Access intermediate outputs here
+            if "retriever" in result:
+                self.retrieved_docs = result["retriever"]["documents"]
+                # Use for citations, logging, analytics, etc.
+
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={
+                "retriever": {"query": question},
+                "prompt_builder": {"query": question}
+            },
+            include_outputs_from={"retriever"},  # Make retriever outputs available
+            on_pipeline_end=on_pipeline_end
+        )
+```
+
+**What happens:** The `on_pipeline_end` callback receives both `llm` and `retriever` outputs in the `result` dict, allowing you to access retrieved documents alongside the generated response.
+
+The same pattern works with async streaming:
+
+```python
+async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    question = get_last_user_message(messages)
+
+    def on_pipeline_end(result: dict[str, Any]) -> None:
+        if "retriever" in result:
+            self.retrieved_docs = result["retriever"]["documents"]
+
+    return async_streaming_generator(
+        pipeline=self.async_pipeline,
+        pipeline_run_args={
+            "retriever": {"query": question},
+            "prompt_builder": {"query": question}
+        },
+        include_outputs_from={"retriever"},
+        on_pipeline_end=on_pipeline_end
+    )
+```
+
+### Non-Streaming API
+
+For non-streaming `run_api` or `run_api_async` endpoints, pass `include_outputs_from` directly to `pipeline.run()` or `pipeline.run_async()`. For example:
+
+```python
+def run_api(self, query: str) -> dict:
+    result = self.pipeline.run(
+        data={"retriever": {"query": query}},
+        include_outputs_from={"retriever"}
+    )
+    # Build custom response with both answer and sources
+    return {"answer": result["llm"]["replies"][0], "sources": result["retriever"]["documents"]}
+```
+
+Same pattern for async:
+
+```python
+async def run_api_async(self, query: str) -> dict:
+    result = await self.async_pipeline.run_async(
+        data={"retriever": {"query": query}},
+        include_outputs_from={"retriever"}
+    )
+    return {"answer": result["llm"]["replies"][0], "sources": result["retriever"]["documents"]}
+```
+
+!!! tip "When to Use `include_outputs_from`"
+    - **Streaming**: Pass `include_outputs_from` to `streaming_generator()` or `async_streaming_generator()` and use `on_pipeline_end` callback to access the outputs
+    - **Non-streaming**: Pass `include_outputs_from` directly to `pipeline.run()` or `pipeline.run_async()`
+    - **YAML Pipelines**: Automatically handled - see [YAML Pipeline Deployment](yaml-pipeline-deployment.md#output-mapping)
+
 ## File Upload Support
 
 Hayhooks can handle file uploads by adding a `files` parameter:

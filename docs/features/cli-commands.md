@@ -73,7 +73,7 @@ hayhooks run --reload
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--host` | | Host to bind to | `127.0.0.1` |
+| `--host` | | Host to bind to | `localhost` |
 | `--port` | | Port to listen on | `1416` |
 | `--workers` | | Number of worker processes | `1` |
 | `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
@@ -97,7 +97,7 @@ hayhooks mcp run --host 0.0.0.0 --port 1417
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--host` | | MCP server host | `127.0.0.1` |
+| `--host` | | MCP server host | `localhost` |
 | `--port` | | MCP server port | `1417` |
 | `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
 | `--additional-python-path` | | Additional Python path | `None` |
