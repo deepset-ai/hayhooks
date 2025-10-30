@@ -92,7 +92,7 @@ class PipelineWrapper(BasePipelineWrapper):
         )
         return {"reply": result["llm_2"]["replies"][0].text if result["llm_2"]["replies"] else ""}
 
-    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:  # noqa: ARG002, UP006
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:  # noqa: ARG002
         """
         Run the pipeline in streaming mode.
 
