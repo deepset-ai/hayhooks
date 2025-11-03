@@ -937,7 +937,7 @@ def test_sync_streaming_generator_on_pipeline_end_callback_raises(mocked_pipelin
     messages = []
     logger.add(lambda msg: messages.append(msg), level="ERROR")
     _ = list(generator)
-    assert "Callback error" in messages[0]
+    assert "Error in on_pipeline_end callback" in messages[0]
 
 
 @pytest.mark.asyncio
@@ -970,7 +970,7 @@ async def test_async_streaming_generator_on_pipeline_end_callback_raises(
     messages = []
     logger.add(lambda msg: messages.append(msg), level="ERROR")
     _ = [chunk async for chunk in generator]
-    assert "Callback error" in messages[0]
+    assert "Error in on_pipeline_end callback" in messages[0]
 
 
 def test_find_all_streaming_components_finds_multiple(mocker):

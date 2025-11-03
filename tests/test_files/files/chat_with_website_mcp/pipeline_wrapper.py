@@ -14,5 +14,5 @@ class PipelineWrapper(BasePipelineWrapper):
         """
         Ask a question about one or more websites using a Haystack pipeline.
         """
-        log.trace(f"Running pipeline with urls: {urls} and question: {question}")
+        log.trace("Running pipeline with urls: {urls} and question: {question}", urls=urls, question=question)
         return "This is a mock response from the pipeline"

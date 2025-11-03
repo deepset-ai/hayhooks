@@ -153,7 +153,7 @@ from hayhooks import log
 
 class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, query: str) -> str:
-        log.info(f"Processing query: {query}")
+        log.info("Processing query: {query}", query=query)
         result = self.pipeline.run({"prompt": {"query": query}})
         log.info("Pipeline completed")
         return result["llm"]["replies"][0]

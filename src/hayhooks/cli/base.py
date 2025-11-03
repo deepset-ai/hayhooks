@@ -62,7 +62,7 @@ def run(  # noqa: PLR0913
     if additional_python_path:
         settings.additional_python_path = additional_python_path
         sys.path.append(additional_python_path)
-        log.trace(f"Added {additional_python_path} to sys.path")
+        log.trace("Added {additional_python_path} to sys.path", additional_python_path=additional_python_path)
 
     # Use string import path so server modules load only within uvicorn context
     uvicorn.run("hayhooks.server.app:create_app", host=host, port=port, workers=workers, reload=reload, factory=True)

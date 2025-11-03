@@ -13,16 +13,21 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
     def run_api(self, urls: list[str], question: str) -> str:
-        log.trace(f"Running pipeline with urls: {urls} and question: {question}")
+        log.trace("Running pipeline with urls: {urls} and question: {question}", urls=urls, question=question)
 
         # NOTE: This is used in tests, please don't change it
         return "This is a mock response from the pipeline"
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
-        log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+        log.trace(
+            "Running pipeline with model: {model}, messages: {messages}, body: {body}",
+            model=model,
+            messages=messages,
+            body=body,
+        )
 
         question = get_last_user_message(messages)
-        log.trace(f"Question: {question}")
+        log.trace("Question: {question}", question=question)
 
         # Mock streaming pipeline run, will return a fixed string
         # NOTE: This is used in tests, please don't change it

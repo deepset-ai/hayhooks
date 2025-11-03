@@ -11,7 +11,7 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
     async def run_api_async(self, urls: list[str], question: str) -> str:
-        log.trace(f"Running pipeline with urls: {urls} and question: {question}")
+        log.trace("Running pipeline with urls: {urls} and question: {question}", urls=urls, question=question)
 
         # NOTE: This is used in tests, please don't change it
         return "This is a mock response from the pipeline"

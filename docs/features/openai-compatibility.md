@@ -34,10 +34,10 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
-        log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+        log.trace("Running pipeline with model: {model}, messages: {messages}, body: {body}", model=model, messages=messages, body=body)
 
         question = get_last_user_message(messages)
-        log.trace(f"Question: {question}")
+        log.trace("Question: {question}", question=question)
 
         # Pipeline run, returns a string
         result = self.pipeline.run({"prompt": {"query": question}})
@@ -57,10 +57,10 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = AsyncPipeline.loads(pipeline_yaml)
 
     async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
-        log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+        log.trace("Running pipeline with model: {model}, messages: {messages}, body: {body}", model=model, messages=messages, body=body)
 
         question = get_last_user_message(messages)
-        log.trace(f"Question: {question}")
+        log.trace("Question: {question}", question=question)
 
         # Async streaming pipeline run
         return async_streaming_generator(

@@ -11,13 +11,13 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = None
 
     def run_api(self, test_param: str, files: Optional[list[UploadFile]] = None) -> str:
-        log.info(f"----- Received files: {files}")
+        log.info("----- Received files: {files}", files=files)
 
         if files and len(files) > 0:
             filenames = [f.filename for f in files if f.filename is not None]
 
             file_contents = [f.file.read() for f in files]
-            log.info(f"----- File contents: {file_contents}")
+            log.info("----- File contents: {file_contents}", file_contents=file_contents)
 
             return f"Received files: {', '.join(filenames)} with param {test_param}"
 

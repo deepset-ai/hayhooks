@@ -52,7 +52,7 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = pipe
 
     def run_api(self, question: str) -> str:
-        log.trace(f"Running pipeline with question: {question}")
+        log.trace("Running pipeline with question: {question}", question=question)
         result = self.pipeline.run(
             {
                 "embedder": {"text": question},
