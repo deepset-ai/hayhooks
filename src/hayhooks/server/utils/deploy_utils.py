@@ -636,7 +636,7 @@ def add_pipeline_wrapper_to_registry(
 
     if save_files:
         log.debug(
-            "Saving pipeline files for '{pipeline_name}' in '{settings.pipelines_dir}'",
+            "Saving pipeline files for '{pipeline_name}' in '{pipelines_dir}'",
             pipeline_name=pipeline_name,
             pipelines_dir=settings.pipelines_dir,
         )
