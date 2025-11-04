@@ -18,14 +18,14 @@ class PipelineWrapper(BasePipelineWrapper):
         self, model: str, messages: list[dict], body: dict
     ) -> AsyncGenerator[StreamingChunk, None]:
         log.trace(
-            "Running pipeline with model: {model}, messages: {messages}, body: {body}",
-            model=model,
-            messages=messages,
-            body=body,
+            "Running pipeline with model: {}, messages: {}, body: {}",
+            model,
+            messages,
+            body,
         )
 
         question = get_last_user_message(messages)
-        log.trace("Question: {question}", question=question)
+        log.trace("Question: {}", question)
 
         # Mock streaming pipeline run, will return a fixed string
         # NOTE: This is used in tests, please don't change it

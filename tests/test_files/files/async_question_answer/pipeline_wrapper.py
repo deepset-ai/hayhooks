@@ -14,16 +14,16 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = AsyncPipeline.loads(pipeline_yaml)
 
     async def run_api_async(self, question: str) -> str:
-        log.trace("Running pipeline with question: {question}", question=question)
+        log.trace("Running pipeline with question: {}", question)
 
         return "This is a mock response from the pipeline"
 
     async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
         log.trace(
-            "Running pipeline with model: {model}, messages: {messages}, body: {body}",
-            model=model,
-            messages=messages,
-            body=body,
+            "Running pipeline with model: {}, messages: {}, body: {}",
+            model,
+            messages,
+            body,
         )
 
         mock_response = "This is a mock response from the pipeline"

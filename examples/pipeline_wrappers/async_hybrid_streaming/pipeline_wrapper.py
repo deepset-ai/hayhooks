@@ -28,7 +28,7 @@ class PipelineWrapper(BasePipelineWrapper):
         Returns:
             The LLM's answer as a string
         """
-        log.trace("Running pipeline with question: {question}", question=question)
+        log.trace("Running pipeline with question: {}", question)
 
         result = await self.pipeline.run_async({"prompt": {"query": question}})
         return result["llm"]["replies"][0]
@@ -48,15 +48,10 @@ class PipelineWrapper(BasePipelineWrapper):
         Yields:
             Streaming chunks from the pipeline execution
         """
-        log.trace(
-            "Running pipeline with model: {model}, messages: {messages}, body: {body}",
-            model=model,
-            messages=messages,
-            body=body,
-        )
+        log.trace("Running pipeline with model: {}, messages: {}, body: {}", model, messages, body)
 
         question = get_last_user_message(messages)
-        log.trace("Question: {question}", question=question)
+        log.trace("Question: {}", question)
 
         # ✅ Enable hybrid mode with allow_sync_streaming_callbacks=True
         # This is required because OpenAIGenerator (legacy component) only supports

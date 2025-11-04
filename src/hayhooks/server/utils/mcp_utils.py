@@ -55,21 +55,21 @@ def deploy_pipelines() -> None:
     """Deploy pipelines from the configured directory"""
     pipelines_dir = init_pipeline_dir(settings.pipelines_dir)
 
-    log.info("Pipelines dir set to: {pipelines_dir}", pipelines_dir=pipelines_dir)
+    log.info("Pipelines dir set to: '{}'", pipelines_dir)
     pipelines_path = Path(pipelines_dir)
 
     pipeline_dirs = [d for d in pipelines_path.iterdir() if d.is_dir()]
-    log.debug("Found {num_pipeline_dirs} pipeline directories", num_pipeline_dirs=len(pipeline_dirs))
+    log.debug("Found {} pipeline directories", len(pipeline_dirs))
 
     for pipeline_dir in pipeline_dirs:
-        log.debug("Deploying pipeline from {pipeline_dir}", pipeline_dir=pipeline_dir)
+        log.debug("Deploying pipeline from '{}'", pipeline_dir)
 
         try:
             add_pipeline_wrapper_to_registry(
                 pipeline_name=pipeline_dir.name, files=read_pipeline_files_from_dir(pipeline_dir)
             )
         except Exception as e:
-            log.warning("Skipping pipeline directory {pipeline_dir}: {e}", pipeline_dir=pipeline_dir, e=e)
+            log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
             continue
 
 
@@ -115,14 +115,14 @@ async def list_pipelines_as_tools() -> list["Tool"]:
 
     for pipeline_name in registry.get_names():
         metadata = registry.get_metadata(name=pipeline_name) or {}
-        log.trace("Metadata for pipeline '{pipeline_name}': {metadata}", pipeline_name=pipeline_name, metadata=metadata)
+        log.trace("Metadata for pipeline '{}': {}", pipeline_name, metadata)
 
         if not metadata.get("request_model"):
-            log.warning("Skipping pipeline '{pipeline_name}' as it has no request model", pipeline_name=pipeline_name)
+            log.warning("Skipping pipeline '{}' as it has no request model", pipeline_name)
             continue
 
         if metadata.get("skip_mcp"):
-            log.debug("Skipping pipeline '{pipeline_name}' as it has skip_mcp set to True", pipeline_name=pipeline_name)
+            log.debug("Skipping pipeline '{}' as it has skip_mcp set to True", pipeline_name)
             continue
 
         tools.append(
@@ -132,13 +132,9 @@ async def list_pipelines_as_tools() -> list["Tool"]:
                 inputSchema=metadata["request_model"].model_json_schema(),
             )
         )
-        log.debug(
-            "Added pipeline as MCP tool '{pipeline_name}' with description: '{description}'",
-            pipeline_name=pipeline_name,
-            description=metadata["description"],
-        )
+        log.debug("Added pipeline as MCP tool '{}' with description: '{}'", pipeline_name, metadata["description"])
 
-    log.debug("Pipelines listed as MCP tools: {tools}", tools=[tool.name for tool in tools])
+    log.debug("Pipelines listed as MCP tools: {}", [tool.name for tool in tools])
 
     return tools
 
@@ -146,7 +142,7 @@ async def list_pipelines_as_tools() -> list["Tool"]:
 async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"]:
     mcp_import.check()
 
-    log.debug("Calling pipeline as tool '{name}' with arguments: {arguments}", name=name, arguments=arguments)
+    log.debug("Calling pipeline as tool '{}' with arguments: {}", name, arguments)
     pipeline: Union[PipelineType, None] = registry.get(name)
 
     if not pipeline:
@@ -159,7 +155,7 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
         else:
             result = await run_in_threadpool(pipeline.run_api, **arguments)
 
-        log.trace("Pipeline '{name}' returned result: {result}", name=name, result=result)
+        log.trace("Pipeline '{}' returned result: {}", name, result)
         return [TextContent(text=result, type="text")]
 
     if isinstance(pipeline, AsyncPipeline):
@@ -175,7 +171,7 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
 
         result = await pipeline.run_async(**kwargs)
 
-        log.trace("YAML Pipeline '{name}' returned result: {result}", name=name, result=result)
+        log.trace("YAML Pipeline '{}' returned result: {}", name, result)
         return [TextContent(text=json.dumps(result), type="text")]
 
     msg = (
@@ -198,14 +194,14 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C
     async def list_tools() -> list[Tool]:
         try:
             core_tools = await list_core_tools()
-            log.debug("Listing {num_core_tools} core tools", num_core_tools=len(core_tools))
+            log.debug("Listing {} core tools", len(core_tools))
 
             pipelines_tools = await list_pipelines_as_tools()
-            log.debug("Listing {num_pipelines_tools} pipelines as tools", num_pipelines_tools=len(pipelines_tools))
+            log.debug("Listing {} pipelines as tools", len(pipelines_tools))
 
             return core_tools + pipelines_tools
         except Exception as e:
-            log.error("Error listing tools: {e}", e=e)
+            log.error("Error listing tools: {}", e)
             return []
 
     @server.call_tool()
@@ -239,23 +235,23 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C
 
             else:
                 log.debug(
-                    "Attempting to run pipeline '{name}' as MCP Tool with arguments: {arguments}",
-                    name=name,
-                    arguments=arguments,
+                    "Attempting to run pipeline '{}' as MCP Tool with arguments: {}",
+                    name,
+                    arguments,
                 )
 
                 try:
                     return await run_pipeline_as_tool(name, arguments)
                 except Exception as e_pipeline:
                     msg = "Error calling pipeline as MCP Tool '{name}': {e_pipeline}"
-                    log.error(msg, name=name, e_pipeline=e_pipeline)
+                    log.error(msg, name=name, e_pipeline=e_pipeline, exc_info=True)
                     raise Exception(msg.format(name=name, e_pipeline=e_pipeline)) from e_pipeline
 
         except Exception as exc:
             msg = "General unhandled error in call_tool for tool '{name}': {exc}"
             if settings.show_tracebacks:
                 msg += f"\n{traceback.format_exc()}"
-            log.error(msg, name=name, exc=exc)
+            log.error(msg, name=name, exc=exc, exc_info=True)
             raise Exception(msg.format(name=name, exc=exc)) from exc
 
         finally:

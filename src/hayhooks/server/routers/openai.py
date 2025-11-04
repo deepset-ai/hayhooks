@@ -146,14 +146,14 @@ async def _execute_pipeline_method(
 
     # Determine which run_chat_completion method to use (prefer async if available)
     if async_implemented:
-        log.debug("Using run_chat_completion_async for model: {model}", model=model)
+        log.debug("Using run_chat_completion_async for model: {}", model)
         return await pipeline_wrapper.run_chat_completion_async(
             model=model,
             messages=messages,
             body=body,
         )
     else:
-        log.debug("Using run_chat_completion (sync) for model: {model}", model=model)
+        log.debug("Using run_chat_completion (sync) for model: {}", model)
         return await run_in_threadpool(
             pipeline_wrapper.run_chat_completion,
             model=model,

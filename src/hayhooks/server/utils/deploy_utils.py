@@ -54,7 +54,7 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
     try:
         # Create pipeline directory under the configured pipelines directory
         pipeline_dir = Path(pipelines_dir) / pipeline_name
-        log.debug("Creating pipeline dir: {pipeline_dir}", pipeline_dir=pipeline_dir)
+        log.debug("Creating pipeline dir: '{}'", pipeline_dir)
 
         pipeline_dir.mkdir(parents=True, exist_ok=True)
         saved_files = {}
@@ -95,7 +95,7 @@ def save_yaml_pipeline_file(pipeline_name: str, source_code: str, pipelines_dir:
         pipelines_dir_path = Path(pipelines_dir)
         pipelines_dir_path.mkdir(parents=True, exist_ok=True)
         file_path = pipelines_dir_path / f"{pipeline_name}.yml"
-        log.debug("Saving YAML pipeline file: {file_path}", file_path=file_path)
+        log.debug("Saving YAML pipeline file: '{}'", file_path)
         file_path.write_text(source_code)
         return str(file_path)
     except Exception as e:
@@ -131,8 +131,7 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         PipelineWrapperError: If required files or symbols are missing
         PipelineModuleLoadError: If the module cannot be loaded
     """
-    log.trace("Loading pipeline module from {dir_path}", dir_path=dir_path)
-    log.trace("Is folder present: {is_folder_present}", is_folder_present=Path(dir_path).exists())
+    log.trace("Loading pipeline module from '{}'", dir_path)
 
     try:
         dir_path = Path(dir_path)
@@ -145,7 +144,7 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         # Clear the module from sys.modules if it exists to ensure a fresh load
         module_name = pipeline_name
         if module_name in sys.modules:
-            log.debug("Removing existing module {module_name} from sys.modules", module_name=module_name)
+            log.debug("Removing existing module '{}' from sys.modules", module_name)
             del sys.modules[module_name]
 
         spec = importlib.util.spec_from_file_location(pipeline_name, wrapper_path)
@@ -155,7 +154,7 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
 
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        log.debug("Loaded module {module}", module=module)
+        log.debug("Loaded module '{}'", module_name)
 
         if not hasattr(module, "PipelineWrapper"):
             msg = f"Failed to load '{pipeline_name}' pipeline module spec"
@@ -164,7 +163,7 @@ def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> Modu
         return module
 
     except Exception as e:
-        log.error("Error loading pipeline module: {e}", e=e)
+        log.error("Error loading pipeline module: {}", e, exc_info=True)
         error_msg = f"Failed to load pipeline module '{pipeline_name}' - {e!s}"
         if settings.show_tracebacks:
             error_msg += f"\n{traceback.format_exc()}"
@@ -189,10 +188,10 @@ def handle_pipeline_exceptions() -> Callable:
             except Exception as e:
                 error_msg = f"Pipeline execution failed: {e!s}"
                 if settings.show_tracebacks:
-                    log.error("Pipeline execution error: {e} - {traceback}", e=e, traceback=traceback.format_exc())
+                    log.error("Pipeline execution error: {} - {}", e, traceback.format_exc(), exc_info=True)
                     error_msg += f"\n{traceback.format_exc()}"
                 else:
-                    log.error("Pipeline execution error: {e}", e=e)
+                    log.error("Pipeline execution error: {}", e, exc_info=True)
                 raise HTTPException(status_code=500, detail=error_msg) from e
 
         return wrapper
@@ -285,7 +284,7 @@ def add_pipeline_wrapper_api_route(app: FastAPI, pipeline_name: str, pipeline_wr
 
     run_api_params = inspect.signature(run_method_to_inspect).parameters
     requires_files = "files" in run_api_params
-    clog.debug("Pipeline requires files: {requires_files}", requires_files=requires_files)
+    clog.debug("Pipeline requires files: {}", requires_files)
 
     run_endpoint = create_run_endpoint_handler(
         pipeline_wrapper=pipeline_wrapper,
@@ -515,13 +514,13 @@ def add_yaml_pipeline_to_registry(
     """
 
     log.debug(
-        "Checking if YAML pipeline '{pipeline_name}' already exists: {registry_get}",
-        pipeline_name=pipeline_name,
-        registry_get=registry.get(pipeline_name),
+        "Checking if YAML pipeline '{}' already exists: {}",
+        pipeline_name,
+        registry.get(pipeline_name),
     )
     if registry.get(pipeline_name):
         if overwrite:
-            log.debug("Clearing existing YAML pipeline '{pipeline_name}'", pipeline_name=pipeline_name)
+            log.debug("Clearing existing YAML pipeline '{}'", pipeline_name)
             registry.remove(pipeline_name)
         else:
             msg = f"YAML pipeline '{pipeline_name}' already exists"
@@ -543,9 +542,7 @@ def add_yaml_pipeline_to_registry(
         response_model = get_response_model_from_resolved_io(pipeline_name, pipeline_outputs)
     except Exception as e:
         clog.error(
-            "Failed creating request/response models for YAML pipeline '{pipeline_name}': {e}",
-            pipeline_name=pipeline_name,
-            e=e,
+            "Failed creating request/response models for YAML pipeline '{}': {}", pipeline_name, e, exc_info=True
         )
         raise
 
@@ -554,9 +551,7 @@ def add_yaml_pipeline_to_registry(
 
     streaming_components = get_streaming_components_from_yaml(source_code)
     if streaming_components:
-        clog.debug(
-            "Found streaming_components in YAML: {streaming_components}", streaming_components=streaming_components
-        )
+        clog.debug("Found streaming_components in YAML: {}", streaming_components)
 
     # Automatically derive include_outputs_from from the outputs mapping.
     # This ensures we get outputs from all components referenced in the outputs declaration,
@@ -565,10 +560,7 @@ def add_yaml_pipeline_to_registry(
     outputs_to_include: set[str] | None = None
     if pipeline_outputs:
         outputs_to_include = get_components_from_outputs(pipeline_outputs)
-        clog.debug(
-            "Auto-derived include_outputs_from from outputs: {outputs_to_include}",
-            outputs_to_include=outputs_to_include,
-        )
+        clog.debug("Auto-derived include_outputs_from from outputs: {}", outputs_to_include)
 
     metadata = {
         "description": description or pipeline_name,
@@ -579,7 +571,7 @@ def add_yaml_pipeline_to_registry(
         "include_outputs_from": outputs_to_include,
     }
 
-    clog.debug("Adding YAML pipeline to registry with metadata: {metadata}", metadata=metadata)
+    clog.debug("Adding YAML pipeline to registry with metadata: {}", metadata)
 
     # Store the instantiated pipeline together with its metadata
     # NOTE: We want to create an AsyncPipeline here so we can avoid using
@@ -591,7 +583,7 @@ def add_yaml_pipeline_to_registry(
         raise ValueError(msg) from e
 
     registry.add(pipeline_name, pipeline, metadata=metadata)
-    log.success("YAML pipeline '{pipeline_name}' successfully added to registry", pipeline_name=pipeline_name)
+    log.success("YAML pipeline '{}' successfully added to registry", pipeline_name)
 
 
 def add_pipeline_wrapper_to_registry(
@@ -616,17 +608,13 @@ def add_pipeline_wrapper_to_registry(
         PipelineWrapperError: If wrapper instantiation or setup fails, or required methods are missing.
     """
 
-    log.debug(
-        "Checking if pipeline '{pipeline_name}' already exists: {registry_get}",
-        pipeline_name=pipeline_name,
-        registry_get=registry.get(pipeline_name),
-    )
+    log.debug("Checking if pipeline '{}' already exists: {}", pipeline_name, registry.get(pipeline_name))
     if registry.get(pipeline_name):
         if overwrite:
-            log.debug("Clearing existing pipeline '{pipeline_name}'", pipeline_name=pipeline_name)
+            log.debug("Clearing existing pipeline '{}'", pipeline_name)
             registry.remove(pipeline_name)
 
-            log.debug("Removing pipeline files for '{pipeline_name}'", pipeline_name=pipeline_name)
+            log.debug("Removing pipeline files for '{}'", pipeline_name)
             remove_pipeline_files(pipeline_name, settings.pipelines_dir)
         else:
             msg = f"Pipeline '{pipeline_name}' already exists"
@@ -635,11 +623,7 @@ def add_pipeline_wrapper_to_registry(
     tmp_dir = None
 
     if save_files:
-        log.debug(
-            "Saving pipeline files for '{pipeline_name}' in '{pipelines_dir}'",
-            pipeline_name=pipeline_name,
-            pipelines_dir=settings.pipelines_dir,
-        )
+        log.debug("Saving pipeline files for '{}' in '{}'", pipeline_name, settings.pipelines_dir)
         save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
         pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
     else:
@@ -685,7 +669,7 @@ def add_pipeline_wrapper_to_registry(
         "skip_mcp": pipeline_wrapper.skip_mcp,
     }
 
-    clog.debug("Adding pipeline to registry with metadata: {metadata}", metadata=metadata)
+    clog.debug("Adding pipeline to registry with metadata: {}", metadata)
     registry.add(
         pipeline_name,
         pipeline_wrapper,
@@ -695,7 +679,7 @@ def add_pipeline_wrapper_to_registry(
     clog.success("Pipeline successfully added to registry")
 
     if tmp_dir is not None:
-        log.debug("Removing temporary pipeline files for '{pipeline_name}'", pipeline_name=pipeline_name)
+        log.debug("Removing temporary pipeline files for '{}'", pipeline_name)
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return pipeline_wrapper
@@ -738,21 +722,14 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
         pipeline_wrapper, "_is_run_chat_completion_async_implemented", "run_chat_completion_async"
     )
 
+    log.debug("pipeline_wrapper._is_run_api_implemented: {}", pipeline_wrapper._is_run_api_implemented)
+    log.debug("pipeline_wrapper._is_run_api_async_implemented: {}", pipeline_wrapper._is_run_api_async_implemented)
     log.debug(
-        "pipeline_wrapper._is_run_api_implemented: {is_run_api_implemented}",
-        is_run_api_implemented=pipeline_wrapper._is_run_api_implemented,
+        "pipeline_wrapper._is_run_chat_completion_implemented: {}", pipeline_wrapper._is_run_chat_completion_implemented
     )
     log.debug(
-        "pipeline_wrapper._is_run_api_async_implemented: {is_run_api_async_implemented}",
-        is_run_api_async_implemented=pipeline_wrapper._is_run_api_async_implemented,
-    )
-    log.debug(
-        "pipeline_wrapper._is_run_chat_completion_implemented: {is_run_chat_completion_implemented}",
-        is_run_chat_completion_implemented=pipeline_wrapper._is_run_chat_completion_implemented,
-    )
-    log.debug(
-        "pipeline_wrapper._is_run_chat_completion_async_implemented: {is_run_chat_completion_async_implemented}",
-        is_run_chat_completion_async_implemented=pipeline_wrapper._is_run_chat_completion_async_implemented,
+        "pipeline_wrapper._is_run_chat_completion_async_implemented: {}",
+        pipeline_wrapper._is_run_chat_completion_async_implemented,
     )
 
     if not (
@@ -819,7 +796,7 @@ def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
         try:
             files[str(file_path.relative_to(dir_path))] = file_path.read_text(encoding="utf-8", errors="ignore")
         except Exception as e:
-            log.warning("Skipping file {file_path}: {e}", file_path=file_path, e=e)
+            log.warning("Skipping file '{}': {}", file_path, e)
             continue
 
     return files
