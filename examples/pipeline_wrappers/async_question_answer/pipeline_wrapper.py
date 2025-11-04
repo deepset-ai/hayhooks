@@ -15,7 +15,7 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = AsyncPipeline.loads(pipeline_yaml)
 
     async def run_api_async(self, question: str) -> str:
-        log.trace(f"Running pipeline with question: {question}")
+        log.trace("Running pipeline with question: {}", question)
 
         result = await self.pipeline.run_async(
             {
@@ -30,10 +30,10 @@ class PipelineWrapper(BasePipelineWrapper):
         return result["llm"]["replies"][0].text
 
     async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
-        log.trace(f"Running pipeline with model: {model}, messages: {messages}, body: {body}")
+        log.trace("Running pipeline with model: {}, messages: {}, body: {}", model, messages, body)
 
         question = get_last_user_message(messages)
-        log.trace(f"Question: {question}")
+        log.trace("Question: {}", question)
 
         return async_streaming_generator(
             pipeline=self.pipeline,

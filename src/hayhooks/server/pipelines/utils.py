@@ -56,7 +56,7 @@ def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> l
         if hasattr(component, "run"):
             sig = inspect.signature(component.run)
             if "streaming_callback" in sig.parameters:
-                log.trace(f"Streaming component found in '{name}' with type {type(component)}")
+                log.trace("streaming_callback run parameter found in '{}'", name)
                 streaming_components.append((component, name))
 
     if not streaming_components:
@@ -132,13 +132,13 @@ def _setup_streaming_callback_for_pipeline(
     # Stream all capable components
     if streaming_components == "all":
         components_to_stream = all_streaming_components
-        log.trace("Streaming enabled for all components via 'all' keyword")
+        log.trace("Streaming enabled for all components via 'all' keyword '{}'", components_to_stream)
 
     # Default behavior: stream only the last capable component
     elif streaming_components is None:
         if all_streaming_components:
             components_to_stream = [all_streaming_components[-1]]
-            log.trace(f"Streaming enabled for last component only: {all_streaming_components[-1][1]}")
+            log.trace("Streaming enabled for last component only '{}'", components_to_stream)
 
     # Use explicit list of component names
     elif isinstance(streaming_components, list):
@@ -146,7 +146,7 @@ def _setup_streaming_callback_for_pipeline(
         for component, component_name in all_streaming_components:
             if component_name in enabled_component_names:
                 components_to_stream.append((component, component_name))
-        log.trace(f"Streaming enabled for components: {[name for _, name in components_to_stream]}")
+        log.trace("Streaming enabled for components '{}'", [name for _, name in components_to_stream])
 
     for _, component_name in components_to_stream:
         # Ensure component args exist and make a copy to avoid mutating original
@@ -157,7 +157,7 @@ def _setup_streaming_callback_for_pipeline(
             pipeline_run_args[component_name] = pipeline_run_args[component_name].copy()
 
         pipeline_run_args[component_name]["streaming_callback"] = streaming_callback
-        log.trace(f"Streaming callback set for component '{component_name}'")
+        log.trace("Streaming callback set for component '{}'", component_name)
 
     return pipeline_run_args
 
@@ -286,7 +286,7 @@ def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd
             if on_pipeline_end_result:
                 return StreamingChunk(content=on_pipeline_end_result)
         except Exception as e:
-            log.error(f"Error in on_pipeline_end callback: {e}", exc_info=True)
+            log.error("Error in on_pipeline_end callback: {}", e, exc_info=True)
     return None
 
 
@@ -363,9 +363,9 @@ def streaming_generator(  # noqa: PLR0913
         configured_args = _setup_streaming_callback(
             pipeline, pipeline_run_args, streaming_callback, streaming_components
         )
-        log.trace(f"Streaming pipeline run args: {configured_args}")
+        log.trace("Streaming pipeline run args '{}'", configured_args)
     except Exception as e:
-        log.error(f"Error in streaming callback setup: {e}", exc_info=True)
+        log.error("Error in streaming callback setup: {}", e, exc_info=True)
         raise
 
     def run_pipeline() -> None:
@@ -378,7 +378,7 @@ def streaming_generator(  # noqa: PLR0913
             # Signal completion
             queue.put(None)
         except Exception as e:
-            log.error(f"Error in pipeline execution thread for streaming_generator: {e}", exc_info=True)
+            log.error("Error in pipeline execution thread for streaming_generator: {}", e, exc_info=True)
             queue.put(e)  # Signal error
 
     thread = threading.Thread(target=run_pipeline)
@@ -425,7 +425,7 @@ def _create_hybrid_streaming_callback(
         async def async_callback(chunk: StreamingChunk) -> None:
             await queue.put(chunk)
 
-        log.trace(f"Using async streaming callback for component '{component_name}'")
+        log.trace("Using async streaming callback for component '{}'", component_name)
         return async_callback
     else:
 
@@ -439,12 +439,15 @@ def _create_hybrid_streaming_callback(
                         fut.result()
                 except Exception as e:
                     log.error(
-                        f"Error in hybrid streaming callback for component '{component_name}': {e}", exc_info=True
+                        "Error in hybrid streaming callback for component '{}': {}",
+                        component_name,
+                        e,
+                        exc_info=True,
                     )
 
             future.add_done_callback(handle_error)
 
-        log.trace(f"Using sync streaming callback (hybrid mode) for component '{component_name}'")
+        log.trace("Using sync streaming callback (hybrid mode) for component '{}'", component_name)
         return sync_callback
 
 
@@ -522,17 +525,26 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
 
     if streaming_components == "all":
         components_to_stream = all_streaming_components
-        log.trace("Hybrid streaming enabled for all components via 'all' keyword")
+        log.trace(
+            "Hybrid streaming enabled for all components via 'all' keyword '{}'",
+            components_to_stream,
+        )
     elif streaming_components is None:
         if all_streaming_components:
             components_to_stream = [all_streaming_components[-1]]
-            log.trace(f"Hybrid streaming enabled for last component only: {all_streaming_components[-1][1]}")
+            log.trace(
+                "Hybrid streaming enabled for last component only '{}'",
+                components_to_stream,
+            )
     elif isinstance(streaming_components, list):
         enabled_component_names = set(streaming_components)
         for component, component_name in all_streaming_components:
             if component_name in enabled_component_names:
                 components_to_stream.append((component, component_name))
-        log.trace(f"Hybrid streaming enabled for components: {[name for _, name in components_to_stream]}")
+        log.trace(
+            "Hybrid streaming enabled for components '{}'",
+            [name for _, name in components_to_stream],
+        )
 
     for component, component_name in components_to_stream:
         streaming_callback = _create_hybrid_streaming_callback(queue, component, component_name, loop)
@@ -544,7 +556,7 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
             pipeline_run_args[component_name] = pipeline_run_args[component_name].copy()
 
         pipeline_run_args[component_name]["streaming_callback"] = streaming_callback
-        log.trace(f"Hybrid streaming callback set for component '{component_name}'")
+        log.trace("Hybrid streaming callback set for component '{}'", component_name)
 
     return pipeline_run_args
 
@@ -607,7 +619,7 @@ async def _stream_chunks_from_queue(
             log.warning("Async streaming generator was cancelled")
             break
         except Exception as e:
-            log.error(f"Unexpected error in async streaming generator: {e}")
+            log.error("Unexpected error in async streaming generator: {}", e, exc_info=True)
             raise e
 
 
@@ -625,7 +637,7 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         except Exception as e:
-            log.warning(f"Error during pipeline task cleanup: {e}")
+            log.warning("Error during pipeline task cleanup: {}", e, exc_info=True)
             raise e
 
 
@@ -720,7 +732,7 @@ async def async_streaming_generator(  # noqa: PLR0913
             yield final_chunk
 
     except Exception as e:
-        log.error(f"Unexpected error in async streaming generator: {e}")
+        log.error("Unexpected error in async streaming generator: {}", e, exc_info=True)
         raise e
     finally:
         await _cleanup_pipeline_task(pipeline_task)

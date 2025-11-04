@@ -672,7 +672,7 @@ class PipelineWrapper(BasePipelineWrapper):
         try:
             self.pipeline = self._create_pipeline()
         except Exception as e:
-            log.error(f"Failed to initialize pipeline: {e}")
+            log.error("Failed to initialize pipeline: {}", e)
             raise
 
     def run_api(self, query: str) -> str:
@@ -683,7 +683,7 @@ class PipelineWrapper(BasePipelineWrapper):
             result = self.pipeline.run({"prompt": {"query": query}})
             return result["llm"]["replies"][0]
         except Exception as e:
-            log.error(f"Pipeline execution failed: {e}")
+            log.error("Pipeline execution failed: {}", e)
             raise HTTPException(status_code=500, detail="Pipeline execution failed")
 ```
 

@@ -55,21 +55,21 @@ def deploy_pipelines() -> None:
     """Deploy pipelines from the configured directory"""
     pipelines_dir = init_pipeline_dir(settings.pipelines_dir)
 
-    log.info(f"Pipelines dir set to: {pipelines_dir}")
+    log.info("Pipelines dir set to: '{}'", pipelines_dir)
     pipelines_path = Path(pipelines_dir)
 
     pipeline_dirs = [d for d in pipelines_path.iterdir() if d.is_dir()]
-    log.debug(f"Found {len(pipeline_dirs)} pipeline directories")
+    log.debug("Found {} pipeline directories", len(pipeline_dirs))
 
     for pipeline_dir in pipeline_dirs:
-        log.debug(f"Deploying pipeline from {pipeline_dir}")
+        log.debug("Deploying pipeline from '{}'", pipeline_dir)
 
         try:
             add_pipeline_wrapper_to_registry(
                 pipeline_name=pipeline_dir.name, files=read_pipeline_files_from_dir(pipeline_dir)
             )
         except Exception as e:
-            log.warning(f"Skipping pipeline directory {pipeline_dir}: {e!s}")
+            log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
             continue
 
 
@@ -115,14 +115,14 @@ async def list_pipelines_as_tools() -> list["Tool"]:
 
     for pipeline_name in registry.get_names():
         metadata = registry.get_metadata(name=pipeline_name) or {}
-        log.trace(f"Metadata for pipeline '{pipeline_name}': {metadata}")
+        log.trace("Metadata for pipeline '{}': {}", pipeline_name, metadata)
 
         if not metadata.get("request_model"):
-            log.warning(f"Skipping pipeline '{pipeline_name}' as it has no request model")
+            log.warning("Skipping pipeline '{}' as it has no request model", pipeline_name)
             continue
 
         if metadata.get("skip_mcp"):
-            log.debug(f"Skipping pipeline '{pipeline_name}' as it has skip_mcp set to True")
+            log.debug("Skipping pipeline '{}' as it has skip_mcp set to True", pipeline_name)
             continue
 
         tools.append(
@@ -132,9 +132,9 @@ async def list_pipelines_as_tools() -> list["Tool"]:
                 inputSchema=metadata["request_model"].model_json_schema(),
             )
         )
-        log.debug(f"Added pipeline as MCP tool '{pipeline_name}' with description: '{metadata['description']}'")
+        log.debug("Added pipeline as MCP tool '{}' with description: '{}'", pipeline_name, metadata["description"])
 
-    log.debug(f"Pipelines listed as MCP tools: {[tool.name for tool in tools]}")
+    log.debug("Pipelines listed as MCP tools: {}", [tool.name for tool in tools])
 
     return tools
 
@@ -142,7 +142,7 @@ async def list_pipelines_as_tools() -> list["Tool"]:
 async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"]:
     mcp_import.check()
 
-    log.debug(f"Calling pipeline as tool '{name}' with arguments: {arguments}")
+    log.debug("Calling pipeline as tool '{}' with arguments: {}", name, arguments)
     pipeline: Union[PipelineType, None] = registry.get(name)
 
     if not pipeline:
@@ -155,7 +155,7 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
         else:
             result = await run_in_threadpool(pipeline.run_api, **arguments)
 
-        log.trace(f"Pipeline '{name}' returned result: {result}")
+        log.trace("Pipeline '{}' returned result: {}", name, result)
         return [TextContent(text=result, type="text")]
 
     if isinstance(pipeline, AsyncPipeline):
@@ -171,7 +171,7 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
 
         result = await pipeline.run_async(**kwargs)
 
-        log.trace(f"YAML Pipeline '{name}' returned result: {result}")
+        log.trace("YAML Pipeline '{}' returned result: {}", name, result)
         return [TextContent(text=json.dumps(result), type="text")]
 
     msg = (
@@ -194,14 +194,14 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C
     async def list_tools() -> list[Tool]:
         try:
             core_tools = await list_core_tools()
-            log.debug(f"Listing {len(core_tools)} core tools")
+            log.debug("Listing {} core tools", len(core_tools))
 
             pipelines_tools = await list_pipelines_as_tools()
-            log.debug(f"Listing {len(pipelines_tools)} pipelines as tools")
+            log.debug("Listing {} pipelines as tools", len(pipelines_tools))
 
             return core_tools + pipelines_tools
         except Exception as e:
-            log.error(f"Error listing tools: {e}")
+            log.error("Error listing tools: {}", e)
             return []
 
     @server.call_tool()
@@ -234,21 +234,25 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C
                 return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' undeployed")]
 
             else:
-                log.debug(f"Attempting to run pipeline '{name}' as MCP Tool with arguments: {arguments}")
+                log.debug(
+                    "Attempting to run pipeline '{}' as MCP Tool with arguments: {}",
+                    name,
+                    arguments,
+                )
 
                 try:
                     return await run_pipeline_as_tool(name, arguments)
                 except Exception as e_pipeline:
-                    msg = f"Error calling pipeline as MCP Tool '{name}': {e_pipeline}"
-                    log.error(msg)
-                    raise Exception(msg) from e_pipeline
+                    msg = "Error calling pipeline as MCP Tool '{name}': {e_pipeline}"
+                    log.error(msg, name=name, e_pipeline=e_pipeline, exc_info=True)
+                    raise Exception(msg.format(name=name, e_pipeline=e_pipeline)) from e_pipeline
 
         except Exception as exc:
-            msg = f"General unhandled error in call_tool for tool '{name}': {exc}"
+            msg = "General unhandled error in call_tool for tool '{name}': {exc}"
             if settings.show_tracebacks:
                 msg += f"\n{traceback.format_exc()}"
-            log.error(msg)
-            raise Exception(msg) from exc
+            log.error(msg, name=name, exc=exc, exc_info=True)
+            raise Exception(msg.format(name=name, exc=exc)) from exc
 
         finally:
             if name in [CoreTools.DEPLOY_PIPELINE, CoreTools.UNDEPLOY_PIPELINE]:

@@ -51,7 +51,7 @@ def run(  # noqa: PLR0913
     if additional_python_path:
         settings.additional_python_path = additional_python_path
         sys.path.append(additional_python_path)
-        log.trace(f"Added {additional_python_path} to sys.path")
+        log.trace("Added '{}' to sys.path", additional_python_path)
 
     # Deploy the pipelines
     deploy_pipelines()

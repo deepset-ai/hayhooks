@@ -74,13 +74,13 @@ class PipelineWrapper(BasePipelineWrapper):
         # ... setup code
 
     def run_api(self, query: str) -> str:
-        log.debug(f"Processing query: {query}")
+        log.debug("Processing query: {query}")
         try:
             result = self.pipeline.run({"prompt": {"query": query}})
             log.info("Pipeline execution completed successfully")
             return result["llm"]["replies"][0]
         except Exception as e:
-            log.error(f"Pipeline execution failed: {e}")
+            log.error("Pipeline execution failed: {}", e)
             raise
 ```
 
@@ -97,7 +97,7 @@ class PipelineWrapper(BasePipelineWrapper):
         result = self.pipeline.run({"prompt": {"query": query}})
 
         execution_time = time.time() - start_time
-        log.info(f"Pipeline executed in {execution_time:.2f} seconds")
+        log.info("Pipeline executed in {} seconds", execution_time.round(2))
 
         return result["llm"]["replies"][0]
 ```
