@@ -31,8 +31,8 @@ def _normalize_declared_path(value: Any) -> Union[str, None]:
     Normalize a declared path from YAML to a string.
 
     A declared IO path in YAML can be provided either as a string (e.g. "comp.field")
-    or as a one-item list of strings. This helper normalizes both cases to a single
-    string, or None if the value cannot be normalized.
+    or as a list of strings. This helper normalizes those cases to the first valid
+    string entry, or None if the value cannot be normalized.
 
     Args:
         value: Declared path value from YAML (string or list of strings).
@@ -40,8 +40,17 @@ def _normalize_declared_path(value: Any) -> Union[str, None]:
     Returns:
         The normalized "component.field" string, or None when not available.
     """
-    if isinstance(value, list) and len(value) == 1:
-        value = value[0]
+    if isinstance(value, list):
+        string_candidates = [candidate for candidate in value if isinstance(candidate, str)]
+
+        for candidate in string_candidates:
+            if "." in candidate:
+                value = candidate
+                break
+        else:
+            if not string_candidates:
+                return None
+            value = string_candidates[0]
 
     if not isinstance(value, str):
         return None

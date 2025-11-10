@@ -15,7 +15,6 @@ components:
 
   llm:
     init_parameters:
-      api_base_url: null
       api_key:
         env_vars:
           - OPENAI_API_KEY
@@ -23,9 +22,7 @@ components:
         type: env_var
       generation_kwargs: {}
       model: gpt-4o-mini
-      streaming_callback: null
-      system_prompt: null
-    type: haystack.components.generators.openai.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
 
   prompt:
     init_parameters:
@@ -38,14 +35,14 @@ components:
         Answer:
         "
       required_variables: "*"
-    type: haystack.components.builders.prompt_builder.PromptBuilder
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
 
 connections:
   - receiver: converter.sources
     sender: fetcher.streams
   - receiver: prompt.documents
     sender: converter.documents
-  - receiver: llm.prompt
+  - receiver: llm.messages
     sender: prompt.prompt
 
 metadata: {}
