@@ -172,7 +172,7 @@ inputs:
 ```
 
 !!! note "How multi-target inputs are resolved"
-    Hayhooks normalizes list-declared inputs by looking at the first valid target to derive type and required metadata for the API schema. At runtime the resolved value is fanned out to **all** listed component inputs, so the example above sends the same `query` payload to both `chat_summary_prompt_builder` and `answer_builder`.
+    Hayhooks normalizes list-declared inputs by looking at the first valid target to derive type metadata and by checking **all** declared targets to decide whether the field is required. At runtime the resolved value is fanned out to **all** listed component inputs, so the example above sends the same payload to both `chat_summary_prompt_builder.query` and `answer_builder.query` even if the external parameter is named differently (for example `a_query`). This ensures downstream components get the expected inputs while the API still exposes a single friendly field.
 
 ### Output Mapping
 
