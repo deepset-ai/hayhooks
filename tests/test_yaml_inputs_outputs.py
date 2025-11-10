@@ -3,8 +3,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from haystack.dataclasses import ChatMessage
+
 from hayhooks.server.exceptions import InvalidYamlIOError
 from hayhooks.server.utils.yaml_utils import (
     InputResolution,
@@ -58,17 +58,43 @@ def test_get_inputs_outputs_from_yaml_raises_when_missing_inputs_outputs():
 def test_get_streaming_components_from_yaml_with_valid_config():
     yaml_source = """
 components:
+  prompt_1:
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+    init_parameters:
+      template: |
+        {% message role="user" %}
+        {{query}}
+        {% endmessage %}
+      required_variables: "*"
   llm_1:
-    type: haystack.components.generators.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      model: gpt-4o-mini
+      generation_kwargs: {}
   llm_2:
-    type: haystack.components.generators.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      model: gpt-4o-mini
+      generation_kwargs: {}
 
 connections:
+  - sender: prompt_1.prompt
+    receiver: llm_1.messages
   - sender: llm_1.replies
-    receiver: llm_2.prompt
+    receiver: llm_2.messages
 
 inputs:
-  prompt: llm_1.prompt
+  query: prompt_1.query
 
 outputs:
   replies: llm_2.replies
@@ -85,11 +111,31 @@ streaming_components:
 def test_get_streaming_components_from_yaml_without_config():
     yaml_source = """
 components:
+  prompt:
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+    init_parameters:
+      template: |
+        {% message role="user" %}
+        {{query}}
+        {% endmessage %}
+      required_variables: "*"
   llm:
-    type: haystack.components.generators.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      model: gpt-4o-mini
+      generation_kwargs: {}
+
+connections:
+  - sender: prompt.prompt
+    receiver: llm.messages
 
 inputs:
-  prompt: llm.prompt
+  query: prompt.query
 
 outputs:
   replies: llm.replies
@@ -102,11 +148,31 @@ outputs:
 def test_get_streaming_components_from_yaml_with_invalid_type():
     yaml_source = """
 components:
+  prompt:
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+    init_parameters:
+      template: |
+        {% message role="user" %}
+        {{query}}
+        {% endmessage %}
+      required_variables: "*"
   llm:
-    type: haystack.components.generators.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      model: gpt-4o-mini
+      generation_kwargs: {}
+
+connections:
+  - sender: prompt.prompt
+    receiver: llm.messages
 
 inputs:
-  prompt: llm.prompt
+  query: prompt.query
 
 outputs:
   replies: llm.replies
@@ -121,13 +187,43 @@ streaming_components: 123
 def test_get_streaming_components_from_yaml_converts_to_str():
     yaml_source = """
 components:
+  prompt:
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+    init_parameters:
+      template: |
+        {% message role="user" %}
+        {{query}}
+        {% endmessage %}
+      required_variables: "*"
   llm_1:
-    type: haystack.components.generators.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      model: gpt-4o-mini
+      generation_kwargs: {}
   llm_2:
-    type: haystack.components.generators.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      model: gpt-4o-mini
+      generation_kwargs: {}
+
+connections:
+  - sender: prompt.prompt
+    receiver: llm_1.messages
+  - sender: llm_1.replies
+    receiver: llm_2.messages
 
 inputs:
-  prompt: llm_1.prompt
+  query: prompt.query
 
 outputs:
   replies: llm_2.replies
@@ -146,13 +242,43 @@ streaming_components:
 def test_get_streaming_components_from_yaml_with_all_keyword():
     yaml_source = """
 components:
+  prompt:
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+    init_parameters:
+      template: |
+        {% message role="user" %}
+        {{query}}
+        {% endmessage %}
+      required_variables: "*"
   llm_1:
-    type: haystack.components.generators.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      model: gpt-4o-mini
+      generation_kwargs: {}
   llm_2:
-    type: haystack.components.generators.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      model: gpt-4o-mini
+      generation_kwargs: {}
+
+connections:
+  - sender: prompt.prompt
+    receiver: llm_1.messages
+  - sender: llm_1.replies
+    receiver: llm_2.messages
 
 inputs:
-  prompt: llm_1.prompt
+  query: prompt.query
 
 outputs:
   replies: llm_2.replies
