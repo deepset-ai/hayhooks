@@ -330,6 +330,11 @@ def test_get_inputs_outputs_from_yaml_handles_list_declared_inputs():
     assert set(result["outputs"].keys()) == {"answers"}
 
     query_input = result["inputs"]["query"]
+
+    # Here we're testing that we take `chat_summary_prompt_builder.query`
+    # as a reference component for detecting the type, then we will pass the `query_input` value
+    # to both `chat_summary_prompt_builder.query` and `answer_builder.query`
+    # Note that `query_input` is _always_ required, since it's present in the `inputs` section.
     assert query_input.path == "chat_summary_prompt_builder.query"
     assert query_input.component == "chat_summary_prompt_builder"
     assert query_input.name == "query"

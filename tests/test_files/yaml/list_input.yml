@@ -1,72 +1,13 @@
 components:
-  qa_generator:
-    type: haystack.components.generators.openai.OpenAIGenerator
-    init_parameters:
-      api_base_url: null
-      api_key:
-        env_vars:
-          - OPENAI_API_KEY
-        strict: true
-        type: env_var
-      generation_kwargs: {}
-      model: gpt-4o-mini
-      streaming_callback: null
-      system_prompt: null
-  chat_summary_generator:
-    type: haystack.components.generators.openai.OpenAIGenerator
-    init_parameters:
-      api_base_url: null
-      api_key:
-        env_vars:
-          - OPENAI_API_KEY
-        strict: true
-        type: env_var
-      generation_kwargs: {}
-      model: gpt-4o-mini
-      streaming_callback: null
-      system_prompt: null
   chat_summary_prompt_builder:
     type: haystack.components.builders.prompt_builder.PromptBuilder
     init_parameters:
-      template: |-
-        You interact with the user in chat format.
-        Your task is to rephrase the user's question in such a way that it is optimally suited for searching on the Internet.
-        The user may be referring to previous chat history with her question and your job is to use the information from the chat history to rephrase the user's query so that it is suitable as a search query in a search engine.
-        The question you generate should
-        - only consist of a question, without explanations
-        - be self-explanatory
-        - are suitable for web search
-        For example, if the user asked about Rome and then just asked: What should I see there?
-        Then you have to rephrase the question so that you can do a web search: What are the tourist attractions in Rome worth seeing?
-        Note relevant contextual information from the chat history and include it in your search query.
-        Below you will find the chat history and the question you need to rephrase.
-        {{query}}
-        Enhanced user question:
-  qa_prompt_builder:
-    type: haystack.components.builders.prompt_builder.PromptBuilder
+      template: "Normalized: {{ query }}"
+  chat_summary_generator:
+    type: haystack.components.generators.openai.OpenAIGenerator
     init_parameters:
-      template: |-
-        You are a technical expert.
-        You answer questions truthfully based on provided documents.
-        If the answer exists in several documents, summarize them.
-        Ignore documents that don't contain the answer to the question.
-        Only answer based on the documents provided. Don't make things up.
-        Always use references in the form [NUMBER OF DOCUMENT] when using information from a document. e.g. [3], for Document [3] .
-        The reference must only refer to the number that comes in square brackets after passage.
-        Otherwise, do not use brackets in your answer and reference ONLY the number of the passage without mentioning the word passage.
-        If no information related to the question can be found in the document, say so.
-        These are the documents:
-        {% for doc in documents %}
-        Document [{{loop.index}}] :
-        {{ doc.content }}
-        {% endfor %}
-        Question: {{query}}
-        Answer:
-  query_unwrapper:
-    type: haystack.components.builders.prompt_builder.PromptBuilder
-    init_parameters:
-      template: |-
-        {% for reply in replies %}{{ reply }}{% endfor %}
+      model: gpt-4o-mini
+      generation_kwargs: {}
   answer_builder:
     type: haystack.components.builders.answer_builder.AnswerBuilder
     init_parameters: {}
@@ -74,12 +15,6 @@ connections:
   - sender: chat_summary_prompt_builder.prompt
     receiver: chat_summary_generator.prompt
   - sender: chat_summary_generator.replies
-    receiver: query_unwrapper.replies
-  - sender: query_unwrapper.prompt
-    receiver: qa_prompt_builder.query
-  - sender: qa_prompt_builder.prompt
-    receiver: qa_generator.prompt
-  - sender: qa_generator.replies
     receiver: answer_builder.replies
 max_runs_per_component: 100
 metadata: {}

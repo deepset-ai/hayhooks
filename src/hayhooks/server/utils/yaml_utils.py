@@ -106,15 +106,7 @@ def _resolve_declared_inputs(
         component_name, field_name = normalized_path.split(".", 1)
         meta = (pipeline_meta.get(component_name, {}) or {}).get(field_name, {}) or {}
         resolved_type = meta.get("type")
-        is_required = bool(meta.get("is_mandatory", False))
-
-        if len(candidate_paths) > 1 and not is_required:
-            for candidate in candidate_paths[1:]:
-                c_component, c_field = candidate.split(".", 1)
-                candidate_meta = (pipeline_meta.get(c_component, {}) or {}).get(c_field, {}) or {}
-                if candidate_meta.get("is_mandatory", False):
-                    is_required = True
-                    break
+        is_required = True
 
         resolutions[io_name] = InputResolution(
             path=f"{component_name}.{field_name}",
