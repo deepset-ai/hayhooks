@@ -316,3 +316,26 @@ def test_get_components_from_outputs_multiple_components():
 
 def test_get_components_from_outputs_empty():
     assert get_components_from_outputs({}) == set()
+
+
+def test_get_inputs_outputs_from_yaml_handles_list_declared_inputs():
+    yaml_path = Path(__file__).parent / "test_files" / "yaml" / "list_input.yml"
+    yaml_source = yaml_path.read_text()
+
+    result = get_inputs_outputs_from_yaml(yaml_source)
+
+    assert set(result.keys()) == {"inputs", "outputs"}
+    assert set(result["inputs"].keys()) == {"query"}
+    assert set(result["outputs"].keys()) == {"answers"}
+
+    query_input = result["inputs"]["query"]
+    assert query_input.path == "chat_summary_prompt_builder.query"
+    assert query_input.component == "chat_summary_prompt_builder"
+    assert query_input.name == "query"
+    assert query_input.type == Any
+    assert query_input.required is False
+
+    answers_output = result["outputs"]["answers"]
+    assert answers_output.path == "answer_builder.answers"
+    assert answers_output.component == "answer_builder"
+    assert answers_output.name == "answers"
