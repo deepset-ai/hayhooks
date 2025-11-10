@@ -43,14 +43,11 @@ def _normalize_declared_path(value: Any) -> Union[str, None]:
     if isinstance(value, list):
         string_candidates = [candidate for candidate in value if isinstance(candidate, str)]
 
-        for candidate in string_candidates:
-            if "." in candidate:
-                value = candidate
-                break
-        else:
-            if not string_candidates:
-                return None
-            value = string_candidates[0]
+        if not string_candidates:
+            return None
+
+        path = next((candidate for candidate in string_candidates if "." in candidate), None)
+        value = path or string_candidates[0]
 
     if not isinstance(value, str):
         return None
