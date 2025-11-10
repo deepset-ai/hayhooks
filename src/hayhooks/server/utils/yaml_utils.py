@@ -66,19 +66,20 @@ def _collect_candidate_paths(value: Any) -> list[str]:
     Returns:
         List of normalized "component.field" strings.
     """
+    paths: list[str] = []
+
     if isinstance(value, list):
-        paths: list[str] = []
-        for candidate in value:
-            normalized = _normalize_declared_path(candidate)
-            if isinstance(normalized, str) and "." in normalized:
-                paths.append(normalized)
-        return paths
+        candidates = [candidate for candidate in value if isinstance(candidate, str)]
+        paths.extend(candidate for candidate in candidates if "." in candidate)
+        if paths:
+            return paths
+        return candidates
 
     normalized = _normalize_declared_path(value)
-    if isinstance(normalized, str) and "." in normalized:
-        return [normalized]
+    if isinstance(normalized, str) and normalized not in paths:
+        paths.append(normalized)
 
-    return []
+    return [path for path in paths if "." in path]
 
 
 def _resolve_declared_inputs(
