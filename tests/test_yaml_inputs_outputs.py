@@ -6,6 +6,7 @@ import pytest
 from haystack.dataclasses import ChatMessage
 
 from hayhooks.server.exceptions import InvalidYamlIOError
+from hayhooks.server.utils.deploy_utils import map_flat_inputs_to_components
 from hayhooks.server.utils.yaml_utils import (
     InputResolution,
     OutputResolution,
@@ -333,9 +334,26 @@ def test_get_inputs_outputs_from_yaml_handles_list_declared_inputs():
     assert query_input.component == "chat_summary_prompt_builder"
     assert query_input.name == "query"
     assert query_input.type == Any
-    assert query_input.required is False
+    assert query_input.required is True
+    assert query_input.targets == [
+        "chat_summary_prompt_builder.query",
+        "answer_builder.query",
+    ]
 
     answers_output = result["outputs"]["answers"]
     assert answers_output.path == "answer_builder.answers"
     assert answers_output.component == "answer_builder"
     assert answers_output.name == "answers"
+
+
+def test_map_flat_inputs_to_components_expands_targets():
+    yaml_path = Path(__file__).parent / "test_files" / "yaml" / "list_input.yml"
+    yaml_source = yaml_path.read_text()
+    resolved = get_inputs_outputs_from_yaml(yaml_source)
+
+    expanded = map_flat_inputs_to_components({"query": "value"}, resolved["inputs"])
+
+    assert expanded == {
+        "chat_summary_prompt_builder": {"query": "value"},
+        "answer_builder": {"query": "value"},
+    }
