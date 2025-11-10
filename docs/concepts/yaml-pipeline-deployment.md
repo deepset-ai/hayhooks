@@ -172,7 +172,6 @@ outputs:
   # response_field: component.field
   replies: llm.replies
   documents: fetcher.documents
-  metadata: prompt_builder.metadata
 ```
 
 **Mapping rules:**

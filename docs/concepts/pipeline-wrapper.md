@@ -470,25 +470,44 @@ You can also specify streaming configuration in YAML pipeline definitions:
 ```yaml
 components:
   prompt_1:
-    type: haystack.components.builders.PromptBuilder
     init_parameters:
-      template: "Answer this question: {{query}}"
+      required_variables: "*"
+      template: |
+        {% message role="user" %}
+        Answer this question: {{query}}
+        Answer:
+        {% endmessage %}
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+
   llm_1:
-    type: haystack.components.generators.OpenAIGenerator
-  prompt_2:
-    type: haystack.components.builders.PromptBuilder
     init_parameters:
-      template: "Refine this response: {{previous_reply}}"
+      ...
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+
+  prompt_2:
+    init_parameters:
+      required_variables: "*"
+      template: |
+        {% message role="user" %}
+        Refine this response: {{previous_reply[0].text}}
+        Improved answer:
+        {% endmessage %}
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+
   llm_2:
-    type: haystack.components.generators.OpenAIGenerator
+    init_parameters:
+      ...
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
 
 connections:
-  - sender: prompt_1.prompt
-    receiver: llm_1.prompt
-  - sender: llm_1.replies
-    receiver: prompt_2.previous_reply
-  - sender: prompt_2.prompt
-    receiver: llm_2.prompt
+  - receiver: llm_1.messages
+    sender: prompt_1.prompt
+  - receiver: prompt_2.previous_reply
+    sender: llm_1.replies
+  - receiver: llm_2.messages
+    sender: prompt_2.prompt
+
+metadata: {}
 
 inputs:
   query: prompt_1.query

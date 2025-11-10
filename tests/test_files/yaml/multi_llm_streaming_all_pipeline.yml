@@ -3,10 +3,11 @@ components:
     init_parameters:
       required_variables: "*"
       template: |
-        "Answer this question: {{query}}
+        {% message role="user" %}
+        Answer this question: {{query}}
         Answer:
-        "
-    type: haystack.components.builders.prompt_builder.PromptBuilder
+        {% endmessage %}
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
 
   llm_1:
     init_parameters:
@@ -19,17 +20,17 @@ components:
       generation_kwargs: {}
       model: gpt-4o-mini
       streaming_callback: null
-      system_prompt: null
-    type: haystack.components.generators.openai.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
 
   prompt_2:
     init_parameters:
       required_variables: "*"
       template: |
-        "Refine this response: {{previous_reply}}
+        {% message role="user" %}
+        Refine this response: {{previous_reply[0].text}}
         Improved answer:
-        "
-    type: haystack.components.builders.prompt_builder.PromptBuilder
+        {% endmessage %}
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
 
   llm_2:
     init_parameters:
@@ -42,15 +43,14 @@ components:
       generation_kwargs: {}
       model: gpt-4o-mini
       streaming_callback: null
-      system_prompt: null
-    type: haystack.components.generators.openai.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
 
 connections:
-  - receiver: llm_1.prompt
+  - receiver: llm_1.messages
     sender: prompt_1.prompt
   - receiver: prompt_2.previous_reply
     sender: llm_1.replies
-  - receiver: llm_2.prompt
+  - receiver: llm_2.messages
     sender: prompt_2.prompt
 
 metadata: {}

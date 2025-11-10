@@ -11,22 +11,24 @@ components:
       model: gpt-4o-mini
       organization: null
       streaming_callback: null
-      system_prompt: null
-    type: haystack.components.generators.openai.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
   prompt_builder:
     init_parameters:
       required_variables: "*"
-      template: "{{ question }}"
+      template: |
+        {% message role="user" %}
+        {{ question }}
+        {% endmessage %}
       variables: null
-    type: haystack.components.builders.prompt_builder.PromptBuilder
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
 connections:
-- receiver: llm.prompt
+- receiver: llm.messages
   sender: prompt_builder.prompt
 max_runs_per_component: 100
 metadata: {}
 
 inputs:
-  question: llm.prompt
+  question: prompt_builder.question
 
 outputs:
-  answer: llm.response
+  answer: llm.replies
