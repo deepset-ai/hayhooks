@@ -11,16 +11,22 @@ components:
       model: gpt-4o-mini
       organization: null
       streaming_callback: null
-      system_prompt: null
-    type: haystack.components.generators.openai.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
   prompt_builder:
     init_parameters:
       required_variables: "*"
-      template: "\nGiven the following information, answer the question.\n\nContext:\n\
-        {% for document in documents %}\n    {{ document.content }}\n{% endfor %}\n\
-        \nQuestion: {{question}}\nAnswer:\n"
+      template: | 
+        {% message role="user" %}
+        Given the following information, answer the question.
+        Context:
+        {% for document in documents %}
+          {{ document.content }}
+        {% endfor %}
+        Question: {{question}}
+        Answer:
+        {% endmessage %}
       variables: null
-    type: haystack.components.builders.prompt_builder.PromptBuilder
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
   retriever:
     init_parameters:
       document_store:
@@ -66,7 +72,7 @@ connections:
   sender: text_embedder.embedding
 - receiver: prompt_builder.documents
   sender: retriever.documents
-- receiver: llm.prompt
+- receiver: llm.messages
   sender: prompt_builder.prompt
 max_runs_per_component: 100
 metadata: {}
@@ -74,8 +80,8 @@ metadata: {}
 
 inputs:
   question:
-  - llm.prompt
+  - prompt_builder.question
 
 outputs:
   answer:
-  - llm.response
+  - llm.replies

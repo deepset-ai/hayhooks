@@ -51,16 +51,23 @@ def setup(self) -> None:
     from haystack import Pipeline
     from haystack.components.fetchers import LinkContentFetcher
     from haystack.components.converters import HTMLToDocument
-    from haystack.components.builders import PromptBuilder
-    from haystack.components.generators import OpenAIGenerator
+    from haystack.components.builders import ChatPromptBuilder
+    from haystack.components.generators.chat import OpenAIChatGenerator
 
     # Create components
     fetcher = LinkContentFetcher()
     converter = HTMLToDocument()
-    prompt_builder = PromptBuilder(
-        template="Based on: {{documents}}\nAnswer: {{query}}"
+    prompt_builder = ChatPromptBuilder(
+        template="""{% message role="user" %}
+        According to the contents of this website:
+        {% for document in documents %}
+            {{document.content}}
+        {% endfor %}
+        Answer the given question: {{query}}
+        {% endmessage %}""",
+        required_variables="*"
     )
-    llm = OpenAIGenerator(model="gpt-4o-mini")
+    llm = OpenAIChatGenerator(model="gpt-4o-mini")
 
     # Build pipeline
     self.pipeline = Pipeline()
@@ -72,7 +79,7 @@ def setup(self) -> None:
     # Connect components
     self.pipeline.connect("fetcher.streams", "converter.sources")
     self.pipeline.connect("converter.documents", "prompt.documents")
-    self.pipeline.connect("prompt.prompt", "llm.prompt")
+    self.pipeline.connect("prompt.prompt", "llm.messages")
 ```
 
 !!! success "Benefits of Programmatic Initialization"
@@ -463,25 +470,44 @@ You can also specify streaming configuration in YAML pipeline definitions:
 ```yaml
 components:
   prompt_1:
-    type: haystack.components.builders.PromptBuilder
     init_parameters:
-      template: "Answer this question: {{query}}"
+      required_variables: "*"
+      template: |
+        {% message role="user" %}
+        Answer this question: {{query}}
+        Answer:
+        {% endmessage %}
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+
   llm_1:
-    type: haystack.components.generators.OpenAIGenerator
-  prompt_2:
-    type: haystack.components.builders.PromptBuilder
     init_parameters:
-      template: "Refine this response: {{previous_reply}}"
+      ...
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+
+  prompt_2:
+    init_parameters:
+      required_variables: "*"
+      template: |
+        {% message role="user" %}
+        Refine this response: {{previous_reply[0].text}}
+        Improved answer:
+        {% endmessage %}
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+
   llm_2:
-    type: haystack.components.generators.OpenAIGenerator
+    init_parameters:
+      ...
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
 
 connections:
-  - sender: prompt_1.prompt
-    receiver: llm_1.prompt
-  - sender: llm_1.replies
-    receiver: prompt_2.previous_reply
-  - sender: prompt_2.prompt
-    receiver: llm_2.prompt
+  - receiver: llm_1.messages
+    sender: prompt_1.prompt
+  - receiver: prompt_2.previous_reply
+    sender: llm_1.replies
+  - receiver: llm_2.messages
+    sender: prompt_2.prompt
+
+metadata: {}
 
 inputs:
   query: prompt_1.query
