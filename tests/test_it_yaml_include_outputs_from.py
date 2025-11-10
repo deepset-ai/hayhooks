@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from hayhooks.server.pipelines import registry
