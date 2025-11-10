@@ -29,16 +29,16 @@ UPLOAD_FILES_DIR = TEST_FILES_DIR / "upload_files"
 ASYNC_TEST_FILES_DIR = TEST_FILES_DIR / "async_chat_with_website"
 
 ASYNC_SAMPLE_PIPELINE_FILES = {
-    "pipeline_wrapper.py": (ASYNC_TEST_FILES_DIR / "pipeline_wrapper.py").read_text(),
-    "chat_with_website.yml": (ASYNC_TEST_FILES_DIR / "chat_with_website.yml").read_text(),
+    "pipeline_wrapper.py": (ASYNC_TEST_FILES_DIR / "pipeline_wrapper.py").read_text(encoding="utf-8"),
+    "chat_with_website.yml": (ASYNC_TEST_FILES_DIR / "chat_with_website.yml").read_text(encoding="utf-8"),
 }
 SAMPLE_PIPELINE_FILES = {
-    "pipeline_wrapper.py": (TEST_FILES_DIR / "chat_with_website" / "pipeline_wrapper.py").read_text(),
-    "chat_with_website.yml": (TEST_FILES_DIR / "chat_with_website" / "chat_with_website.yml").read_text(),
+    "pipeline_wrapper.py": (TEST_FILES_DIR / "chat_with_website" / "pipeline_wrapper.py").read_text(encoding="utf-8"),
+    "chat_with_website.yml": (TEST_FILES_DIR / "chat_with_website" / "chat_with_website.yml").read_text(encoding="utf-8"),
 }
 
 SAMPLE_PIPELINE_FILES_NO_CHAT_COMPLETION = {
-    "pipeline_wrapper.py": (TEST_FILES_DIR / "no_chat" / "pipeline_wrapper.py").read_text(),
+    "pipeline_wrapper.py": (TEST_FILES_DIR / "no_chat" / "pipeline_wrapper.py").read_text(encoding="utf-8"),
 }
 
 

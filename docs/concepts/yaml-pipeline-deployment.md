@@ -22,24 +22,55 @@ Your YAML file must include both `inputs` and `outputs` sections:
 
 ```yaml
 components:
-  fetcher:
-    type: haystack.components.fetchers.LinkContentFetcher
-  prompt_builder:
-    type: haystack.components.builders.PromptBuilder
+  converter:
+    type: haystack.components.converters.html.HTMLToDocument
     init_parameters:
-      template: "Answer this question: {{query}} based on this content: {{documents}}"
+      extraction_kwargs: null
+
+  fetcher:
+    init_parameters:
+      raise_on_failure: true
+      retry_attempts: 2
+      timeout: 3
+      user_agents:
+        - haystack/LinkContentFetcher/2.0.0b8
+    type: haystack.components.fetchers.link_content.LinkContentFetcher
+
   llm:
-    type: haystack.components.generators.OpenAIGenerator
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      generation_kwargs: {}
+      model: gpt-4o-mini
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+
+  prompt:
+    init_parameters:
+      template: |
+        {% message role="user" %}
+        According to the contents of this website:
+        {% for document in documents %}
+          {{document.content}}
+        {% endfor %}
+        Answer the given question: {{query}}
+        {% endmessage %}
+      required_variables: "*"
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
 
 connections:
-  - sender: fetcher.content
-    receiver: prompt_builder.documents
-  - sender: prompt_builder
-    receiver: llm
+  - receiver: converter.sources
+    sender: fetcher.streams
+  - receiver: prompt.documents
+    sender: converter.documents
+  - receiver: llm.messages
+    sender: prompt.prompt
 
 inputs:
   urls: fetcher.urls
-  query: prompt_builder.query
+  query: prompt.query
 
 outputs:
   replies: llm.replies
@@ -296,7 +327,7 @@ This example demonstrates:
 - Complete pipeline structure with components and connections
 - Proper `inputs` mapping to component fields
 - Proper `outputs` mapping from component results
-- Real-world usage with `LinkContentFetcher`, `HTMLToDocument`, `PromptBuilder`, and `OpenAIGenerator`
+- Real-world usage with `LinkContentFetcher`, `HTMLToDocument`, `ChatPromptBuilder`, and `OpenAIChatGenerator`
 
 ## Next Steps
 

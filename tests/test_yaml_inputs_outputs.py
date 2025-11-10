@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from haystack.dataclasses import ChatMessage
 from hayhooks.server.exceptions import InvalidYamlIOError
 from hayhooks.server.utils.yaml_utils import (
     InputResolution,
@@ -41,7 +42,7 @@ def test_get_inputs_outputs_from_yaml_matches_pipeline_metadata():
     assert result["outputs"]["replies"].path == "llm.replies"
     assert result["outputs"]["replies"].component == "llm"
     assert result["outputs"]["replies"].name == "replies"
-    assert result["outputs"]["replies"].type == list[str]
+    assert result["outputs"]["replies"].type == list[ChatMessage]
 
 
 def test_get_inputs_outputs_from_yaml_raises_when_missing_inputs_outputs():

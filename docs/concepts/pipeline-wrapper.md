@@ -51,16 +51,23 @@ def setup(self) -> None:
     from haystack import Pipeline
     from haystack.components.fetchers import LinkContentFetcher
     from haystack.components.converters import HTMLToDocument
-    from haystack.components.builders import PromptBuilder
-    from haystack.components.generators import OpenAIGenerator
+    from haystack.components.builders import ChatPromptBuilder
+    from haystack.components.generators.chat import OpenAIChatGenerator
 
     # Create components
     fetcher = LinkContentFetcher()
     converter = HTMLToDocument()
-    prompt_builder = PromptBuilder(
-        template="Based on: {{documents}}\nAnswer: {{query}}"
+    prompt_builder = ChatPromptBuilder(
+        template="""{% message role="user" %}
+        According to the contents of this website:
+        {% for document in documents %}
+            {{document.content}}
+        {% endfor %}
+        Answer the given question: {{query}}
+        {% endmessage %}""",
+        required_variables="*"
     )
-    llm = OpenAIGenerator(model="gpt-4o-mini")
+    llm = OpenAIChatGenerator(model="gpt-4o-mini")
 
     # Build pipeline
     self.pipeline = Pipeline()
@@ -72,7 +79,7 @@ def setup(self) -> None:
     # Connect components
     self.pipeline.connect("fetcher.streams", "converter.sources")
     self.pipeline.connect("converter.documents", "prompt.documents")
-    self.pipeline.connect("prompt.prompt", "llm.prompt")
+    self.pipeline.connect("prompt.prompt", "llm.messages")
 ```
 
 !!! success "Benefits of Programmatic Initialization"
