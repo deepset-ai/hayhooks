@@ -1,10 +1,15 @@
 components:
   chat_summary_prompt_builder:
-    type: haystack.components.builders.prompt_builder.PromptBuilder
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
     init_parameters:
-      template: "Normalized: {{ query }}"
+      template: |
+        {% message role="user" %}
+        Normalized: {{ query }}
+        {% endmessage %}
+      required_variables:
+        - query
   chat_summary_generator:
-    type: haystack.components.generators.openai.OpenAIGenerator
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
     init_parameters:
       model: gpt-4o-mini
       generation_kwargs: {}
@@ -13,7 +18,7 @@ components:
     init_parameters: {}
 connections:
   - sender: chat_summary_prompt_builder.prompt
-    receiver: chat_summary_generator.prompt
+    receiver: chat_summary_generator.messages
   - sender: chat_summary_generator.replies
     receiver: answer_builder.replies
 max_runs_per_component: 100
