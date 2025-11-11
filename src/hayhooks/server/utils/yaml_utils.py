@@ -4,6 +4,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from hayhooks.server.exceptions import InvalidYamlIOError
+from hayhooks.server.logger import log
 
 
 class InputResolution(BaseModel):
@@ -107,12 +108,44 @@ def _resolve_declared_inputs(
         A mapping from declared IO name to `InputResolution`.
     """
     resolutions: dict[str, InputResolution] = {}
+    target_to_declared_input: dict[str, str] = {}
+
     for io_name, declared_path in declared_map.items():
         candidate_paths = _collect_candidate_paths(declared_path)
         if not candidate_paths:
             continue
 
-        normalized_path = candidate_paths[0]
+        # Deduplicate candidate paths while preserving order
+        unique_candidate_paths = list(dict.fromkeys(candidate_paths))
+
+        conflicts = {
+            target: owner
+            for target in unique_candidate_paths
+            if (owner := target_to_declared_input.get(target)) and owner != io_name
+        }
+        if conflicts:
+            conflicting_targets = ", ".join(f"'{target}'" for target in conflicts)
+            log.debug(
+                "Declared input '{}' reuses targets {} already assigned to {}.",
+                io_name,
+                conflicting_targets,
+                conflicts,
+            )
+
+        if conflicts:
+            conflict_messages = ", ".join(
+                f"'{target}' already targeted by declared input '{owner}'" for target, owner in conflicts.items()
+            )
+            targets = ", ".join(f"'{target}'" for target in conflicts)
+            msg = (
+                f"Declared input '{io_name}' targets {targets}; "
+                f"{conflict_messages}. Each pipeline input target may be declared only once."
+            )
+            raise InvalidYamlIOError(msg)
+
+        target_to_declared_input.update(dict.fromkeys(unique_candidate_paths, io_name))
+
+        normalized_path = unique_candidate_paths[0]
         component_name, field_name = normalized_path.split(".", 1)
         meta = (pipeline_meta.get(component_name, {}) or {}).get(field_name, {}) or {}
         resolved_type = meta.get("type")
@@ -124,7 +157,7 @@ def _resolve_declared_inputs(
             name=field_name,
             type=resolved_type,
             required=is_required,
-            targets=candidate_paths,
+            targets=unique_candidate_paths,
         )
 
     return resolutions

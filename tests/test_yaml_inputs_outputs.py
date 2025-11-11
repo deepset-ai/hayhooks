@@ -354,6 +354,21 @@ def test_get_inputs_outputs_from_yaml_handles_list_declared_inputs():
     assert answers_output.name == "answers"
 
 
+def test_get_inputs_outputs_from_yaml_raises_on_duplicate_input_targets():
+    yaml_path = Path(__file__).parent / "test_files" / "yaml" / "broken" / "duplicate_input_target.yml"
+    yaml_source = yaml_path.read_text()
+
+    with pytest.raises(
+        InvalidYamlIOError,
+        match=re.escape(
+            "Declared input 'another_input' targets 'chat_summary_prompt_builder.query'; "
+            "'chat_summary_prompt_builder.query' already targeted by declared input 'query'. "
+            "Each pipeline input target may be declared only once."
+        ),
+    ):
+        get_inputs_outputs_from_yaml(yaml_source)
+
+
 def test_map_flat_inputs_to_components_expands_targets():
     yaml_path = Path(__file__).parent / "test_files" / "yaml" / "list_input.yml"
     yaml_source = yaml_path.read_text()
