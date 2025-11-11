@@ -31,6 +31,7 @@ def test_get_inputs_outputs_from_yaml_matches_pipeline_metadata():
     assert result["inputs"]["urls"].component == "fetcher"
     assert result["inputs"]["urls"].name == "urls"
     assert result["inputs"]["urls"].type == list[str]
+    assert result["inputs"]["urls"].targets == ["fetcher.urls"]
     assert result["inputs"]["urls"].required is True
 
     assert isinstance(result["inputs"]["query"], InputResolution)
@@ -38,6 +39,8 @@ def test_get_inputs_outputs_from_yaml_matches_pipeline_metadata():
     assert result["inputs"]["query"].component == "prompt"
     assert result["inputs"]["query"].name == "query"
     assert result["inputs"]["query"].type == Any
+    assert result["inputs"]["query"].targets == ["prompt.query"]
+    assert result["inputs"]["query"].required is True
 
     assert isinstance(result["outputs"]["replies"], OutputResolution)
     assert result["outputs"]["replies"].path == "llm.replies"

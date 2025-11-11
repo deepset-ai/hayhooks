@@ -1,18 +1,28 @@
 from typing import Any, TypedDict, Union
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from hayhooks.server.exceptions import InvalidYamlIOError
 
 
 class InputResolution(BaseModel):
-    path: str
-    component: str
-    name: str
-    type: Any
-    required: bool
-    targets: list[str]
+    path: str = Field(
+        description="Primary 'component.field' path chosen for type resolution and introspection.",
+    )
+    component: str = Field(
+        description="Component name extracted from the primary path (matches the path used for type resolution)."
+    )
+    name: str = Field(description="Field name extracted from the primary path.")
+    type: Any = Field(
+        description="Python type associated with the primary path, as inferred from Haystack pipeline metadata."
+    )
+    required: bool = Field(
+        description="Whether the request model marks this input as mandatory; declared inputs are always required."
+    )
+    targets: list[str] = Field(
+        description="All declared 'component.field' targets that receive the same value when the pipeline is executed."
+    )
 
 
 class OutputResolution(BaseModel):
