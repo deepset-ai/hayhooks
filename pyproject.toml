@@ -71,6 +71,7 @@ dependencies = [
   "mkdocs-mermaid2-plugin",
   "mkdocs-minify-plugin",
   "mkdocs-git-revision-date-localized-plugin",
+  "mkdocs-llmstxt",
 ]
 
 [tool.hatch.envs.docs.scripts]
