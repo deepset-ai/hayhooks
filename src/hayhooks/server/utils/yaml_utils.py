@@ -1,17 +1,29 @@
 from typing import Any, TypedDict, Union
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from hayhooks.server.exceptions import InvalidYamlIOError
+from hayhooks.server.logger import log
 
 
 class InputResolution(BaseModel):
-    path: str
-    component: str
-    name: str
-    type: Any
-    required: bool
+    path: str = Field(
+        description="Primary 'component.field' path chosen for type resolution and introspection.",
+    )
+    component: str = Field(
+        description="Component name extracted from the primary path (matches the path used for type resolution)."
+    )
+    name: str = Field(description="Field name extracted from the primary path.")
+    type: Any = Field(
+        description="Python type associated with the primary path, as inferred from Haystack pipeline metadata."
+    )
+    required: bool = Field(
+        description="Whether the request model marks this input as mandatory; declared inputs are always required."
+    )
+    targets: list[str] = Field(
+        description="All declared 'component.field' targets that receive the same value when the pipeline is executed."
+    )
 
 
 class OutputResolution(BaseModel):
@@ -31,8 +43,8 @@ def _normalize_declared_path(value: Any) -> Union[str, None]:
     Normalize a declared path from YAML to a string.
 
     A declared IO path in YAML can be provided either as a string (e.g. "comp.field")
-    or as a one-item list of strings. This helper normalizes both cases to a single
-    string, or None if the value cannot be normalized.
+    or as a list of strings. This helper normalizes those cases to the first valid
+    string entry, or None if the value cannot be normalized.
 
     Args:
         value: Declared path value from YAML (string or list of strings).
@@ -40,13 +52,45 @@ def _normalize_declared_path(value: Any) -> Union[str, None]:
     Returns:
         The normalized "component.field" string, or None when not available.
     """
-    if isinstance(value, list) and len(value) == 1:
-        value = value[0]
+    if isinstance(value, list):
+        string_candidates = [candidate for candidate in value if isinstance(candidate, str)]
+
+        if not string_candidates:
+            return None
+
+        path = next((candidate for candidate in string_candidates if "." in candidate), None)
+        value = path or string_candidates[0]
 
     if not isinstance(value, str):
         return None
 
     return value
+
+
+def _collect_candidate_paths(value: Any) -> list[str]:
+    """
+    Collect all candidate "component.field" paths from a declared IO value.
+
+    Args:
+        value: Declared path value from YAML (string or list).
+
+    Returns:
+        List of normalized "component.field" strings.
+    """
+    paths: list[str] = []
+
+    if isinstance(value, list):
+        candidates = [candidate for candidate in value if isinstance(candidate, str)]
+        paths.extend(candidate for candidate in candidates if "." in candidate)
+        if paths:
+            return paths
+        return candidates
+
+    normalized = _normalize_declared_path(value)
+    if isinstance(normalized, str) and normalized not in paths:
+        paths.append(normalized)
+
+    return [path for path in paths if "." in path]
 
 
 def _resolve_declared_inputs(
@@ -64,21 +108,56 @@ def _resolve_declared_inputs(
         A mapping from declared IO name to `InputResolution`.
     """
     resolutions: dict[str, InputResolution] = {}
+    target_to_declared_input: dict[str, str] = {}
+
     for io_name, declared_path in declared_map.items():
-        normalized_path = _normalize_declared_path(declared_path)
-        if not isinstance(normalized_path, str) or "." not in normalized_path:
+        candidate_paths = _collect_candidate_paths(declared_path)
+        if not candidate_paths:
             continue
 
+        # Deduplicate candidate paths while preserving order
+        unique_candidate_paths = list(dict.fromkeys(candidate_paths))
+
+        conflicts = {
+            target: owner
+            for target in unique_candidate_paths
+            if (owner := target_to_declared_input.get(target)) and owner != io_name
+        }
+        if conflicts:
+            conflicting_targets = ", ".join(f"'{target}'" for target in conflicts)
+            log.debug(
+                "Declared input '{}' reuses targets {} already assigned to {}.",
+                io_name,
+                conflicting_targets,
+                conflicts,
+            )
+
+        if conflicts:
+            conflict_messages = ", ".join(
+                f"'{target}' already targeted by declared input '{owner}'" for target, owner in conflicts.items()
+            )
+            targets = ", ".join(f"'{target}'" for target in conflicts)
+            msg = (
+                f"Declared input '{io_name}' targets {targets}; "
+                f"{conflict_messages}. Each pipeline input target may be declared only once."
+            )
+            raise InvalidYamlIOError(msg)
+
+        target_to_declared_input.update(dict.fromkeys(unique_candidate_paths, io_name))
+
+        normalized_path = unique_candidate_paths[0]
         component_name, field_name = normalized_path.split(".", 1)
         meta = (pipeline_meta.get(component_name, {}) or {}).get(field_name, {}) or {}
         resolved_type = meta.get("type")
+        is_required = True
 
         resolutions[io_name] = InputResolution(
             path=f"{component_name}.{field_name}",
             component=component_name,
             name=field_name,
             type=resolved_type,
-            required=bool(meta.get("is_mandatory", False)),
+            required=is_required,
+            targets=unique_candidate_paths,
         )
 
     return resolutions

@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import traceback
+from collections import defaultdict
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
@@ -33,8 +34,45 @@ from hayhooks.server.pipelines.models import (
     get_response_model_from_resolved_io,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.utils.yaml_utils import get_inputs_outputs_from_yaml
+from hayhooks.server.utils.yaml_utils import InputResolution, get_inputs_outputs_from_yaml
 from hayhooks.settings import settings
+
+
+def map_flat_inputs_to_components(
+    flat_inputs: dict[str, Any], input_resolutions: dict[str, InputResolution]
+) -> dict[str, Any]:
+    """
+    Expand flat input payloads to per-component inputs using resolved IO metadata.
+
+    Args:
+        flat_inputs: Payload with logical input names (e.g. {"query": "foo"}).
+        input_resolutions: Resolved IO metadata keyed by logical input name.
+
+    Returns:
+        Mapping suitable for Haystack Pipeline.run, or the original payload when we cannot resolve it.
+    """
+    if not input_resolutions or not flat_inputs:
+        return flat_inputs
+
+    component_inputs: dict[str, dict[str, Any]] = defaultdict(dict)
+    unresolved: dict[str, Any] = {}
+
+    for input_name, value in flat_inputs.items():
+        resolution = input_resolutions.get(input_name)
+        if resolution is None:
+            unresolved[input_name] = value
+            continue
+
+        targets = resolution.targets or [resolution.path]
+        for target in targets:
+            component, field = target.split(".", 1)
+            component_inputs[component][field] = value
+
+    if unresolved:
+        # If we can't resolve all inputs explicitly, fall back to the original payload.
+        return flat_inputs
+
+    return dict(component_inputs)
 
 
 def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir: str) -> dict[str, str]:
@@ -361,12 +399,14 @@ def add_yaml_pipeline_api_route(app: FastAPI, pipeline_name: str) -> None:
         msg = f"Missing request/response models for YAML pipeline '{pipeline_name}'"
         raise PipelineYamlError(msg)
 
+    input_resolutions = metadata.get("input_resolutions") or {}
+
     @handle_pipeline_exceptions()
     async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type:ignore[valid-type]
         # Get include_outputs_from from metadata if available
         outputs_to_include = metadata.get("include_outputs_from")
         kwargs: dict[str, Any] = {
-            "data": run_req.model_dump(),  # type: ignore[attr-defined]
+            "data": map_flat_inputs_to_components(run_req.model_dump(), input_resolutions),  # type: ignore[attr-defined]
         }
 
         if outputs_to_include is not None:
@@ -569,6 +609,7 @@ def add_yaml_pipeline_to_registry(
         "skip_mcp": bool(skip_mcp),
         "streaming_components": streaming_components,
         "include_outputs_from": outputs_to_include,
+        "input_resolutions": pipeline_inputs,
     }
 
     clog.debug("Adding YAML pipeline to registry with metadata: {}", metadata)

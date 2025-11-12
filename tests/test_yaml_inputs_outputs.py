@@ -6,6 +6,7 @@ import pytest
 from haystack.dataclasses import ChatMessage
 
 from hayhooks.server.exceptions import InvalidYamlIOError
+from hayhooks.server.utils.deploy_utils import map_flat_inputs_to_components
 from hayhooks.server.utils.yaml_utils import (
     InputResolution,
     OutputResolution,
@@ -30,6 +31,7 @@ def test_get_inputs_outputs_from_yaml_matches_pipeline_metadata():
     assert result["inputs"]["urls"].component == "fetcher"
     assert result["inputs"]["urls"].name == "urls"
     assert result["inputs"]["urls"].type == list[str]
+    assert result["inputs"]["urls"].targets == ["fetcher.urls"]
     assert result["inputs"]["urls"].required is True
 
     assert isinstance(result["inputs"]["query"], InputResolution)
@@ -37,6 +39,8 @@ def test_get_inputs_outputs_from_yaml_matches_pipeline_metadata():
     assert result["inputs"]["query"].component == "prompt"
     assert result["inputs"]["query"].name == "query"
     assert result["inputs"]["query"].type == Any
+    assert result["inputs"]["query"].targets == ["prompt.query"]
+    assert result["inputs"]["query"].required is True
 
     assert isinstance(result["outputs"]["replies"], OutputResolution)
     assert result["outputs"]["replies"].path == "llm.replies"
@@ -316,3 +320,63 @@ def test_get_components_from_outputs_multiple_components():
 
 def test_get_components_from_outputs_empty():
     assert get_components_from_outputs({}) == set()
+
+
+def test_get_inputs_outputs_from_yaml_handles_list_declared_inputs():
+    yaml_path = Path(__file__).parent / "test_files" / "yaml" / "list_input.yml"
+    yaml_source = yaml_path.read_text()
+
+    result = get_inputs_outputs_from_yaml(yaml_source)
+
+    assert set(result.keys()) == {"inputs", "outputs"}
+    assert set(result["inputs"].keys()) == {"query"}
+    assert set(result["outputs"].keys()) == {"answers"}
+
+    query_input = result["inputs"]["query"]
+
+    # Here we're testing that we take `chat_summary_prompt_builder.query`
+    # as a reference component for detecting the type, then we will pass the `query_input` value
+    # to both `chat_summary_prompt_builder.query` and `answer_builder.query`
+    # Note that `query_input` is _always_ required, since it's present in the `inputs` section.
+    assert query_input.path == "chat_summary_prompt_builder.query"
+    assert query_input.component == "chat_summary_prompt_builder"
+    assert query_input.name == "query"
+    assert query_input.type == Any
+    assert query_input.required is True
+    assert query_input.targets == [
+        "chat_summary_prompt_builder.query",
+        "answer_builder.query",
+    ]
+
+    answers_output = result["outputs"]["answers"]
+    assert answers_output.path == "answer_builder.answers"
+    assert answers_output.component == "answer_builder"
+    assert answers_output.name == "answers"
+
+
+def test_get_inputs_outputs_from_yaml_raises_on_duplicate_input_targets():
+    yaml_path = Path(__file__).parent / "test_files" / "yaml" / "broken" / "duplicate_input_target.yml"
+    yaml_source = yaml_path.read_text()
+
+    with pytest.raises(
+        InvalidYamlIOError,
+        match=re.escape(
+            "Declared input 'another_input' targets 'chat_summary_prompt_builder.query'; "
+            "'chat_summary_prompt_builder.query' already targeted by declared input 'query'. "
+            "Each pipeline input target may be declared only once."
+        ),
+    ):
+        get_inputs_outputs_from_yaml(yaml_source)
+
+
+def test_map_flat_inputs_to_components_expands_targets():
+    yaml_path = Path(__file__).parent / "test_files" / "yaml" / "list_input.yml"
+    yaml_source = yaml_path.read_text()
+    resolved = get_inputs_outputs_from_yaml(yaml_source)
+
+    expanded = map_flat_inputs_to_components({"query": "value"}, resolved["inputs"])
+
+    assert expanded == {
+        "chat_summary_prompt_builder": {"query": "value"},
+        "answer_builder": {"query": "value"},
+    }

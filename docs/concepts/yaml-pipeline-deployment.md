@@ -162,6 +162,17 @@ inputs:
 - Field must exist in the component
 - Multiple inputs can map to the same component field
 - Input names become API parameters
+- Use a YAML list when the same external field should feed **multiple** component inputs
+
+```yaml
+inputs:
+  query:
+    - chat_summary_prompt_builder.query
+    - answer_builder.query
+```
+
+!!! note "How multi-target inputs are resolved"
+    Hayhooks normalizes list-declared inputs by looking at the first valid target to derive type metadata and marks the input as **required** regardless of component-level metadata. At runtime the resolved value is fanned out to **all** listed component inputs, so the example above sends the same payload to both `chat_summary_prompt_builder.query` and `answer_builder.query` even if the external parameter is named differently (for example `a_query`). This ensures downstream components get the expected inputs while the API still exposes a single friendly field.
 
 ### Output Mapping
 

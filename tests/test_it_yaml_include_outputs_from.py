@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from hayhooks.server.pipelines import registry
 
 MULTI_OUTPUT_PIPELINE_PATH = Path(__file__).parent / "test_files" / "yaml" / "multi_output_pipeline.yml"
+LIST_INPUT_PIPELINE_PATH = Path(__file__).parent / "test_files" / "yaml" / "list_input.yml"
 
 
 def test_yaml_pipeline_auto_derives_include_outputs_from(client, deploy_yaml_pipeline, undeploy_pipeline):
@@ -36,3 +37,18 @@ def test_yaml_pipeline_passes_include_outputs_from_to_haystack(client, deploy_ya
         assert call_kwargs["include_outputs_from"] == {"double", "second_addition"}
 
     undeploy_pipeline(client, "test_run_include")
+
+
+def test_yaml_pipeline_supports_list_declared_inputs(client, deploy_yaml_pipeline, undeploy_pipeline):
+    yaml_source = LIST_INPUT_PIPELINE_PATH.read_text()
+
+    response = deploy_yaml_pipeline(client, "test_list_inputs", yaml_source)
+    assert response.status_code == 200
+
+    metadata = registry.get_metadata("test_list_inputs")
+    assert metadata["include_outputs_from"] == {"answer_builder"}
+
+    request_model = metadata["request_model"]
+    assert "query" in request_model.model_fields
+
+    undeploy_pipeline(client, "test_list_inputs")
