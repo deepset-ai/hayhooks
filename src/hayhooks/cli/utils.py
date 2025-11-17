@@ -4,7 +4,7 @@ import io
 import mimetypes
 import time
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, TypeVar, overload
+from typing import Any, Callable, Literal, Optional, TypeVar, Union, overload
 from urllib.parse import urljoin
 
 import requests
@@ -80,7 +80,7 @@ def make_request(  # noqa: PLR0913
     use_https: bool = False,
     disable_ssl: bool = False,
     stream: bool = False,
-) -> dict[str, Any] | requests.Response:
+) -> Union[dict[str, Any], requests.Response]:
     """
     Make HTTP request to Hayhooks server with error handling.
 
