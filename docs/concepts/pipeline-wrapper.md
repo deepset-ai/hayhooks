@@ -134,6 +134,36 @@ def run_api(self, urls: list[str], question: str) -> str:
 - Default values are supported
 - Complex types like `dict[str, Any]` are allowed
 
+#### Streaming responses
+
+Hayhooks can stream results from `run_api()` or `run_api_async()` when you return a generator instead of a fully materialized value. This is especially useful when you already rely on `streaming_generator()` / `async_streaming_generator()` inside chat endpoints and want the same behaviour on the generic `/run` route.
+
+```python
+from collections.abc import Generator
+from hayhooks import streaming_generator
+
+def run_api(self, query: str) -> Generator:
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": query}},
+    )
+```
+
+For async pipelines:
+
+```python
+from collections.abc import AsyncGenerator
+from hayhooks import async_streaming_generator
+
+async def run_api_async(self, query: str) -> AsyncGenerator:
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": query}},
+    )
+```
+
+When a generator is detected, Hayhooks automatically wraps it in a FastAPI `StreamingResponse` using the `text/plain` media type. If you need custom headers or a different MIME type, return your own `StreamingResponse` instance instead of the generator.
+
 ## Optional Methods
 
 ### run_api_async()

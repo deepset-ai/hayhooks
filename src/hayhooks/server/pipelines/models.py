@@ -1,5 +1,6 @@
 import inspect
-from typing import Any, Callable
+from collections.abc import AsyncGenerator, Generator
+from typing import Any, Callable, get_origin
 
 from docstring_parser.common import Docstring
 from pydantic import BaseModel, Field, create_model
@@ -99,5 +100,9 @@ def create_response_model_from_callable(func: Callable, model_name: str, docstri
         raise PipelineWrapperError(msg)
 
     return_description = docstring.returns.description if docstring.returns else None
+
+    origin = get_origin(return_type)
+    if origin in {Generator, AsyncGenerator} or return_type in {Generator, AsyncGenerator}:
+        return_type = Any
 
     return create_model(f"{model_name}Response", result=(return_type, Field(..., description=return_description)))

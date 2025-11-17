@@ -1,5 +1,6 @@
 import importlib.util
 import inspect
+import json
 import shutil
 import sys
 import tempfile
@@ -13,10 +14,13 @@ from typing import Any, Callable, Optional, Union
 import docstring_parser
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response, StreamingResponse
 from fastapi.routing import APIRoute
 from haystack import AsyncPipeline
+from haystack.dataclasses import StreamingChunk
 from pydantic import BaseModel
 
+from hayhooks.open_webui import OpenWebUIEvent
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
@@ -237,6 +241,76 @@ def handle_pipeline_exceptions() -> Callable:
     return decorator
 
 
+def _format_run_stream_chunk(stream_item: Any) -> Optional[Union[str, bytes]]:
+    if isinstance(stream_item, StreamingChunk):
+        return stream_item.content or ""
+    if isinstance(stream_item, OpenWebUIEvent):
+        log.warning("OpenWebUIEvent emitted during /run streaming; skipping. Use OpenAI chat endpoints for UI events.")
+        return None
+    if isinstance(stream_item, (str, bytes)):
+        return stream_item
+    if stream_item is None:
+        return ""
+    try:
+        return json.dumps(stream_item)
+    except TypeError:
+        return str(stream_item)
+
+
+def _streaming_response_from_async_gen(async_gen: Any) -> Response:
+    async def async_stream():
+        try:
+            async for item in async_gen:
+                formatted = _format_run_stream_chunk(item)
+                if formatted is None:
+                    continue
+                yield formatted
+        finally:
+            aclose = getattr(async_gen, "aclose", None)
+            if callable(aclose):
+                await aclose()
+
+    return StreamingResponse(async_stream(), media_type="text/plain")
+
+
+def _streaming_response_from_gen(gen: Any) -> Response:
+    def sync_stream():
+        try:
+            for item in gen:
+                formatted = _format_run_stream_chunk(item)
+                if formatted is None:
+                    continue
+                yield formatted
+        finally:
+            close = getattr(gen, "close", None)
+            if callable(close):
+                close()
+
+    return StreamingResponse(sync_stream(), media_type="text/plain")
+
+
+def _streaming_response_from_result(result: Any) -> Optional[Response]:
+    if isinstance(result, Response):
+        return result
+
+    if inspect.isasyncgen(result):
+        return _streaming_response_from_async_gen(result)
+
+    if inspect.isgenerator(result):
+        return _streaming_response_from_gen(result)
+
+    return None
+
+
+async def _execute_pipeline_run(
+    pipeline_wrapper: BasePipelineWrapper,
+    payload: dict[str, Any],
+) -> Any:
+    if pipeline_wrapper._is_run_api_async_implemented:
+        return await pipeline_wrapper.run_api_async(**payload)
+    return await run_in_threadpool(pipeline_wrapper.run_api, **payload)
+
+
 def create_run_endpoint_handler(
     pipeline_wrapper: BasePipelineWrapper,
     request_model: type[BaseModel],
@@ -261,23 +335,25 @@ def create_run_endpoint_handler(
         A FastAPI endpoint function that executes the pipeline and returns the response model.
     """
 
+    async def _handle_request(run_req: BaseModel) -> Response | BaseModel:
+        payload = run_req.model_dump()
+
+        result = await _execute_pipeline_run(pipeline_wrapper, payload)
+        streaming_response = _streaming_response_from_result(result)
+        if streaming_response is not None:
+            return streaming_response
+
+        return response_model(result=result)
+
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(
         run_req: request_model = Form(..., media_type="multipart/form-data"),  # type:ignore[valid-type] # noqa: B008
     ) -> response_model:  # type:ignore[valid-type]
-        if pipeline_wrapper._is_run_api_async_implemented:
-            result = await pipeline_wrapper.run_api_async(**run_req.model_dump())  # type:ignore[attr-defined]
-        else:
-            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type:ignore[attr-defined]
-        return response_model(result=result)
+        return await _handle_request(run_req)
 
     @handle_pipeline_exceptions()
     async def run_endpoint_without_files(run_req: request_model) -> response_model:  # type:ignore[valid-type]
-        if pipeline_wrapper._is_run_api_async_implemented:
-            result = await pipeline_wrapper.run_api_async(**run_req.model_dump())  # type:ignore[attr-defined]
-        else:
-            result = await run_in_threadpool(pipeline_wrapper.run_api, **run_req.model_dump())  # type:ignore[attr-defined]
-        return response_model(result=result)
+        return await _handle_request(run_req)
 
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
 
