@@ -86,6 +86,8 @@ def status(ctx: typer.Context) -> None:
         title="",
     )
 
+    assert isinstance(response, dict), "Status endpoint must return JSON"
+
     if pipes := response.get("pipelines"):
         # Lazy import rich only when needed to render the table
         import rich

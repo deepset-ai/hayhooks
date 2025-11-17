@@ -20,7 +20,7 @@ pipeline = typer.Typer()
 
 def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload: dict) -> None:
     """Handle deployment with progress spinner and response handling."""
-    response = with_progress_spinner(
+    response: dict = with_progress_spinner(
         f"Deploying pipeline '{name}'...",
         make_request,
         host=ctx.obj["host"],
@@ -30,6 +30,8 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
         json=payload,
         use_https=ctx.obj["use_https"],
         disable_ssl=ctx.obj["disable_ssl"],
+        # Deployment endpoints never stream, so response is always dict
+        stream=False,
     )
 
     if response.get("name") == name:
@@ -134,7 +136,7 @@ def undeploy(
     name: Annotated[str, typer.Argument(help="The name of the pipeline to undeploy.")],
 ) -> None:
     """Undeploy a pipeline from the Hayhooks server."""
-    response = with_progress_spinner(
+    response: dict = with_progress_spinner(
         f"Undeploying pipeline '{name}'...",
         make_request,
         host=ctx.obj["host"],
@@ -281,7 +283,7 @@ def _run_with_streaming(ctx: typer.Context, pipeline_name: str, params: dict[str
 
 def _run_regular(ctx: typer.Context, pipeline_name: str, params: dict[str, Any]) -> dict:
     """Execute pipeline in regular (non-streaming) mode."""
-    response = with_progress_spinner(
+    response: dict = with_progress_spinner(
         f"Running pipeline '{pipeline_name}'...",
         make_request,
         host=ctx.obj["host"],
@@ -292,6 +294,7 @@ def _run_regular(ctx: typer.Context, pipeline_name: str, params: dict[str, Any])
         disable_ssl=ctx.obj["disable_ssl"],
         use_https=ctx.obj["use_https"],
     )
+
     return response
 
 

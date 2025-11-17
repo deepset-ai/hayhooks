@@ -4,7 +4,7 @@ import io
 import mimetypes
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Literal, Optional, TypeVar, overload
 from urllib.parse import urljoin
 
 import requests
@@ -38,6 +38,37 @@ def get_server_url(host: str, port: int, https: bool = False) -> str:
         return f"https://{host}:{port}"
     else:
         return f"http://{host}:{port}"
+
+
+# We need to overload the make_request function to handle whether the response is a dictionary or a streaming response.
+# The streaming response is a requests.Response object, while the dictionary response is a dict[str, Any].
+# We use the overloads to make the type checker happy.
+
+
+@overload
+def make_request(
+    host: str,
+    port: int,
+    endpoint: str,
+    method: str = "GET",
+    json: Optional[dict[str, Any]] = None,
+    use_https: bool = False,
+    disable_ssl: bool = False,
+    stream: Literal[False] = False,
+) -> dict[str, Any]: ...
+
+
+@overload
+def make_request(
+    host: str,
+    port: int,
+    endpoint: str,
+    method: str = "GET",
+    json: Optional[dict[str, Any]] = None,
+    use_https: bool = False,
+    disable_ssl: bool = False,
+    stream: Literal[True] = ...,
+) -> requests.Response: ...
 
 
 def make_request(  # noqa: PLR0913
