@@ -172,6 +172,10 @@ def run(  # noqa: PLR0912, C901
         Optional[list[str]],
         typer.Option("--param", "-p", help="Parameters in format key=value (value can be string or JSON)"),
     ] = None,
+    stream: Annotated[
+        bool,
+        typer.Option("--stream", "-s", help="Enable streaming mode to display tokens as they arrive"),
+    ] = False,
 ) -> None:
     """Run a pipeline with the given files and parameters."""
     # Initialize collections
@@ -227,11 +231,11 @@ def run(  # noqa: PLR0912, C901
                     files_to_upload[str(rel_path)] = file_path
 
     # Run pipeline
-    run_pipeline_with_files(ctx=ctx, pipeline_name=name, files=files_to_upload, params=params_dict)
+    run_pipeline_with_files(ctx=ctx, pipeline_name=name, files=files_to_upload, params=params_dict, stream=stream)
 
 
 def run_pipeline_with_files(
-    ctx: typer.Context, pipeline_name: str, files: dict[str, Path], params: dict[str, Any]
+    ctx: typer.Context, pipeline_name: str, files: dict[str, Path], params: dict[str, Any], stream: bool = False
 ) -> None:
     """Run a pipeline with files and parameters."""
     server_url = get_server_url(host=ctx.obj["host"], port=ctx.obj["port"], https=ctx.obj["use_https"])
@@ -239,6 +243,10 @@ def run_pipeline_with_files(
 
     # For files or no files, handle differently
     if files:
+        if stream:
+            show_warning_panel("Streaming mode is not supported with file uploads. Running without streaming.")
+            stream = False
+
         # Prepare form data (parameters)
         form_data = {}
         for key, value in params.items():
@@ -252,8 +260,33 @@ def run_pipeline_with_files(
         result, _ = upload_files_with_progress(
             url=endpoint, files=files, form_data=form_data, verify_ssl=not ctx.obj["disable_ssl"]
         )
+    elif stream:
+        # Streaming mode (no files)
+        get_console().print(f"Running pipeline '[bold]{pipeline_name}[/bold]' in streaming mode...")
+        get_console().print("\n[bold cyan]Streaming output:[/bold cyan]")
+
+        response = make_request(
+            host=ctx.obj["host"],
+            port=ctx.obj["port"],
+            endpoint=f"{pipeline_name}/run",
+            method="POST",
+            json=params,
+            disable_ssl=ctx.obj["disable_ssl"],
+            use_https=ctx.obj["use_https"],
+            stream=True,
+        )
+
+        # Stream the response
+        if hasattr(response, "iter_content"):
+            for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
+                if chunk:
+                    get_console().print(chunk, end="")
+
+        get_console().print()  # New line after streaming
+        show_success_panel(f"Pipeline '[bold]{pipeline_name}[/bold]' executed successfully!")
+        return
     else:
-        # No files - use regular JSON request
+        # No files, no streaming - regular JSON request
         response = with_progress_spinner(
             f"Running pipeline '{pipeline_name}'...",
             make_request,
