@@ -335,7 +335,7 @@ def create_run_endpoint_handler(
         A FastAPI endpoint function that executes the pipeline and returns the response model.
     """
 
-    async def _handle_request(run_req: BaseModel) -> Response | BaseModel:
+    async def _handle_request(run_req: BaseModel) -> Union[Response, BaseModel]:
         payload = run_req.model_dump()
 
         result = await _execute_pipeline_run(pipeline_wrapper, payload)
@@ -673,7 +673,7 @@ def add_yaml_pipeline_to_registry(
     # This ensures we get outputs from all components referenced in the outputs declaration,
     # not just leaf components. Useful for debugging and getting intermediate results.
     # Extract component names from paths like "llm.replies" -> "llm"
-    outputs_to_include: set[str] | None = None
+    outputs_to_include: Union[set[str], None] = None
     if pipeline_outputs:
         outputs_to_include = get_components_from_outputs(pipeline_outputs)
         clog.debug("Auto-derived include_outputs_from from outputs: {}", outputs_to_include)
