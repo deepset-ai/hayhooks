@@ -108,7 +108,9 @@ def test_make_request_http_error_with_detail(mock_requests, capsys):
     with pytest.raises(Exception):
         make_request(host="localhost", port=8000, endpoint="/notfound")
 
-    mock_requests.assert_called_once_with(method="GET", url="http://localhost:8000/notfound", json=None, verify=True, stream=False)
+    mock_requests.assert_called_once_with(
+        method="GET", url="http://localhost:8000/notfound", json=None, verify=True, stream=False
+    )
     captured = capsys.readouterr()
     assert "Server error" in captured.out
     assert "Item not found" in captured.out
@@ -122,7 +124,9 @@ def test_make_request_http_error_no_detail(mock_requests, capsys):
     with pytest.raises(Exception):
         make_request(host="localhost", port=8000, endpoint="/servererror")
 
-    mock_requests.assert_called_once_with(method="GET", url="http://localhost:8000/servererror", json=None, verify=True, stream=False)
+    mock_requests.assert_called_once_with(
+        method="GET", url="http://localhost:8000/servererror", json=None, verify=True, stream=False
+    )
     captured = capsys.readouterr()
     assert "Server error" in captured.out
     assert "Unknown error" in captured.out  # Default message
