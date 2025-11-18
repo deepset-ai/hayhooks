@@ -313,7 +313,7 @@ def _execute_pipeline_sync(
     return pipeline.run(**kwargs)
 
 
-def streaming_generator(  # noqa: PLR0913
+def streaming_generator(  # noqa: PLR0913, C901
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
     pipeline_run_args: Optional[dict[str, Any]] = None,
@@ -381,23 +381,26 @@ def streaming_generator(  # noqa: PLR0913
             log.error("Error in pipeline execution thread for streaming_generator: {}", e, exc_info=True)
             queue.put(e)  # Signal error
 
-    thread = threading.Thread(target=run_pipeline)
-    thread.start()
+    def generator() -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
+        thread = threading.Thread(target=run_pipeline)
+        thread.start()
 
-    try:
-        while True:
-            item = queue.get()
-            if isinstance(item, Exception):
-                raise item
-            if item is None:
-                break
+        try:
+            while True:
+                item = queue.get()
+                if isinstance(item, Exception):
+                    raise item
+                if item is None:
+                    break
 
-            # Handle tool calls
-            yield from _process_tool_call_start(item, on_tool_call_start)
-            yield from _process_tool_call_end(item, on_tool_call_end)
-            yield item
-    finally:
-        thread.join()
+                # Handle tool calls
+                yield from _process_tool_call_start(item, on_tool_call_start)
+                yield from _process_tool_call_end(item, on_tool_call_end)
+                yield item
+        finally:
+            thread.join()
+
+    return generator()
 
 
 def _create_hybrid_streaming_callback(
@@ -641,7 +644,7 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
             raise e
 
 
-async def async_streaming_generator(  # noqa: PLR0913
+def async_streaming_generator(  # noqa: PLR0913, C901
     pipeline: Union[Pipeline, AsyncPipeline, Agent],
     *,
     pipeline_run_args: Optional[dict[str, Any]] = None,
@@ -716,23 +719,26 @@ async def async_streaming_generator(  # noqa: PLR0913
             pipeline, pipeline_run_args, streaming_callback, streaming_components
         )
 
-    pipeline_task = await _execute_pipeline_async(pipeline, configured_args, include_outputs_from)
+    async def generator() -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
+        pipeline_task = await _execute_pipeline_async(pipeline, configured_args, include_outputs_from)
 
-    try:
-        async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
-            for result in _process_tool_call_start(chunk, on_tool_call_start):
-                yield result
-            for result in _process_tool_call_end(chunk, on_tool_call_end):
-                yield result
-            yield chunk
+        try:
+            async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
+                for result in _process_tool_call_start(chunk, on_tool_call_start):
+                    yield result
+                for result in _process_tool_call_end(chunk, on_tool_call_end):
+                    yield result
+                yield chunk
 
-        await pipeline_task
-        final_chunk = _process_pipeline_end(pipeline_task.result(), on_pipeline_end)
-        if final_chunk:
-            yield final_chunk
+            await pipeline_task
+            final_chunk = _process_pipeline_end(pipeline_task.result(), on_pipeline_end)
+            if final_chunk:
+                yield final_chunk
 
-    except Exception as e:
-        log.error("Unexpected error in async streaming generator: {}", e, exc_info=True)
-        raise e
-    finally:
-        await _cleanup_pipeline_task(pipeline_task)
+        except Exception as e:
+            log.error("Unexpected error in async streaming generator: {}", e, exc_info=True)
+            raise e
+        finally:
+            await _cleanup_pipeline_task(pipeline_task)
+
+    return generator()
