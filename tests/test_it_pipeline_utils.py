@@ -260,9 +260,7 @@ async def test_async_streaming_generator_with_existing_component_args(mocker, mo
 
 
 @pytest.mark.asyncio
-async def test_async_sse_stream_wraps_async_generator(
-    mocker, mocked_pipeline_with_streaming_component
-):
+async def test_async_sse_stream_wraps_async_generator(mocker, mocked_pipeline_with_streaming_component):
     pipeline = mocked_pipeline_with_streaming_component
 
     async def mock_run_async(data):
