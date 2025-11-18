@@ -193,7 +193,9 @@ ignore = [
 source_pkgs = ["hayhooks"]
 branch = true
 parallel = true
-omit = []
+omit = [
+  "src/hayhooks/testing/*",
+]
 
 [tool.coverage.report]
 exclude_lines = [
