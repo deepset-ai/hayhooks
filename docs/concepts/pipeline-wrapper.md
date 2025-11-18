@@ -162,7 +162,15 @@ async def run_api_async(self, query: str) -> AsyncGenerator:
     )
 ```
 
-When a generator is detected, Hayhooks automatically wraps it in a FastAPI `StreamingResponse` using the `text/plain` media type. To opt into SSE, wrap the generator in `SSEStream(...)` (works for both sync and async generators). This sets the response media type to `text/event-stream` without needing to build the response manually:
+When a generator is detected, Hayhooks automatically wraps it in a FastAPI `StreamingResponse` using the `text/plain` media type. The behaviour is identical for both `run_api()` and `run_api_async()`—the only difference is whether the underlying generator is sync or async.
+
+| Method            | What you return                        | Response media type | Notes                                                     |
+|-------------------|----------------------------------------|---------------------|-----------------------------------------------------------|
+| `run_api()`       | generator / `streaming_generator(...)` | `text/plain`        | Works out of the box with existing clients (CLI, curl).   |
+| `run_api_async()` | async generator / `async_streaming_generator(...)` | `text/plain` | Same payload as sync version, emitted from an async task. |
+| Either            | `SSEStream(...)` around the generator  | `text/event-stream` | Opt-in Server-Sent Events with automatic frame wrapping.  |
+
+If you need SSE (for browsers, [EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource), or anything expecting `text/event-stream`), wrap the generator in `SSEStream(...)`. The wrapper is a tiny dataclass—the only thing it does is annotate “this stream should be served as SSE”, so you still write your pipeline logic exactly as before.
 
 ```python
 from hayhooks import SSEStream, streaming_generator
