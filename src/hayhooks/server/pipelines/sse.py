@@ -7,7 +7,7 @@ from typing import Any, Union
 StreamType = Union[Generator[Any, None, None], AsyncGenerator[Any, None]]
 
 
-@dataclass(slots=True)
+@dataclass
 class SSEStream:
     """
     Declarative container that flags a generator (sync or async) for SSE streaming.
