@@ -5,7 +5,7 @@ from typing import Optional
 from haystack import Pipeline
 from haystack.dataclasses import StreamingChunk
 
-from hayhooks import BasePipelineWrapper, log, streaming_generator
+from hayhooks import BasePipelineWrapper, SSEStream, log, streaming_generator
 
 DEFAULT_URLS = [
     "https://haystack.deepset.ai",
@@ -41,10 +41,12 @@ class PipelineWrapper(BasePipelineWrapper):
         target_urls = urls or DEFAULT_URLS
         log.info("Streaming pipeline run for question='{}' urls={}", question, target_urls)
 
-        return streaming_generator(
+        generator = streaming_generator(
             pipeline=self.pipeline,
             pipeline_run_args={
                 "fetcher": {"urls": target_urls},
                 "prompt": {"query": question},
             },
         )
+
+        return SSEStream(generator)

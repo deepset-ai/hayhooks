@@ -162,7 +162,33 @@ async def run_api_async(self, query: str) -> AsyncGenerator:
     )
 ```
 
-When a generator is detected, Hayhooks automatically wraps it in a FastAPI `StreamingResponse` using the `text/plain` media type. If you need custom headers or a different MIME type, return your own `StreamingResponse` instance instead of the generator.
+When a generator is detected, Hayhooks automatically wraps it in a FastAPI `StreamingResponse` using the `text/plain` media type. To opt into SSE, wrap the generator in `SSEStream(...)` (works for both sync and async generators). This sets the response media type to `text/event-stream` without needing to build the response manually:
+
+```python
+from hayhooks import SSEStream, streaming_generator
+
+def run_api(self, query: str):
+    return SSEStream(
+        streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": query}},
+        )
+    )
+```
+
+For async pipelines:
+
+```python
+from hayhooks import SSEStream, async_streaming_generator
+
+async def run_api_async(self, query: str):
+    return SSEStream(
+        async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": query}},
+        )
+    )
+```
 
 ## Optional Methods
 

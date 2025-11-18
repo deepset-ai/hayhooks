@@ -9,6 +9,22 @@ the final string, the wrapper yields streaming chunks as soon as the underlying 
 - Implements `run_api()` to return a generator of `StreamingChunk` objects.
 - Uses the helper `streaming_generator()` from Hayhooks (no manual queue management required).
 - Demonstrates how `/run` automatically becomes a `StreamingResponse` after returning a generator.
+- Wrap the generator with `SSEStream(...)` to turn the `/run` response into SSE.
+
+```python
+from hayhooks import SSEStream, streaming_generator
+
+def run_api(self, question: str, urls: Optional[list[str]] = None):
+    return SSEStream(
+        streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={
+                "fetcher": {"urls": urls or DEFAULT_URLS},
+                "prompt": {"query": question},
+            },
+        )
+    )
+```
 
 ## Deploy & Try It
 
