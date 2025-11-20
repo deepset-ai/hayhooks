@@ -8,23 +8,8 @@ the final string, the wrapper yields streaming chunks as soon as the underlying 
 
 - Implements `run_api()` to return a generator of `StreamingChunk` objects.
 - Uses the helper `streaming_generator()` from Hayhooks (no manual queue management required).
-- Demonstrates how `/run` automatically becomes a `StreamingResponse` after returning a generator.
-- Wrap the generator with `SSEStream(...)` to turn the `/run` response into SSE.
-
-```python
-from hayhooks import SSEStream, streaming_generator
-
-def run_api(self, question: str, urls: Optional[list[str]] = None):
-    return SSEStream(
-        streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={
-                "fetcher": {"urls": urls or DEFAULT_URLS},
-                "prompt": {"query": question},
-            },
-        )
-    )
-```
+- Demonstrates how `/run` automatically becomes a `StreamingResponse` with `text/plain` media type.
+- Works seamlessly with curl, CLI tools, and any HTTP client.
 
 ## Deploy & Try It
 
@@ -61,3 +46,25 @@ and takes care of cleaning up the generator once streaming is complete.
 
 > **Note:** For async pipelines, use `async_streaming_generator()` inside `run_api_async()` instead.
 > The async version works identically but returns an async generator that Hayhooks will handle automatically.
+
+## Alternative: Server-Sent Events (SSE)
+
+If you need SSE format (e.g., for browser `EventSource` or clients expecting `text/event-stream`),
+wrap the generator with `SSEStream`:
+
+```python
+from hayhooks import SSEStream, streaming_generator
+
+def run_api(self, question: str, urls: Optional[list[str]] = None):
+    return SSEStream(
+        streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={
+                "fetcher": {"urls": urls or DEFAULT_URLS},
+                "prompt": {"query": question},
+            },
+        )
+    )
+```
+
+This changes the response media type to `text/event-stream` and wraps each chunk in SSE format.
