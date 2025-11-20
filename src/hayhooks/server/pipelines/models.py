@@ -102,8 +102,8 @@ def create_response_model_from_callable(func: Callable, model_name: str, docstri
     return_description = docstring.returns.description if docstring.returns else None
 
     # When a pipeline wrapper returns a generator (for streaming responses), we need to handle it specially:
-    # 1. Check both `get_origin()` (for parameterized types like Generator[str, None, None]) and the raw type
-    #    (for bare Generator/AsyncGenerator annotations)
+    # 1. Check both `get_origin()` (for parameterized types like `Generator[StreamingChunk, None, None]`)
+    #    and the raw type (for bare Generator/AsyncGenerator annotations). In examples we are using both.
     # 2. Replace with `Any` because Pydantic can't serialize generators, and the actual streaming is handled
     #    at runtime by _streaming_response_from_result() which converts generators to StreamingResponse.
     #    The response model is only used for OpenAPI schema generation, not runtime validation.
