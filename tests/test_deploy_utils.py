@@ -6,13 +6,16 @@ from typing import Callable
 
 import docstring_parser
 import pytest
+from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from haystack import Pipeline
 
 from hayhooks.server.exceptions import PipelineFilesError, PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.pipelines import registry
+from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
+    _streaming_response_from_result,
     add_pipeline_wrapper_to_registry,
     create_pipeline_wrapper_instance,
     create_request_model_from_callable,
@@ -31,6 +34,31 @@ def cleanup_test_pipelines(test_settings):
     registry.clear()
     if Path(test_settings.pipelines_dir).exists():
         shutil.rmtree(test_settings.pipelines_dir)
+
+
+def test_streaming_response_from_gen_honors_media_type():
+    def generator():
+        yield "chunk"
+
+    response = _streaming_response_from_result(SSEStream(generator()))
+
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "text/event-stream"
+
+
+@pytest.mark.asyncio
+async def test_streaming_response_from_async_gen_honors_media_type():
+    async def async_generator():
+        yield "chunk"
+
+    sse_stream = SSEStream(async_generator())
+    response = _streaming_response_from_result(sse_stream)
+
+    try:
+        assert isinstance(response, StreamingResponse)
+        assert response.media_type == "text/event-stream"
+    finally:
+        await sse_stream.stream.aclose()
 
 
 def test_load_pipeline_module():

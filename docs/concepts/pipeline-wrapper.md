@@ -134,6 +134,70 @@ def run_api(self, urls: list[str], question: str) -> str:
 - Default values are supported
 - Complex types like `dict[str, Any]` are allowed
 
+#### Streaming responses
+
+Hayhooks can stream results from `run_api()` or `run_api_async()` when you return a generator instead of a fully materialized value. This is especially useful when you already rely on `streaming_generator()` / `async_streaming_generator()` inside chat endpoints and want the same behaviour on the generic `/run` route.
+
+```python
+from collections.abc import Generator
+from hayhooks import streaming_generator
+
+def run_api(self, query: str) -> Generator:
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": query}},
+    )
+```
+
+For async pipelines:
+
+```python
+from collections.abc import AsyncGenerator
+from hayhooks import async_streaming_generator
+
+async def run_api_async(self, query: str) -> AsyncGenerator:
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": query}},
+    )
+```
+
+When a generator is detected, Hayhooks automatically wraps it in a FastAPI `StreamingResponse` using the `text/plain` media type. The behaviour is identical for both `run_api()` and `run_api_async()`—the only difference is whether the underlying generator is sync or async.
+
+| Method            | What you return                        | Response media type | Notes                                                     |
+|-------------------|----------------------------------------|---------------------|-----------------------------------------------------------|
+| `run_api()`       | generator / `streaming_generator(...)` | `text/plain`        | Works out of the box with existing clients (CLI, curl).   |
+| `run_api_async()` | async generator / `async_streaming_generator(...)` | `text/plain` | Same payload as sync version, emitted from an async task. |
+| Either            | `SSEStream(...)` around the generator  | `text/event-stream` | Opt-in Server-Sent Events with automatic frame wrapping.  |
+
+If you need SSE (for browsers, [EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource), or anything expecting `text/event-stream`), wrap the generator in `SSEStream(...)`. The wrapper is a tiny dataclass—the only thing it does is annotate “this stream should be served as SSE”, so you still write your pipeline logic exactly as before.
+
+```python
+from hayhooks import SSEStream, streaming_generator
+
+def run_api(self, query: str):
+    return SSEStream(
+        streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": query}},
+        )
+    )
+```
+
+For async pipelines:
+
+```python
+from hayhooks import SSEStream, async_streaming_generator
+
+async def run_api_async(self, query: str):
+    return SSEStream(
+        async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": query}},
+        )
+    )
+```
+
 ## Optional Methods
 
 ### run_api_async()

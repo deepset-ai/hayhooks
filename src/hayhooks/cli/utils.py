@@ -4,7 +4,7 @@ import io
 import mimetypes
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Literal, Optional, TypeVar, Union, overload
 from urllib.parse import urljoin
 
 import requests
@@ -40,6 +40,37 @@ def get_server_url(host: str, port: int, https: bool = False) -> str:
         return f"http://{host}:{port}"
 
 
+# We need to overload the make_request function to handle whether the response is a dictionary or a streaming response.
+# The streaming response is a requests.Response object, while the dictionary response is a dict[str, Any].
+# We use the overloads to make the type checker happy.
+
+
+@overload
+def make_request(
+    host: str,
+    port: int,
+    endpoint: str,
+    method: str = "GET",
+    json: Optional[dict[str, Any]] = None,
+    use_https: bool = False,
+    disable_ssl: bool = False,
+    stream: Literal[False] = False,
+) -> dict[str, Any]: ...
+
+
+@overload
+def make_request(
+    host: str,
+    port: int,
+    endpoint: str,
+    method: str = "GET",
+    json: Optional[dict[str, Any]] = None,
+    use_https: bool = False,
+    disable_ssl: bool = False,
+    stream: Literal[True] = ...,
+) -> requests.Response: ...
+
+
 def make_request(  # noqa: PLR0913
     host: str,
     port: int,
@@ -48,7 +79,8 @@ def make_request(  # noqa: PLR0913
     json: Optional[dict[str, Any]] = None,
     use_https: bool = False,
     disable_ssl: bool = False,
-) -> dict[str, Any]:
+    stream: bool = False,
+) -> Union[dict[str, Any], requests.Response]:
     """
     Make HTTP request to Hayhooks server with error handling.
 
@@ -60,21 +92,47 @@ def make_request(  # noqa: PLR0913
         json: Optional JSON payload
         use_https: Whether to use HTTPS for the connection.
         disable_ssl: Whether to disable SSL certificate verification.
+        stream: Whether to return a streaming response (returns Response object instead of dict)
     """
     server_url = get_server_url(host=host, port=port, https=use_https)
     url = urljoin(server_url, endpoint)
 
     try:
-        response = requests.request(method=method, url=url, json=json, verify=not disable_ssl)  # noqa: S113
+        response = requests.request(method=method, url=url, json=json, verify=not disable_ssl, stream=stream)  # noqa: S113
         response.raise_for_status()
-        return response.json()
+
+        if stream:
+            return response
+
+        # Check if response is JSON or plain text (streaming response without --stream flag)
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type:
+            return response.json()
+        elif "text/plain" in content_type:
+            # Server returned streaming response but client didn't request streaming
+            get_console().print(
+                "[yellow][bold]Note:[/bold] This endpoint returns a streaming response. "
+                "Use --stream flag to see tokens as they arrive.[/yellow]\n"
+            )
+            # Collect all the streamed content
+            return {"result": response.text}
+        else:
+            # Try JSON first, fallback to text
+            try:
+                return response.json()
+            except ValueError:
+                return {"result": response.text}
+
     except requests.ConnectionError as connection_error:
         get_console().print(
             "[red][bold]Hayhooks server is not responding.[/bold]\nTo start one, run `hayhooks run`[/red]."
         )
         raise typer.Abort() from connection_error
     except requests.HTTPError as http_error:
-        error_detail = response.json().get("detail", "Unknown error")
+        try:
+            error_detail = response.json().get("detail", "Unknown error")
+        except ValueError:
+            error_detail = response.text or "Unknown error"
         get_console().print(f"[red][bold]Server error[/bold]\n{error_detail}[/red]")
         raise typer.Abort() from http_error
     except Exception as e:

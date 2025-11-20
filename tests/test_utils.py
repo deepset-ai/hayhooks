@@ -47,6 +47,7 @@ def test_make_request_http_get_success(mock_requests):
         url="http://localhost:8000/test_endpoint",
         json=None,
         verify=True,
+        stream=False,
     )
     assert response == {"status": "ok"}
 
@@ -61,6 +62,7 @@ def test_make_request_https_success(mock_requests):
         url="https://localhost:8000/secure_endpoint",
         json=None,
         verify=True,
+        stream=False,
     )
     assert response == {"status": "ok_https"}
 
@@ -77,6 +79,7 @@ def test_make_request_https_disable_ssl_verification(mock_requests):
         url="https://localhost:8000/secure_endpoint_noverify",
         json=None,
         verify=False,
+        stream=False,
     )
     assert response == {"status": "ok_https_noverify"}
 
@@ -88,7 +91,7 @@ def test_make_request_connection_error(mock_requests, capsys):
         make_request(host="localhost", port=8000, endpoint="/test_endpoint")
 
     mock_requests.assert_called_once_with(
-        method="GET", url="http://localhost:8000/test_endpoint", json=None, verify=True
+        method="GET", url="http://localhost:8000/test_endpoint", json=None, verify=True, stream=False
     )
     captured = capsys.readouterr()
     assert "Hayhooks server is not responding." in captured.out
@@ -105,7 +108,9 @@ def test_make_request_http_error_with_detail(mock_requests, capsys):
     with pytest.raises(Exception):
         make_request(host="localhost", port=8000, endpoint="/notfound")
 
-    mock_requests.assert_called_once_with(method="GET", url="http://localhost:8000/notfound", json=None, verify=True)
+    mock_requests.assert_called_once_with(
+        method="GET", url="http://localhost:8000/notfound", json=None, verify=True, stream=False
+    )
     captured = capsys.readouterr()
     assert "Server error" in captured.out
     assert "Item not found" in captured.out
@@ -119,7 +124,9 @@ def test_make_request_http_error_no_detail(mock_requests, capsys):
     with pytest.raises(Exception):
         make_request(host="localhost", port=8000, endpoint="/servererror")
 
-    mock_requests.assert_called_once_with(method="GET", url="http://localhost:8000/servererror", json=None, verify=True)
+    mock_requests.assert_called_once_with(
+        method="GET", url="http://localhost:8000/servererror", json=None, verify=True, stream=False
+    )
     captured = capsys.readouterr()
     assert "Server error" in captured.out
     assert "Unknown error" in captured.out  # Default message
@@ -132,7 +139,7 @@ def test_make_request_unexpected_error(mock_requests, capsys):
         make_request(host="localhost", port=8000, endpoint="/test_endpoint")
 
     mock_requests.assert_called_once_with(
-        method="GET", url="http://localhost:8000/test_endpoint", json=None, verify=True
+        method="GET", url="http://localhost:8000/test_endpoint", json=None, verify=True, stream=False
     )
     captured = capsys.readouterr()
     assert "Unexpected error" in captured.out

@@ -14,6 +14,7 @@ from loguru import logger
 
 from hayhooks import callbacks
 from hayhooks.open_webui import OpenWebUIEvent, create_notification_event
+from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.pipelines.utils import (
     async_streaming_generator,
     find_all_streaming_components,
@@ -187,6 +188,24 @@ def test_streaming_generator_with_existing_component_args(mocked_pipeline_with_s
     assert pipeline_run_args == {"streaming_component": {"existing": "args"}}
 
 
+def test_sse_stream_wraps_sync_generator(mocked_pipeline_with_streaming_component):
+    pipeline = mocked_pipeline_with_streaming_component
+
+    def mock_run(data):
+        callback = data.get("streaming_component", {}).get("streaming_callback")
+        if callback:
+            callback(StreamingChunk(content="chunk"))
+
+    pipeline.run.side_effect = mock_run
+
+    generator = streaming_generator(pipeline)
+    sse_stream = SSEStream(generator)
+
+    assert isinstance(sse_stream, SSEStream)
+    assert isinstance(sse_stream.stream, Generator)
+    assert list(sse_stream.stream) == [StreamingChunk(content="chunk")]
+
+
 def test_streaming_generator_pipeline_exception(mocked_pipeline_with_streaming_component):
     pipeline = mocked_pipeline_with_streaming_component
 
@@ -238,6 +257,26 @@ async def test_async_streaming_generator_with_existing_component_args(mocker, mo
 
     # Verify original args were preserved and copied
     assert pipeline_run_args == {"streaming_component": {"existing": "args"}}
+
+
+@pytest.mark.asyncio
+async def test_async_sse_stream_wraps_async_generator(mocker, mocked_pipeline_with_streaming_component):
+    pipeline = mocked_pipeline_with_streaming_component
+
+    async def mock_run_async(data):
+        callback = data.get("streaming_component", {}).get("streaming_callback")
+        if callback:
+            await callback(StreamingChunk(content="chunk"))
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    async_generator = async_streaming_generator(pipeline)
+    async_sse_stream = SSEStream(async_generator)
+
+    assert isinstance(async_sse_stream, SSEStream)
+    assert isinstance(async_sse_stream.stream, AsyncGenerator)
+    chunks = [chunk async for chunk in async_sse_stream.stream]
+    assert chunks == [StreamingChunk(content="chunk")]
 
 
 @pytest.mark.asyncio
