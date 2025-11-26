@@ -418,7 +418,8 @@ def streaming_generator(  # noqa: PLR0913, C901
                     yield item
                 except Empty:
                     # No item available, continue polling
-                    pass
+                    # The small delay prevents CPU spinning
+                    time.sleep(0.001)
         finally:
             thread.join()
 
