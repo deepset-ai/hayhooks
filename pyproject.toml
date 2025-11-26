@@ -208,6 +208,7 @@ exclude_lines = [
 addopts = "--strict-markers"
 filterwarnings = [
   "ignore::UserWarning",
+  "ignore:Module hayhooks was previously imported:coverage.exceptions.CoverageWarning",
 ]
 asyncio_mode = "auto"
 log_cli = true

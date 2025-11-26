@@ -1,6 +1,7 @@
 import asyncio
 import os
 from collections.abc import AsyncGenerator, Generator
+from queue import Queue
 from typing import Any
 
 import pytest
@@ -1463,3 +1464,114 @@ def test_parse_streaming_components_setting_with_empty():
 
     assert _parse_streaming_components_setting("") is None
     assert _parse_streaming_components_setting("   ") is None
+
+
+def test_streaming_generator_external_queue_merges_events(mocked_pipeline_with_streaming_component):
+    pipeline = mocked_pipeline_with_streaming_component
+    mock_chunks = [StreamingChunk(content="chunk1")]
+
+    external_queue: Queue = Queue()
+    event1 = create_notification_event(content="Notification", notification_type="info")
+    event2 = {"type": "custom", "data": {"key": "value"}}
+    event3 = "String event"
+
+    external_queue.put(event1)
+    external_queue.put(event2)
+    external_queue.put(event3)
+
+    def mock_run(data):
+        callback = data.get("streaming_component", {}).get("streaming_callback")
+        if callback:
+            callback(mock_chunks[0])
+
+    pipeline.run.side_effect = mock_run
+
+    chunks = list(streaming_generator(pipeline, external_event_queue=external_queue))
+
+    assert len(chunks) == 4
+    assert chunks[0] == event1
+    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert chunks[1] == event2
+    assert isinstance(chunks[1], dict)
+    assert chunks[2] == event3
+    assert isinstance(chunks[2], str)
+    assert chunks[3] == mock_chunks[0]
+
+
+def test_streaming_generator_external_queue_interleaved(mocked_pipeline_with_streaming_component):
+    pipeline = mocked_pipeline_with_streaming_component
+    mock_chunks = [StreamingChunk(content="chunk1"), StreamingChunk(content="chunk2")]
+    external_queue: Queue = Queue()
+
+    def mock_run(data):
+        callback = data.get("streaming_component", {}).get("streaming_callback")
+        if callback:
+            callback(mock_chunks[0])
+            external_queue.put({"type": "interleaved", "data": "added during run"})
+            callback(mock_chunks[1])
+
+    pipeline.run.side_effect = mock_run
+
+    chunks = list(streaming_generator(pipeline, external_event_queue=external_queue))
+
+    # Order may vary due to timing
+    assert len(chunks) == 3
+    assert mock_chunks[0] in chunks
+    assert mock_chunks[1] in chunks
+    assert {"type": "interleaved", "data": "added during run"} in chunks
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_external_queue_merges_events(mocker, mocked_pipeline_with_streaming_component):
+    pipeline = mocked_pipeline_with_streaming_component
+    mock_chunks = [StreamingChunk(content="chunk1")]
+
+    external_queue: asyncio.Queue = asyncio.Queue()
+    event1 = create_notification_event(content="Notification", notification_type="info")
+    event2 = {"type": "custom", "data": {"key": "value"}}
+    event3 = "String event"
+
+    await external_queue.put(event1)
+    await external_queue.put(event2)
+    await external_queue.put(event3)
+
+    async def mock_run_async(data):
+        callback = data.get("streaming_component", {}).get("streaming_callback")
+        if callback:
+            await callback(mock_chunks[0])
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline, external_event_queue=external_queue)]
+
+    assert len(chunks) == 4
+    assert chunks[0] == event1
+    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert chunks[1] == event2
+    assert isinstance(chunks[1], dict)
+    assert chunks[2] == event3
+    assert isinstance(chunks[2], str)
+    assert chunks[3] == mock_chunks[0]
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_generator_external_queue_interleaved(mocker, mocked_pipeline_with_streaming_component):
+    pipeline = mocked_pipeline_with_streaming_component
+    mock_chunks = [StreamingChunk(content="chunk1"), StreamingChunk(content="chunk2")]
+    external_queue: asyncio.Queue = asyncio.Queue()
+
+    async def mock_run_async(data):
+        callback = data.get("streaming_component", {}).get("streaming_callback")
+        if callback:
+            await callback(mock_chunks[0])
+            await external_queue.put({"type": "interleaved", "data": "added during run"})
+            await callback(mock_chunks[1])
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline, external_event_queue=external_queue)]
+
+    assert len(chunks) == 3
+    assert chunks[0] == mock_chunks[0]
+    assert chunks[1] == {"type": "interleaved", "data": "added during run"}
+    assert chunks[2] == mock_chunks[1]

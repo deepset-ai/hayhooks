@@ -678,6 +678,13 @@ async def run_api_async(self, query: str) -> dict:
     - **Non-streaming**: Pass `include_outputs_from` directly to `pipeline.run()` or `pipeline.run_async()`
     - **YAML Pipelines**: Automatically handled - see [YAML Pipeline Deployment](yaml-pipeline-deployment.md#output-mapping)
 
+## External Event Queue
+
+Both `streaming_generator` and `async_streaming_generator` support an optional `external_event_queue` parameter. This allows you to inject custom events (`dict`, `OpenWebUIEvent`, `str`, or `StreamingChunk`) into the streaming output alongside pipeline chunks. The external queue is checked before the internal queue in each iteration cycle, ensuring external events are delivered promptly.
+
+!!! tip "Typical Use Case"
+    A typical use case is passing the queue to pipeline components that need to emit events during execution—for example, a Human-in-the-Loop (HITL) confirmation strategy that pushes approval request events to the queue while waiting for user input.
+
 ## File Upload Support
 
 Hayhooks can handle file uploads by adding a `files` parameter:
