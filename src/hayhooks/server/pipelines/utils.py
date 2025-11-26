@@ -1,8 +1,9 @@
 import asyncio
 import inspect
 import threading
+import time
 from collections.abc import AsyncGenerator, Generator
-from queue import Queue
+from queue import Empty, Queue
 from typing import Any, Callable, Literal, Optional, Union
 
 from haystack import AsyncPipeline, Pipeline
@@ -322,7 +323,8 @@ def streaming_generator(  # noqa: PLR0913, C901
     on_pipeline_end: OnPipelineEnd = None,
     streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
     include_outputs_from: Optional[set[str]] = None,
-) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
+    external_event_queue: Optional[Queue[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]]]] = None,
+) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
 
@@ -341,11 +343,15 @@ def streaming_generator(  # noqa: PLR0913, C901
                              - "all": stream all capable components
                              - list[str]: ["llm_1", "llm_2"] to enable specific components
         include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
+        external_event_queue: Optional external queue to merge with internal events. Events from this queue
+                             will be yielded alongside streaming chunks from the pipeline. Supports
+                             StreamingChunk, OpenWebUIEvent, str, or custom dict events.
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
         OpenWebUIEvent: Event for tool call
         str: Tool name or stream content
+        dict: Custom events from external queue
 
     NOTE: This generator works with sync/async pipelines and agents. Pipeline components
           which support streaming must have a _sync_ `streaming_callback`. By default,
@@ -353,10 +359,10 @@ def streaming_generator(  # noqa: PLR0913, C901
     """
     if pipeline_run_args is None:
         pipeline_run_args = {}
-    queue: Queue[Union[StreamingChunk, None, Exception]] = Queue()
+    internal_queue: Queue[Union[StreamingChunk, None, Exception]] = Queue()
 
     def streaming_callback(chunk: StreamingChunk) -> None:
-        queue.put(chunk)
+        internal_queue.put(chunk)
 
     # Configure streaming callback
     try:
@@ -374,29 +380,45 @@ def streaming_generator(  # noqa: PLR0913, C901
             # Process pipeline end callback
             final_chunk = _process_pipeline_end(result, on_pipeline_end)
             if final_chunk:
-                queue.put(final_chunk)
+                internal_queue.put(final_chunk)
             # Signal completion
-            queue.put(None)
+            internal_queue.put(None)
         except Exception as e:
             log.error("Error in pipeline execution thread for streaming_generator: {}", e, exc_info=True)
-            queue.put(e)  # Signal error
+            internal_queue.put(e)  # Signal error
 
-    def generator() -> Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None]:
+    def generator() -> Generator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None, None]:
         thread = threading.Thread(target=run_pipeline)
         thread.start()
 
         try:
-            while True:
-                item = queue.get()
-                if isinstance(item, Exception):
-                    raise item
-                if item is None:
-                    break
+            pipeline_done = False
+            while not pipeline_done:
+                # Process items from external queue first (non-blocking)
+                if external_event_queue is not None:
+                    while True:
+                        try:
+                            external_item = external_event_queue.get_nowait()
+                            yield external_item
+                        except Empty:
+                            break
 
-                # Handle tool calls
-                yield from _process_tool_call_start(item, on_tool_call_start)
-                yield from _process_tool_call_end(item, on_tool_call_end)
-                yield item
+                # Process items from internal queue (with small timeout to allow checking external queue)
+                try:
+                    item = internal_queue.get(timeout=0.01)
+                    if isinstance(item, Exception):
+                        raise item
+                    if item is None:
+                        pipeline_done = True
+                        continue
+
+                    # Handle tool calls
+                    yield from _process_tool_call_start(item, on_tool_call_start)
+                    yield from _process_tool_call_end(item, on_tool_call_end)
+                    yield item
+                except Empty:
+                    # No item available, continue polling
+                    time.sleep(0.001)
         finally:
             thread.join()
 
@@ -594,17 +616,23 @@ async def _execute_pipeline_async(
 
 
 async def _stream_chunks_from_queue(
-    queue: asyncio.Queue[StreamingChunk], pipeline_task: asyncio.Task
-) -> AsyncGenerator[StreamingChunk, None]:
+    queue: asyncio.Queue[StreamingChunk],
+    pipeline_task: asyncio.Task,
+    external_event_queue: Optional[asyncio.Queue[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]]]] = None,
+) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None]:
     """
     Streams chunks from the queue while the pipeline is running.
 
     Args:
         queue: Queue containing streaming chunks
         pipeline_task: The async task running the pipeline
+        external_event_queue: Optional external queue to merge with internal events
 
     Yields:
         StreamingChunk: Individual chunks from the pipeline
+        OpenWebUIEvent: Events from external queue
+        str: String events from external queue
+        dict: Custom events from external queue
     """
     while not pipeline_task.done() or not queue.empty():
         # Check for pipeline completion with exception
@@ -612,6 +640,15 @@ async def _stream_chunks_from_queue(
             exception = pipeline_task.exception()
             if exception is not None:
                 raise exception
+
+        # Process items from external queue first (non-blocking)
+        if external_event_queue is not None:
+            while not external_event_queue.empty():
+                try:
+                    external_item = external_event_queue.get_nowait()
+                    yield external_item
+                except asyncio.QueueEmpty:
+                    break
 
         try:
             chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
@@ -654,7 +691,8 @@ def async_streaming_generator(  # noqa: PLR0913, C901
     streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
     include_outputs_from: Optional[set[str]] = None,
     allow_sync_streaming_callbacks: bool = False,
-) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
+    external_event_queue: Optional[asyncio.Queue[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]]]] = None,
+) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
 
@@ -680,11 +718,15 @@ def async_streaming_generator(  # noqa: PLR0913, C901
                                        streaming callbacks (e.g., OpenAIGenerator) and enables hybrid mode to
                                        bridge them to work in async pipelines. If all components support async,
                                        no bridging is applied (pure async mode).
+        external_event_queue: Optional external asyncio queue to merge with internal events. Events from this
+                             queue will be yielded alongside streaming chunks from the pipeline. Supports
+                             StreamingChunk, OpenWebUIEvent, str, or custom dict events.
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
         OpenWebUIEvent: Event for tool call
         str: Tool name or stream content
+        dict: Custom events from external queue
 
     NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming components
           should support an _async_ `streaming_callback`. However, if allow_sync_streaming_callbacks=True,
@@ -719,11 +761,16 @@ def async_streaming_generator(  # noqa: PLR0913, C901
             pipeline, pipeline_run_args, streaming_callback, streaming_components
         )
 
-    async def generator() -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
+    async def generator() -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None]:
         pipeline_task = await _execute_pipeline_async(pipeline, configured_args, include_outputs_from)
 
         try:
-            async for chunk in _stream_chunks_from_queue(queue, pipeline_task):
+            async for chunk in _stream_chunks_from_queue(queue, pipeline_task, external_event_queue):
+                # External events are yielded directly without processing
+                if not isinstance(chunk, StreamingChunk):
+                    yield chunk
+                    continue
+
                 for result in _process_tool_call_start(chunk, on_tool_call_start):
                     yield result
                 for result in _process_tool_call_end(chunk, on_tool_call_end):
