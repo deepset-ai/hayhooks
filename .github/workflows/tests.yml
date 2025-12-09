@@ -34,7 +34,7 @@ jobs:
         run: hatch run test:all-cov
 
   linting:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@v4
 
