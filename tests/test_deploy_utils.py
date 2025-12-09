@@ -1,6 +1,7 @@
 import inspect
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -17,13 +18,16 @@ from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
     _streaming_response_from_result,
     add_pipeline_wrapper_to_registry,
-    create_pipeline_wrapper_instance,
     create_request_model_from_callable,
     create_response_model_from_callable,
     deploy_pipeline_files,
-    load_pipeline_module,
     save_pipeline_files,
     undeploy_pipeline,
+)
+from hayhooks.server.utils.module_loader import (
+    create_pipeline_wrapper_instance,
+    load_pipeline_module,
+    unload_pipeline_modules,
 )
 
 
@@ -87,13 +91,70 @@ def test_load_pipeline_module_async():
     assert isinstance(module.PipelineWrapper.setup, Callable)
 
 
+def test_load_pipeline_module_with_relative_imports():
+    pipeline_name = "with_helper_module"
+    pipeline_dir_path = Path("tests/test_files/files/with_helper_module")
+    wrapper_module_name = f"{pipeline_name}.pipeline_wrapper"
+
+    # Ensure modules are not already loaded
+    unload_pipeline_modules(pipeline_name)
+
+    module = load_pipeline_module(pipeline_name, pipeline_dir_path)
+
+    # Verify module was loaded correctly
+    assert module is not None
+    assert hasattr(module, "PipelineWrapper")
+    assert isinstance(module.PipelineWrapper.run_api, Callable)
+
+    # Verify package and wrapper module are registered in sys.modules
+    assert pipeline_name in sys.modules  # Package module
+    assert wrapper_module_name in sys.modules  # Wrapper module
+    assert sys.modules[wrapper_module_name] is module
+
+    # Verify __package__ is set correctly for relative imports
+    assert module.__package__ == pipeline_name
+
+    # Verify the parent directory is in sys.path
+    parent_dir_str = str(pipeline_dir_path.resolve().parent)
+    assert parent_dir_str in sys.path
+
+    # Create an instance and verify the relative imports work
+    wrapper = module.PipelineWrapper()
+    wrapper.setup()
+    result = wrapper.run_api(name="World", a=3, b=4)
+
+    assert result["greeting"] == "Hello, World!"
+    assert result["multiply_result"] == 12
+
+
+def test_load_pipeline_module_registers_in_sys_modules():
+    pipeline_name = "test_sys_modules_registration"
+    pipeline_dir_path = Path("tests/test_files/files/chat_with_website")
+    wrapper_module_name = f"{pipeline_name}.pipeline_wrapper"
+
+    # Ensure modules are not already loaded
+    unload_pipeline_modules(pipeline_name)
+
+    module = load_pipeline_module(pipeline_name, pipeline_dir_path)
+
+    # Verify both package and wrapper module are registered in sys.modules
+    assert pipeline_name in sys.modules  # Package module
+    assert wrapper_module_name in sys.modules  # Wrapper module
+    assert sys.modules[wrapper_module_name] is module
+
+    # Verify the module can be found by name (simulates what tracing libraries do)
+    imported_module = sys.modules[wrapper_module_name]
+    assert imported_module is module
+    assert hasattr(imported_module, "PipelineWrapper")
+
+
 def test_load_pipeline_wrong_dir():
     pipeline_name = "chat_with_website"
     pipeline_dir_path = Path("tests/test_files/files/wrong_dir")
 
     with pytest.raises(
         PipelineModuleLoadError,
-        match=re.escape("Required file 'tests/test_files/files/wrong_dir/pipeline_wrapper.py' not found"),
+        match=r"pipeline_wrapper\.py.*not found",
     ):
         load_pipeline_module(pipeline_name, pipeline_dir_path)
 
@@ -104,7 +165,7 @@ def test_load_pipeline_no_wrapper():
 
     with pytest.raises(
         PipelineModuleLoadError,
-        match=re.escape("Required file 'tests/test_files/files/no_wrapper/pipeline_wrapper.py' not found"),
+        match=r"pipeline_wrapper\.py.*not found",
     ):
         load_pipeline_module(pipeline_name, pipeline_dir_path)
 
