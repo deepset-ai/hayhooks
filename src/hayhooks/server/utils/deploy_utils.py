@@ -1,8 +1,6 @@
-import importlib.util
 import inspect
 import json
 import shutil
-import sys
 import tempfile
 import traceback
 from collections import defaultdict
@@ -10,7 +8,6 @@ from collections.abc import AsyncGenerator as AsyncGeneratorABC
 from collections.abc import Generator as GeneratorABC
 from functools import wraps
 from pathlib import Path
-from types import ModuleType
 from typing import Any, Callable, Optional, Union
 
 import docstring_parser
@@ -26,9 +23,7 @@ from hayhooks.open_webui import OpenWebUIEvent
 from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
-    PipelineModuleLoadError,
     PipelineNotFoundError,
-    PipelineWrapperError,
     PipelineYamlError,
 )
 from hayhooks.server.logger import log
@@ -41,6 +36,11 @@ from hayhooks.server.pipelines.models import (
 )
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.module_loader import (
+    create_pipeline_wrapper_instance,
+    load_pipeline_module,
+    unload_pipeline_modules,
+)
 from hayhooks.server.utils.yaml_utils import InputResolution, get_inputs_outputs_from_yaml
 from hayhooks.settings import settings
 
@@ -159,60 +159,6 @@ def remove_pipeline_files(pipeline_name: str, pipelines_dir: str) -> None:
     pipeline_dir = Path(pipelines_dir) / pipeline_name
     if pipeline_dir.exists():
         shutil.rmtree(pipeline_dir, ignore_errors=True)
-
-
-def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> ModuleType:
-    """
-    Load a pipeline module from a directory path.
-
-    Args:
-        pipeline_name: Name of the pipeline
-        dir_path: Path to the directory containing the pipeline files
-
-    Returns:
-        The loaded module
-
-    Raises:
-        PipelineWrapperError: If required files or symbols are missing
-        PipelineModuleLoadError: If the module cannot be loaded
-    """
-    log.trace("Loading pipeline module from '{}'", dir_path)
-
-    try:
-        dir_path = Path(dir_path)
-        wrapper_path = dir_path / "pipeline_wrapper.py"
-
-        if not wrapper_path.exists():
-            msg = f"Required file '{wrapper_path}' not found"
-            raise PipelineWrapperError(msg)
-
-        # Clear the module from sys.modules if it exists to ensure a fresh load
-        module_name = pipeline_name
-        if module_name in sys.modules:
-            log.debug("Removing existing module '{}' from sys.modules", module_name)
-            del sys.modules[module_name]
-
-        spec = importlib.util.spec_from_file_location(pipeline_name, wrapper_path)
-        if spec is None or spec.loader is None:
-            msg = f"Failed to load pipeline module '{pipeline_name}' - module loader not available"
-            raise PipelineModuleLoadError(msg)
-
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        log.debug("Loaded module '{}'", module_name)
-
-        if not hasattr(module, "PipelineWrapper"):
-            msg = f"Failed to load '{pipeline_name}' pipeline module spec"
-            raise PipelineWrapperError(msg)
-
-        return module
-
-    except Exception as e:
-        log.error("Error loading pipeline module: {}", e, exc_info=True)
-        error_msg = f"Failed to load pipeline module '{pipeline_name}' - {e!s}"
-        if settings.show_tracebacks:
-            error_msg += f"\n{traceback.format_exc()}"
-        raise PipelineModuleLoadError(error_msg) from e
 
 
 def handle_pipeline_exceptions() -> Callable:
@@ -844,93 +790,6 @@ def add_pipeline_wrapper_to_registry(
     return pipeline_wrapper
 
 
-def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelineWrapper:
-    """
-    Instantiate a `PipelineWrapper` from a loaded module and verify supported methods.
-
-    Args:
-        pipeline_module: The loaded module exposing a `PipelineWrapper` class.
-
-    Returns:
-        An initialized PipelineWrapper instance with capability flags set.
-
-    Raises:
-        PipelineWrapperError: If instantiation or setup fails, or if no supported run methods are implemented.
-    """
-    try:
-        pipeline_wrapper = pipeline_module.PipelineWrapper()
-    except Exception as e:
-        error_msg = "Failed to create pipeline wrapper instance: " + str(e)
-        if settings.show_tracebacks:
-            error_msg += f"\n{traceback.format_exc()}"
-        raise PipelineWrapperError(error_msg) from e
-
-    try:
-        pipeline_wrapper.setup()
-    except Exception as e:
-        error_msg = "Failed to call setup() on pipeline wrapper instance: " + str(e)
-        if settings.show_tracebacks:
-            error_msg += f"\n{traceback.format_exc()}"
-        raise PipelineWrapperError(error_msg) from e
-
-    # Determine if the run_api, run_chat_completion, and their async versions are implemented
-    _set_method_implementation_flag(pipeline_wrapper, "_is_run_api_implemented", "run_api")
-    _set_method_implementation_flag(pipeline_wrapper, "_is_run_api_async_implemented", "run_api_async")
-    _set_method_implementation_flag(pipeline_wrapper, "_is_run_chat_completion_implemented", "run_chat_completion")
-    _set_method_implementation_flag(
-        pipeline_wrapper, "_is_run_chat_completion_async_implemented", "run_chat_completion_async"
-    )
-
-    log.debug("pipeline_wrapper._is_run_api_implemented: {}", pipeline_wrapper._is_run_api_implemented)
-    log.debug("pipeline_wrapper._is_run_api_async_implemented: {}", pipeline_wrapper._is_run_api_async_implemented)
-    log.debug(
-        "pipeline_wrapper._is_run_chat_completion_implemented: {}", pipeline_wrapper._is_run_chat_completion_implemented
-    )
-    log.debug(
-        "pipeline_wrapper._is_run_chat_completion_async_implemented: {}",
-        pipeline_wrapper._is_run_chat_completion_async_implemented,
-    )
-
-    if not (
-        pipeline_wrapper._is_run_api_implemented
-        or pipeline_wrapper._is_run_api_async_implemented
-        or pipeline_wrapper._is_run_chat_completion_implemented
-        or pipeline_wrapper._is_run_chat_completion_async_implemented
-    ):
-        msg = (
-            "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async "
-            "must be implemented"
-        )
-        raise PipelineWrapperError(msg)
-
-    return pipeline_wrapper
-
-
-def _set_method_implementation_flag(pipeline_wrapper: BasePipelineWrapper, attr_name: str, method_name: str) -> None:
-    """
-    Helper to check if a method is implemented on the wrapper compared to the base.
-
-    Args:
-        pipeline_wrapper: The wrapper instance to annotate.
-        attr_name: The attribute name to set on the wrapper (e.g., "_is_run_api_implemented").
-        method_name: The method name to check (e.g., "run_api").
-    """
-    wrapper_method = getattr(pipeline_wrapper, method_name, None)
-    base_method = getattr(BasePipelineWrapper, method_name, None)
-    if wrapper_method and base_method:
-        # Ensure we are comparing the function itself, not the bound method if one is already bound.
-        # For unbound methods (like on the class itself), __func__ is the function.
-        # For bound methods (on an instance), __func__ gives the original function.
-        setattr(
-            pipeline_wrapper,
-            attr_name,
-            getattr(wrapper_method, "__func__", wrapper_method) is not getattr(base_method, "__func__", base_method),
-        )
-    else:
-        # Fallback or error handling if methods are not found
-        setattr(pipeline_wrapper, attr_name, False)
-
-
 def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
     """
     Read pipeline files from a directory and return a dictionary mapping filenames to their contents.
@@ -965,7 +824,8 @@ def undeploy_pipeline(pipeline_name: str, app: Optional[FastAPI] = None) -> None
     """
     Undeploy a pipeline.
 
-    Removes a pipeline from the registry, removes its API routes and deletes its files from disk.
+    Removes a pipeline from the registry, removes its API routes, cleans up sys.modules,
+    and deletes its files from disk.
 
     Args:
         pipeline_name: Name of the pipeline to undeploy.
@@ -980,6 +840,9 @@ def undeploy_pipeline(pipeline_name: str, app: Optional[FastAPI] = None) -> None
 
     # Remove pipeline from registry
     registry.remove(pipeline_name)
+
+    # Clean up sys.modules for wrapper-based pipelines
+    unload_pipeline_modules(pipeline_name)
 
     if app:
         # Remove API routes for the pipeline

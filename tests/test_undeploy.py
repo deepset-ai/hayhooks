@@ -100,3 +100,27 @@ def test_undeploy_removes_files(client: TestClient, deploy_files, undeploy_pipel
 
     # Verify files no longer exist on disk
     assert not pipeline_dir.exists()
+
+
+def test_undeploy_cleans_up_sys_modules(client: TestClient, deploy_files, undeploy_pipeline):
+    """Test that undeploy properly removes pipeline modules from sys.modules."""
+    import sys
+
+    pipeline_name = "test_sys_modules_cleanup"
+
+    deploy_response = deploy_files(
+        client, pipeline_name=pipeline_name, pipeline_files=SAMPLE_PIPELINE_FILES, save_files=False
+    )
+    assert deploy_response.status_code == 200
+
+    # Verify modules exist in sys.modules after deploy
+    assert pipeline_name in sys.modules
+    assert f"{pipeline_name}.pipeline_wrapper" in sys.modules
+
+    # Undeploy the pipeline
+    undeploy_response = undeploy_pipeline(client, pipeline_name=pipeline_name)
+    assert undeploy_response.status_code == 200
+
+    # Verify modules are removed from sys.modules
+    assert pipeline_name not in sys.modules
+    assert f"{pipeline_name}.pipeline_wrapper" not in sys.modules
