@@ -148,6 +148,129 @@ def test_load_pipeline_module_registers_in_sys_modules():
     assert hasattr(imported_module, "PipelineWrapper")
 
 
+def test_load_pipeline_module_with_init_py():
+    pipeline_name = "with_init_py"
+    pipeline_dir_path = Path("tests/test_files/files/with_init_py")
+
+    # Ensure modules are not already loaded
+    unload_pipeline_modules(pipeline_name)
+
+    module = load_pipeline_module(pipeline_name, pipeline_dir_path)
+
+    # Verify module was loaded correctly
+    assert module is not None
+    assert hasattr(module, "PipelineWrapper")
+
+    # Verify __init__.py was executed (PACKAGE_VERSION should be available)
+    package_module = sys.modules[pipeline_name]
+    assert hasattr(package_module, "PACKAGE_VERSION")
+    assert package_module.PACKAGE_VERSION == "1.0.0"
+
+    # Verify the wrapper works with imports from both __init__.py and helpers.py
+    wrapper = module.PipelineWrapper()
+    wrapper.setup()
+    result = wrapper.run_api(value=5)
+
+    assert result["result"] == 10  # double(5) = 10
+    assert result["version"] == "1.0.0"
+
+
+def test_unload_pipeline_modules():
+    pipeline_name = "test_unload"
+    pipeline_dir_path = Path("tests/test_files/files/chat_with_website")
+
+    # First, load the module
+    unload_pipeline_modules(pipeline_name)
+    load_pipeline_module(pipeline_name, pipeline_dir_path)
+
+    # Verify modules are in sys.modules
+    assert pipeline_name in sys.modules
+    assert f"{pipeline_name}.pipeline_wrapper" in sys.modules
+
+    # Unload the modules
+    unload_pipeline_modules(pipeline_name)
+
+    # Verify modules are removed
+    assert pipeline_name not in sys.modules
+    assert f"{pipeline_name}.pipeline_wrapper" not in sys.modules
+
+
+def test_unload_pipeline_modules_nonexistent():
+    # Should not raise any errors
+    unload_pipeline_modules("nonexistent_pipeline_xyz")
+
+
+def test_load_pipeline_module_cleans_up_on_import_error():
+    pipeline_name = "broken_import"
+    pipeline_dir_path = Path("tests/test_files/files/broken_import")
+
+    # Ensure modules are not already loaded
+    unload_pipeline_modules(pipeline_name)
+
+    # Loading should fail due to broken import
+    with pytest.raises(PipelineModuleLoadError, match="nonexistent_module"):
+        load_pipeline_module(pipeline_name, pipeline_dir_path)
+
+    # Verify modules were cleaned up from sys.modules
+    assert pipeline_name not in sys.modules
+    assert f"{pipeline_name}.pipeline_wrapper" not in sys.modules
+
+
+def test_load_pipeline_module_reload():
+    pipeline_name = "test_reload"
+    pipeline_dir_path = Path("tests/test_files/files/chat_with_website")
+
+    # Load the module first time
+    unload_pipeline_modules(pipeline_name)
+    module1 = load_pipeline_module(pipeline_name, pipeline_dir_path)
+
+    # Load the module second time (should replace the first)
+    module2 = load_pipeline_module(pipeline_name, pipeline_dir_path)
+
+    # The second load should have replaced the first in sys.modules
+    assert sys.modules[f"{pipeline_name}.pipeline_wrapper"] is module2
+    assert module1 is not module2  # Different module objects
+
+
+def test_multiple_pipelines_with_helpers_dont_interfere():
+    # Load first pipeline
+    pipeline1_name = "helper_test_1"
+    pipeline1_dir = Path("tests/test_files/files/with_helper_module")
+    unload_pipeline_modules(pipeline1_name)
+    module1 = load_pipeline_module(pipeline1_name, pipeline1_dir)
+
+    # Load second pipeline (reusing the same test files but with different name)
+    pipeline2_name = "helper_test_2"
+    pipeline2_dir = Path("tests/test_files/files/with_init_py")
+    unload_pipeline_modules(pipeline2_name)
+    module2 = load_pipeline_module(pipeline2_name, pipeline2_dir)
+
+    # Both should be loaded and independent
+    assert pipeline1_name in sys.modules
+    assert pipeline2_name in sys.modules
+    assert f"{pipeline1_name}.pipeline_wrapper" in sys.modules
+    assert f"{pipeline2_name}.pipeline_wrapper" in sys.modules
+
+    # Create instances and verify they work independently
+    wrapper1 = module1.PipelineWrapper()
+    wrapper1.setup()
+    result1 = wrapper1.run_api(name="Test1", a=2, b=3)
+
+    wrapper2 = module2.PipelineWrapper()
+    wrapper2.setup()
+    result2 = wrapper2.run_api(value=7)
+
+    # Verify results are correct for each pipeline
+    assert result1["greeting"] == "Hello, Test1!"
+    assert result1["multiply_result"] == 6
+    assert result2["result"] == 14
+    assert result2["version"] == "1.0.0"
+
+    # Clean up
+    unload_pipeline_modules(pipeline1_name)
+    unload_pipeline_modules(pipeline2_name)
+
+
 def test_load_pipeline_wrong_dir():
     pipeline_name = "chat_with_website"
     pipeline_dir_path = Path("tests/test_files/files/wrong_dir")
