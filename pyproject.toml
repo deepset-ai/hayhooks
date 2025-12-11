@@ -209,6 +209,7 @@ addopts = "--strict-markers"
 filterwarnings = [
   "ignore::UserWarning",
   "ignore:Module hayhooks was previously imported:coverage.exceptions.CoverageWarning",
+  "ignore:__package__ != __spec__.parent:DeprecationWarning",
 ]
 asyncio_mode = "auto"
 log_cli = true

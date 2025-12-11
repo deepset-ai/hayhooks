@@ -5,6 +5,7 @@ from haystack import Pipeline
 from hayhooks import BasePipelineWrapper
 
 # This import will fail - module doesn't exist
+from .nonexistent_module import some_function
 
 
 class PipelineWrapper(BasePipelineWrapper):
