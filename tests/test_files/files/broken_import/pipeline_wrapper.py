@@ -1,5 +1,7 @@
 """Pipeline wrapper with a broken import to test error handling."""
 
+# ruff: noqa: F401
+
 from haystack import Pipeline
 
 from hayhooks import BasePipelineWrapper
