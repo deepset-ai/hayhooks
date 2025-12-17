@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,7 +15,7 @@ def mock_requests(monkeypatch):
 
 
 def configure_mock_response(
-    mock_requests, *, json_return_value: Optional[dict[str, Any]] = None, raise_return_value: Optional[Exception] = None
+    mock_requests, *, json_return_value: dict[str, Any] | None = None, raise_return_value: Exception | None = None
 ):
     if json_return_value is None:
         json_return_value = {}

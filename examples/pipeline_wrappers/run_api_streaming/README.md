@@ -31,7 +31,7 @@ You should see words streaming in the terminal instead of receiving the entire a
 ## How It Works
 
 ```python
-def run_api(self, question: str, urls: Optional[list[str]] = None) -> Generator[StreamingChunk, None, None]:
+def run_api(self, question: str, urls: list[str] | None = None) -> Generator[StreamingChunk, None, None]:
     return streaming_generator(
         pipeline=self.pipeline,
         pipeline_run_args={
@@ -55,7 +55,7 @@ wrap the generator with `SSEStream`:
 ```python
 from hayhooks import SSEStream, streaming_generator
 
-def run_api(self, question: str, urls: Optional[list[str]] = None):
+def run_api(self, question: str, urls: list[str] | None = None):
     return SSEStream(
         streaming_generator(
             pipeline=self.pipeline,

@@ -3,8 +3,9 @@ import contextlib
 import io
 import mimetypes
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, TypeVar, Union, overload
+from typing import Any, Literal, TypeVar, overload
 from urllib.parse import urljoin
 
 import requests
@@ -51,7 +52,7 @@ def make_request(
     port: int,
     endpoint: str,
     method: str = "GET",
-    json: Optional[dict[str, Any]] = None,
+    json: dict[str, Any] | None = None,
     use_https: bool = False,
     disable_ssl: bool = False,
     stream: Literal[False] = False,
@@ -64,7 +65,7 @@ def make_request(
     port: int,
     endpoint: str,
     method: str = "GET",
-    json: Optional[dict[str, Any]] = None,
+    json: dict[str, Any] | None = None,
     use_https: bool = False,
     disable_ssl: bool = False,
     stream: Literal[True] = ...,
@@ -76,11 +77,11 @@ def make_request(  # noqa: PLR0913
     port: int,
     endpoint: str,
     method: str = "GET",
-    json: Optional[dict[str, Any]] = None,
+    json: dict[str, Any] | None = None,
     use_https: bool = False,
     disable_ssl: bool = False,
     stream: bool = False,
-) -> Union[dict[str, Any], requests.Response]:
+) -> dict[str, Any] | requests.Response:
     """
     Make HTTP request to Hayhooks server with error handling.
 
@@ -250,7 +251,7 @@ def prepare_files_with_progress(
 
 
 def upload_files_with_progress(
-    url: str, files: dict[str, Path], form_data: Optional[dict[str, Any]] = None, verify_ssl: bool = True
+    url: str, files: dict[str, Path], form_data: dict[str, Any] | None = None, verify_ssl: bool = True
 ) -> tuple[dict[str, Any], float]:
     """
     Upload files with progress bar tracking.

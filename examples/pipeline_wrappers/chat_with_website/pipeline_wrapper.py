@@ -1,6 +1,5 @@
 from collections.abc import Generator
 from pathlib import Path
-from typing import Union
 
 from haystack import Pipeline
 
@@ -19,7 +18,7 @@ class PipelineWrapper(BasePipelineWrapper):
         result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
         return result["llm"]["replies"][0]
 
-    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         log.trace("Running pipeline with model: {}, messages: {}, body: {}", model, messages, body)
 
         question = get_last_user_message(messages)

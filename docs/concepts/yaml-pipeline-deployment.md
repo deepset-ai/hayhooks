@@ -312,12 +312,12 @@ with open("pipeline.yml", "w") as f:
 ```python
 # For OpenAI compatibility
 class PipelineWrapper(BasePipelineWrapper):
-    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         ...
 
 # For file uploads
 class PipelineWrapper(BasePipelineWrapper):
-    def run_api(self, files: Optional[list[UploadFile]] = None, query: str = "") -> str:
+    def run_api(self, files: list[UploadFile] | None = None, query: str = "") -> str:
         ...
 
 # For streaming

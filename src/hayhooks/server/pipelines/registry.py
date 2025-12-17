@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union
+from typing import Any
 
 from haystack import AsyncPipeline, DeserializationError, Pipeline
 from haystack.core.errors import PipelineError
@@ -6,7 +6,7 @@ from haystack.core.errors import PipelineError
 from hayhooks.server.exceptions import PipelineNotFoundError
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
-PipelineType = Union[Pipeline, AsyncPipeline, BasePipelineWrapper]
+PipelineType = Pipeline | AsyncPipeline | BasePipelineWrapper
 
 
 class _PipelineRegistry:
@@ -15,7 +15,7 @@ class _PipelineRegistry:
         self._metadata: dict[str, dict[str, Any]] = {}
 
     def add(
-        self, name: str, source_or_pipeline: Union[str, PipelineType], metadata: Optional[dict[str, Any]] = None
+        self, name: str, source_or_pipeline: str | PipelineType, metadata: dict[str, Any] | None = None
     ) -> PipelineType:
         if metadata is None:
             metadata = {}
@@ -42,10 +42,10 @@ class _PipelineRegistry:
             del self._pipelines[name]
             del self._metadata[name]
 
-    def get(self, name: str) -> Union[PipelineType, None]:
+    def get(self, name: str) -> PipelineType | None:
         return self._pipelines.get(name)
 
-    def get_metadata(self, name: str) -> Optional[dict[str, Any]]:
+    def get_metadata(self, name: str) -> dict[str, Any] | None:
         return self._metadata.get(name)
 
     def update_metadata(self, name: str, metadata: dict[str, Any]) -> None:

@@ -1,6 +1,5 @@
 from collections.abc import Generator
 from pathlib import Path
-from typing import Union
 
 from haystack import Pipeline
 
@@ -18,7 +17,7 @@ class PipelineWrapper(BasePipelineWrapper):
         # NOTE: This is used in tests, please don't change it
         return "This is a mock response from the pipeline"
 
-    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         log.trace(
             "Running pipeline with model: {}, messages: {}, body: {}",
             model,

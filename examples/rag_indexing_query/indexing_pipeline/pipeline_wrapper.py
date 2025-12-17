@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import UploadFile
 from haystack.dataclasses import ByteStream
 
@@ -55,7 +53,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
         self.pipeline = pipe
 
-    def run_api(self, files: Optional[list[UploadFile]] = None) -> dict:
+    def run_api(self, files: list[UploadFile] | None = None) -> dict:
         try:
             if files:
                 byte_streams = []

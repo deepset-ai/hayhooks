@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Generator
-from typing import Union
 
 
 class BasePipelineWrapper(ABC):
@@ -51,7 +50,7 @@ class BasePipelineWrapper(ABC):
         msg = "run_api_async not implemented"
         raise NotImplementedError(msg)
 
-    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         """
         This method is called when a user sends an OpenAI-compatible chat completion request.
 
@@ -68,9 +67,7 @@ class BasePipelineWrapper(ABC):
         msg = "run_chat_completion not implemented"
         raise NotImplementedError(msg)
 
-    async def run_chat_completion_async(
-        self, model: str, messages: list[dict], body: dict
-    ) -> Union[str, AsyncGenerator]:
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> str | AsyncGenerator:
         """
         Asynchronous version of run_chat_completion.
         """

@@ -2,8 +2,8 @@ import inspect
 import re
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import docstring_parser
 import pytest

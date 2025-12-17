@@ -5,10 +5,11 @@ import tempfile
 import traceback
 from collections import defaultdict
 from collections.abc import AsyncGenerator as AsyncGeneratorABC
+from collections.abc import Callable
 from collections.abc import Generator as GeneratorABC
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import docstring_parser
 from fastapi import FastAPI, Form, HTTPException
@@ -190,7 +191,7 @@ def handle_pipeline_exceptions() -> Callable:
     return decorator
 
 
-def _format_run_stream_chunk(stream_item: Any) -> Optional[Union[str, bytes]]:
+def _format_run_stream_chunk(stream_item: Any) -> str | bytes | None:
     if isinstance(stream_item, StreamingChunk):
         return stream_item.content or ""
     if isinstance(stream_item, OpenWebUIEvent):
@@ -206,7 +207,7 @@ def _format_run_stream_chunk(stream_item: Any) -> Optional[Union[str, bytes]]:
         return str(stream_item)
 
 
-def _format_sse_chunk(formatted: Union[str, bytes]) -> str:
+def _format_sse_chunk(formatted: str | bytes) -> str:
     text = formatted.decode("utf-8", errors="replace") if isinstance(formatted, bytes) else str(formatted)
 
     if text == "":
@@ -260,7 +261,7 @@ def _streaming_response_from_gen(gen: Any, media_type: str = "text/plain") -> Re
     return StreamingResponse(sync_stream(), media_type=media_type)
 
 
-def _streaming_response_from_result(result: Any) -> Optional[Response]:
+def _streaming_response_from_result(result: Any) -> Response | None:
     # If the result is a SSEStream, return a StreamingResponse with the appropriate media type
     if isinstance(result, SSEStream):
         # Get the stream from the SSEStream
@@ -323,7 +324,7 @@ def create_run_endpoint_handler(
         A FastAPI endpoint function that executes the pipeline and returns the response model.
     """
 
-    async def _handle_request(run_req: BaseModel) -> Union[Response, BaseModel]:
+    async def _handle_request(run_req: BaseModel) -> Response | BaseModel:
         payload = run_req.model_dump()
 
         result = await _execute_pipeline_run(pipeline_wrapper, payload)
@@ -503,7 +504,7 @@ def add_yaml_pipeline_api_route(app: FastAPI, pipeline_name: str) -> None:
 def deploy_pipeline_files(
     pipeline_name: str,
     files: dict[str, str],
-    app: Optional[FastAPI] = None,
+    app: FastAPI | None = None,
     save_files: bool = True,
     overwrite: bool = False,
 ) -> dict[str, str]:
@@ -539,9 +540,9 @@ def deploy_pipeline_files(
 def deploy_pipeline_yaml(
     pipeline_name: str,
     source_code: str,
-    app: Optional[FastAPI] = None,
+    app: FastAPI | None = None,
     overwrite: bool = False,
-    options: Optional[dict[str, Any]] = None,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """
     Deploy a YAML pipeline to the FastAPI application with IO declared in the YAML.
@@ -554,9 +555,9 @@ def deploy_pipeline_yaml(
         source_code: YAML pipeline source code
         overwrite: Whether to overwrite an existing pipeline
         options: Optional dict with additional deployment options. Supported keys:
-            - save_file: Optional[bool] - whether to persist the YAML to disk (default: True)
-            - description: Optional[str]
-            - skip_mcp: Optional[bool]
+            - save_file: bool | None - whether to persist the YAML to disk (default: True)
+            - description: str | None
+            - skip_mcp: bool | None
         app: Optional FastAPI application instance. If provided, the API route will be added.
 
     Returns:
@@ -592,8 +593,8 @@ def add_yaml_pipeline_to_registry(
     pipeline_name: str,
     source_code: str,
     overwrite: bool = False,
-    description: Optional[str] = None,
-    skip_mcp: Optional[bool] = False,
+    description: str | None = None,
+    skip_mcp: bool | None = False,
 ) -> None:
     """
     Add a YAML pipeline to the registry.
@@ -661,7 +662,7 @@ def add_yaml_pipeline_to_registry(
     # This ensures we get outputs from all components referenced in the outputs declaration,
     # not just leaf components. Useful for debugging and getting intermediate results.
     # Extract component names from paths like "llm.replies" -> "llm"
-    outputs_to_include: Union[set[str], None] = None
+    outputs_to_include: set[str] | None = None
     if pipeline_outputs:
         outputs_to_include = get_components_from_outputs(pipeline_outputs)
         clog.debug("Auto-derived include_outputs_from from outputs: {}", outputs_to_include)
@@ -820,7 +821,7 @@ def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
     return files
 
 
-def undeploy_pipeline(pipeline_name: str, app: Optional[FastAPI] = None) -> None:
+def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
     """
     Undeploy a pipeline.
 

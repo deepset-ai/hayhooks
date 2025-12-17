@@ -31,7 +31,7 @@ Each example includes:
 
 Most examples require:
 
-- Python 3.9+ (note: MCP-related examples and features require Python 3.10+)
+- Python 3.10+
 - A virtual environment (recommended)
 - The Hayhooks package: `pip install hayhooks`
 - Additional dependencies (as specified in each example)

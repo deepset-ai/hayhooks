@@ -4,7 +4,7 @@ This guide covers how to install Hayhooks and its dependencies.
 
 ## System Requirements
 
-- Python 3.9+
+- Python 3.10+
 - Operating System: Linux, macOS, or Windows
 - Memory: Minimum 512MB RAM, 2GB+ recommended
 - Storage: Minimum 100MB free space

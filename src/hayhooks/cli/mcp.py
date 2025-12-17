@@ -1,5 +1,5 @@
 import sys
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from haystack.lazy_imports import LazyImport
@@ -12,13 +12,13 @@ with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
 
 @mcp.command()
 def run(  # noqa: PLR0913
-    host: Annotated[Optional[str], typer.Option("--host", "-h", help="Host to run the MCP server on")] = None,
-    port: Annotated[Optional[int], typer.Option("--port", "-p", help="Port to run the MCP server on")] = None,
+    host: Annotated[str | None, typer.Option("--host", "-h", help="Host to run the MCP server on")] = None,
+    port: Annotated[int | None, typer.Option("--port", "-p", help="Port to run the MCP server on")] = None,
     pipelines_dir: Annotated[
-        Optional[str], typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
+        str | None, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
     ] = None,
     additional_python_path: Annotated[
-        Optional[str], typer.Option(help="Additional Python path to add to sys.path")
+        str | None, typer.Option(help="Additional Python path to add to sys.path")
     ] = None,
     json_response: Annotated[
         bool, typer.Option("--json-response", "-j", help="Enable JSON responses instead of SSE streams")

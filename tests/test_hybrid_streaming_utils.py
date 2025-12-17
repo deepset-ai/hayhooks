@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator, Generator
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 from haystack import AsyncPipeline, Pipeline, component
@@ -19,7 +19,7 @@ class MockSyncOnlyGenerator:
     """
 
     @component.output_types(replies=list[str])
-    def run(self, prompt: str, streaming_callback: Optional[Any] = None) -> dict[str, Any]:
+    def run(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
         """Run method with streaming_callback parameter (sync only, no run_async)."""
         # Simulate streaming output
         chunks = ["This ", "is ", "a ", "test ", "response."]

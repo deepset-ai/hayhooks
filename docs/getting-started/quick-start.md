@@ -4,7 +4,7 @@ This guide will help you get started with Hayhooks quickly.
 
 ## Prerequisites
 
-- Python 3.9+
+- Python 3.10+
 - A Haystack pipeline or agent to deploy
 
 ## Installation

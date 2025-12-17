@@ -3,7 +3,6 @@ from collections.abc import AsyncIterator
 from functools import lru_cache
 from os import PathLike
 from pathlib import Path
-from typing import Union
 
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
@@ -36,7 +35,7 @@ def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
     return deployed_pipeline
 
 
-def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> Union[dict, None]:
+def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> dict | None:
     """
     Deploy a pipeline from a directory containing multiple files.
 
@@ -60,7 +59,7 @@ def deploy_files_pipeline(app: FastAPI, pipeline_dir: Path) -> Union[dict, None]
         return None
 
 
-def init_pipeline_dir(pipelines_dir: Union[PathLike, str]) -> str:
+def init_pipeline_dir(pipelines_dir: PathLike | str) -> str:
     """
     Create a directory for pipelines if it doesn't exist.
 
@@ -86,7 +85,7 @@ def init_pipeline_dir(pipelines_dir: Union[PathLike, str]) -> str:
     return str(pipelines_dir)
 
 
-def deploy_pipelines(app: FastAPI, pipelines_dir: Union[PathLike, str]) -> None:
+def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
     """
     Deploy all pipelines from the specified directory.
 

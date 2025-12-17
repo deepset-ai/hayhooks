@@ -1,5 +1,4 @@
 from collections.abc import AsyncGenerator
-from typing import Union
 
 from haystack.components.agents import Agent
 from haystack.components.generators.chat import OpenAIChatGenerator
@@ -21,7 +20,7 @@ class PipelineWrapper(BasePipelineWrapper):
         model: str,  # noqa: ARG002
         messages: list[dict],
         body: dict,  # noqa: ARG002
-    ) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None]:
+    ) -> AsyncGenerator[StreamingChunk | OpenWebUIEvent | str, None]:
         chat_messages = [ChatMessage.from_openai_dict_format(message) for message in messages]
 
         async def main_async_generator():
