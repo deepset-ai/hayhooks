@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from fastapi.concurrency import run_in_threadpool
 from haystack import AsyncPipeline
@@ -143,7 +143,7 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
     mcp_import.check()
 
     log.debug("Calling pipeline as tool '{}' with arguments: {}", name, arguments)
-    pipeline: Union[PipelineType, None] = registry.get(name)
+    pipeline: PipelineType | None = registry.get(name)
 
     if not pipeline:
         msg = f"Pipeline '{name}' not found"

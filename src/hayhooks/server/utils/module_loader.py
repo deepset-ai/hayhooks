@@ -10,7 +10,7 @@ import sys
 import traceback
 from pathlib import Path
 from types import ModuleType
-from typing import NoReturn, Union
+from typing import NoReturn
 
 from hayhooks.server.exceptions import PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.logger import log
@@ -18,7 +18,7 @@ from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.settings import settings
 
 
-def load_pipeline_module(pipeline_name: str, dir_path: Union[Path, str]) -> ModuleType:
+def load_pipeline_module(pipeline_name: str, dir_path: Path | str) -> ModuleType:
     """
     Load a pipeline module from a directory path.
 

@@ -2,9 +2,9 @@ import asyncio
 import inspect
 import threading
 import time
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from queue import Empty, Queue
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal
 
 from haystack import AsyncPipeline, Pipeline
 from haystack.components.agents import Agent
@@ -16,25 +16,25 @@ from hayhooks.server.logger import log
 from hayhooks.server.routers.openai import Message
 from hayhooks.settings import settings
 
-ToolCallbackReturn = Union[OpenWebUIEvent, str, None, list[Union[OpenWebUIEvent, str]]]
-OnToolCallStart = Optional[Callable[[str, Optional[str], Optional[str]], ToolCallbackReturn]]
-OnToolCallEnd = Optional[Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn]]
-OnPipelineEnd = Optional[Callable[[Any], Optional[str]]]
+ToolCallbackReturn = OpenWebUIEvent | str | None | list[OpenWebUIEvent | str]
+OnToolCallStart = Callable[[str, str | None, str | None], ToolCallbackReturn] | None
+OnToolCallEnd = Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn] | None
+OnPipelineEnd = Callable[[Any], str | None] | None
 
 
-def is_user_message(msg: Union[Message, dict]) -> bool:
+def is_user_message(msg: Message | dict) -> bool:
     if isinstance(msg, Message):
         return msg.role == "user"
     return msg.get("role") == "user"
 
 
-def get_content(msg: Union[Message, dict]) -> str:
+def get_content(msg: Message | dict) -> str:
     if isinstance(msg, Message):
         return msg.content
     return msg.get("content", "")
 
 
-def get_last_user_message(messages: list[Union[Message, dict]]) -> Union[str, None]:
+def get_last_user_message(messages: list[Message | dict]) -> str | None:
     user_messages = (msg for msg in reversed(messages) if is_user_message(msg))
 
     for message in user_messages:
@@ -43,7 +43,7 @@ def get_last_user_message(messages: list[Union[Message, dict]]) -> Union[str, No
     return None
 
 
-def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> list[tuple[Component, str]]:
+def find_all_streaming_components(pipeline: Pipeline | AsyncPipeline) -> list[tuple[Component, str]]:
     """
     Finds all components in the pipeline that support streaming_callback.
 
@@ -67,7 +67,7 @@ def find_all_streaming_components(pipeline: Union[Pipeline, AsyncPipeline]) -> l
     return streaming_components
 
 
-def _parse_streaming_components_setting(setting_value: str) -> Union[list[str], Literal["all"], None]:
+def _parse_streaming_components_setting(setting_value: str) -> list[str] | Literal["all"] | None:
     """
     Parse the HAYHOOKS_STREAMING_COMPONENTS environment variable.
 
@@ -97,10 +97,10 @@ def _parse_streaming_components_setting(setting_value: str) -> Union[list[str], 
 
 
 def _setup_streaming_callback_for_pipeline(
-    pipeline: Union[Pipeline, AsyncPipeline],
+    pipeline: Pipeline | AsyncPipeline,
     pipeline_run_args: dict[str, Any],
     streaming_callback: Any,
-    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
+    streaming_components: list[str] | Literal["all"] | None = None,
 ) -> dict[str, Any]:
     """
     Sets up streaming callbacks for streaming-capable components in the pipeline.
@@ -179,10 +179,10 @@ def _setup_streaming_callback_for_agent(pipeline_run_args: dict[str, Any], strea
 
 
 def _setup_streaming_callback(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    pipeline: Pipeline | AsyncPipeline | Agent,
     pipeline_run_args: dict[str, Any],
     streaming_callback: Any,
-    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
+    streaming_components: list[str] | Literal["all"] | None = None,
 ) -> dict[str, Any]:
     """
     Configures streaming callback for the given pipeline or agent.
@@ -210,7 +210,7 @@ def _setup_streaming_callback(
     raise ValueError(msg)
 
 
-def _yield_callback_results(result: ToolCallbackReturn) -> Generator[Union[OpenWebUIEvent, str], None, None]:
+def _yield_callback_results(result: ToolCallbackReturn) -> Generator[OpenWebUIEvent | str, None, None]:
     """
     Yields callback results, handling both single values and lists.
 
@@ -229,7 +229,7 @@ def _yield_callback_results(result: ToolCallbackReturn) -> Generator[Union[OpenW
 
 def _process_tool_call_start(
     chunk: StreamingChunk, on_tool_call_start: OnToolCallStart
-) -> Generator[Union[OpenWebUIEvent, str], None, None]:
+) -> Generator[OpenWebUIEvent | str, None, None]:
     """
     Process tool call start events from a streaming chunk.
 
@@ -249,7 +249,7 @@ def _process_tool_call_start(
 
 def _process_tool_call_end(
     chunk: StreamingChunk, on_tool_call_end: OnToolCallEnd
-) -> Generator[Union[OpenWebUIEvent, str], None, None]:
+) -> Generator[OpenWebUIEvent | str, None, None]:
     """
     Process tool call end events from a streaming chunk.
 
@@ -270,7 +270,7 @@ def _process_tool_call_end(
         yield from _yield_callback_results(result)
 
 
-def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd) -> Optional[StreamingChunk]:
+def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd) -> StreamingChunk | None:
     """
     Process pipeline end callback and return a StreamingChunk if there's content.
 
@@ -292,9 +292,9 @@ def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd
 
 
 def _execute_pipeline_sync(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    pipeline: Pipeline | AsyncPipeline | Agent,
     pipeline_run_args: dict[str, Any],
-    include_outputs_from: Optional[set[str]] = None,
+    include_outputs_from: set[str] | None = None,
 ) -> dict[str, Any]:
     """
     Executes pipeline synchronously based on its type.
@@ -315,16 +315,16 @@ def _execute_pipeline_sync(
 
 
 def streaming_generator(  # noqa: PLR0913, C901
-    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    pipeline: Pipeline | AsyncPipeline | Agent,
     *,
-    pipeline_run_args: Optional[dict[str, Any]] = None,
+    pipeline_run_args: dict[str, Any] | None = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
-    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
-    include_outputs_from: Optional[set[str]] = None,
-    external_event_queue: Optional[Queue[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]]]] = None,
-) -> Generator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None, None]:
+    streaming_components: list[str] | Literal["all"] | None = None,
+    include_outputs_from: set[str] | None = None,
+    external_event_queue: Queue[StreamingChunk | OpenWebUIEvent | str | dict[str, Any]] | None = None,
+) -> Generator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None, None]:
     """
     Creates a generator that yields streaming chunks from a pipeline or agent execution.
 
@@ -359,7 +359,7 @@ def streaming_generator(  # noqa: PLR0913, C901
     """
     if pipeline_run_args is None:
         pipeline_run_args = {}
-    internal_queue: Queue[Union[StreamingChunk, None, Exception]] = Queue()
+    internal_queue: Queue[StreamingChunk | None | Exception] = Queue()
 
     def streaming_callback(chunk: StreamingChunk) -> None:
         internal_queue.put(chunk)
@@ -387,7 +387,7 @@ def streaming_generator(  # noqa: PLR0913, C901
             log.error("Error in pipeline execution thread for streaming_generator: {}", e, exc_info=True)
             internal_queue.put(e)  # Signal error
 
-    def generator() -> Generator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None, None]:
+    def generator() -> Generator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None, None]:
         thread = threading.Thread(target=run_pipeline)
         thread.start()
 
@@ -478,7 +478,7 @@ def _create_hybrid_streaming_callback(
 
 
 def _validate_async_streaming_support(
-    pipeline: Union[Pipeline, AsyncPipeline],
+    pipeline: Pipeline | AsyncPipeline,
     allow_sync_streaming_callbacks: bool = False,
 ) -> tuple[bool, list[tuple[Component, str]]]:
     """
@@ -525,7 +525,7 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
     queue: asyncio.Queue[StreamingChunk],
     loop: asyncio.AbstractEventLoop,
     all_streaming_components: list[tuple[Component, str]],
-    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
+    streaming_components: list[str] | Literal["all"] | None = None,
 ) -> dict[str, Any]:
     """
     Sets up hybrid streaming callbacks (sync or async) for pipeline components.
@@ -588,9 +588,9 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
 
 
 async def _execute_pipeline_async(
-    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    pipeline: Pipeline | AsyncPipeline | Agent,
     pipeline_run_args: dict[str, Any],
-    include_outputs_from: Optional[set[str]] = None,
+    include_outputs_from: set[str] | None = None,
 ) -> asyncio.Task:
     """
     Creates and returns an async task for pipeline execution.
@@ -619,8 +619,8 @@ async def _execute_pipeline_async(
 async def _stream_chunks_from_queue(
     queue: asyncio.Queue[StreamingChunk],
     pipeline_task: asyncio.Task,
-    external_event_queue: Optional[asyncio.Queue[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]]]] = None,
-) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None]:
+    external_event_queue: asyncio.Queue[StreamingChunk | OpenWebUIEvent | str | dict[str, Any]] | None = None,
+) -> AsyncGenerator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None]:
     """
     Streams chunks from the queue while the pipeline is running.
 
@@ -683,17 +683,17 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
 
 
 def async_streaming_generator(  # noqa: PLR0913, C901
-    pipeline: Union[Pipeline, AsyncPipeline, Agent],
+    pipeline: Pipeline | AsyncPipeline | Agent,
     *,
-    pipeline_run_args: Optional[dict[str, Any]] = None,
+    pipeline_run_args: dict[str, Any] | None = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
     on_pipeline_end: OnPipelineEnd = None,
-    streaming_components: Optional[Union[list[str], Literal["all"]]] = None,
-    include_outputs_from: Optional[set[str]] = None,
+    streaming_components: list[str] | Literal["all"] | None = None,
+    include_outputs_from: set[str] | None = None,
     allow_sync_streaming_callbacks: bool = False,
-    external_event_queue: Optional[asyncio.Queue[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]]]] = None,
-) -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None]:
+    external_event_queue: asyncio.Queue[StreamingChunk | OpenWebUIEvent | str | dict[str, Any]] | None = None,
+) -> AsyncGenerator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
 
@@ -762,7 +762,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
             pipeline, pipeline_run_args, streaming_callback, streaming_components
         )
 
-    async def generator() -> AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str, dict[str, Any]], None]:
+    async def generator() -> AsyncGenerator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None]:
         pipeline_task = await _execute_pipeline_async(pipeline, configured_args, include_outputs_from)
 
         try:

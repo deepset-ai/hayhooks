@@ -1,5 +1,5 @@
 import sys
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from fastapi import FastAPI
@@ -25,14 +25,14 @@ def get_app() -> FastAPI:
 
 @hayhooks_cli.command()
 def run(  # noqa: PLR0913
-    host: Annotated[Optional[str], typer.Option("--host", "-h", help="Host to run the server on")] = None,
-    port: Annotated[Optional[int], typer.Option("--port", "-p", help="Port to run the server on")] = None,
+    host: Annotated[str | None, typer.Option("--host", "-h", help="Host to run the server on")] = None,
+    port: Annotated[int | None, typer.Option("--port", "-p", help="Port to run the server on")] = None,
     pipelines_dir: Annotated[
-        Optional[str], typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
+        str | None, typer.Option("--pipelines-dir", "-d", help="Directory containing the pipelines")
     ] = None,
-    root_path: Annotated[Optional[str], typer.Option(help="Root path of the server")] = None,
+    root_path: Annotated[str | None, typer.Option(help="Root path of the server")] = None,
     additional_python_path: Annotated[
-        Optional[str], typer.Option(help="Additional Python path to add to sys.path")
+        str | None, typer.Option(help="Additional Python path to add to sys.path")
     ] = None,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Number of workers to run the server with")] = 1,
     reload: Annotated[

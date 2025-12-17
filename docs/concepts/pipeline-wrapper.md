@@ -13,10 +13,12 @@ The pipeline wrapper provides a flexible foundation for deploying Haystack pipel
 ## Basic Structure
 
 ```python
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
-from typing import Generator, Union, AsyncGenerator
-from haystack import Pipeline, AsyncPipeline
-from hayhooks import BasePipelineWrapper, get_last_user_message, streaming_generator, async_streaming_generator
+
+from haystack import AsyncPipeline, Pipeline
+
+from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator, streaming_generator
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
@@ -130,7 +132,7 @@ def run_api(self, urls: list[str], question: str) -> str:
 **Input argument rules:**
 
 - Arguments must be JSON-serializable
-- Use proper type hints (`list[str]`, `Optional[int]`, etc.)
+- Use proper type hints (`list[str]`, `int | None`, etc.)
 - Default values are supported
 - Complex types like `dict[str, Any]` are allowed
 
@@ -222,7 +224,7 @@ async def run_api_async(self, urls: list[str], question: str) -> str:
 Enable OpenAI-compatible chat endpoints for integration with chat interfaces.
 
 ```python
-def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
     question = get_last_user_message(messages)
     result = self.pipeline.run({"prompt": {"query": question}})
     return result["llm"]["replies"][0]
@@ -323,7 +325,8 @@ allow_sync_streaming_callbacks=True
 ### Example: Legacy OpenAI Generator with Async Pipeline
 
 ```python
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+
 from haystack import AsyncPipeline
 from haystack.components.builders import PromptBuilder
 from haystack.components.generators import OpenAIGenerator
@@ -691,9 +694,8 @@ Hayhooks can handle file uploads by adding a `files` parameter:
 
 ```python
 from fastapi import UploadFile
-from typing import Optional
 
-def run_api(self, files: Optional[list[UploadFile]] = None, query: str = "") -> str:
+def run_api(self, files: list[UploadFile] | None = None, query: str = "") -> str:
     if files:
         # Process uploaded files
         filenames = [f.filename for f in files if f.filename]

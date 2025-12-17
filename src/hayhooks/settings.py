@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Union
 
 from dotenv import find_dotenv, load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -62,7 +61,7 @@ class AppSettings(BaseSettings):
     cors_allow_methods: list[str] = ["*"]
     cors_allow_headers: list[str] = ["*"]
     cors_allow_credentials: bool = False
-    cors_allow_origin_regex: Union[str, None] = None
+    cors_allow_origin_regex: str | None = None
     cors_expose_headers: list[str] = []
     cors_max_age: int = 600
 

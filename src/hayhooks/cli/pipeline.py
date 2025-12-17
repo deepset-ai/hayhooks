@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 
 import typer
 
@@ -46,12 +46,12 @@ def deploy_yaml(  # noqa: PLR0913
     pipeline_file: Path = typer.Argument(  # noqa: B008
         help="The path to the YAML pipeline file to deploy."
     ),
-    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")] = None,
+    name: Annotated[str | None, typer.Option("--name", "-n", help="The name of the pipeline to deploy.")] = None,
     overwrite: Annotated[
         bool, typer.Option("--overwrite", "-o", help="Whether to overwrite the pipeline if it already exists.")
     ] = False,
     description: Annotated[
-        Optional[str], typer.Option("--description", help="Optional description for the pipeline.")
+        str | None, typer.Option("--description", help="Optional description for the pipeline.")
     ] = None,
     skip_mcp: Annotated[
         bool, typer.Option("--skip-mcp", help="If set, skip MCP integration for this pipeline.")
@@ -88,7 +88,7 @@ def deploy_yaml(  # noqa: PLR0913
 @pipeline.command()
 def deploy_files(
     ctx: typer.Context,
-    name: Annotated[Optional[str], typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
+    name: Annotated[str | None, typer.Option("--name", "-n", help="The name of the pipeline to deploy.")],
     pipeline_dir: Path = typer.Argument(  # noqa: B008
         help="The path to the directory containing the pipeline files to deploy."
     ),
@@ -164,14 +164,14 @@ def run(  # noqa: PLR0912, C901, PLR0913
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The name of the pipeline to run.")],
     file: Annotated[
-        Optional[list[Path]], typer.Option("--file", "-f", help="Files to upload (can be specified multiple times)")
+        list[Path] | None, typer.Option("--file", "-f", help="Files to upload (can be specified multiple times)")
     ] = None,
     directory: Annotated[
-        Optional[list[Path]],
+        list[Path] | None,
         typer.Option("--dir", "-d", help="Directories to upload (all files within will be uploaded)"),
     ] = None,
     param: Annotated[
-        Optional[list[str]],
+        list[str] | None,
         typer.Option("--param", "-p", help="Parameters in format key=value (value can be string or JSON)"),
     ] = None,
     stream: Annotated[

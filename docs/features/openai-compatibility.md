@@ -33,7 +33,7 @@ class PipelineWrapper(BasePipelineWrapper):
         pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
         self.pipeline = Pipeline.loads(pipeline_yaml)
 
-    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         log.trace("Running pipeline with model: {}, messages: {}, body: {}", model, messages, body)
 
         question = get_last_user_message(messages)
@@ -47,7 +47,8 @@ class PipelineWrapper(BasePipelineWrapper):
 ### Async Chat Completion with Streaming
 
 ```python
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+
 from hayhooks import async_streaming_generator, get_last_user_message, log
 
 class PipelineWrapper(BasePipelineWrapper):
@@ -74,7 +75,7 @@ class PipelineWrapper(BasePipelineWrapper):
 ### run_chat_completion(...)
 
 ```python
-def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
     """
     Run the pipeline for OpenAI-compatible chat completion.
 
@@ -92,7 +93,7 @@ def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> U
 ### run_chat_completion_async(...)
 
 ```python
-async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> Union[str, AsyncGenerator]:
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> str | AsyncGenerator:
     """
     Async version of run_chat_completion.
 

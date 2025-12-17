@@ -1,4 +1,4 @@
-from typing import Any, TypedDict, Union
+from typing import Any, TypedDict
 
 import yaml
 from pydantic import BaseModel, Field
@@ -38,7 +38,7 @@ class ResolvedIO(TypedDict):
     outputs: dict[str, OutputResolution]
 
 
-def _normalize_declared_path(value: Any) -> Union[str, None]:
+def _normalize_declared_path(value: Any) -> str | None:
     """
     Normalize a declared path from YAML to a string.
 
@@ -236,7 +236,7 @@ def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
     return {"inputs": input_resolutions, "outputs": output_resolutions}
 
 
-def get_streaming_components_from_yaml(yaml_source_code: str) -> Union[list[str], str, None]:
+def get_streaming_components_from_yaml(yaml_source_code: str) -> list[str] | str | None:
     """
     Extract streaming components configuration from a Haystack pipeline YAML.
 

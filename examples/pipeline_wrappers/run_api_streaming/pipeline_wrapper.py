@@ -1,6 +1,5 @@
 from collections.abc import Generator
 from pathlib import Path
-from typing import Optional
 
 from haystack import Pipeline
 from haystack.dataclasses import StreamingChunk
@@ -29,14 +28,14 @@ class PipelineWrapper(BasePipelineWrapper):
     def run_api(
         self,
         question: str,
-        urls: Optional[list[str]] = None,
+        urls: list[str] | None = None,
     ) -> Generator[StreamingChunk, None, None]:
         """
         Execute the pipeline and stream tokens back to the caller.
 
         Args:
             question: User question about the target websites.
-            urls: Optional list of URLs to crawl. Defaults to a curated list.
+            urls: List of URLs to crawl. Defaults to a curated list.
         """
         target_urls = urls or DEFAULT_URLS
         log.info("Streaming pipeline run for question='{}' urls={}", question, target_urls)

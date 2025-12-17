@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union
+from typing import Any
 
 from haystack.tracing.utils import coerce_tag_value
 
@@ -7,9 +7,9 @@ from hayhooks.open_webui import OpenWebUIEvent, create_details_tag, create_notif
 
 def default_on_tool_call_start(
     tool_name: str,
-    arguments: Optional[str],  # noqa: ARG001
-    tool_call_id: Optional[str],  # noqa: ARG001
-) -> Union[OpenWebUIEvent, None]:
+    arguments: str | None,  # noqa: ARG001
+    tool_call_id: str | None,  # noqa: ARG001
+) -> OpenWebUIEvent | None:
     """
     Default callback function when a tool call starts.
 
@@ -20,11 +20,11 @@ def default_on_tool_call_start(
     Args:
         tool_name (str): The name of the tool being called. If empty or falsy,
             no event will be created.
-        arguments (Optional[str]): The stringified arguments passed to the tool.
-        tool_call_id (Optional[str]): A unique identifier for the tool call.
+        arguments (str | None): The stringified arguments passed to the tool.
+        tool_call_id (str | None): A unique identifier for the tool call.
 
     Returns:
-        Union[OpenWebUIEvent, None]: A status event object that can be rendered
+        OpenWebUIEvent | None: A status event object that can be rendered
             by Open WebUI to show tool execution progress. Returns None if the
             tool_name is empty or falsy.
     """
@@ -38,7 +38,7 @@ def default_on_tool_call_start(
 
 def default_on_tool_call_end(
     tool_name: str, arguments: dict[str, Any], result: str, error: bool
-) -> list[Union[OpenWebUIEvent, str]]:
+) -> list[OpenWebUIEvent | str]:
     """
     Default callback function when a tool call ends.
 
@@ -53,7 +53,7 @@ def default_on_tool_call_end(
         error (bool): Whether the tool call resulted in an error.
 
     Returns:
-        list[Union[OpenWebUIEvent, str]]: A list of events to be processed by Open WebUI.
+        list[OpenWebUIEvent | str]: A list of events to be processed by Open WebUI.
             For successful calls, returns a status event and a details tag with the tool's arguments and response.
             For failed calls, returns a hidden status event and an error notification.
             The list can contain both OpenWebUIEvent and str objects.

@@ -1,4 +1,4 @@
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -31,12 +31,9 @@ class OpenWebUIEvent(BaseModel):
     """
 
     type: str
-    data: Union[
-        StatusEventData,
-        MessageEventData,
-        NotificationEventData,
-        dict[str, Any],  # Fallback for custom data
-    ]
+    data: (
+        StatusEventData | MessageEventData | NotificationEventData | dict[str, Any]  # Fallback for custom data
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for Open WebUI."""

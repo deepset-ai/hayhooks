@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
-StreamType = Union[Generator[Any, None, None], AsyncGenerator[Any, None]]
+StreamType = Generator[Any, None, None] | AsyncGenerator[Any, None]
 
 
 @dataclass

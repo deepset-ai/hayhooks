@@ -2,7 +2,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncGenerator, Generator
-from typing import Literal, Union
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
@@ -49,15 +49,15 @@ class Message(OpenAIBaseModel):
 
 class Choice(OpenAIBaseModel):
     index: int
-    delta: Union[Message, None] = None
-    finish_reason: Union[Literal["stop"], None] = None
-    logprobs: Union[None, dict] = None
-    message: Union[Message, None] = None
+    delta: Message | None = None
+    finish_reason: Literal["stop"] | None = None
+    logprobs: None | dict = None
+    message: Message | None = None
 
 
 class ChatCompletion(OpenAIBaseModel):
     id: str
-    object: Union[Literal["chat.completion"], Literal["chat.completion.chunk"]]
+    object: Literal["chat.completion"] | Literal["chat.completion.chunk"]
     created: int
     model: str
     choices: list[Choice]
@@ -77,7 +77,7 @@ def _event_to_sse_msg(
 
 
 def _create_sse_data_msg(
-    resp_id: str, model_name: str, chunk_content: str = "", finish_reason: Union[Literal["stop"], None] = None
+    resp_id: str, model_name: str, chunk_content: str = "", finish_reason: Literal["stop"] | None = None
 ) -> str:
     response = ChatCompletion(
         id=resp_id,
@@ -90,7 +90,7 @@ def _create_sse_data_msg(
 
 
 def _create_sync_streaming_response(
-    result: Generator[Union[StreamingChunk, OpenWebUIEvent, str], None, None], resp_id: str, model_name: str
+    result: Generator[StreamingChunk | OpenWebUIEvent | str, None, None], resp_id: str, model_name: str
 ) -> StreamingResponse:
     def stream_chunks() -> Generator[str, None, None]:
         for chunk in result:
@@ -108,7 +108,7 @@ def _create_sync_streaming_response(
 
 
 def _create_async_streaming_response(
-    result: AsyncGenerator[Union[StreamingChunk, OpenWebUIEvent, str], None], resp_id: str, model_name: str
+    result: AsyncGenerator[StreamingChunk | OpenWebUIEvent | str, None], resp_id: str, model_name: str
 ) -> StreamingResponse:
     async def stream_chunks_async() -> AsyncGenerator[str, None]:
         async for chunk in result:
@@ -136,7 +136,7 @@ def _chat_completion_response(result: str, resp_id: str, model_name: str) -> Cha
 
 async def _execute_pipeline_method(
     pipeline_wrapper: BasePipelineWrapper, model: str, messages: list[dict], body: dict
-) -> Union[str, Generator, AsyncGenerator]:
+) -> str | Generator | AsyncGenerator:
     # Check if either sync or async chat completion is implemented
     sync_implemented = pipeline_wrapper._is_run_chat_completion_implemented
     async_implemented = pipeline_wrapper._is_run_chat_completion_async_implemented
@@ -202,7 +202,7 @@ CHAT_COMPLETION_PARAMS: dict = {
 @router.post("/v1/chat/completions", **CHAT_COMPLETION_PARAMS, operation_id="openai_chat_completions_alias")
 @router.post("/{pipeline_name}/chat", **CHAT_COMPLETION_PARAMS, operation_id="chat_completions")
 @handle_pipeline_exceptions()
-async def chat_endpoint(chat_req: ChatRequest) -> Union[ChatCompletion, StreamingResponse]:
+async def chat_endpoint(chat_req: ChatRequest) -> ChatCompletion | StreamingResponse:
     # Get and validate pipeline wrapper
     pipeline_wrapper = registry.get(chat_req.model)
     if not isinstance(pipeline_wrapper, BasePipelineWrapper):

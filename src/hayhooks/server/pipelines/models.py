@@ -1,6 +1,6 @@
 import inspect
-from collections.abc import AsyncGenerator, Generator
-from typing import Any, Callable, get_origin
+from collections.abc import AsyncGenerator, Callable, Generator
+from typing import Any, get_origin
 
 from docstring_parser.common import Docstring
 from pydantic import BaseModel, Field, create_model
