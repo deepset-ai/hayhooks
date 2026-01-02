@@ -467,11 +467,11 @@ def add_yaml_pipeline_api_route(app: FastAPI, pipeline_name: str) -> None:
     input_resolutions = metadata.get("input_resolutions") or {}
 
     @handle_pipeline_exceptions()
-    async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:  # type:ignore[valid-type]
+    async def pipeline_run(run_req: PipelineRunRequest) -> PipelineRunResponse:
         # Get include_outputs_from from metadata if available
         outputs_to_include = metadata.get("include_outputs_from")
         kwargs: dict[str, Any] = {
-            "data": map_flat_inputs_to_components(run_req.model_dump(), input_resolutions),  # type: ignore[attr-defined]
+            "data": map_flat_inputs_to_components(run_req.model_dump(), input_resolutions),
         }
 
         if outputs_to_include is not None:
