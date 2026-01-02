@@ -180,10 +180,10 @@ def handle_pipeline_exceptions() -> Callable:
             except Exception as e:
                 error_msg = f"Pipeline execution failed: {e!s}"
                 if settings.show_tracebacks:
-                    log.error("Pipeline execution error: {} - {}", e, traceback.format_exc(), exc_info=True)
+                    log.opt(exception=True).error("Pipeline execution error: {} - {}", e, traceback.format_exc())
                     error_msg += f"\n{traceback.format_exc()}"
                 else:
-                    log.error("Pipeline execution error: {}", e, exc_info=True)
+                    log.opt(exception=True).error("Pipeline execution error: {}", e)
                 raise HTTPException(status_code=500, detail=error_msg) from e
 
         return wrapper
@@ -646,8 +646,8 @@ def add_yaml_pipeline_to_registry(
         request_model = get_request_model_from_resolved_io(pipeline_name, pipeline_inputs)
         response_model = get_response_model_from_resolved_io(pipeline_name, pipeline_outputs)
     except Exception as e:
-        clog.error(
-            "Failed creating request/response models for YAML pipeline '{}': {}", pipeline_name, e, exc_info=True
+        clog.opt(exception=True).error(
+            "Failed creating request/response models for YAML pipeline '{}': {}", pipeline_name, e
         )
         raise
 

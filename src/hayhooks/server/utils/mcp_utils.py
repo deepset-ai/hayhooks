@@ -244,14 +244,14 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C
                     return await run_pipeline_as_tool(name, arguments)
                 except Exception as e_pipeline:
                     msg = "Error calling pipeline as MCP Tool '{name}': {e_pipeline}"
-                    log.error(msg, name=name, e_pipeline=e_pipeline, exc_info=True)
+                    log.opt(exception=True).error(msg, name=name, e_pipeline=e_pipeline)
                     raise Exception(msg.format(name=name, e_pipeline=e_pipeline)) from e_pipeline
 
         except Exception as exc:
             msg = "General unhandled error in call_tool for tool '{name}': {exc}"
             if settings.show_tracebacks:
                 msg += f"\n{traceback.format_exc()}"
-            log.error(msg, name=name, exc=exc, exc_info=True)
+            log.opt(exception=True).error(msg, name=name, exc=exc)
             raise Exception(msg.format(name=name, exc=exc)) from exc
 
         finally:
