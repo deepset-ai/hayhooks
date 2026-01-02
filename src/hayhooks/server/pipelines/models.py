@@ -96,7 +96,7 @@ def create_response_model_from_callable(func: Callable, model_name: str, docstri
     return_type = inspect.signature(func).return_annotation
 
     if return_type is inspect.Signature.empty:
-        msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"
+        msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"  # type:ignore[attr-defined]
         raise PipelineWrapperError(msg)
 
     return_description = docstring.returns.description if docstring.returns else None

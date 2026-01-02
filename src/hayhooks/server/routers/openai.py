@@ -2,7 +2,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncGenerator, Generator
-from typing import Literal
+from typing import Literal, cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
@@ -222,10 +222,14 @@ async def chat_endpoint(chat_req: ChatRequest) -> ChatCompletion | StreamingResp
         return _chat_completion_response(result, resp_id, chat_req.model)
 
     elif isinstance(result, Generator):
-        return _create_sync_streaming_response(result, resp_id, chat_req.model)
+        return _create_sync_streaming_response(
+            cast(Generator[StreamingChunk | OpenWebUIEvent | str, None, None], result), resp_id, chat_req.model
+        )
 
     elif isinstance(result, AsyncGenerator):
-        return _create_async_streaming_response(result, resp_id, chat_req.model)
+        return _create_async_streaming_response(
+            cast(AsyncGenerator[StreamingChunk | OpenWebUIEvent | str, None], result), resp_id, chat_req.model
+        )
 
     else:
         raise HTTPException(status_code=500, detail="Unsupported response type from pipeline")
