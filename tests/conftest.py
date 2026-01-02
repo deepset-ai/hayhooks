@@ -2,13 +2,33 @@ import shutil
 from pathlib import Path
 
 import pytest
+from _pytest.logging import LogCaptureFixture
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from hayhooks.server.app import create_app
+from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
 from hayhooks.settings import settings
+
+
+@pytest.fixture
+def caplog(caplog: LogCaptureFixture):
+    """
+    Override caplog fixture to work with loguru.
+
+    See: https://loguru.readthedocs.io/en/stable/resources/migration.html
+    """
+    handler_id = log.add(
+        caplog.handler,
+        format="{message}",
+        level=0,
+        filter=lambda record: record["level"].no >= caplog.handler.level,
+        enqueue=False,
+    )
+    yield caplog
+    log.remove(handler_id)
 
 
 def pytest_configure(config):

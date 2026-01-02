@@ -230,7 +230,7 @@ class _PipelineModuleLoader:
             sys.path.remove(self.parent_dir_str)
 
     def _raise_load_error(self, original_error: Exception) -> NoReturn:
-        log.error("Error loading pipeline module: {}", original_error, exc_info=True)
+        log.opt(exception=True).error("Error loading pipeline module: {}", original_error)
         error_msg = f"Failed to load pipeline module '{self.pipeline_name}' - {original_error!s}"
 
         if settings.show_tracebacks:

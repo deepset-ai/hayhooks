@@ -287,7 +287,7 @@ def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd
             if on_pipeline_end_result:
                 return StreamingChunk(content=on_pipeline_end_result)
         except Exception as e:
-            log.error("Error in on_pipeline_end callback: {}", e, exc_info=True)
+            log.opt(exception=True).error("Error in on_pipeline_end callback: {}", e)
     return None
 
 
@@ -371,7 +371,7 @@ def streaming_generator(  # noqa: PLR0913, C901
         )
         log.trace("Streaming pipeline run args '{}'", configured_args)
     except Exception as e:
-        log.error("Error in streaming callback setup: {}", e, exc_info=True)
+        log.opt(exception=True).error("Error in streaming callback setup: {}", e)
         raise
 
     def run_pipeline() -> None:
@@ -384,7 +384,7 @@ def streaming_generator(  # noqa: PLR0913, C901
             # Signal completion
             internal_queue.put(None)
         except Exception as e:
-            log.error("Error in pipeline execution thread for streaming_generator: {}", e, exc_info=True)
+            log.opt(exception=True).error("Error in pipeline execution thread for streaming_generator: {}", e)
             internal_queue.put(e)  # Signal error
 
     def generator() -> Generator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None, None]:
@@ -464,11 +464,10 @@ def _create_hybrid_streaming_callback(
                     if not fut.cancelled():
                         fut.result()
                 except Exception as e:
-                    log.error(
+                    log.opt(exception=True).error(
                         "Error in hybrid streaming callback for component '{}': {}",
                         component_name,
                         e,
-                        exc_info=True,
                     )
 
             future.add_done_callback(handle_error)
@@ -660,7 +659,7 @@ async def _stream_chunks_from_queue(
             log.warning("Async streaming generator was cancelled")
             break
         except Exception as e:
-            log.error("Unexpected error in async streaming generator: {}", e, exc_info=True)
+            log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
             raise e
 
 
@@ -678,7 +677,7 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         except Exception as e:
-            log.warning("Error during pipeline task cleanup: {}", e, exc_info=True)
+            log.opt(exception=True).warning("Error during pipeline task cleanup: {}", e)
             raise e
 
 
@@ -784,7 +783,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
                 yield final_chunk
 
         except Exception as e:
-            log.error("Unexpected error in async streaming generator: {}", e, exc_info=True)
+            log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
             raise e
         finally:
             await _cleanup_pipeline_task(pipeline_task)
