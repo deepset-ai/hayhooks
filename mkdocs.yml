@@ -44,7 +44,7 @@ nav:
     - License: about/license.md
 
 theme:
-  logo: assets/haystack_icon_green.png
+  logo: assets/haystack_icon.png
   name: material
   language: en
   features:
