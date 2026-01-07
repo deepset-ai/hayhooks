@@ -2,10 +2,20 @@ services:
   hayhooks:
     image: deepset/hayhooks:main
     container_name: hayhooks
+    restart: unless-stopped
     ports:
       - '1416:1416'
+      - '1417:1417'
     volumes:
-      - ./tests/test_files:/opt/pipelines
+      - ./examples/pipeline_wrappers:/opt/pipelines:ro
+    environment:
+      - LOG=INFO
+      - HAYHOOKS_SHOW_TRACEBACKS=true
+      - HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
+      # Add your API keys here or use .env file
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    command: >
+      sh -c "pip install --quiet trafilatura && hayhooks run --host 0.0.0.0"
     healthcheck:
       test: ["CMD-SHELL", "curl --silent --fail localhost:1416/status || exit 1"]
       interval: 10s

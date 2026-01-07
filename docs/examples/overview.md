@@ -30,3 +30,33 @@ This page lists all maintained Hayhooks examples with detailed descriptions and 
 - End-to-end examples: follow the example's documentation for full setup (services like Elasticsearch, multi-pipeline deployment, datasets, etc.)
 
 For general usage and CLI commands, see the [Getting Started Guide](../getting-started/quick-start.md).
+
+## Try all examples with Docker Compose
+
+The repository includes a `compose.yml` file that automatically deploys all pipeline wrapper examples:
+
+```bash
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Set your API key (required for most examples)
+export OPENAI_API_KEY=your-api-key
+
+# Start Hayhooks with all examples
+docker compose up -d
+```
+
+This will:
+
+- Start Hayhooks on port `1416` (API) and `1417` (MCP server)
+- Auto-deploy all pipeline wrappers from `examples/pipeline_wrappers/`
+- Install required dependencies like `trafilatura`
+
+Check deployed pipelines:
+
+```bash
+curl localhost:1416/status
+```
+
+Access the API documentation at <http://localhost:1416/docs>.
