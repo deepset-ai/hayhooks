@@ -6,19 +6,21 @@ for Hayhooks, allowing users to interact with deployed pipelines through
 a chat interface.
 """
 
+import os
 from pathlib import Path
 
 from haystack.lazy_imports import LazyImport
 
 from hayhooks.server.logger import log
 
+# Path to the default Chainlit app directory and file
+DEFAULT_CHAINLIT_APP_DIR = Path(__file__).parent.parent / "chainlit_app"
+DEFAULT_CHAINLIT_APP = DEFAULT_CHAINLIT_APP_DIR / "app.py"
+
 # Lazily import Chainlit so the optional dependency is only required when used
+# Note: CHAINLIT_APP_ROOT must be set in app.py BEFORE this module is imported
 with LazyImport("Run 'pip install \"hayhooks[ui]\"' to install Chainlit UI support.") as chainlit_import:
     from chainlit.utils import mount_chainlit
-
-
-# Path to the default Chainlit app
-DEFAULT_CHAINLIT_APP = Path(__file__).parent.parent / "chainlit_app" / "app.py"
 
 
 def is_chainlit_available() -> bool:
@@ -62,13 +64,28 @@ def mount_chainlit_app(
     """
     chainlit_import.check()
 
-    target = str(DEFAULT_CHAINLIT_APP) if target is None else str(target)
+    if target is None:
+        target = str(DEFAULT_CHAINLIT_APP)
+        app_root = str(DEFAULT_CHAINLIT_APP_DIR)
+    else:
+        target = str(target)
+        app_root = str(Path(target).parent)
 
     # Verify the target file exists
     target_path = Path(target)
     if not target_path.exists():
         msg = f"Chainlit app file not found: {target}"
         raise FileNotFoundError(msg)
+
+    # Verify CHAINLIT_APP_ROOT is set (should be set in app.py before imports)
+    current_root = os.environ.get("CHAINLIT_APP_ROOT", "")
+    if current_root != app_root:
+        log.warning(
+            "CHAINLIT_APP_ROOT mismatch: expected '{}', got '{}'. "
+            "Theme/config may not load correctly.",
+            app_root,
+            current_root,
+        )
 
     log.info("Mounting Chainlit UI at path '{}' using app: {}", path, target)
 

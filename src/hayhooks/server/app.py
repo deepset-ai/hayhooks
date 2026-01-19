@@ -1,8 +1,14 @@
+import os
 import sys
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from os import PathLike
 from pathlib import Path
+
+# Set CHAINLIT_APP_ROOT before any Chainlit imports (must be done before import)
+_chainlit_app_dir = Path(__file__).parent / "chainlit_app"
+if _chainlit_app_dir.exists():
+    os.environ.setdefault("CHAINLIT_APP_ROOT", str(_chainlit_app_dir))
 
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
