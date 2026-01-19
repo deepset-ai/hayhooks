@@ -38,6 +38,12 @@ def run(  # noqa: PLR0913
     reload: Annotated[
         bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")
     ] = False,
+    with_ui: Annotated[
+        bool, typer.Option("--with-ui", help="Enable embedded Chainlit UI (requires hayhooks[ui])")
+    ] = False,
+    ui_path: Annotated[
+        str | None, typer.Option("--ui-path", help="URL path for the Chainlit UI (default: /ui)")
+    ] = None,
 ) -> None:
     """
     Run the Hayhooks server.
@@ -63,6 +69,13 @@ def run(  # noqa: PLR0913
         settings.additional_python_path = additional_python_path
         sys.path.append(additional_python_path)
         log.trace("Added '{}' to sys.path", additional_python_path)
+
+    # Configure Chainlit UI if enabled
+    if with_ui:
+        settings.ui_enabled = True
+        if ui_path:
+            settings.ui_path = ui_path
+        log.info("Chainlit UI enabled at path '{}'", settings.ui_path)
 
     # Use string import path so server modules load only within uvicorn context
     uvicorn.run("hayhooks.server.app:create_app", host=host, port=port, workers=workers, reload=reload, factory=True)

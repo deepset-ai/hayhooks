@@ -200,4 +200,35 @@ def create_app() -> FastAPI:
     app.include_router(undeploy_router)
     app.include_router(openai_router)
 
+    # Mount Chainlit UI if enabled
+    if settings.ui_enabled:
+        _mount_chainlit_ui(app)
+
     return app
+
+
+def _mount_chainlit_ui(app: FastAPI) -> None:
+    """
+    Mount Chainlit UI as a sub-application if enabled and available.
+
+    Args:
+        app: FastAPI application instance
+    """
+    from hayhooks.server.utils.chainlit_utils import is_chainlit_available, mount_chainlit_app
+
+    if not is_chainlit_available():
+        log.warning(
+            "Chainlit UI is enabled but not installed. "
+            "Install with: pip install 'hayhooks[ui]'"
+        )
+        return
+
+    try:
+        custom_app = settings.ui_app if settings.ui_app else None
+        mount_chainlit_app(app, target=custom_app, path=settings.ui_path)
+    except Exception as e:
+        log.error("Failed to mount Chainlit UI: {}", e)
+        if settings.show_tracebacks:
+            import traceback
+
+            log.error(traceback.format_exc())
