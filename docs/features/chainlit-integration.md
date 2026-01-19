@@ -131,6 +131,7 @@ class PipelineWrapper(BasePipelineWrapper):
             pipeline=self.pipeline,
             pipeline_run_args={"chat_prompt_builder": {"template": chat_messages}},
         )
+```
 
 ### 2. Run Hayhooks with UI
 

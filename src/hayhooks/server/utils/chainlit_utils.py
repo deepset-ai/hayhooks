@@ -56,7 +56,6 @@ def mount_chainlit_app(
         >>> app = FastAPI()
         >>> mount_chainlit_app(app, path="/chat")
     """
-    # Import chainlit here to check availability
     try:
         from chainlit.utils import mount_chainlit  # ty: ignore[unresolved-import]
     except ImportError as e:
@@ -84,6 +83,7 @@ def mount_chainlit_app(
             app_root,
             current_root,
         )
+
 
     log.info("Mounting Chainlit UI at path '{}' using app: {}", path, target)
 
