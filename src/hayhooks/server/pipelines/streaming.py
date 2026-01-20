@@ -1,7 +1,7 @@
 import asyncio
 import inspect
 import threading
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from queue import Empty, Queue
 from typing import Any, Literal
 
@@ -22,6 +22,7 @@ ToolCallbackReturn = OpenWebUIEvent | str | None | list[OpenWebUIEvent | str]
 OnToolCallStart = Callable[[str, str | None, str | None], ToolCallbackReturn] | None
 OnToolCallEnd = Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn] | None
 OnPipelineEnd = Callable[[Any], str | None] | None
+StreamingCallback = Callable[[StreamingChunk], None] | Callable[[StreamingChunk], Awaitable[None]]
 
 
 def find_all_streaming_components(pipeline: Pipeline | AsyncPipeline) -> list[tuple[Component, str]]:
@@ -80,7 +81,7 @@ def _parse_streaming_components_setting(setting_value: str) -> list[str] | Liter
 def _setup_streaming_callback_for_pipeline(
     pipeline: Pipeline | AsyncPipeline,
     pipeline_run_args: dict[str, Any],
-    streaming_callback: Any,
+    streaming_callback: StreamingCallback,
     streaming_components: list[str] | Literal["all"] | None = None,
 ) -> dict[str, Any]:
     """
@@ -144,7 +145,9 @@ def _setup_streaming_callback_for_pipeline(
     return pipeline_run_args
 
 
-def _setup_streaming_callback_for_agent(pipeline_run_args: dict[str, Any], streaming_callback: Any) -> dict[str, Any]:
+def _setup_streaming_callback_for_agent(
+    pipeline_run_args: dict[str, Any], streaming_callback: StreamingCallback
+) -> dict[str, Any]:
     """
     Sets up streaming callback for agent execution.
 
@@ -162,7 +165,7 @@ def _setup_streaming_callback_for_agent(pipeline_run_args: dict[str, Any], strea
 def _setup_streaming_callback(
     pipeline: Pipeline | AsyncPipeline | Agent,
     pipeline_run_args: dict[str, Any],
-    streaming_callback: Any,
+    streaming_callback: StreamingCallback,
     streaming_components: list[str] | Literal["all"] | None = None,
 ) -> dict[str, Any]:
     """
@@ -228,6 +231,7 @@ def _process_tool_call_start(
                     result = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
                     yield from _yield_callback_results(result)
                 except Exception as e:
+                    # Don't re-raise - callback errors shouldn't break the streaming flow
                     log.opt(exception=True).error("Error in on_tool_call_start callback: {}", e)
 
 
@@ -254,6 +258,7 @@ def _process_tool_call_end(
             )
             yield from _yield_callback_results(result)
         except Exception as e:
+            # Don't re-raise - callback errors shouldn't break the streaming flow
             log.opt(exception=True).error("Error in on_tool_call_end callback: {}", e)
 
 
@@ -274,6 +279,7 @@ def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd
             if on_pipeline_end_result:
                 return StreamingChunk(content=on_pipeline_end_result)
         except Exception as e:
+            # Don't re-raise - callback errors shouldn't break the streaming flow
             log.opt(exception=True).error("Error in on_pipeline_end callback: {}", e)
     return None
 
