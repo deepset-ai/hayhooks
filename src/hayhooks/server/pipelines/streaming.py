@@ -301,7 +301,90 @@ def _execute_pipeline_sync(
     return pipeline.run(**kwargs)
 
 
-def streaming_generator(  # noqa: PLR0913, PLR0915, C901
+def _execute_pipeline_in_thread(
+    pipeline: Pipeline | AsyncPipeline | Agent,
+    configured_args: dict[str, Any],
+    include_outputs_from: set[str] | None,
+    on_pipeline_end: OnPipelineEnd,
+    internal_queue: Queue[StreamingChunk | None | Exception],
+) -> None:
+    """
+    Runs the pipeline in a thread and puts results in the queue.
+
+    Args:
+        pipeline: The pipeline or agent to execute
+        configured_args: Configured execution arguments with streaming callback
+        include_outputs_from: Optional set of component names to include outputs from
+        on_pipeline_end: Callback for pipeline end
+        internal_queue: Queue to put chunks and signals into
+    """
+    try:
+        result = _execute_pipeline_sync(pipeline, configured_args, include_outputs_from)
+        final_chunk = _process_pipeline_end(result, on_pipeline_end)
+        if final_chunk:
+            internal_queue.put(final_chunk)
+        internal_queue.put(None)  # Signal completion
+    except Exception as e:
+        log.opt(exception=True).error("Error in pipeline execution thread for streaming_generator: {}", e)
+        internal_queue.put(e)  # Signal error
+
+
+def _stream_chunks_from_queue_sync(
+    internal_queue: Queue[StreamingChunk | None | Exception],
+    external_event_queue: Queue[StreamingChunk | OpenWebUIEvent | str | dict[str, Any]] | None = None,
+) -> Generator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None, None]:
+    """
+    Streams chunks from the sync queue while the pipeline is running.
+
+    Args:
+        internal_queue: Queue containing streaming chunks and signals
+        external_event_queue: Optional external queue to merge with internal events
+
+    Yields:
+        StreamingChunk: Individual chunks from the pipeline
+        OpenWebUIEvent: Events from external queue
+        str: String events from external queue
+        dict: Custom events from external queue
+    """
+    pipeline_done = False
+    while not pipeline_done:
+        # Process items from external queue first (non-blocking)
+        if external_event_queue is not None:
+            while True:
+                try:
+                    external_item = external_event_queue.get_nowait()
+                    yield external_item
+                except Empty:
+                    break
+
+        # Process items from internal queue (with small timeout to allow checking external queue)
+        try:
+            item = internal_queue.get(timeout=0.01)
+            if isinstance(item, Exception):
+                raise item
+            if item is None:
+                pipeline_done = True
+                continue
+            yield item
+        except Empty:
+            # No item available, continue polling
+            # The queue.get timeout already prevents CPU spinning
+            pass
+
+
+def _cleanup_pipeline_sync(thread: threading.Thread) -> None:
+    """
+    Cleans up the pipeline thread if it's still running.
+
+    Args:
+        thread: The thread to clean up
+    """
+    thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
+    if thread.is_alive():
+        log.warning("Pipeline thread still running after timeout - generator was likely terminated early")
+
+
+def streaming_generator(  # noqa: PLR0913
     pipeline: Pipeline | AsyncPipeline | Agent,
     *,
     pipeline_run_args: dict[str, Any] | None = None,
@@ -346,72 +429,34 @@ def streaming_generator(  # noqa: PLR0913, PLR0915, C901
     """
     if pipeline_run_args is None:
         pipeline_run_args = {}
+
     internal_queue: Queue[StreamingChunk | None | Exception] = Queue()
 
     def streaming_callback(chunk: StreamingChunk) -> None:
         internal_queue.put(chunk)
 
-    # Configure streaming callback
-    try:
-        configured_args = _setup_streaming_callback(
-            pipeline, pipeline_run_args, streaming_callback, streaming_components
-        )
-        log.trace("Streaming pipeline run args '{}'", configured_args)
-    except Exception as e:
-        log.opt(exception=True).error("Error in streaming callback setup: {}", e)
-        raise
-
-    def run_pipeline() -> None:
-        try:
-            result = _execute_pipeline_sync(pipeline, configured_args, include_outputs_from)
-            # Process pipeline end callback
-            final_chunk = _process_pipeline_end(result, on_pipeline_end)
-            if final_chunk:
-                internal_queue.put(final_chunk)
-            # Signal completion
-            internal_queue.put(None)
-        except Exception as e:
-            log.opt(exception=True).error("Error in pipeline execution thread for streaming_generator: {}", e)
-            internal_queue.put(e)  # Signal error
+    configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, streaming_callback, streaming_components)
+    log.trace("Streaming pipeline run args '{}'", configured_args)
 
     def generator() -> Generator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None, None]:
-        thread = threading.Thread(target=run_pipeline)
+        thread = threading.Thread(
+            target=_execute_pipeline_in_thread,
+            args=(pipeline, configured_args, include_outputs_from, on_pipeline_end, internal_queue),
+        )
         thread.start()
 
         try:
-            pipeline_done = False
-            while not pipeline_done:
-                # Process items from external queue first (non-blocking)
-                if external_event_queue is not None:
-                    while True:
-                        try:
-                            external_item = external_event_queue.get_nowait()
-                            yield external_item
-                        except Empty:
-                            break
+            for chunk in _stream_chunks_from_queue_sync(internal_queue, external_event_queue):
+                # External events are yielded directly without processing
+                if not isinstance(chunk, StreamingChunk):
+                    yield chunk
+                    continue
 
-                # Process items from internal queue (with small timeout to allow checking external queue)
-                try:
-                    item = internal_queue.get(timeout=0.01)
-                    if isinstance(item, Exception):
-                        raise item
-                    if item is None:
-                        pipeline_done = True
-                        continue
-
-                    # Handle tool calls
-                    yield from _process_tool_call_start(item, on_tool_call_start)
-                    yield from _process_tool_call_end(item, on_tool_call_end)
-                    yield item
-                except Empty:
-                    # No item available, continue polling
-                    # The queue.get timeout already prevents CPU spinning
-                    pass
+                yield from _process_tool_call_start(chunk, on_tool_call_start)
+                yield from _process_tool_call_end(chunk, on_tool_call_end)
+                yield chunk
         finally:
-            # Use timeout to avoid blocking forever on early termination
-            thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
-            if thread.is_alive():
-                log.warning("Pipeline thread still running after timeout - generator was likely terminated early")
+            _cleanup_pipeline_sync(thread)
 
     return generator()
 
@@ -655,7 +700,7 @@ async def _stream_chunks_from_queue(
             raise
 
 
-async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
+async def _cleanup_pipeline_async(pipeline_task: asyncio.Task) -> None:
     """
     Cleans up the pipeline task if it's still running.
 
@@ -778,6 +823,6 @@ def async_streaming_generator(  # noqa: PLR0913, C901
             log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
             raise
         finally:
-            await _cleanup_pipeline_task(pipeline_task)
+            await _cleanup_pipeline_async(pipeline_task)
 
     return generator()
