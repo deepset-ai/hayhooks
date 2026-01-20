@@ -661,6 +661,22 @@ async def _execute_pipeline_async(
         return asyncio.create_task(asyncio.to_thread(pipeline.run, **kwargs))
 
 
+def _check_pipeline_task_exception(pipeline_task: asyncio.Task) -> None:
+    """
+    Checks if a pipeline task has completed with an exception and raises it.
+
+    Args:
+        pipeline_task: The async task to check
+
+    Raises:
+        Exception: The exception from the pipeline task if one occurred
+    """
+    if pipeline_task.done():
+        exception = pipeline_task.exception()
+        if exception is not None:
+            raise exception
+
+
 async def _stream_chunks_from_queue(
     queue: asyncio.Queue[StreamingChunk],
     pipeline_task: asyncio.Task,
@@ -681,12 +697,6 @@ async def _stream_chunks_from_queue(
         dict: Custom events from external queue
     """
     while not pipeline_task.done() or not queue.empty():
-        # Check for pipeline completion with exception
-        if pipeline_task.done():
-            exception = pipeline_task.exception()
-            if exception is not None:
-                raise exception
-
         # Process items from external queue first (non-blocking)
         if external_event_queue is not None:
             while not external_event_queue.empty():
@@ -700,6 +710,9 @@ async def _stream_chunks_from_queue(
             chunk = await asyncio.wait_for(queue.get(), timeout=_QUEUE_POLL_TIMEOUT_SECONDS)
             yield chunk
         except asyncio.TimeoutError:
+            # No chunk available - check if task failed (only when queue is empty to drain first)
+            if queue.empty():
+                _check_pipeline_task_exception(pipeline_task)
             continue
         except asyncio.CancelledError:
             log.warning("Async streaming generator was cancelled")
@@ -707,6 +720,9 @@ async def _stream_chunks_from_queue(
         except Exception as e:
             log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
             raise
+
+    # Final check for exception after draining queue
+    _check_pipeline_task_exception(pipeline_task)
 
 
 async def _cleanup_pipeline_async(pipeline_task: asyncio.Task) -> None:
