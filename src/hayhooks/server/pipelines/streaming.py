@@ -16,7 +16,10 @@ from hayhooks.settings import settings
 
 # Timeout for thread cleanup when generator is terminated early (e.g., consumer breaks out of loop)
 # The thread continues running after this timeout - this just controls how long we block
-THREAD_JOIN_TIMEOUT_SECONDS = 1.0
+_THREAD_JOIN_TIMEOUT_SECONDS = 1.0
+
+# Timeout for queue polling - allows periodic checking of external event queue
+_QUEUE_POLL_TIMEOUT_SECONDS = 0.01
 
 ToolCallbackReturn = OpenWebUIEvent | str | None | list[OpenWebUIEvent | str]
 OnToolCallStart = Callable[[str, str | None, str | None], ToolCallbackReturn] | None
@@ -365,7 +368,7 @@ def _stream_chunks_from_queue_sync(
 
         # Process items from internal queue (with small timeout to allow checking external queue)
         try:
-            item = internal_queue.get(timeout=0.01)
+            item = internal_queue.get(timeout=_QUEUE_POLL_TIMEOUT_SECONDS)
             if isinstance(item, Exception):
                 raise item
             if item is None:
@@ -385,7 +388,7 @@ def _cleanup_pipeline_sync(thread: threading.Thread) -> None:
     Args:
         thread: The thread to clean up
     """
-    thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
+    thread.join(timeout=_THREAD_JOIN_TIMEOUT_SECONDS)
     if thread.is_alive():
         log.warning("Pipeline thread still running after timeout - generator was likely terminated early")
 
@@ -694,7 +697,7 @@ async def _stream_chunks_from_queue(
                     break
 
         try:
-            chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+            chunk = await asyncio.wait_for(queue.get(), timeout=_QUEUE_POLL_TIMEOUT_SECONDS)
             yield chunk
         except asyncio.TimeoutError:
             continue
