@@ -6,7 +6,7 @@ from haystack import AsyncPipeline, Pipeline, component
 from haystack.components.builders import PromptBuilder
 from haystack.dataclasses import StreamingChunk
 
-from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator
+from hayhooks.server.pipelines.streaming import async_streaming_generator, streaming_generator
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 

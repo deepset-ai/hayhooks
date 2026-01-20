@@ -1289,7 +1289,7 @@ def test_streaming_generator_with_env_var_all_components(
 
     # Set environment variable and reload settings
     monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", env_var_value)
-    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+    monkeypatch.setattr("hayhooks.server.pipelines.streaming.settings", AppSettings())
 
     mock_chunks = [
         StreamingChunk(content="chunk1_from_component1"),
@@ -1323,7 +1323,7 @@ def test_streaming_generator_param_overrides_env_var(monkeypatch, pipeline_with_
 
     # Set environment variable to "all"
     monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "all")
-    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+    monkeypatch.setattr("hayhooks.server.pipelines.streaming.settings", AppSettings())
 
     mock_chunks = [
         StreamingChunk(content="chunk1_from_component1"),
@@ -1392,7 +1392,7 @@ def test_streaming_generator_with_single_component_comma_separated(
 
     # Set environment variable with single component
     monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "component1")
-    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+    monkeypatch.setattr("hayhooks.server.pipelines.streaming.settings", AppSettings())
 
     mock_chunks = [
         StreamingChunk(content="chunk1_from_component1"),
@@ -1418,7 +1418,7 @@ def test_parse_streaming_components_with_empty_string(monkeypatch, pipeline_with
 
     # Set environment variable to empty string (default)
     monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "")
-    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+    monkeypatch.setattr("hayhooks.server.pipelines.streaming.settings", AppSettings())
 
     mock_chunks = [
         StreamingChunk(content="chunk1_from_component2"),
