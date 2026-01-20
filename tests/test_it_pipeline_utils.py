@@ -90,6 +90,35 @@ def test_sync_pipeline_sync_streaming_callback_streaming_generator(sync_pipeline
     reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
 )
 @pytest.mark.integration
+async def test_sync_pipeline_async_streaming_generator_rejects_async_callback(
+    sync_pipeline_with_sync_streaming_callback_support,
+):
+    """
+    Test that sync Pipeline with OpenAIChatGenerator rejects async streaming callbacks.
+
+    When using async_streaming_generator with a sync Pipeline, the component's run() method
+    validates that the callback is not a coroutine. This test verifies that validation works.
+    """
+    from haystack.core.errors import PipelineRuntimeError
+
+    pipeline = sync_pipeline_with_sync_streaming_callback_support
+
+    async_generator = async_streaming_generator(
+        pipeline,
+        pipeline_run_args={
+            "prompt_builder": {"template": [ChatMessage.from_user(QUESTION)]},
+        },
+    )
+
+    with pytest.raises(PipelineRuntimeError, match="The runtime callback cannot be a coroutine"):
+        _ = [chunk async for chunk in async_generator]
+
+
+@pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY", None),
+    reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
+)
+@pytest.mark.integration
 async def test_async_pipeline_async_streaming_callback_async_streaming_generator(
     async_pipeline_with_async_streaming_callback_support,
 ):

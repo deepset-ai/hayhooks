@@ -1,3 +1,4 @@
+import os
 import time
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
@@ -5,12 +6,21 @@ from typing import Any
 import pytest
 from haystack import AsyncPipeline, Pipeline, component
 from haystack.components.agents import Agent
-from haystack.components.builders import PromptBuilder
-from haystack.dataclasses import StreamingChunk
+from haystack.components.builders import ChatPromptBuilder, PromptBuilder
+from haystack.components.generators import OpenAIGenerator
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage, StreamingChunk
+from haystack.utils import Secret
 
 from hayhooks.server.pipelines.streaming import async_streaming_generator, streaming_generator
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
+
+# skip decorator for tests requiring OpenAI API key
+requires_openai_api_key = pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY"),
+    reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
+)
 
 
 @component
@@ -25,42 +35,6 @@ class MockSlowGenerator:
         if streaming_callback:
             streaming_callback(StreamingChunk(content="Second chunk", index=1))
         return {"replies": ["Done"]}
-
-
-@component
-class MockSyncOnlyGenerator:
-    """Mock generator that only supports sync streaming callbacks (no run_async)."""
-
-    @component.output_types(replies=list[str])
-    def run(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
-        chunks = ["This ", "is ", "a ", "test ", "response."]
-        if streaming_callback:
-            for i, chunk_text in enumerate(chunks):
-                streaming_callback(StreamingChunk(content=chunk_text, index=i))
-        return {"replies": ["This is a test response."]}
-
-
-@component
-class MockAsyncGenerator:
-    """Mock generator that supports both sync and async streaming callbacks."""
-
-    def __init__(self):
-        # Set output types in constructor to satisfy Haystack's requirement
-        component.set_output_types(self, replies=list[str])
-
-    def run(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
-        chunks = ["Async ", "test ", "response."]
-        if streaming_callback:
-            for i, chunk_text in enumerate(chunks):
-                streaming_callback(StreamingChunk(content=chunk_text, index=i))
-        return {"replies": ["Async test response."]}
-
-    async def run_async(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
-        chunks = ["Async ", "test ", "response."]
-        if streaming_callback:
-            for i, chunk_text in enumerate(chunks):
-                await streaming_callback(StreamingChunk(content=chunk_text, index=i))
-        return {"replies": ["Async test response."]}
 
 
 @component
@@ -89,28 +63,50 @@ class MockFailingGenerator:
 
 @pytest.fixture
 def pipeline_with_sync_only_generator():
+    """
+    Pipeline with OpenAIGenerator - a sync-only component (no run_async method).
+    This is a real integration test fixture requiring OPENAI_API_KEY.
+    """
     pipe = Pipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
-    pipe.add_component("llm", MockSyncOnlyGenerator())
+    pipe.add_component("llm", OpenAIGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
     pipe.connect("prompt_builder.prompt", "llm.prompt")
     return pipe
 
 
 @pytest.fixture
 def async_pipeline_with_sync_only_generator():
+    """
+    AsyncPipeline with OpenAIGenerator - a sync-only component (no run_async method).
+    This demonstrates the case where async pipeline contains sync-only streaming components.
+    """
     pipe = AsyncPipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
-    pipe.add_component("llm", MockSyncOnlyGenerator())
+    pipe.add_component("llm", OpenAIGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
     pipe.connect("prompt_builder.prompt", "llm.prompt")
     return pipe
 
 
 @pytest.fixture
 def pipeline_with_slow_generator():
+    """Pipeline with MockSlowGenerator for testing early termination behavior."""
     pipe = Pipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
     pipe.add_component("llm", MockSlowGenerator())
     pipe.connect("prompt_builder.prompt", "llm.prompt")
+    return pipe
+
+
+@pytest.fixture
+def async_pipeline_with_async_capable_generator():
+    """
+    AsyncPipeline with OpenAIChatGenerator - supports both sync and async streaming callbacks.
+    This is a real integration test fixture requiring OPENAI_API_KEY.
+    """
+    pipe = AsyncPipeline()
+    pipe.add_component("prompt_builder", ChatPromptBuilder(template=[ChatMessage.from_user(QUESTION)]))
+    pipe.add_component("llm", OpenAIChatGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
+    pipe.connect("prompt_builder.prompt", "llm.messages")
     return pipe
 
 
@@ -155,6 +151,8 @@ def create_mock_agent(mocker):  # noqa: C901
     return _factory
 
 
+@requires_openai_api_key
+@pytest.mark.integration
 def test_streaming_generator_with_sync_only_generator(pipeline_with_sync_only_generator):
     generator = streaming_generator(pipeline_with_sync_only_generator, pipeline_run_args={})
 
@@ -162,16 +160,23 @@ def test_streaming_generator_with_sync_only_generator(pipeline_with_sync_only_ge
     chunks = list(generator)
     streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
 
-    assert len(streaming_chunks) == 5
-    assert streaming_chunks[0].content == "This "
+    # Real OpenAI response will have multiple chunks
+    assert len(streaming_chunks) > 0
+    # Content should contain Yes or No as per the question
+    full_content = "".join(c.content for c in streaming_chunks)
+    assert "Yes" in full_content or "No" in full_content
 
 
+@requires_openai_api_key
+@pytest.mark.integration
 async def test_async_streaming_rejects_sync_only_components(async_pipeline_with_sync_only_generator):
     with pytest.raises(ValueError, match="seems to not support async streaming callbacks"):
         async_gen = async_streaming_generator(async_pipeline_with_sync_only_generator, pipeline_run_args={})
         _ = [chunk async for chunk in async_gen]
 
 
+@requires_openai_api_key
+@pytest.mark.integration
 async def test_async_streaming_hybrid_mode(async_pipeline_with_sync_only_generator):
     async_gen = async_streaming_generator(
         async_pipeline_with_sync_only_generator,
@@ -183,9 +188,27 @@ async def test_async_streaming_hybrid_mode(async_pipeline_with_sync_only_generat
     chunks = [chunk async for chunk in async_gen]
     streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
 
-    assert len(streaming_chunks) == 5
+    # Real OpenAI response will have multiple chunks
+    assert len(streaming_chunks) > 0
 
 
+@requires_openai_api_key
+@pytest.mark.integration
+async def test_async_streaming_async_pipeline_emits_chunks(async_pipeline_with_async_capable_generator):
+    async_gen = async_streaming_generator(async_pipeline_with_async_capable_generator, pipeline_run_args={})
+
+    chunks = [chunk async for chunk in async_gen]
+    streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
+
+    # Real OpenAI response will have multiple chunks
+    assert len(streaming_chunks) > 0
+    # Content should contain Yes or No as per the question
+    full_content = "".join(c.content for c in streaming_chunks)
+    assert "Yes" in full_content or "No" in full_content
+
+
+@requires_openai_api_key
+@pytest.mark.integration
 async def test_async_streaming_does_not_mutate_args(async_pipeline_with_sync_only_generator):
     original_args: dict[str, Any] = {}
 
@@ -341,14 +364,11 @@ async def test_agent_exception(create_mock_agent, use_async):
             list(gen)
 
 
-async def test_async_streaming_cancellation():
-    pipe = AsyncPipeline()
-    pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
-    pipe.add_component("llm", MockAsyncGenerator())
-    pipe.connect("prompt_builder.prompt", "llm.prompt")
-
+@requires_openai_api_key
+@pytest.mark.integration
+async def test_async_streaming_cancellation(async_pipeline_with_async_capable_generator):
     async def consume_with_cancel():
-        gen = async_streaming_generator(pipe, pipeline_run_args={})
+        gen = async_streaming_generator(async_pipeline_with_async_capable_generator, pipeline_run_args={})
         chunks_received = []
         async for chunk in gen:
             chunks_received.append(chunk)
