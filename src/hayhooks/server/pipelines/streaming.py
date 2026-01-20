@@ -1,7 +1,6 @@
 import asyncio
 import inspect
 import threading
-import time
 from collections.abc import AsyncGenerator, Callable, Generator
 from queue import Empty, Queue
 from typing import Any, Literal
@@ -225,8 +224,11 @@ def _process_tool_call_start(
     if on_tool_call_start and hasattr(chunk, "tool_calls") and chunk.tool_calls:
         for tool_call in chunk.tool_calls:
             if tool_call.tool_name:
-                result = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
-                yield from _yield_callback_results(result)
+                try:
+                    result = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
+                    yield from _yield_callback_results(result)
+                except Exception as e:
+                    log.opt(exception=True).error("Error in on_tool_call_start callback: {}", e)
 
 
 def _process_tool_call_end(
@@ -243,13 +245,16 @@ def _process_tool_call_end(
         OpenWebUIEvent or str: Results from the callback
     """
     if on_tool_call_end and hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
-        result = on_tool_call_end(
-            chunk.tool_call_result.origin.tool_name,
-            chunk.tool_call_result.origin.arguments,
-            chunk.tool_call_result.result,
-            bool(chunk.tool_call_result.error),
-        )
-        yield from _yield_callback_results(result)
+        try:
+            result = on_tool_call_end(
+                chunk.tool_call_result.origin.tool_name,
+                chunk.tool_call_result.origin.arguments,
+                chunk.tool_call_result.result,
+                bool(chunk.tool_call_result.error),
+            )
+            yield from _yield_callback_results(result)
+        except Exception as e:
+            log.opt(exception=True).error("Error in on_tool_call_end callback: {}", e)
 
 
 def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd) -> StreamingChunk | None:
@@ -400,8 +405,8 @@ def streaming_generator(  # noqa: PLR0913, C901
                     yield item
                 except Empty:
                     # No item available, continue polling
-                    # The small delay prevents CPU spinning
-                    time.sleep(0.001)
+                    # The queue.get timeout already prevents CPU spinning
+                    pass
         finally:
             # Use timeout to avoid blocking forever on early termination
             thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
@@ -647,7 +652,7 @@ async def _stream_chunks_from_queue(
             break
         except Exception as e:
             log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
-            raise e
+            raise
 
 
 async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
@@ -664,8 +669,8 @@ async def _cleanup_pipeline_task(pipeline_task: asyncio.Task) -> None:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         except Exception as e:
+            # Don't re-raise - this runs in finally block, so we don't want to mask original errors
             log.opt(exception=True).warning("Error during pipeline task cleanup: {}", e)
-            raise e
 
 
 def async_streaming_generator(  # noqa: PLR0913, C901
@@ -771,7 +776,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
 
         except Exception as e:
             log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
-            raise e
+            raise
         finally:
             await _cleanup_pipeline_task(pipeline_task)
 
