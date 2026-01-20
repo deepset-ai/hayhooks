@@ -301,7 +301,7 @@ def _execute_pipeline_sync(
     return pipeline.run(**kwargs)
 
 
-def streaming_generator(  # noqa: PLR0913, C901
+def streaming_generator(  # noqa: PLR0913, PLR0915, C901
     pipeline: Pipeline | AsyncPipeline | Agent,
     *,
     pipeline_run_args: dict[str, Any] | None = None,

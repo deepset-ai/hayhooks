@@ -254,7 +254,7 @@ async def test_async_streaming_exception_after_chunks():
     with pytest.raises(PipelineRuntimeError, match="Async pipeline execution failed"):
         async for chunk in async_gen:
             if isinstance(chunk, StreamingChunk):
-                received_chunks.append(chunk)
+                received_chunks.append(chunk)  # noqa: PERF401
 
     # Should have received some chunks before the exception
     assert len(received_chunks) == 2
