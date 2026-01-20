@@ -521,6 +521,8 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
     Returns:
         Updated pipeline run arguments
     """
+    pipeline_run_args = pipeline_run_args.copy()
+
     if streaming_components is None:
         streaming_components = _parse_streaming_components_setting(settings.streaming_components)
 

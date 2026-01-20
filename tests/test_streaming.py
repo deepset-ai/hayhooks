@@ -118,3 +118,20 @@ async def test_async_streaming_generator_with_sync_only_generator_true_mode(
     streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
     assert len(streaming_chunks) > 0
     assert isinstance(streaming_chunks[0], StreamingChunk)
+
+
+async def test_async_streaming_generator_does_not_mutate_pipeline_run_args(
+    async_pipeline_with_sync_only_generator,
+):
+    """Test that async_streaming_generator does not mutate the original pipeline_run_args."""
+    pipeline = async_pipeline_with_sync_only_generator
+    original_args: dict[str, Any] = {}
+
+    async_generator = async_streaming_generator(
+        pipeline,
+        pipeline_run_args=original_args,
+        allow_sync_streaming_callbacks=True,
+    )
+    _ = [chunk async for chunk in async_generator]
+
+    assert original_args == {}, f"pipeline_run_args should not be mutated, but got: {original_args}"
