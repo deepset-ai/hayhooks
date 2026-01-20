@@ -52,7 +52,7 @@ def find_all_streaming_components(pipeline: Pipeline | AsyncPipeline) -> list[tu
     return streaming_components
 
 
-def _parse_streaming_components_setting(setting_value: str) -> list[str] | Literal["all"] | None:
+def parse_streaming_components_setting(setting_value: str) -> list[str] | Literal["all"] | None:
     """
     Parse the HAYHOOKS_STREAMING_COMPONENTS environment variable.
 
@@ -110,7 +110,7 @@ def _setup_streaming_callback_for_pipeline(
 
     # If streaming_components not provided, check environment variable
     if streaming_components is None:
-        streaming_components = _parse_streaming_components_setting(settings.streaming_components)
+        streaming_components = parse_streaming_components_setting(settings.streaming_components)
 
     # Determine which components should stream
     components_to_stream = []
@@ -590,7 +590,7 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
     pipeline_run_args = pipeline_run_args.copy()
 
     if streaming_components is None:
-        streaming_components = _parse_streaming_components_setting(settings.streaming_components)
+        streaming_components = parse_streaming_components_setting(settings.streaming_components)
 
     components_to_stream = []
 

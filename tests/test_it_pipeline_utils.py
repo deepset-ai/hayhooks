@@ -1440,30 +1440,30 @@ def test_parse_streaming_components_with_empty_string(monkeypatch, pipeline_with
     assert chunks == mock_chunks
 
 
-def test_parse_streaming_components_setting_with_all():
-    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+def testparse_streaming_components_setting_with_all():
+    from hayhooks.server.pipelines.utils import parse_streaming_components_setting
 
-    assert _parse_streaming_components_setting("all") == "all"
-    assert _parse_streaming_components_setting("ALL") == "all"
-    assert _parse_streaming_components_setting("  all  ") == "all"
+    assert parse_streaming_components_setting("all") == "all"
+    assert parse_streaming_components_setting("ALL") == "all"
+    assert parse_streaming_components_setting("  all  ") == "all"
 
 
-def test_parse_streaming_components_setting_with_comma_list():
-    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+def testparse_streaming_components_setting_with_comma_list():
+    from hayhooks.server.pipelines.utils import parse_streaming_components_setting
 
-    result = _parse_streaming_components_setting("llm_1,llm_2,llm_3")
+    result = parse_streaming_components_setting("llm_1,llm_2,llm_3")
     assert result == ["llm_1", "llm_2", "llm_3"]
 
     # Test with spaces
-    result = _parse_streaming_components_setting("llm_1, llm_2 , llm_3")
+    result = parse_streaming_components_setting("llm_1, llm_2 , llm_3")
     assert result == ["llm_1", "llm_2", "llm_3"]
 
 
-def test_parse_streaming_components_setting_with_empty():
-    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+def testparse_streaming_components_setting_with_empty():
+    from hayhooks.server.pipelines.utils import parse_streaming_components_setting
 
-    assert _parse_streaming_components_setting("") is None
-    assert _parse_streaming_components_setting("   ") is None
+    assert parse_streaming_components_setting("") is None
+    assert parse_streaming_components_setting("   ") is None
 
 
 def test_streaming_generator_external_queue_merges_events(mocked_pipeline_with_streaming_component):

@@ -3,9 +3,9 @@ from hayhooks.server.pipelines.streaming import (
     OnToolCallEnd,
     OnToolCallStart,
     ToolCallbackReturn,
-    _parse_streaming_components_setting,
     async_streaming_generator,
     find_all_streaming_components,
+    parse_streaming_components_setting,
     streaming_generator,
 )
 from hayhooks.server.routers.openai import Message
@@ -15,12 +15,12 @@ __all__ = [
     "OnToolCallEnd",
     "OnToolCallStart",
     "ToolCallbackReturn",
-    "_parse_streaming_components_setting",
     "async_streaming_generator",
     "find_all_streaming_components",
     "get_content",
     "get_last_user_message",
     "is_user_message",
+    "parse_streaming_components_setting",
     "streaming_generator",
 ]
 
