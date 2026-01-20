@@ -1,3 +1,4 @@
+import time
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
@@ -9,6 +10,24 @@ from haystack.dataclasses import StreamingChunk
 from hayhooks.server.pipelines.streaming import async_streaming_generator, streaming_generator
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
+
+
+@component
+class MockSlowGenerator:
+    """Mock generator that takes a long time to complete (for testing early termination)."""
+
+    @component.output_types(replies=list[str])
+    def run(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
+        if streaming_callback:
+            streaming_callback(StreamingChunk(content="First chunk", index=0))
+
+        # Simulate slow processing - this would block thread.join() without timeout
+        time.sleep(5)
+
+        if streaming_callback:
+            streaming_callback(StreamingChunk(content="Second chunk", index=1))
+
+        return {"replies": ["Done"]}
 
 
 @component
@@ -135,3 +154,43 @@ async def test_async_streaming_generator_does_not_mutate_pipeline_run_args(
     _ = [chunk async for chunk in async_generator]
 
     assert original_args == {}, f"pipeline_run_args should not be mutated, but got: {original_args}"
+
+
+@pytest.fixture
+def pipeline_with_slow_generator():
+    """Pipeline with a slow component for testing early termination."""
+    prompt_builder = PromptBuilder(template=QUESTION)
+    llm = MockSlowGenerator()
+
+    pipe = Pipeline()
+    pipe.add_component("prompt_builder", prompt_builder)
+    pipe.add_component("llm", llm)
+    pipe.connect("prompt_builder.prompt", "llm.prompt")
+
+    return pipe
+
+
+def test_streaming_generator_early_termination_does_not_block(pipeline_with_slow_generator):
+    """
+    Test that early termination of streaming_generator does not block indefinitely.
+
+    When a consumer stops iterating early (e.g., break), the generator should
+    clean up within a reasonable timeout, not wait forever for the pipeline.
+    """
+    pipeline = pipeline_with_slow_generator
+
+    start_time = time.time()
+
+    generator = streaming_generator(pipeline, pipeline_run_args={})
+
+    # Consume only the first chunk, then stop (simulates early termination)
+    for _chunk in generator:
+        break  # Stop after first chunk
+
+    # Explicitly close the generator to trigger cleanup (finally block)
+    generator.close()
+
+    elapsed = time.time() - start_time
+
+    # Should complete quickly (within 2 seconds), not wait 5+ seconds for pipeline
+    assert elapsed < 2.0, f"Early termination took {elapsed:.2f}s, should be < 2s"

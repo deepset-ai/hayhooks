@@ -15,6 +15,10 @@ from hayhooks.open_webui import OpenWebUIEvent
 from hayhooks.server.logger import log
 from hayhooks.settings import settings
 
+# Timeout for thread cleanup when generator is terminated early (e.g., consumer breaks out of loop)
+# The thread continues running after this timeout - this just controls how long we block
+THREAD_JOIN_TIMEOUT_SECONDS = 1.0
+
 ToolCallbackReturn = OpenWebUIEvent | str | None | list[OpenWebUIEvent | str]
 OnToolCallStart = Callable[[str, str | None, str | None], ToolCallbackReturn] | None
 OnToolCallEnd = Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn] | None
@@ -399,7 +403,10 @@ def streaming_generator(  # noqa: PLR0913, C901
                     # The small delay prevents CPU spinning
                     time.sleep(0.001)
         finally:
-            thread.join()
+            # Use timeout to avoid blocking forever on early termination
+            thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
+            if thread.is_alive():
+                log.warning("Pipeline thread still running after timeout - generator was likely terminated early")
 
     return generator()
 
