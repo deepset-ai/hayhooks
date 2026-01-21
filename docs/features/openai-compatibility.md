@@ -230,6 +230,7 @@ class SyncChatWrapper(BasePipelineWrapper):
 ```python
 class AsyncStreamingWrapper(BasePipelineWrapper):
     def setup(self) -> None:
+        from haystack import AsyncPipeline
         from haystack.components.builders import ChatPromptBuilder
         from haystack.components.generators.chat import OpenAIChatGenerator
         from haystack.dataclasses import ChatMessage
@@ -238,7 +239,7 @@ class AsyncStreamingWrapper(BasePipelineWrapper):
         chat_prompt_builder = ChatPromptBuilder(template=template)
         llm = OpenAIChatGenerator(model="gpt-4o")
 
-        self.pipeline = Pipeline()
+        self.pipeline = AsyncPipeline()
         self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
         self.pipeline.add_component("llm", llm)
         self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
