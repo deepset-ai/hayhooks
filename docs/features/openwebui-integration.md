@@ -251,7 +251,7 @@ Here's a complete example for a website chat pipeline:
 
 ```python
 from typing import AsyncGenerator
-from haystack import Pipeline
+from haystack import AsyncPipeline
 from haystack.components.fetchers import LinkContentFetcher
 from haystack.components.converters import HTMLToDocument
 from haystack.components.builders import ChatPromptBuilder
@@ -273,7 +273,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
         llm = OpenAIChatGenerator(model="gpt-4o")
 
-        self.pipeline = Pipeline()
+        self.pipeline = AsyncPipeline()
         self.pipeline.add_component("fetcher", fetcher)
         self.pipeline.add_component("converter", converter)
         self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)

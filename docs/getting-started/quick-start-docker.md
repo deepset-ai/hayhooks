@@ -13,28 +13,7 @@ git clone https://github.com/deepset-ai/hayhooks-open-webui-docker-compose.git
 cd hayhooks-open-webui-docker-compose
 ```
 
-### 2. Configure Environment Variables
-
-Copy the example environment file:
-
-```bash
-cp .env.example .env
-```
-
-Edit the `.env` file to configure your settings:
-
-```ini
-# Hayhooks Configuration
-HAYHOOKS_HOST=0.0.0.0
-HAYHOOKS_PORT=1416
-HAYHOOKS_MCP_PORT=1417
-HAYHOOKS_PIPELINES_DIR=/app/pipelines
-
-# OpenWebUI Configuration
-OPENWEBUI_PORT=3000
-```
-
-### 3. Start the Services
+### 2. Start the Services
 
 ```bash
 docker-compose up -d
@@ -46,13 +25,13 @@ This will start:
 - Hayhooks MCP server on port 1417
 - Open WebUI on port 3000
 
-### 4. Access the Services
+### 3. Access the Services
 
 - **Hayhooks API**: <http://localhost:1416>
 - **Open WebUI**: <http://localhost:3000>
 - **Hayhooks API Documentation**: <http://localhost:1416/docs>
 
-### 5. Deploy Example Pipelines
+### 4. Deploy Example Pipelines
 
 Install Hayhooks locally to use the CLI:
 
@@ -64,7 +43,7 @@ Then deploy example pipelines:
 
 ```bash
 # Deploy a sample pipeline
-hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/chat_with_website_streaming
+hayhooks pipeline deploy-files -n chat_with_website pipelines/chat_with_website_streaming
 ```
 
 !!! tip "Alternative: Deploy via API"
@@ -78,17 +57,14 @@ The following environment variables can be configured in `.env`:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HAYHOOKS_HOST` | Host to bind to | `0.0.0.0` |
-| `HAYHOOKS_PORT` | Port for Hayhooks API | `1416` |
-| `HAYHOOKS_MCP_PORT` | Port for Hayhooks MCP server | `1417` |
-| `HAYHOOKS_PIPELINES_DIR` | Directory for pipeline definitions | `/app/pipelines` |
-| `OPENWEBUI_PORT` | Port for Open WebUI | `3000` |
+| `OPEN_WEBUI_PORT` | Port for Open WebUI | `3000` |
+| `WEBUI_DOCKER_TAG` | Tag for Open WebUI image | `main` |
 
 ### Volume Mounts
 
 The Docker Compose setup includes the following volume mounts:
 
-- **Pipeline Directory**: `/app/pipelines` – Directory mounted inside the Hayhooks container where your pipeline wrappers or YAML files live. Hayhooks auto-deploys anything it finds here at startup.
+- **Pipeline Directory**: `/pipelines` – Directory mounted inside the Hayhooks container where your pipeline wrappers or YAML files live. Hayhooks auto-deploys anything it finds here at startup.
 
 ## Integrating with Open WebUI
 
@@ -107,7 +83,7 @@ The Docker Compose setup comes pre-configured to integrate Hayhooks with Open We
 Deploy a pipeline that supports chat completion:
 
 ```bash
-hayhooks pipeline deploy-files -n chat_agent examples/pipeline_wrappers/open_webui_agent_events
+hayhooks pipeline deploy-files -n chat_with_website pipelines/chat_with_website_streaming
 ```
 
 Alternatively, use the [API endpoints](../reference/api-reference.md#pipeline-management) (`POST /deploy_files` or `POST /deploy-yaml`).

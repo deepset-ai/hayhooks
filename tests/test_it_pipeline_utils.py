@@ -90,6 +90,35 @@ def test_sync_pipeline_sync_streaming_callback_streaming_generator(sync_pipeline
     reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
 )
 @pytest.mark.integration
+async def test_sync_pipeline_async_streaming_generator_rejects_async_callback(
+    sync_pipeline_with_sync_streaming_callback_support,
+):
+    """
+    Test that sync Pipeline with OpenAIChatGenerator rejects async streaming callbacks.
+
+    When using async_streaming_generator with a sync Pipeline, the component's run() method
+    validates that the callback is not a coroutine. This test verifies that validation works.
+    """
+    from haystack.core.errors import PipelineRuntimeError
+
+    pipeline = sync_pipeline_with_sync_streaming_callback_support
+
+    async_generator = async_streaming_generator(
+        pipeline,
+        pipeline_run_args={
+            "prompt_builder": {"template": [ChatMessage.from_user(QUESTION)]},
+        },
+    )
+
+    with pytest.raises(PipelineRuntimeError, match="The runtime callback cannot be a coroutine"):
+        _ = [chunk async for chunk in async_generator]
+
+
+@pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY", None),
+    reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
+)
+@pytest.mark.integration
 async def test_async_pipeline_async_streaming_callback_async_streaming_generator(
     async_pipeline_with_async_streaming_callback_support,
 ):
@@ -1289,7 +1318,7 @@ def test_streaming_generator_with_env_var_all_components(
 
     # Set environment variable and reload settings
     monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", env_var_value)
-    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+    monkeypatch.setattr("hayhooks.server.pipelines.streaming.settings", AppSettings())
 
     mock_chunks = [
         StreamingChunk(content="chunk1_from_component1"),
@@ -1323,7 +1352,7 @@ def test_streaming_generator_param_overrides_env_var(monkeypatch, pipeline_with_
 
     # Set environment variable to "all"
     monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "all")
-    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+    monkeypatch.setattr("hayhooks.server.pipelines.streaming.settings", AppSettings())
 
     mock_chunks = [
         StreamingChunk(content="chunk1_from_component1"),
@@ -1392,7 +1421,7 @@ def test_streaming_generator_with_single_component_comma_separated(
 
     # Set environment variable with single component
     monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "component1")
-    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+    monkeypatch.setattr("hayhooks.server.pipelines.streaming.settings", AppSettings())
 
     mock_chunks = [
         StreamingChunk(content="chunk1_from_component1"),
@@ -1418,7 +1447,7 @@ def test_parse_streaming_components_with_empty_string(monkeypatch, pipeline_with
 
     # Set environment variable to empty string (default)
     monkeypatch.setenv("HAYHOOKS_STREAMING_COMPONENTS", "")
-    monkeypatch.setattr("hayhooks.server.pipelines.utils.settings", AppSettings())
+    monkeypatch.setattr("hayhooks.server.pipelines.streaming.settings", AppSettings())
 
     mock_chunks = [
         StreamingChunk(content="chunk1_from_component2"),
@@ -1440,30 +1469,30 @@ def test_parse_streaming_components_with_empty_string(monkeypatch, pipeline_with
     assert chunks == mock_chunks
 
 
-def test_parse_streaming_components_setting_with_all():
-    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+def testparse_streaming_components_setting_with_all():
+    from hayhooks.server.pipelines.utils import parse_streaming_components_setting
 
-    assert _parse_streaming_components_setting("all") == "all"
-    assert _parse_streaming_components_setting("ALL") == "all"
-    assert _parse_streaming_components_setting("  all  ") == "all"
+    assert parse_streaming_components_setting("all") == "all"
+    assert parse_streaming_components_setting("ALL") == "all"
+    assert parse_streaming_components_setting("  all  ") == "all"
 
 
-def test_parse_streaming_components_setting_with_comma_list():
-    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+def testparse_streaming_components_setting_with_comma_list():
+    from hayhooks.server.pipelines.utils import parse_streaming_components_setting
 
-    result = _parse_streaming_components_setting("llm_1,llm_2,llm_3")
+    result = parse_streaming_components_setting("llm_1,llm_2,llm_3")
     assert result == ["llm_1", "llm_2", "llm_3"]
 
     # Test with spaces
-    result = _parse_streaming_components_setting("llm_1, llm_2 , llm_3")
+    result = parse_streaming_components_setting("llm_1, llm_2 , llm_3")
     assert result == ["llm_1", "llm_2", "llm_3"]
 
 
-def test_parse_streaming_components_setting_with_empty():
-    from hayhooks.server.pipelines.utils import _parse_streaming_components_setting
+def testparse_streaming_components_setting_with_empty():
+    from hayhooks.server.pipelines.utils import parse_streaming_components_setting
 
-    assert _parse_streaming_components_setting("") is None
-    assert _parse_streaming_components_setting("   ") is None
+    assert parse_streaming_components_setting("") is None
+    assert parse_streaming_components_setting("   ") is None
 
 
 def test_streaming_generator_external_queue_merges_events(mocked_pipeline_with_streaming_component):
