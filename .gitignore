@@ -172,5 +172,27 @@ cython_debug/
 # PyCharm
 .idea/
 
-# Chainlit app
+# VSCode
+.vscode/
+
+# Cursor IDE
+.cursor/
+
+# Chainlit
 .chainlit/
+.chainlit.db
+.chainlit.sqlite
+.files/
+chainlit.md
+
+# Local environment overrides
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# OS-specific
+Thumbs.db
