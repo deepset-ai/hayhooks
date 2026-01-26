@@ -1,7 +1,8 @@
 import os
 from typing import Any, TypedDict
 
-import chainlit as cl
+# Note: This file is executed only when chainlit is installed and running.
+import chainlit as cl  # ty: ignore[unresolved-import]
 import httpx
 
 from hayhooks.server.chainlit_app import utils

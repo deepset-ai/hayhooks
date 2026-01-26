@@ -9,18 +9,11 @@ a chat interface.
 import os
 from pathlib import Path
 
-from haystack.lazy_imports import LazyImport
-
 from hayhooks.server.logger import log
 
 # Path to the default Chainlit app directory and file
 DEFAULT_CHAINLIT_APP_DIR = Path(__file__).parent.parent / "chainlit_app"
 DEFAULT_CHAINLIT_APP = DEFAULT_CHAINLIT_APP_DIR / "app.py"
-
-# Lazily import Chainlit so the optional dependency is only required when used
-# Note: CHAINLIT_APP_ROOT must be set in app.py BEFORE this module is imported
-with LazyImport("Run 'pip install \"hayhooks[ui]\"' to install Chainlit UI support.") as chainlit_import:
-    from chainlit.utils import mount_chainlit
 
 
 def is_chainlit_available() -> bool:
@@ -31,7 +24,8 @@ def is_chainlit_available() -> bool:
         bool: True if Chainlit is installed, False otherwise.
     """
     try:
-        chainlit_import.check()
+        import chainlit  # noqa: F401  # ty: ignore[unresolved-import]
+
         return True
     except ImportError:
         return False
@@ -62,7 +56,12 @@ def mount_chainlit_app(
         >>> app = FastAPI()
         >>> mount_chainlit_app(app, path="/chat")
     """
-    chainlit_import.check()
+    # Import chainlit here to check availability
+    try:
+        from chainlit.utils import mount_chainlit  # ty: ignore[unresolved-import]
+    except ImportError as e:
+        msg = "Run 'pip install \"hayhooks[ui]\"' to install Chainlit UI support."
+        raise ImportError(msg) from e
 
     if target is None:
         target = str(DEFAULT_CHAINLIT_APP)
