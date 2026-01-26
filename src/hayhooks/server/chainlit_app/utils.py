@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -16,6 +17,8 @@ HTTP_OK = 200
 # Constants for tool name extraction
 TOOL_CALL_PREFIX = "Calling '"
 TOOL_CALL_SUFFIX = "' tool"
+# Used to detect if prefix was found: find() returns -1 if not found,
+# so -1 + len(prefix) equals this value, failing the > check
 TOOL_CALL_PREFIX_LEN = len(TOOL_CALL_PREFIX) - 1
 
 # Event types
@@ -142,7 +145,10 @@ def build_chat_request(model: str, history: list[dict[str, Any]]) -> dict[str, A
     }
 
 
-async def process_sse_chunk(line: str, chunk_handler: dict[str, Any]) -> str | None:
+async def process_sse_chunk(
+    line: str,
+    event_handler: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+) -> str | None:
     """
     Process a single SSE line from the streaming response.
 
@@ -150,7 +156,7 @@ async def process_sse_chunk(line: str, chunk_handler: dict[str, Any]) -> str | N
 
     Args:
         line: SSE line to process.
-        chunk_handler: Handler function to process events.
+        event_handler: Optional async callback to handle Open WebUI events.
 
     Returns:
         Content delta if any, None otherwise.
@@ -170,8 +176,8 @@ async def process_sse_chunk(line: str, chunk_handler: dict[str, Any]) -> str | N
     # Handle Open WebUI event
     if "event" in chunk:
         event = chunk.get("event", {})
-        if "type" in event and "data" in event and (handler := chunk_handler.get("event_handler")):
-            await handler(event)
+        if "type" in event and "data" in event and event_handler:
+            await event_handler(event)
         return None
 
     # Handle OpenAI-format chunk
@@ -180,4 +186,5 @@ async def process_sse_chunk(line: str, chunk_handler: dict[str, Any]) -> str | N
         return None
 
     delta = choices[0].get("delta", {})
-    return delta.get("content", "")
+    content = delta.get("content")
+    return content if content else None

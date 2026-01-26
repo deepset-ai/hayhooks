@@ -1,10 +1,16 @@
 import os
-from typing import Any
+from typing import Any, TypedDict
 
 import chainlit as cl
 import httpx
 
 from hayhooks.server.chainlit_app import utils
+
+
+class StreamState(TypedDict):
+    """State maintained during streaming response."""
+
+    current_step: cl.Step | None
 
 # Configuration
 DEFAULT_MODEL = os.getenv("HAYHOOKS_DEFAULT_MODEL", "")
@@ -87,14 +93,14 @@ async def on_model_select(action: cl.Action) -> None:
     await send_message(MSG_CONNECTED.format(model=model))
 
 
-async def close_current_step(state: dict[str, Any]) -> None:
+async def close_current_step(state: StreamState) -> None:
     """Close any open step in the state."""
     if current_step := state.get("current_step"):
         await current_step.__aexit__(None, None, None)
         state["current_step"] = None
 
 
-async def handle_status_event(data: dict[str, Any], state: dict[str, Any]) -> None:
+async def handle_status_event(data: dict[str, Any], state: StreamState) -> None:
     """Handle status event (progress updates)."""
     description = data.get("description", "Processing...")
     done = data.get("done", False)
@@ -122,7 +128,7 @@ async def handle_status_event(data: dict[str, Any], state: dict[str, Any]) -> No
         await close_current_step(state)
 
 
-async def handle_tool_result_event(data: dict[str, Any], state: dict[str, Any]) -> None:
+async def handle_tool_result_event(data: dict[str, Any], state: StreamState) -> None:
     """Handle tool_result event (tool execution results)."""
     arguments = data.get("arguments", {})
     result = data.get("result", "")
@@ -151,7 +157,7 @@ async def handle_notification_event(data: dict[str, Any]) -> None:
     await send_message(f"{icon} {content}")
 
 
-async def handle_open_webui_event(event: dict[str, Any], state: dict[str, Any]) -> None:
+async def handle_open_webui_event(event: dict[str, Any], state: StreamState) -> None:
     """
     Handle Open WebUI events from the streaming response.
 
@@ -178,7 +184,7 @@ async def handle_open_webui_event(event: dict[str, Any], state: dict[str, Any]) 
         cl.logger.debug(f"Unhandled event type: {event_type}")
 
 
-async def process_stream_line(line: str, state: dict[str, Any]) -> str | None:
+async def process_stream_line(line: str, state: StreamState) -> str | None:
     """
     Process a single SSE line from the streaming response.
 
@@ -187,9 +193,10 @@ async def process_stream_line(line: str, state: dict[str, Any]) -> str | None:
     Returns:
         Content delta if any, None otherwise.
     """
-    # Use utils function with custom event handler
-    chunk_handler = {"event_handler": lambda event: handle_open_webui_event(event, state)}
-    return await utils.process_sse_chunk(line, chunk_handler)
+    return await utils.process_sse_chunk(
+        line,
+        event_handler=lambda event: handle_open_webui_event(event, state),
+    )
 
 
 async def ensure_model_selected() -> str | None:
@@ -230,7 +237,7 @@ async def stream_chat_completion(
         httpx.HTTPStatusError: If response status is not 200.
         httpx.TimeoutException: If request times out.
     """
-    stream_state: dict[str, Any] = {"current_step": None}
+    stream_state: StreamState = {"current_step": None}
     full_response = ""
 
     async with (
@@ -282,17 +289,16 @@ async def on_message(message: cl.Message) -> None:
             cl.user_session.set(SESSION_HISTORY, history)
 
     except httpx.HTTPStatusError as e:
-        error_msg = f"Server error ({e.response.status_code})"
         cl.logger.error(f"HTTP error during chat completion: {e}")
-        await response_msg.stream_token(f"❌ {error_msg}")
+        response_msg.content = f"❌ Server error ({e.response.status_code})"
 
     except httpx.TimeoutException:
         cl.logger.error("Request timed out")
-        await response_msg.stream_token(MSG_TIMEOUT)
+        response_msg.content = MSG_TIMEOUT
 
     except Exception as e:
         cl.logger.error(f"Unexpected error during chat: {e}", exc_info=True)
-        await response_msg.stream_token(MSG_GENERIC_ERROR)
+        response_msg.content = MSG_GENERIC_ERROR
 
     finally:
         await response_msg.update()
