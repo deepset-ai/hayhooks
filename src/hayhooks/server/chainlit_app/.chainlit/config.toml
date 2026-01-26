@@ -31,5 +31,8 @@ speech_to_text.enabled = false
 # Allows user to generate audio from text messages
 text_to_speech.enabled = false
 
+# File upload support - disabled as Hayhooks OpenAI endpoint doesn't support multimodal inputs yet
+spontaneous_file_upload.enabled = false
+
 [meta]
 generated_by = "hayhooks"
