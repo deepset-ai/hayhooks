@@ -6,6 +6,8 @@ from os import PathLike
 from pathlib import Path
 
 # Set CHAINLIT_APP_ROOT before any Chainlit imports (must be done before import)
+# ruff: noqa: E402
+
 _chainlit_app_dir = Path(__file__).parent / "chainlit_app"
 if _chainlit_app_dir.exists():
     os.environ.setdefault("CHAINLIT_APP_ROOT", str(_chainlit_app_dir))
@@ -223,10 +225,7 @@ def _mount_chainlit_ui(app: FastAPI) -> None:
     from hayhooks.server.utils.chainlit_utils import is_chainlit_available, mount_chainlit_app
 
     if not is_chainlit_available():
-        log.warning(
-            "Chainlit UI is enabled but not installed. "
-            "Install with: pip install 'hayhooks[ui]'"
-        )
+        log.warning("Chainlit UI is enabled but not installed. Install with: pip install 'hayhooks[ui]'")
         return
 
     try:

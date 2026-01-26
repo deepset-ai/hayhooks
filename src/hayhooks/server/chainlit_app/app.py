@@ -12,6 +12,7 @@ class StreamState(TypedDict):
 
     current_step: cl.Step | None
 
+
 # Configuration
 DEFAULT_MODEL = os.getenv("HAYHOOKS_DEFAULT_MODEL", "")
 MAX_PIPELINES_DISPLAY = 10

@@ -81,8 +81,7 @@ def mount_chainlit_app(
     current_root = os.environ.get("CHAINLIT_APP_ROOT", "")
     if current_root != app_root:
         log.warning(
-            "CHAINLIT_APP_ROOT mismatch: expected '{}', got '{}'. "
-            "Theme/config may not load correctly.",
+            "CHAINLIT_APP_ROOT mismatch: expected '{}', got '{}'. Theme/config may not load correctly.",
             app_root,
             current_root,
         )

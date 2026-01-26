@@ -36,10 +36,7 @@ async def check_backend_health() -> bool:
     """
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{HAYHOOKS_BASE_URL}/status",
-                timeout=HEALTH_CHECK_TIMEOUT
-            )
+            response = await client.get(f"{HAYHOOKS_BASE_URL}/status", timeout=HEALTH_CHECK_TIMEOUT)
             return response.status_code == HTTP_OK
     except Exception:
         return False
@@ -54,10 +51,7 @@ async def get_available_models() -> list[dict[str, Any]]:
     """
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{HAYHOOKS_BASE_URL}/v1/models",
-                timeout=MODELS_FETCH_TIMEOUT
-            )
+            response = await client.get(f"{HAYHOOKS_BASE_URL}/v1/models", timeout=MODELS_FETCH_TIMEOUT)
             response.raise_for_status()
             data = response.json()
             return data.get("data", [])
@@ -121,10 +115,7 @@ def format_tool_result(arguments: dict[str, Any], result: str) -> str:
         Formatted markdown string.
     """
     args_str = json.dumps(arguments, indent=2) if isinstance(arguments, dict) else str(arguments)
-    return (
-        f"**Arguments:**\n```json\n{args_str}\n```\n\n"
-        f"**Result:**\n```\n{result}\n```"
-    )
+    return f"**Arguments:**\n```json\n{args_str}\n```\n\n**Result:**\n```\n{result}\n```"
 
 
 def build_chat_request(model: str, history: list[dict[str, Any]]) -> dict[str, Any]:
