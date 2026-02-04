@@ -1,7 +1,7 @@
 import importlib.util
-from pathlib import Path
 
 import pytest
+from anyio import Path
 
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest

@@ -644,9 +644,7 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
         # Remove API routes for the pipeline
         # All pipelines have a run endpoint at /<pipeline_name>/run
         routes_to_remove = [
-            route
-            for route in app.routes
-            if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run"
+            route for route in app.routes if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run"
         ]
         for route in routes_to_remove:
             app.routes.remove(route)

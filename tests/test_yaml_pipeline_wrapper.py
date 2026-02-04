@@ -79,8 +79,12 @@ def test_set_method_signature_self_removed_when_bound():
 def test_map_flat_inputs_single_target():
     input_resolutions = {
         "query": InputResolution(
-            path="prompt.query", component="prompt", name="query",
-            type=str, required=True, targets=["prompt.query"],
+            path="prompt.query",
+            component="prompt",
+            name="query",
+            type=str,
+            required=True,
+            targets=["prompt.query"],
         ),
     }
 
@@ -92,8 +96,12 @@ def test_map_flat_inputs_single_target():
 def test_map_flat_inputs_multi_target():
     input_resolutions = {
         "query": InputResolution(
-            path="prompt.query", component="prompt", name="query",
-            type=str, required=True, targets=["prompt.query", "builder.query"],
+            path="prompt.query",
+            component="prompt",
+            name="query",
+            type=str,
+            required=True,
+            targets=["prompt.query", "builder.query"],
         ),
     }
 
@@ -110,8 +118,7 @@ def test_map_flat_inputs_empty_returns_original():
 def test_map_flat_inputs_unresolved_falls_back():
     input_resolutions = {
         "query": InputResolution(
-            path="prompt.query", component="prompt", name="query",
-            type=str, required=True, targets=["prompt.query"]
+            path="prompt.query", component="prompt", name="query", type=str, required=True, targets=["prompt.query"]
         ),
     }
     flat_inputs = {"query": "test", "unknown": "value"}
@@ -124,12 +131,15 @@ def test_map_flat_inputs_unresolved_falls_back():
 def test_create_dynamic_run_api_async_signature():
     input_resolutions = {
         "query": InputResolution(
-            path="prompt.query", component="prompt", name="query",
-            type=str, required=True, targets=["prompt.query"]
+            path="prompt.query", component="prompt", name="query", type=str, required=True, targets=["prompt.query"]
         ),
         "limit": InputResolution(
-            path="retriever.top_k", component="retriever", name="top_k",
-            type=int, required=False, targets=["retriever.top_k"]
+            path="retriever.top_k",
+            component="retriever",
+            name="top_k",
+            type=int,
+            required=False,
+            targets=["retriever.top_k"],
         ),
     }
 
@@ -147,8 +157,7 @@ def test_create_dynamic_run_api_async_signature():
 def test_create_dynamic_run_api_async_uses_any_when_type_none():
     input_resolutions = {
         "data": InputResolution(
-            path="comp.data", component="comp", name="data",
-            type=None, required=True, targets=["comp.data"]
+            path="comp.data", component="comp", name="data", type=None, required=True, targets=["comp.data"]
         ),
     }
 

@@ -1,8 +1,8 @@
 import importlib.util
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from anyio import Path
 
 from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_files, deploy_pipeline_yaml
