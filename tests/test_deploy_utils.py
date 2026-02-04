@@ -16,6 +16,7 @@ from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
+    _register_and_deploy_pipeline,
     _streaming_response_from_result,
     create_request_model_from_callable,
     create_response_model_from_callable,
@@ -506,6 +507,41 @@ def test_create_pipeline_wrapper_instance_missing_methods():
         match=re.escape("At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async"),
     ):
         create_pipeline_wrapper_instance(module)
+
+
+def test_register_and_deploy_pipeline_setup_is_idempotent():
+    """Test that setup() is not called again if pipeline is already initialized."""
+    setup_call_count = 0
+
+    class TrackingWrapper(BasePipelineWrapper):
+        def setup(self):
+            nonlocal setup_call_count
+            setup_call_count += 1
+            self.pipeline = Pipeline()
+
+        def run_api(self, value: int) -> dict:
+            return {"result": value}
+
+    wrapper = TrackingWrapper()
+
+    # Manually call setup first (simulating pre-initialization)
+    wrapper.setup()
+    assert setup_call_count == 1
+
+    # Store reference to the pipeline instance
+    first_pipeline = wrapper.pipeline
+
+    # Deploy the wrapper - setup should NOT be called again
+    _register_and_deploy_pipeline(
+        pipeline_name="tracking_test",
+        pipeline_wrapper=wrapper,
+        app=None,
+        overwrite=False,
+    )
+
+    # Verify setup was not called again
+    assert setup_call_count == 1
+    assert wrapper.pipeline is first_pipeline
 
 
 def test_deploy_pipeline_files_without_saving(test_settings, mocker):

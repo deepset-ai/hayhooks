@@ -420,9 +420,10 @@ def _register_and_deploy_pipeline(
             msg = f"Pipeline '{pipeline_name}' already exists"
             raise PipelineAlreadyExistsError(msg)
 
-    # Call setup to initialize the pipeline
-    clog.debug("Running setup() on pipeline wrapper")
-    pipeline_wrapper.setup()
+    # Call setup to initialize the pipeline (if not already done)
+    if getattr(pipeline_wrapper, "pipeline", None) is None:
+        clog.debug("Running setup() on pipeline wrapper")
+        pipeline_wrapper.setup()
 
     # Determine which run method to use for model generation (prefer async)
     if pipeline_wrapper._is_run_api_async_implemented:
