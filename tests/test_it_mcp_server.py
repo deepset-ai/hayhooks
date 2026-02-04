@@ -30,26 +30,26 @@ def cleanup_test_pipelines():
 
 
 @pytest.fixture
-def deploy_chat_with_website_mcp_pipeline():
+async def deploy_chat_with_website_mcp_pipeline():
     pipeline_name = "chat_with_website"
     pipeline_wrapper_path = Path("tests/test_files/files/chat_with_website_mcp/pipeline_wrapper.py")
     pipeline_yml_path = Path("tests/test_files/files/chat_with_website_mcp/chat_with_website.yml")
     files = {
-        "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
-        "chat_with_website.yml": pipeline_yml_path.read_text(),
+        "pipeline_wrapper.py": await pipeline_wrapper_path.read_text(),
+        "chat_with_website.yml": await pipeline_yml_path.read_text(),
     }
     deploy_pipeline_files(pipeline_name=pipeline_name, files=files, save_files=False)
     return pipeline_name
 
 
 @pytest.fixture
-def deploy_async_question_answer_mcp_pipeline():
+async def deploy_async_question_answer_mcp_pipeline():
     pipeline_name = "async_question_answer"
     pipeline_wrapper_path = Path("tests/test_files/files/async_question_answer/pipeline_wrapper.py")
     pipeline_yml_path = Path("tests/test_files/files/async_question_answer/question_answer.yml")
     files = {
-        "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
-        "question_answer.yml": pipeline_yml_path.read_text(),
+        "pipeline_wrapper.py": await pipeline_wrapper_path.read_text(),
+        "question_answer.yml": await pipeline_yml_path.read_text(),
     }
     deploy_pipeline_files(pipeline_name=pipeline_name, files=files, save_files=False)
     return pipeline_name
@@ -160,10 +160,11 @@ async def test_call_pipeline_as_tool_with_invalid_pipeline_name(mcp_server_insta
 
 
 @pytest.fixture
-def deploy_yaml_calc_pipeline():
+async def deploy_yaml_calc_pipeline():
     pipeline_name = "calc"
     yaml_path = Path("tests/test_files/yaml/sample_calc_pipeline.yml")
-    deploy_pipeline_yaml(pipeline_name=pipeline_name, source_code=yaml_path.read_text(), options={"save_file": False})
+    source_code = await yaml_path.read_text()
+    deploy_pipeline_yaml(pipeline_name=pipeline_name, source_code=source_code, options={"save_file": False})
     return pipeline_name
 
 
@@ -207,10 +208,10 @@ async def test_ensure_send_tool_list_changed_notification_after_deploy_or_undepl
                 {
                     "name": "chat_with_website",
                     "files": {
-                        "pipeline_wrapper.py": Path(
+                        "pipeline_wrapper.py": await Path(
                             "tests/test_files/files/chat_with_website_mcp/pipeline_wrapper.py"
                         ).read_text(),
-                        "chat_with_website.yml": Path(
+                        "chat_with_website.yml": await Path(
                             "tests/test_files/files/chat_with_website_mcp/chat_with_website.yml"
                         ).read_text(),
                     },
