@@ -245,7 +245,11 @@ class YAMLPipelineWrapper(BasePipelineWrapper):
         Initialize the Haystack AsyncPipeline from the stored YAML source.
 
         This method is called during deployment to instantiate the actual pipeline.
+        If the pipeline is already initialized, this method does nothing.
         """
+        if getattr(self, "pipeline", None) is not None:
+            return
+
         log.debug("Setting up YAMLPipelineWrapper - loading AsyncPipeline from YAML")
         try:
             self.pipeline = AsyncPipeline.loads(self._yaml_source)

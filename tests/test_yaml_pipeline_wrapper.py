@@ -267,6 +267,22 @@ def test_setup_loads_async_pipeline(sample_calc_yaml):
     assert isinstance(wrapper.pipeline, AsyncPipeline)
 
 
+def test_setup_is_idempotent(sample_calc_yaml):
+    """Test that calling setup twice does not reload the pipeline."""
+    wrapper = YAMLPipelineWrapper.from_yaml(sample_calc_yaml)
+    wrapper.setup()
+
+    # Store reference to first pipeline instance
+    first_pipeline = wrapper.pipeline
+    assert isinstance(first_pipeline, AsyncPipeline)
+
+    # Call setup again
+    wrapper.setup()
+
+    # Should be the exact same instance (not reloaded)
+    assert wrapper.pipeline is first_pipeline
+
+
 def test_run_api_async_has_correct_signature(sample_calc_yaml):
     wrapper = YAMLPipelineWrapper.from_yaml(sample_calc_yaml)
 
