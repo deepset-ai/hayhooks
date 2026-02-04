@@ -6,7 +6,7 @@ import pytest
 from haystack.dataclasses import ChatMessage
 
 from hayhooks.server.exceptions import InvalidYamlIOError
-from hayhooks.server.utils.deploy_utils import map_flat_inputs_to_components
+from hayhooks.server.utils.yaml_pipeline_wrapper import _map_flat_inputs_to_components
 from hayhooks.server.utils.yaml_utils import (
     InputResolution,
     OutputResolution,
@@ -374,7 +374,7 @@ def test_map_flat_inputs_to_components_expands_targets():
     yaml_source = yaml_path.read_text()
     resolved = get_inputs_outputs_from_yaml(yaml_source)
 
-    expanded = map_flat_inputs_to_components({"query": "value"}, resolved["inputs"])
+    expanded = _map_flat_inputs_to_components({"query": "value"}, resolved["inputs"])
 
     assert expanded == {
         "chat_summary_prompt_builder": {"query": "value"},

@@ -17,7 +17,6 @@ from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
     _streaming_response_from_result,
-    add_pipeline_wrapper_to_registry,
     create_request_model_from_callable,
     create_response_model_from_callable,
     deploy_pipeline_files,
@@ -597,7 +596,7 @@ def test_undeploy_pipeline_without_app(test_settings):
     assert not pipeline_dir.exists()
 
 
-def test_add_pipeline_to_registry_with_async_run_api():
+def test_deploy_pipeline_files_with_async_run_api():
     pipeline_name = "async_question_answer"
     pipeline_wrapper_path = Path("tests/test_files/files/async_question_answer/pipeline_wrapper.py")
     pipeline_yml_path = Path("tests/test_files/files/async_question_answer/question_answer.yml")
@@ -606,8 +605,10 @@ def test_add_pipeline_to_registry_with_async_run_api():
         "question_answer.yml": pipeline_yml_path.read_text(),
     }
 
-    pipeline_wrapper = add_pipeline_wrapper_to_registry(pipeline_name=pipeline_name, files=files, save_files=False)
-    assert registry.get(pipeline_name) == pipeline_wrapper
+    deploy_pipeline_files(pipeline_name=pipeline_name, files=files, save_files=False)
+
+    pipeline_wrapper = registry.get(pipeline_name)
+    assert pipeline_wrapper is not None
 
     metadata = registry.get_metadata(pipeline_name)
     assert metadata is not None

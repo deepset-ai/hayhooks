@@ -5,10 +5,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from fastapi.concurrency import run_in_threadpool
-from haystack import AsyncPipeline
 from haystack.lazy_imports import LazyImport
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -18,15 +16,9 @@ from starlette.types import Receive, Scope, Send
 from hayhooks.server.app import init_pipeline_dir
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
-from hayhooks.server.pipelines.registry import PipelineType
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.utils.deploy_utils import (
-    add_pipeline_wrapper_to_registry,
-    deploy_pipeline_files,
-    read_pipeline_files_from_dir,
-    undeploy_pipeline,
-)
+from hayhooks.server.utils.deploy_utils import deploy_pipeline_files, read_pipeline_files_from_dir, undeploy_pipeline
 from hayhooks.settings import settings
 
 PIPELINE_NAME_SCHEMA = {
@@ -65,8 +57,10 @@ def deploy_pipelines() -> None:
         log.debug("Deploying pipeline from '{}'", pipeline_dir)
 
         try:
-            add_pipeline_wrapper_to_registry(
-                pipeline_name=pipeline_dir.name, files=read_pipeline_files_from_dir(pipeline_dir)
+            deploy_pipeline_files(
+                pipeline_name=pipeline_dir.name,
+                files=read_pipeline_files_from_dir(pipeline_dir),
+                save_files=False,  # Files already exist on disk
             )
         except Exception as e:
             log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
@@ -143,42 +137,23 @@ async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"
     mcp_import.check()
 
     log.debug("Calling pipeline as tool '{}' with arguments: {}", name, arguments)
-    pipeline: PipelineType | None = registry.get(name)
+    pipeline_wrapper: BasePipelineWrapper | None = registry.get(name)
 
-    if not pipeline:
+    if not pipeline_wrapper:
         msg = f"Pipeline '{name}' not found"
         raise ValueError(msg)
 
-    if isinstance(pipeline, BasePipelineWrapper):
-        if pipeline._is_run_api_async_implemented:
-            result = await pipeline.run_api_async(**arguments)
-        else:
-            result = await run_in_threadpool(pipeline.run_api, **arguments)
+    if pipeline_wrapper._is_run_api_async_implemented:
+        result = await pipeline_wrapper.run_api_async(**arguments)
+    else:
+        result = await run_in_threadpool(pipeline_wrapper.run_api, **arguments)
 
-        log.trace("Pipeline '{}' returned result: {}", name, result)
-        return [TextContent(text=result, type="text")]
+    log.trace("Pipeline '{}' returned result: {}", name, result)
 
-    if isinstance(pipeline, AsyncPipeline):
-        # Get include_outputs_from from metadata if available
-        metadata = registry.get_metadata(name) or {}
-        outputs_to_include = metadata.get("include_outputs_from")
-        kwargs: dict[str, Any] = {
-            "data": arguments,
-        }
-
-        if outputs_to_include is not None:
-            kwargs["include_outputs_from"] = outputs_to_include
-
-        result = await pipeline.run_async(**kwargs)
-
-        log.trace("YAML Pipeline '{}' returned result: {}", name, result)
+    # Format result: if it's a dict (from YAML pipeline), convert to JSON string
+    if isinstance(result, dict):
         return [TextContent(text=json.dumps(result), type="text")]
-
-    msg = (
-        f"Pipeline '{name}' is not a supported type for MCP tools. "
-        "Expected a BasePipelineWrapper or AsyncPipeline instance."
-    )
-    raise ValueError(msg)
+    return [TextContent(text=str(result), type="text")]
 
 
 async def notify_client(server: "Server") -> None:

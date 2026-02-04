@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from hayhooks.server.pipelines import registry
-from hayhooks.server.utils.deploy_utils import add_pipeline_wrapper_to_registry, add_yaml_pipeline_to_registry
+from hayhooks.server.utils.deploy_utils import deploy_pipeline_files, deploy_pipeline_yaml
 from hayhooks.server.utils.mcp_utils import CoreTools, create_mcp_server
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -38,7 +38,7 @@ def deploy_chat_with_website_mcp_pipeline():
         "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
         "chat_with_website.yml": pipeline_yml_path.read_text(),
     }
-    add_pipeline_wrapper_to_registry(pipeline_name=pipeline_name, files=files)
+    deploy_pipeline_files(pipeline_name=pipeline_name, files=files, save_files=False)
     return pipeline_name
 
 
@@ -51,7 +51,7 @@ def deploy_async_question_answer_mcp_pipeline():
         "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
         "question_answer.yml": pipeline_yml_path.read_text(),
     }
-    add_pipeline_wrapper_to_registry(pipeline_name=pipeline_name, files=files)
+    deploy_pipeline_files(pipeline_name=pipeline_name, files=files, save_files=False)
     return pipeline_name
 
 
@@ -163,7 +163,7 @@ async def test_call_pipeline_as_tool_with_invalid_pipeline_name(mcp_server_insta
 def deploy_yaml_calc_pipeline():
     pipeline_name = "calc"
     yaml_path = Path("tests/test_files/yaml/sample_calc_pipeline.yml")
-    add_yaml_pipeline_to_registry(pipeline_name=pipeline_name, source_code=yaml_path.read_text())
+    deploy_pipeline_yaml(pipeline_name=pipeline_name, source_code=yaml_path.read_text(), options={"save_file": False})
     return pipeline_name
 
 
