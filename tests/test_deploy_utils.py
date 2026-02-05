@@ -16,8 +16,8 @@ from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
+    _register_and_deploy_pipeline,
     _streaming_response_from_result,
-    add_pipeline_wrapper_to_registry,
     create_request_model_from_callable,
     create_response_model_from_callable,
     deploy_pipeline_files,
@@ -509,6 +509,41 @@ def test_create_pipeline_wrapper_instance_missing_methods():
         create_pipeline_wrapper_instance(module)
 
 
+def test_register_and_deploy_pipeline_setup_is_idempotent():
+    """Test that setup() is not called again if pipeline is already initialized."""
+    setup_call_count = 0
+
+    class TrackingWrapper(BasePipelineWrapper):
+        def setup(self):
+            nonlocal setup_call_count
+            setup_call_count += 1
+            self.pipeline = Pipeline()
+
+        def run_api(self, value: int) -> dict:
+            return {"result": value}
+
+    wrapper = TrackingWrapper()
+
+    # Manually call setup first (simulating pre-initialization)
+    wrapper.setup()
+    assert setup_call_count == 1
+
+    # Store reference to the pipeline instance
+    first_pipeline = wrapper.pipeline
+
+    # Deploy the wrapper - setup should NOT be called again
+    _register_and_deploy_pipeline(
+        pipeline_name="tracking_test",
+        pipeline_wrapper=wrapper,
+        app=None,
+        overwrite=False,
+    )
+
+    # Verify setup was not called again
+    assert setup_call_count == 1
+    assert wrapper.pipeline is first_pipeline
+
+
 def test_deploy_pipeline_files_without_saving(test_settings, mocker):
     mock_app = mocker.Mock()
 
@@ -597,7 +632,7 @@ def test_undeploy_pipeline_without_app(test_settings):
     assert not pipeline_dir.exists()
 
 
-def test_add_pipeline_to_registry_with_async_run_api():
+def test_deploy_pipeline_files_with_async_run_api():
     pipeline_name = "async_question_answer"
     pipeline_wrapper_path = Path("tests/test_files/files/async_question_answer/pipeline_wrapper.py")
     pipeline_yml_path = Path("tests/test_files/files/async_question_answer/question_answer.yml")
@@ -606,8 +641,10 @@ def test_add_pipeline_to_registry_with_async_run_api():
         "question_answer.yml": pipeline_yml_path.read_text(),
     }
 
-    pipeline_wrapper = add_pipeline_wrapper_to_registry(pipeline_name=pipeline_name, files=files, save_files=False)
-    assert registry.get(pipeline_name) == pipeline_wrapper
+    deploy_pipeline_files(pipeline_name=pipeline_name, files=files, save_files=False)
+
+    pipeline_wrapper = registry.get(pipeline_name)
+    assert pipeline_wrapper is not None
 
     metadata = registry.get_metadata(pipeline_name)
     assert metadata is not None

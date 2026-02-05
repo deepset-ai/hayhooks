@@ -9,10 +9,12 @@ from hayhooks.server.pipelines.utils import (
     streaming_generator,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 
 __all__ = [
     "BasePipelineWrapper",
     "SSEStream",
+    "YAMLPipelineWrapper",
     "async_streaming_generator",
     "create_app",
     "default_on_pipeline_end",

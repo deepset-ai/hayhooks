@@ -4,7 +4,8 @@ import pytest
 from haystack import AsyncPipeline
 
 from hayhooks.server.pipelines.registry import registry
-from hayhooks.server.utils.deploy_utils import add_yaml_pipeline_to_registry
+from hayhooks.server.utils.deploy_utils import deploy_pipeline_yaml
+from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 
 
 @pytest.fixture(autouse=True)
@@ -15,64 +16,43 @@ def cleanup_test_pipelines():
 
 
 def test_deploy_pipeline_with_inputs_outputs():
-    pipeline_file = Path(__file__).parent / "test_files/yaml/inputs_outputs_pipeline.yml"
+    # Use sample_calc_pipeline which doesn't require optional dependencies
+    pipeline_file = Path(__file__).parent / "test_files/yaml/sample_calc_pipeline.yml"
     pipeline_data = {
         "name": pipeline_file.stem,
         "source_code": pipeline_file.read_text(),
     }
 
-    add_yaml_pipeline_to_registry(
+    deploy_pipeline_yaml(
         pipeline_name=pipeline_data["name"],
         source_code=pipeline_data["source_code"],
+        options={"save_file": False},
     )
 
-    assert registry.get(pipeline_data["name"]) is not None
+    wrapper = registry.get(pipeline_data["name"])
+    assert wrapper is not None
+    assert isinstance(wrapper, YAMLPipelineWrapper)
 
     metadata = registry.get_metadata(pipeline_data["name"])
     assert metadata is not None
-    assert metadata["request_model"] is not None
-    assert metadata["response_model"] is not None
 
-    assert metadata["request_model"].model_json_schema() == {
-        "properties": {
-            "urls": {
-                "title": "Urls",
-                "type": "array",
-                "items": {"type": "string"},
-            },
-            "query": {
-                "title": "Query",
-            },
-        },
-        "required": ["urls", "query"],
-        "title": "Inputs_outputs_pipelineRunRequest",
-        "type": "object",
-    }
-
-    assert metadata["response_model"].model_json_schema() == {
-        "properties": {
-            "result": {
-                "additionalProperties": True,
-                "description": "Pipeline result",
-                "type": "object",
-                "title": "Result",
-            },
-        },
-        "required": ["result"],
-        "type": "object",
-        "title": "Inputs_outputs_pipelineRunResponse",
-    }
+    # Verify input_resolutions metadata exists
+    assert "input_resolutions" in metadata
+    assert "value" in metadata["input_resolutions"]
 
 
-def test_yaml_pipeline_is_async_pipeline():
-    pipeline_file = Path(__file__).parent / "test_files/yaml/inputs_outputs_pipeline.yml"
+def test_yaml_pipeline_wrapper_has_async_pipeline():
+    # Use sample_calc_pipeline which doesn't require optional dependencies
+    pipeline_file = Path(__file__).parent / "test_files/yaml/sample_calc_pipeline.yml"
     pipeline_name = pipeline_file.stem
     source_code = pipeline_file.read_text()
 
-    add_yaml_pipeline_to_registry(pipeline_name=pipeline_name, source_code=source_code)
+    deploy_pipeline_yaml(pipeline_name=pipeline_name, source_code=source_code, options={"save_file": False})
 
-    pipeline_instance = registry.get(pipeline_name)
-    assert isinstance(pipeline_instance, AsyncPipeline)
+    wrapper = registry.get(pipeline_name)
+    assert isinstance(wrapper, YAMLPipelineWrapper)
+    # The internal pipeline should be an AsyncPipeline
+    assert isinstance(wrapper.pipeline, AsyncPipeline)
 
 
 def test_deploy_yaml_pipeline_with_utf8_characters():
@@ -88,12 +68,15 @@ def test_deploy_yaml_pipeline_with_utf8_characters():
     assert "こんにちは" in pipeline_data["source_code"]
     assert "мир" in pipeline_data["source_code"]
 
-    add_yaml_pipeline_to_registry(
+    deploy_pipeline_yaml(
         pipeline_name=pipeline_data["name"],
         source_code=pipeline_data["source_code"],
+        options={"save_file": False},
     )
 
-    assert registry.get(pipeline_data["name"]) is not None
+    wrapper = registry.get(pipeline_data["name"])
+    assert wrapper is not None
+    assert isinstance(wrapper, YAMLPipelineWrapper)
 
     metadata = registry.get_metadata(pipeline_data["name"])
     assert metadata is not None
@@ -110,13 +93,16 @@ def test_deploy_yaml_pipeline_with_streaming_components():
     # Verify streaming_components is in the YAML
     assert "streaming_components:" in pipeline_data["source_code"]
 
-    add_yaml_pipeline_to_registry(
+    deploy_pipeline_yaml(
         pipeline_name=pipeline_data["name"],
         source_code=pipeline_data["source_code"],
+        options={"save_file": False},
     )
 
     # Verify pipeline was added to registry
-    assert registry.get(pipeline_data["name"]) is not None
+    wrapper = registry.get(pipeline_data["name"])
+    assert wrapper is not None
+    assert isinstance(wrapper, YAMLPipelineWrapper)
 
     # Verify metadata contains streaming_components configuration
     metadata = registry.get_metadata(pipeline_data["name"])
@@ -125,21 +111,21 @@ def test_deploy_yaml_pipeline_with_streaming_components():
     assert metadata["streaming_components"] is not None
     assert metadata["streaming_components"] == ["llm_1", "llm_2"]
 
-    # Verify it's an AsyncPipeline
-    pipeline_instance = registry.get(pipeline_data["name"])
-    assert isinstance(pipeline_instance, AsyncPipeline)
+    # Verify the wrapper has an AsyncPipeline internally
+    assert isinstance(wrapper.pipeline, AsyncPipeline)
 
 
 def test_deploy_yaml_pipeline_without_streaming_components():
     """Test that pipelines without streaming_components field have None in metadata."""
-    pipeline_file = Path(__file__).parent / "test_files/yaml/inputs_outputs_pipeline.yml"
+    # Use sample_calc_pipeline which doesn't require optional dependencies
+    pipeline_file = Path(__file__).parent / "test_files/yaml/sample_calc_pipeline.yml"
     pipeline_name = pipeline_file.stem
     source_code = pipeline_file.read_text()
 
     # Verify streaming_components is NOT in this YAML
     assert "streaming_components:" not in source_code
 
-    add_yaml_pipeline_to_registry(pipeline_name=pipeline_name, source_code=source_code)
+    deploy_pipeline_yaml(pipeline_name=pipeline_name, source_code=source_code, options={"save_file": False})
 
     # Verify metadata contains streaming_components as None (default behavior)
     metadata = registry.get_metadata(pipeline_name)
@@ -159,13 +145,16 @@ def test_deploy_yaml_pipeline_with_streaming_components_all_keyword():
     # Verify streaming_components: all is in the YAML
     assert "streaming_components: all" in pipeline_data["source_code"]
 
-    add_yaml_pipeline_to_registry(
+    deploy_pipeline_yaml(
         pipeline_name=pipeline_data["name"],
         source_code=pipeline_data["source_code"],
+        options={"save_file": False},
     )
 
     # Verify pipeline was added to registry
-    assert registry.get(pipeline_data["name"]) is not None
+    wrapper = registry.get(pipeline_data["name"])
+    assert wrapper is not None
+    assert isinstance(wrapper, YAMLPipelineWrapper)
 
     # Verify metadata contains streaming_components as "all"
     metadata = registry.get_metadata(pipeline_data["name"])
@@ -173,6 +162,5 @@ def test_deploy_yaml_pipeline_with_streaming_components_all_keyword():
     assert "streaming_components" in metadata
     assert metadata["streaming_components"] == "all"
 
-    # Verify it's an AsyncPipeline
-    pipeline_instance = registry.get(pipeline_data["name"])
-    assert isinstance(pipeline_instance, AsyncPipeline)
+    # Verify the wrapper has an AsyncPipeline internally
+    assert isinstance(wrapper.pipeline, AsyncPipeline)

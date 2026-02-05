@@ -1,11 +1,11 @@
 import importlib.util
-from pathlib import Path
 
 import pytest
+from anyio import Path
 
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest
-from hayhooks.server.utils.deploy_utils import add_pipeline_wrapper_to_registry
+from hayhooks.server.utils.deploy_utils import deploy_pipeline_files
 from hayhooks.server.utils.mcp_utils import (
     PIPELINE_NAME_SCHEMA,
     CoreTools,
@@ -30,23 +30,23 @@ def cleanup_test_pipelines():
 
 
 @pytest.fixture
-def deploy_chat_with_website_mcp():
+async def deploy_chat_with_website_mcp():
     pipeline_wrapper_path = Path("tests/test_files/files/chat_with_website_mcp/pipeline_wrapper.py")
     pipeline_yml_path = Path("tests/test_files/files/chat_with_website_mcp/chat_with_website.yml")
     files = {
-        "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
-        "chat_with_website.yml": pipeline_yml_path.read_text(),
+        "pipeline_wrapper.py": await pipeline_wrapper_path.read_text(),
+        "chat_with_website.yml": await pipeline_yml_path.read_text(),
     }
-    add_pipeline_wrapper_to_registry(pipeline_name="chat_with_website", files=files)
+    deploy_pipeline_files(pipeline_name="chat_with_website", files=files, save_files=False)
 
 
 @pytest.fixture
-def deploy_chat_with_website_mcp_skip():
+async def deploy_chat_with_website_mcp_skip():
     pipeline_wrapper_path = Path("tests/test_files/files/chat_with_website_mcp_skip/pipeline_wrapper.py")
     files = {
-        "pipeline_wrapper.py": pipeline_wrapper_path.read_text(),
+        "pipeline_wrapper.py": await pipeline_wrapper_path.read_text(),
     }
-    add_pipeline_wrapper_to_registry(pipeline_name="chat_with_website_mcp_skip", files=files)
+    deploy_pipeline_files(pipeline_name="chat_with_website_mcp_skip", files=files, save_files=False)
 
 
 @pytest.mark.asyncio
@@ -76,10 +76,12 @@ async def test_list_pipelines_as_tools(deploy_chat_with_website_mcp):
 @pytest.mark.asyncio
 async def test_list_pipeline_without_description():
     files = {
-        "pipeline_wrapper.py": Path("tests/test_files/files/chat_with_website/pipeline_wrapper.py").read_text(),
-        "chat_with_website.yml": Path("tests/test_files/files/chat_with_website/chat_with_website.yml").read_text(),
+        "pipeline_wrapper.py": await Path("tests/test_files/files/chat_with_website/pipeline_wrapper.py").read_text(),
+        "chat_with_website.yml": await Path(
+            "tests/test_files/files/chat_with_website/chat_with_website.yml"
+        ).read_text(),
     }
-    add_pipeline_wrapper_to_registry(pipeline_name="chat_with_website", files=files)
+    deploy_pipeline_files(pipeline_name="chat_with_website", files=files, save_files=False)
 
     tools = await list_pipelines_as_tools()
 
