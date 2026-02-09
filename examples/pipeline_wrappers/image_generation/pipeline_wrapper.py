@@ -15,7 +15,7 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         from huggingface_hub import InferenceClient
 
-        self.client = InferenceClient()
+        self.client = InferenceClient(provider="auto")
 
     def run_api(
         self,
