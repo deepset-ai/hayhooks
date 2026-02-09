@@ -1,6 +1,6 @@
 # File Response Support
 
-Hayhooks supports returning binary files (images, PDFs, audio, etc.) directly from `run_api` endpoints. When `run_api` returns a FastAPI `Response` object, Hayhooks passes it straight to the client — bypassing JSON serialization entirely.
+Hayhooks supports returning binary files (images, PDFs, audio, etc.) directly from `run_api` endpoints. When `run_api` returns a FastAPI [`Response`](https://fastapi.tiangolo.com/advanced/response-directly/) object, Hayhooks passes it straight to the client — bypassing JSON serialization entirely. See also the FastAPI docs on [custom responses](https://fastapi.tiangolo.com/advanced/custom-response/).
 
 ## Overview
 
