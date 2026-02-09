@@ -6,7 +6,7 @@ It uses the [FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-sch
 
 ## Key Concept
 
-When `run_api` returns a FastAPI `Response` object (such as `FileResponse`, `StreamingResponse`, or plain `Response`), hayhooks passes it directly to the client — bypassing the usual Pydantic JSON response wrapper. This makes it straightforward to return images, PDFs, audio files, or any other binary content.
+When `run_api` returns a FastAPI `Response` object (such as `FileResponse`, `StreamingResponse`, or plain `Response`), Hayhooks passes it directly to the client — bypassing the usual Pydantic JSON response wrapper. This makes it straightforward to return images, PDFs, audio files, or any other binary content.
 
 ## Prerequisites
 
