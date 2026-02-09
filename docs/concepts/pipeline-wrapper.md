@@ -217,7 +217,7 @@ def run_api(self, prompt: str) -> FileResponse:
     return FileResponse(path=tmp.name, media_type="image/png", filename="result.png")
 ```
 
-Any `Response` subclass works — `FileResponse` for files on disk, `Response` for in-memory bytes, or `StreamingResponse` for large content. When Hayhooks detects a `Response` return type, it registers the endpoint with `response_model=None` (following FastAPI best practices) and returns the response directly at runtime.
+Any `Response` subclass works — `FileResponse` for files on disk, `Response` for in-memory bytes, or `StreamingResponse` for large content. When Hayhooks detects a `Response` return type, it registers the endpoint with `response_model=None` (skipping JSON schema generation) and returns the response directly at runtime.
 
 | Method            | What you return             | Response media type    | Notes                                             |
 |-------------------|-----------------------------|------------------------|----------------------------------------------------|

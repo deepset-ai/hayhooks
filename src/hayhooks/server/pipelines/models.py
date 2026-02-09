@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any, get_origin
 
 from docstring_parser.common import Docstring
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, create_model
 
 from hayhooks.server.exceptions import PipelineWrapperError
@@ -101,8 +101,8 @@ def create_response_model_from_callable(
 
     Returns None when the return type indicates the endpoint will bypass JSON serialization
     (i.e. streaming generators or Response subclasses). In these cases, the response is handled
-    directly at runtime and no Pydantic model is needed. Returning None follows FastAPI's convention
-    of passing ``response_model=None`` for non-JSON endpoints.
+    directly at runtime and no Pydantic model is needed. Returning None causes the route to be
+    registered with ``response_model=None``, telling FastAPI to skip response validation.
 
     Args:
         func: The callable (function/method) to analyze
@@ -119,14 +119,50 @@ def create_response_model_from_callable(
         msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"  # type:ignore[attr-defined]
         raise PipelineWrapperError(msg)
 
-    # When a pipeline wrapper returns a Generator/AsyncGenerator (streaming) or a Response subclass
-    # (e.g. FileResponse), there is no JSON response to validate. At runtime these are intercepted
-    # by _streaming_response_from_result() and returned directly. Returning None here signals to
-    # add_pipeline_api_route() that it should pass response_model=None to FastAPI, which is the
-    # idiomatic way to declare non-JSON endpoints.
+    # Streaming generators and Response subclasses (e.g. FileResponse) produce non-JSON output
+    # that cannot be described by a Pydantic model. At runtime, these are intercepted by
+    # _streaming_response_from_result() in deploy_utils.py and returned directly to the client,
+    # so a Pydantic response model is never used for validation or serialization.
+    #
+    # Returning None here causes add_pipeline_api_route() to register the FastAPI route with
+    # response_model=None, which tells FastAPI to skip response validation and not generate a
+    # JSON schema for this endpoint. The companion function get_response_class_from_callable()
+    # provides the concrete response_class (e.g. FileResponse, StreamingResponse) so that
+    # OpenAPI docs also show the correct Content-Type.
     if _is_streaming_type(return_type) or _is_response_type(return_type):
         return None
 
     return_description = docstring.returns.description if docstring.returns else None
 
     return create_model(f"{model_name}Response", result=(return_type, Field(..., description=return_description)))
+
+
+def get_response_class_from_callable(func: Callable) -> type[Response] | None:
+    """
+    Determine the appropriate ``response_class`` for a FastAPI route.
+
+    FastAPI uses ``response_class`` to set the Content-Type header in OpenAPI docs and to decide
+    how to wrap a return value that is not already a ``Response`` instance. By returning the
+    concrete Response subclass here, we produce more accurate OpenAPI documentation for endpoints
+    that return files or streams.
+
+    Returns:
+        * The annotated Response subclass (e.g. ``FileResponse``) when the return type is a
+          Response subclass.
+        * ``StreamingResponse`` when the return type is a ``Generator`` or ``AsyncGenerator``,
+          since generators are wrapped in ``StreamingResponse`` at runtime.
+        * ``None`` for normal JSON endpoints (the caller should omit the ``response_class``
+          kwarg so FastAPI uses its default ``JSONResponse``).
+    """
+    return_type = inspect.signature(func).return_annotation
+
+    if return_type is inspect.Signature.empty:
+        return None
+
+    if _is_response_type(return_type):
+        return return_type
+
+    if _is_streaming_type(return_type):
+        return StreamingResponse
+
+    return None

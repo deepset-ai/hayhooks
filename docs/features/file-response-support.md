@@ -88,11 +88,13 @@ def run_api(self, query: str) -> StreamingResponse:
 
 ## How It Works
 
-When Hayhooks deploys a pipeline whose `run_api` return type is a `Response` subclass, two things happen:
+When Hayhooks deploys a pipeline whose `run_api` return type is a `Response` subclass (or a generator), three things happen at deploy time:
 
-1. **At deploy time**: `create_response_model_from_callable` detects the `Response` return type and returns `None` instead of a Pydantic model. This causes FastAPI to register the route with `response_model=None`, which is the idiomatic way to declare non-JSON endpoints.
+1. **`response_model=None`**: `create_response_model_from_callable` detects the `Response` return type and returns `None` instead of a Pydantic model. This tells FastAPI to skip response validation and not generate a JSON schema for this endpoint.
 
-2. **At runtime**: The endpoint handler checks if the result is a `Response` instance and returns it directly, skipping JSON wrapping:
+2. **`response_class`**: `get_response_class_from_callable` returns the concrete response class (e.g. `FileResponse`, `StreamingResponse`) so that OpenAPI docs show the correct Content-Type for the endpoint instead of `application/json`.
+
+3. **At runtime**: The endpoint handler checks if the result is a `Response` instance and returns it directly, skipping JSON wrapping:
 
     ```python
     # From deploy_utils.py
@@ -100,7 +102,7 @@ When Hayhooks deploys a pipeline whose `run_api` return type is a `Response` sub
         return result
     ```
 
-This is the same mechanism used for streaming generators — both bypass Pydantic serialization.
+This is the same mechanism used for streaming generators — both bypass Pydantic serialization. Generators additionally get `StreamingResponse` as their `response_class`.
 
 ## API Usage
 
