@@ -55,7 +55,7 @@ The `pipeline_wrapper.py`:
 2. Saves the returned PIL Image to a temporary file
 3. Returns a FastAPI `FileResponse` pointing to that file
 
-Because `FileResponse` is a subclass of `Response`, hayhooks detects this at deploy time and replaces
+Because `FileResponse` is a subclass of `Response`, Hayhooks detects this at deploy time and replaces
 the return type with `Any` for the Pydantic response model (similar to how `Generator`/`AsyncGenerator`
 are handled). At runtime, the `Response` object is detected and returned directly to the client:
 
