@@ -2,12 +2,12 @@ import inspect
 import re
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
 
 import docstring_parser
 import pytest
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from haystack import Pipeline
 
@@ -21,6 +21,7 @@ from hayhooks.server.utils.deploy_utils import (
     create_request_model_from_callable,
     create_response_model_from_callable,
     deploy_pipeline_files,
+    get_response_class_from_callable,
     save_pipeline_files,
     undeploy_pipeline,
 )
@@ -444,6 +445,85 @@ def test_create_response_model_no_docstring():
     assert schema["properties"]["result"]["type"] == "integer"
     assert schema["properties"]["result"].get("description") is None
     assert "result" in schema["required"]
+
+
+@pytest.mark.parametrize(
+    "return_type",
+    [
+        Response,
+        FileResponse,
+        StreamingResponse,
+        Generator,
+        AsyncGenerator,
+        Generator[str, None, None],
+        AsyncGenerator[str, None],
+    ],
+    ids=[
+        "Response",
+        "FileResponse",
+        "StreamingResponse",
+        "Generator",
+        "AsyncGenerator",
+        "Generator[str, None, None]",
+        "AsyncGenerator[str, None]",
+    ],
+)
+def test_create_response_model_returns_none_for_non_json_types(return_type):
+    func = lambda: None  # noqa: E731
+    func.__annotations__["return"] = return_type
+
+    docstring = docstring_parser.parse("")
+    result = create_response_model_from_callable(func, "Test", docstring)
+
+    assert result is None
+
+
+@pytest.mark.parametrize(
+    ("return_type", "expected_class"),
+    [
+        (Response, Response),
+        (FileResponse, FileResponse),
+        (StreamingResponse, StreamingResponse),
+        (Generator, StreamingResponse),
+        (AsyncGenerator, StreamingResponse),
+        (Generator[str, None, None], StreamingResponse),
+        (AsyncGenerator[str, None], StreamingResponse),
+    ],
+    ids=[
+        "Response",
+        "FileResponse",
+        "StreamingResponse",
+        "Generator",
+        "AsyncGenerator",
+        "Generator[str, None, None]",
+        "AsyncGenerator[str, None]",
+    ],
+)
+def test_get_response_class_for_non_json_types(return_type, expected_class):
+    func = lambda: None  # noqa: E731
+    func.__annotations__["return"] = return_type
+
+    result = get_response_class_from_callable(func)
+
+    assert result is expected_class
+
+
+def test_get_response_class_returns_none_for_json_types():
+    func = lambda: None  # noqa: E731
+    func.__annotations__["return"] = dict
+
+    result = get_response_class_from_callable(func)
+
+    assert result is None
+
+
+def test_get_response_class_returns_none_when_no_annotation():
+    def func():
+        pass
+
+    result = get_response_class_from_callable(func)
+
+    assert result is None
 
 
 def test_create_pipeline_wrapper_instance_success():

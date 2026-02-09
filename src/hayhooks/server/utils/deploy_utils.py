@@ -22,7 +22,11 @@ from hayhooks.open_webui import OpenWebUIEvent
 from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
-from hayhooks.server.pipelines.models import create_request_model_from_callable, create_response_model_from_callable
+from hayhooks.server.pipelines.models import (
+    create_request_model_from_callable,
+    create_response_model_from_callable,
+    get_response_class_from_callable,
+)
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.module_loader import (
@@ -256,7 +260,7 @@ async def _execute_pipeline_run(
 def create_run_endpoint_handler(
     pipeline_wrapper: BasePipelineWrapper,
     request_model: type[BaseModel],
-    response_model: type[BaseModel],
+    response_model: type[BaseModel] | None,
     requires_files: bool,
 ) -> Callable:
     """
@@ -270,7 +274,7 @@ def create_run_endpoint_handler(
     Args:
         pipeline_wrapper: The pipeline wrapper instance
         request_model: The request model
-        response_model: The response model
+        response_model: The response model, or None for streaming/file response endpoints
         requires_files: Whether the pipeline requires file uploads
 
     Returns:
@@ -284,6 +288,12 @@ def create_run_endpoint_handler(
         streaming_response = _streaming_response_from_result(result)
         if streaming_response is not None:
             return streaming_response
+
+        # response_model is None for streaming/file response endpoints, where
+        # _streaming_response_from_result() always handles the result above.
+        # For normal JSON endpoints, wrap the result in the Pydantic response model.
+        if response_model is None:
+            return result
 
         return response_model(result=result)
 
@@ -337,6 +347,7 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
     docstring = docstring_parser.parse(docstring_content)
     RunRequest = create_request_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
     RunResponse = create_response_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
+    RunResponseClass = get_response_class_from_callable(run_method_to_inspect)
 
     run_api_params = inspect.signature(run_method_to_inspect).parameters
     requires_files = "files" in run_api_params
@@ -354,15 +365,23 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
         if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run":
             app.routes.remove(route)
 
-    app.add_api_route(
-        path=f"/{pipeline_name}/run",
-        endpoint=run_endpoint,
-        methods=["POST"],
-        name=f"{pipeline_name}_run",
-        response_model=RunResponse,
-        tags=["pipelines"],
-        description=docstring.short_description or None,
-    )
+    # Build the route kwargs. response_class is only set for non-JSON endpoints
+    # (e.g. FileResponse for file downloads, StreamingResponse for generators) so that
+    # OpenAPI docs show the correct Content-Type. For normal JSON endpoints we omit it
+    # and let FastAPI use its default JSONResponse.
+    route_kwargs: dict[str, Any] = {
+        "path": f"/{pipeline_name}/run",
+        "endpoint": run_endpoint,
+        "methods": ["POST"],
+        "name": f"{pipeline_name}_run",
+        "response_model": RunResponse,
+        "tags": ["pipelines"],
+        "description": docstring.short_description or None,
+    }
+    if RunResponseClass is not None:
+        route_kwargs["response_class"] = RunResponseClass
+
+    app.add_api_route(**route_kwargs)
 
     registry.update_metadata(
         pipeline_name,
