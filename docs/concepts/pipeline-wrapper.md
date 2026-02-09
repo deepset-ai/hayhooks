@@ -200,6 +200,33 @@ async def run_api_async(self, query: str):
     )
 ```
 
+#### File responses
+
+Hayhooks can return binary files (images, PDFs, audio, etc.) directly from `run_api()` when you return a FastAPI `Response` object instead of a JSON-serializable value. This is useful for pipelines that generate images, documents, or other binary content.
+
+```python
+import tempfile
+from fastapi.responses import FileResponse
+
+def run_api(self, prompt: str) -> FileResponse:
+    image = self.generate_image(prompt)
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        image.save(tmp, format="PNG")
+
+    return FileResponse(path=tmp.name, media_type="image/png", filename="result.png")
+```
+
+Any `Response` subclass works — `FileResponse` for files on disk, `Response` for in-memory bytes, or `StreamingResponse` for large content. When Hayhooks detects a `Response` return type, it registers the endpoint with `response_model=None` (following FastAPI best practices) and returns the response directly at runtime.
+
+| Method            | What you return             | Response media type    | Notes                                             |
+|-------------------|-----------------------------|------------------------|----------------------------------------------------|
+| `run_api()`       | `FileResponse`              | Set by `media_type`    | Serves a file from disk.                           |
+| `run_api()`       | `Response(content=bytes)`   | Set by `media_type`    | Returns in-memory binary content.                  |
+| `run_api()`       | `StreamingResponse`         | Set by `media_type`    | Streams large content on the fly.                  |
+
+For a full working example, see the [Image Generation example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/image_generation) and the [File Response Support](../features/file-response-support.md) feature documentation.
+
 ## Optional Methods
 
 ### run_api_async()
@@ -829,6 +856,7 @@ For complete, working examples see:
 
 - **[Chat with Website (Streaming)](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_streaming)** - Pipeline with streaming chat completion support
 - **[Async Question Answer](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer)** - Async pipeline patterns with streaming
+- **[Image Generation (File Response)](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/image_generation)** - Returning binary files (images) from `run_api`
 - **[RAG Indexing & Query](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query)** - Complete RAG system with file uploads and Elasticsearch
 
 ## Next Steps

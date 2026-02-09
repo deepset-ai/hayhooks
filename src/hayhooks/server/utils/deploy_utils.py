@@ -256,7 +256,7 @@ async def _execute_pipeline_run(
 def create_run_endpoint_handler(
     pipeline_wrapper: BasePipelineWrapper,
     request_model: type[BaseModel],
-    response_model: type[BaseModel],
+    response_model: type[BaseModel] | None,
     requires_files: bool,
 ) -> Callable:
     """
@@ -270,7 +270,7 @@ def create_run_endpoint_handler(
     Args:
         pipeline_wrapper: The pipeline wrapper instance
         request_model: The request model
-        response_model: The response model
+        response_model: The response model, or None for streaming/file response endpoints
         requires_files: Whether the pipeline requires file uploads
 
     Returns:
@@ -284,6 +284,12 @@ def create_run_endpoint_handler(
         streaming_response = _streaming_response_from_result(result)
         if streaming_response is not None:
             return streaming_response
+
+        # response_model is None for streaming/file response endpoints, where
+        # _streaming_response_from_result() always handles the result above.
+        # For normal JSON endpoints, wrap the result in the Pydantic response model.
+        if response_model is None:
+            return result
 
         return response_model(result=result)
 

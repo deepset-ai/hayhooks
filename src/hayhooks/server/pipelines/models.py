@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any, get_origin
 
 from docstring_parser.common import Docstring
+from fastapi.responses import Response
 from pydantic import BaseModel, Field, create_model
 
 from hayhooks.server.exceptions import PipelineWrapperError
@@ -81,16 +82,35 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
     return create_model(f"{model_name}Request", **fields)
 
 
-def create_response_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:
+def _is_streaming_type(return_type: type) -> bool:
+    """Check if the return type is a Generator or AsyncGenerator (streaming response)."""
+    origin = get_origin(return_type)
+    return origin in {Generator, AsyncGenerator} or return_type in {Generator, AsyncGenerator}
+
+
+def _is_response_type(return_type: type) -> bool:
+    """Check if the return type is a Response or a subclass (e.g. FileResponse, StreamingResponse)."""
+    return inspect.isclass(return_type) and issubclass(return_type, Response)
+
+
+def create_response_model_from_callable(
+    func: Callable, model_name: str, docstring: Docstring
+) -> type[BaseModel] | None:
     """
     Create a dynamic Pydantic model based on callable's return type.
+
+    Returns None when the return type indicates the endpoint will bypass JSON serialization
+    (i.e. streaming generators or Response subclasses). In these cases, the response is handled
+    directly at runtime and no Pydantic model is needed. Returning None follows FastAPI's convention
+    of passing ``response_model=None`` for non-JSON endpoints.
 
     Args:
         func: The callable (function/method) to analyze
         model_name: Name for the generated model
+        docstring: Parsed docstring for field descriptions
 
     Returns:
-        Pydantic model class for response
+        Pydantic model class for response, or None for streaming/file responses.
     """
 
     return_type = inspect.signature(func).return_annotation
@@ -99,16 +119,14 @@ def create_response_model_from_callable(func: Callable, model_name: str, docstri
         msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"  # type:ignore[attr-defined]
         raise PipelineWrapperError(msg)
 
-    return_description = docstring.returns.description if docstring.returns else None
+    # When a pipeline wrapper returns a Generator/AsyncGenerator (streaming) or a Response subclass
+    # (e.g. FileResponse), there is no JSON response to validate. At runtime these are intercepted
+    # by _streaming_response_from_result() and returned directly. Returning None here signals to
+    # add_pipeline_api_route() that it should pass response_model=None to FastAPI, which is the
+    # idiomatic way to declare non-JSON endpoints.
+    if _is_streaming_type(return_type) or _is_response_type(return_type):
+        return None
 
-    # When a pipeline wrapper returns a generator (for streaming responses), we need to handle it specially:
-    # 1. Check both `get_origin()` (for parameterized types like `Generator[StreamingChunk, None, None]`)
-    #    and the raw type (for bare Generator/AsyncGenerator annotations). In examples we are using both.
-    # 2. Replace with `Any` because Pydantic can't serialize generators, and the actual streaming is handled
-    #    at runtime by _streaming_response_from_result() which converts generators to StreamingResponse.
-    #    The response model is only used for OpenAPI schema generation, not runtime validation.
-    origin = get_origin(return_type)
-    if origin in {Generator, AsyncGenerator} or return_type in {Generator, AsyncGenerator}:
-        return_type = Any
+    return_description = docstring.returns.description if docstring.returns else None
 
     return create_model(f"{model_name}Response", result=(return_type, Field(..., description=return_description)))

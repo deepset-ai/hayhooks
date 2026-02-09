@@ -2,12 +2,12 @@ import inspect
 import re
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
 
 import docstring_parser
 import pytest
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from haystack import Pipeline
 
@@ -444,6 +444,37 @@ def test_create_response_model_no_docstring():
     assert schema["properties"]["result"]["type"] == "integer"
     assert schema["properties"]["result"].get("description") is None
     assert "result" in schema["required"]
+
+
+@pytest.mark.parametrize(
+    "return_type",
+    [
+        Response,
+        FileResponse,
+        StreamingResponse,
+        Generator,
+        AsyncGenerator,
+        Generator[str, None, None],
+        AsyncGenerator[str, None],
+    ],
+    ids=[
+        "Response",
+        "FileResponse",
+        "StreamingResponse",
+        "Generator",
+        "AsyncGenerator",
+        "Generator[str, None, None]",
+        "AsyncGenerator[str, None]",
+    ],
+)
+def test_create_response_model_returns_none_for_non_json_types(return_type):
+    func = lambda: None  # noqa: E731
+    func.__annotations__["return"] = return_type
+
+    docstring = docstring_parser.parse("")
+    result = create_response_model_from_callable(func, "Test", docstring)
+
+    assert result is None
 
 
 def test_create_pipeline_wrapper_instance_success():
