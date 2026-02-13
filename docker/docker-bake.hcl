@@ -22,8 +22,8 @@ target "default" {
   dockerfile = "Dockerfile"
   tags = ["${IMAGE_NAME}:${IMAGE_TAG_SUFFIX}"]
   args = {
-    build_image = "deepset/haystack:base-main"
-    base_image = "deepset/haystack:base-main"
+    build_image = "deepset/haystack:stable"
+    base_image = "deepset/haystack:stable"
     hayhooks_version = "${HAYHOOKS_VERSION}"
     pipelines_dir = "${PIPELINES_DIR}"
     additional_python_path = "${ADDITIONAL_PYTHON_PATH}"
