@@ -1,3 +1,4 @@
+import contextvars
 import os
 import time
 from collections.abc import AsyncGenerator, Generator
@@ -379,3 +380,34 @@ async def test_async_streaming_cancellation(async_pipeline_with_async_capable_ge
 
     chunks = await consume_with_cancel()
     assert len(chunks) >= 1
+
+
+# ContextVar used to verify context propagation into the streaming thread
+_test_context_var: contextvars.ContextVar[str] = contextvars.ContextVar("_test_context_var")
+
+
+@component
+class MockContextAwareGenerator:
+    """Mock generator that reads a ContextVar during execution to verify propagation."""
+
+    @component.output_types(replies=list[str])
+    def run(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
+        value = _test_context_var.get("NOT_SET")
+        if streaming_callback:
+            streaming_callback(StreamingChunk(content=value, index=0))
+        return {"replies": [value]}
+
+
+def test_streaming_generator_propagates_context_vars():
+    pipe = Pipeline()
+    pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
+    pipe.add_component("llm", MockContextAwareGenerator())
+    pipe.connect("prompt_builder.prompt", "llm.prompt")
+
+    _test_context_var.set("propagated_value")
+
+    gen = streaming_generator(pipe, pipeline_run_args={})
+    chunks = [c for c in gen if isinstance(c, StreamingChunk)]
+
+    assert len(chunks) > 0
+    assert chunks[0].content == "propagated_value"
