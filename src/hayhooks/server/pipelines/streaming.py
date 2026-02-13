@@ -453,8 +453,12 @@ def streaming_generator(  # noqa: PLR0913
         thread = threading.Thread(
             target=ctx.run,
             args=(
-                _execute_pipeline_in_thread, pipeline, configured_args,
-                include_outputs_from, on_pipeline_end, internal_queue,
+                _execute_pipeline_in_thread,
+                pipeline,
+                configured_args,
+                include_outputs_from,
+                on_pipeline_end,
+                internal_queue,
             ),
         )
         thread.start()
