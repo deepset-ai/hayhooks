@@ -2,12 +2,12 @@ import inspect
 import re
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
 
 import docstring_parser
 import pytest
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from haystack import Pipeline
 
@@ -16,11 +16,12 @@ from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
+    _register_and_deploy_pipeline,
     _streaming_response_from_result,
-    add_pipeline_wrapper_to_registry,
     create_request_model_from_callable,
     create_response_model_from_callable,
     deploy_pipeline_files,
+    get_response_class_from_callable,
     save_pipeline_files,
     undeploy_pipeline,
 )
@@ -446,6 +447,85 @@ def test_create_response_model_no_docstring():
     assert "result" in schema["required"]
 
 
+@pytest.mark.parametrize(
+    "return_type",
+    [
+        Response,
+        FileResponse,
+        StreamingResponse,
+        Generator,
+        AsyncGenerator,
+        Generator[str, None, None],
+        AsyncGenerator[str, None],
+    ],
+    ids=[
+        "Response",
+        "FileResponse",
+        "StreamingResponse",
+        "Generator",
+        "AsyncGenerator",
+        "Generator[str, None, None]",
+        "AsyncGenerator[str, None]",
+    ],
+)
+def test_create_response_model_returns_none_for_non_json_types(return_type):
+    func = lambda: None  # noqa: E731
+    func.__annotations__["return"] = return_type
+
+    docstring = docstring_parser.parse("")
+    result = create_response_model_from_callable(func, "Test", docstring)
+
+    assert result is None
+
+
+@pytest.mark.parametrize(
+    ("return_type", "expected_class"),
+    [
+        (Response, Response),
+        (FileResponse, FileResponse),
+        (StreamingResponse, StreamingResponse),
+        (Generator, StreamingResponse),
+        (AsyncGenerator, StreamingResponse),
+        (Generator[str, None, None], StreamingResponse),
+        (AsyncGenerator[str, None], StreamingResponse),
+    ],
+    ids=[
+        "Response",
+        "FileResponse",
+        "StreamingResponse",
+        "Generator",
+        "AsyncGenerator",
+        "Generator[str, None, None]",
+        "AsyncGenerator[str, None]",
+    ],
+)
+def test_get_response_class_for_non_json_types(return_type, expected_class):
+    func = lambda: None  # noqa: E731
+    func.__annotations__["return"] = return_type
+
+    result = get_response_class_from_callable(func)
+
+    assert result is expected_class
+
+
+def test_get_response_class_returns_none_for_json_types():
+    func = lambda: None  # noqa: E731
+    func.__annotations__["return"] = dict
+
+    result = get_response_class_from_callable(func)
+
+    assert result is None
+
+
+def test_get_response_class_returns_none_when_no_annotation():
+    def func():
+        pass
+
+    result = get_response_class_from_callable(func)
+
+    assert result is None
+
+
 def test_create_pipeline_wrapper_instance_success():
     class ValidPipelineWrapper(BasePipelineWrapper):
         def setup(self):
@@ -507,6 +587,41 @@ def test_create_pipeline_wrapper_instance_missing_methods():
         match=re.escape("At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async"),
     ):
         create_pipeline_wrapper_instance(module)
+
+
+def test_register_and_deploy_pipeline_setup_is_idempotent():
+    """Test that setup() is not called again if pipeline is already initialized."""
+    setup_call_count = 0
+
+    class TrackingWrapper(BasePipelineWrapper):
+        def setup(self):
+            nonlocal setup_call_count
+            setup_call_count += 1
+            self.pipeline = Pipeline()
+
+        def run_api(self, value: int) -> dict:
+            return {"result": value}
+
+    wrapper = TrackingWrapper()
+
+    # Manually call setup first (simulating pre-initialization)
+    wrapper.setup()
+    assert setup_call_count == 1
+
+    # Store reference to the pipeline instance
+    first_pipeline = wrapper.pipeline
+
+    # Deploy the wrapper - setup should NOT be called again
+    _register_and_deploy_pipeline(
+        pipeline_name="tracking_test",
+        pipeline_wrapper=wrapper,
+        app=None,
+        overwrite=False,
+    )
+
+    # Verify setup was not called again
+    assert setup_call_count == 1
+    assert wrapper.pipeline is first_pipeline
 
 
 def test_deploy_pipeline_files_without_saving(test_settings, mocker):
@@ -597,7 +712,7 @@ def test_undeploy_pipeline_without_app(test_settings):
     assert not pipeline_dir.exists()
 
 
-def test_add_pipeline_to_registry_with_async_run_api():
+def test_deploy_pipeline_files_with_async_run_api():
     pipeline_name = "async_question_answer"
     pipeline_wrapper_path = Path("tests/test_files/files/async_question_answer/pipeline_wrapper.py")
     pipeline_yml_path = Path("tests/test_files/files/async_question_answer/question_answer.yml")
@@ -606,8 +721,10 @@ def test_add_pipeline_to_registry_with_async_run_api():
         "question_answer.yml": pipeline_yml_path.read_text(),
     }
 
-    pipeline_wrapper = add_pipeline_wrapper_to_registry(pipeline_name=pipeline_name, files=files, save_files=False)
-    assert registry.get(pipeline_name) == pipeline_wrapper
+    deploy_pipeline_files(pipeline_name=pipeline_name, files=files, save_files=False)
+
+    pipeline_wrapper = registry.get(pipeline_name)
+    assert pipeline_wrapper is not None
 
     metadata = registry.get_metadata(pipeline_name)
     assert metadata is not None

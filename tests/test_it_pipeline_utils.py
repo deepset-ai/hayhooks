@@ -1004,7 +1004,7 @@ def test_sync_streaming_generator_on_pipeline_end_callback_raises(mocked_pipelin
     generator = streaming_generator(pipeline, on_pipeline_end=custom_on_pipeline_end)
 
     messages = []
-    logger.add(lambda msg: messages.append(msg), level="ERROR")
+    logger.add(messages.append, level="ERROR")
     _ = list(generator)
     assert "Error in on_pipeline_end callback" in messages[0]
 
@@ -1037,7 +1037,7 @@ async def test_async_streaming_generator_on_pipeline_end_callback_raises(
     generator = async_streaming_generator(pipeline, on_pipeline_end=custom_on_pipeline_end)
 
     messages = []
-    logger.add(lambda msg: messages.append(msg), level="ERROR")
+    logger.add(messages.append, level="ERROR")
     _ = [chunk async for chunk in generator]
     assert "Error in on_pipeline_end callback" in messages[0]
 

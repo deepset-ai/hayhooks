@@ -24,6 +24,7 @@ nav:
     - Chainlit Integration: features/chainlit-integration.md
     - Open WebUI Integration: features/openwebui-integration.md
     - File Upload Support: features/file-upload-support.md
+    - File Response Support: features/file-response-support.md
     - CLI Commands: features/cli-commands.md
   - Advanced Usage:
     - Running Pipelines: advanced/running-pipelines.md
@@ -106,6 +107,7 @@ plugins:
           - features/chainlit-integration.md: Embed a Chainlit chat UI directly in Hayhooks.
           - features/openwebui-integration.md: Connect Hayhooks to Open WebUI.
           - features/file-upload-support.md: Handle file uploads inside pipeline runs.
+          - features/file-response-support.md: Return binary files (images, PDFs, audio) from pipeline endpoints.
           - features/cli-commands.md: Discover the Hayhooks command-line tooling.
         Advanced Usage:
           - advanced/running-pipelines.md: Execute Haystack Pipelines and manage runs programmatically.

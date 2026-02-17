@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import inspect
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
@@ -448,9 +449,17 @@ def streaming_generator(  # noqa: PLR0913
     log.trace("Streaming pipeline run args '{}'", configured_args)
 
     def generator() -> Generator[StreamingChunk | OpenWebUIEvent | str | dict[str, Any], None, None]:
+        ctx = contextvars.copy_context()
         thread = threading.Thread(
-            target=_execute_pipeline_in_thread,
-            args=(pipeline, configured_args, include_outputs_from, on_pipeline_end, internal_queue),
+            target=ctx.run,
+            args=(
+                _execute_pipeline_in_thread,
+                pipeline,
+                configured_args,
+                include_outputs_from,
+                on_pipeline_end,
+                internal_queue,
+            ),
         )
         thread.start()
 
