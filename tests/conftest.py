@@ -112,7 +112,7 @@ def status_pipeline():
 @pytest.fixture
 def chat_completion():
     def _chat_completion(client: TestClient, pipeline_name: str, messages: list):
-        chat_response = client.post(f"/{pipeline_name}/chat", json={"messages": messages, "model": pipeline_name})
+        chat_response = client.post("/chat/completions", json={"messages": messages, "model": pipeline_name})
         return chat_response
 
     return _chat_completion

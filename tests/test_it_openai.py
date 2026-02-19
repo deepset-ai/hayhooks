@@ -158,6 +158,7 @@ def _test_streaming_chat_completion(client, deploy_files, pipeline_name: str, pi
     request = ChatRequest(
         model=pipeline_name,
         messages=[{"role": "user", "content": "what is Redis?"}],
+        stream=True,
     )
 
     response = client.post("/chat/completions", json=request.model_dump())
@@ -176,6 +177,30 @@ def _test_streaming_chat_completion(client, deploy_files, pipeline_name: str, pi
     assert chunks[0].startswith("data:")
     assert chunks[-1].startswith("data:")
     return chunks
+
+
+def test_chat_completion_streaming_pipeline_without_stream_flag(client, deploy_files) -> None:
+    pipeline_name = "test_pipeline_streaming"
+
+    response = deploy_files(client, pipeline_name, SAMPLE_PIPELINE_FILES_STREAMING)
+    assert response.status_code == 200
+
+    request = ChatRequest(
+        model=pipeline_name,
+        messages=[{"role": "user", "content": "what is Redis?"}],
+        stream=False,
+    )
+
+    response = client.post("/chat/completions", json=request.model_dump())
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "application/json"
+
+    response_data = response.json()
+    chat_completion = ChatCompletion(**response_data)
+    assert chat_completion.object == "chat.completion"
+    assert chat_completion.model == pipeline_name
+    assert len(chat_completion.choices) == 1
+    assert chat_completion.choices[0].message.content
 
 
 def test_chat_completion_streaming(client, deploy_files) -> None:
@@ -214,8 +239,12 @@ def test_chat_completion_concurrent_requests(client, deploy_files):
         ).model_dump()
     )
 
-    request_1 = ChatRequest(model="test_pipeline_streaming", messages=[{"role": "user", "content": "what is Redis?"}])
-    request_2 = ChatRequest(model="test_pipeline_streaming", messages=[{"role": "user", "content": "what is MongoDB?"}])
+    request_1 = ChatRequest(
+        model="test_pipeline_streaming", messages=[{"role": "user", "content": "what is Redis?"}], stream=True
+    )
+    request_2 = ChatRequest(
+        model="test_pipeline_streaming", messages=[{"role": "user", "content": "what is MongoDB?"}], stream=True
+    )
 
     # run the requests concurrently
     with ThreadPoolExecutor() as executor:

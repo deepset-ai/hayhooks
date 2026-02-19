@@ -36,6 +36,7 @@ dependencies = [
   "pydantic-settings",
   "python-dotenv",
   "docstring-parser",
+  "fastapi-openai-compat",
 ]
 
 [project.optional-dependencies]
