@@ -33,7 +33,7 @@ def is_user_message(msg: Message | dict) -> bool:
 
 def get_content(msg: Message | dict) -> str:
     if isinstance(msg, Message):
-        return msg.content
+        return msg.content or ""
     return msg.get("content", "")
 
 
