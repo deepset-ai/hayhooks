@@ -2,21 +2,11 @@ from collections.abc import AsyncGenerator, Generator
 
 from fastapi import HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi_openai_compat import (
-    ChatCompletion,
-    ChatRequest,
-    Message,
-    ModelObject,
-    ModelsResponse,
-    create_openai_router,
-)
+from fastapi_openai_compat import create_openai_router
 
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-
-# Re-export models for backward compatibility
-__all__ = ["ChatCompletion", "ChatRequest", "Message", "ModelObject", "ModelsResponse", "router"]
 
 
 def _list_models() -> list[str]:

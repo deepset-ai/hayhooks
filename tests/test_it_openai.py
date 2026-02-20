@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi_openai_compat import ChatCompletion, ChatRequest, ModelObject, ModelsResponse
 
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import DeployResponse
-from hayhooks.server.routers.openai import ChatCompletion, ChatRequest, ModelObject, ModelsResponse
 from hayhooks.settings import settings
 
 
