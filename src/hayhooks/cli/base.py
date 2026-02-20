@@ -70,7 +70,10 @@ def run(  # noqa: PLR0913
         sys.path.append(additional_python_path)
         log.trace("Added '{}' to sys.path", additional_python_path)
 
-    # Configure Chainlit UI if enabled
+    # Configure Chainlit UI
+    if ui_path and not with_ui:
+        log.warning("--ui-path was provided but --with-ui is not set. The UI will not be mounted.")
+
     if with_ui:
         settings.ui_enabled = True
         if ui_path:

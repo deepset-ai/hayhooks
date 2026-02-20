@@ -75,14 +75,11 @@ def mount_chainlit_app(
         msg = f"Chainlit app file not found: {target}"
         raise FileNotFoundError(msg)
 
-    # Verify CHAINLIT_APP_ROOT is set (should be set in app.py before imports)
+    # Ensure CHAINLIT_APP_ROOT points to the correct directory for theme/config
     current_root = os.environ.get("CHAINLIT_APP_ROOT", "")
     if current_root != app_root:
-        log.warning(
-            "CHAINLIT_APP_ROOT mismatch: expected '{}', got '{}'. Theme/config may not load correctly.",
-            app_root,
-            current_root,
-        )
+        os.environ["CHAINLIT_APP_ROOT"] = app_root
+        log.debug("Set CHAINLIT_APP_ROOT to '{}'", app_root)
 
 
     log.info("Mounting Chainlit UI at path '{}' using app: {}", path, target)

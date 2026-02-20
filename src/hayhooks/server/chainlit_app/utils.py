@@ -54,6 +54,8 @@ async def get_available_models() -> list[dict[str, Any]]:
             response = await client.get(f"{HAYHOOKS_BASE_URL}/v1/models", timeout=MODELS_FETCH_TIMEOUT)
             response.raise_for_status()
             data = response.json()
+            if not isinstance(data, dict):
+                return []
             return data.get("data", [])
     except Exception:
         # Log errors are handled by caller
@@ -71,15 +73,15 @@ def select_model_automatically(models: list[dict[str, Any]], default_model: str 
     Returns:
         Model ID if auto-selected, None if user needs to choose.
     """
-    model_ids = [m["id"] for m in models]
+    model_ids = [m.get("id") for m in models if m.get("id")]
 
     # Use default model if specified and available
     if default_model and default_model in model_ids:
         return default_model
 
     # If only one model, use it
-    if len(models) == 1:
-        return models[0]["id"]
+    if len(model_ids) == 1:
+        return model_ids[0]
 
     return None
 
@@ -176,6 +178,6 @@ async def process_sse_chunk(
     if not choices:
         return None
 
-    delta = choices[0].get("delta", {})
-    content = delta.get("content")
+    delta = choices[0].get("delta") or {}
+    content = delta.get("content") if isinstance(delta, dict) else None
     return content if content else None

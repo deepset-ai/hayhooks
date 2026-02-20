@@ -73,21 +73,18 @@ The default Chainlit app also supports these environment variables:
 
 ## How It Works
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Hayhooks Server                       │
-│                                                          │
-│  ┌──────────────────┐    ┌─────────────────────────┐    │
-│  │   Chainlit UI    │───▶│  /v1/chat/completions   │    │
-│  │   (mounted at    │    │  (OpenAI-compatible)    │    │
-│  │    /ui)          │    └─────────────────────────┘    │
-│  └──────────────────┘              │                     │
-│                                    ▼                     │
-│                         ┌─────────────────────────┐     │
-│                         │   Haystack Pipelines    │     │
-│                         │   (with chat support)   │     │
-│                         └─────────────────────────┘     │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph server ["Hayhooks Server"]
+        UI["Chainlit UI\n(mounted at /ui)"]
+        API["/v1/chat/completions\n(OpenAI-compatible)"]
+        Pipelines["Haystack Pipelines\n(with chat support)"]
+
+        UI -- "HTTP streaming" --> API
+        API --> Pipelines
+    end
+
+    Browser["🌐 Browser"] --> UI
 ```
 
 The Chainlit UI is mounted as a FastAPI sub-application and communicates with your pipelines through Hayhooks' OpenAI-compatible endpoints. This means:
@@ -114,7 +111,7 @@ from hayhooks import BasePipelineWrapper, streaming_generator
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        self.system_message = ChatMessage.from_system("You are a funny assistant that makes jokes.")
+        self.system_message = ChatMessage.from_system("You are a helpful assistant.")
         chat_prompt_builder = ChatPromptBuilder()
         llm = OpenAIChatGenerator(model="gpt-4o-mini")
 
@@ -199,16 +196,16 @@ async def main(message: cl.Message):
     await response_msg.update()
 ```
 
-## Comparison with Other Frontends
+## Why Embedded Chainlit
 
-| Feature | Chainlit (Embedded) | Open WebUI | LibreChat |
-|---------|---------------------|------------|-----------|
-| Deployment | Single process | Separate container | Multiple containers |
-| Setup complexity | Low | Medium | High |
-| Dependencies | `pip install hayhooks[ui]` | Docker | Docker + MongoDB + Redis |
-| Multi-user auth | Basic | Yes | Yes |
-| Conversation history | Session-based | Persistent | Persistent |
-| Best for | Quick demos, simple deployments | Production chat UI | Enterprise features |
+The embedded Chainlit UI is designed for simplicity and fast iteration:
+
+- **Single process deployment**: No extra containers or services to manage
+- **Minimal setup**: Just `pip install "hayhooks[ui]"` and `--with-ui`
+- **Zero configuration**: Automatically discovers deployed pipelines via `/v1/models`
+- **Streaming out of the box**: Real-time token streaming with tool call visualization
+
+For production deployments requiring persistent conversation history, multi-user authentication, or advanced features, consider pairing Hayhooks with an external frontend like [Open WebUI](openwebui-integration.md) which connects through the same OpenAI-compatible endpoints.
 
 ## Troubleshooting
 
@@ -235,7 +232,7 @@ The UI requires at least one deployed pipeline with chat completion support:
 
 - **Session-based history**: Conversation history is stored in the browser session, not persisted
 - **Single process**: The UI runs in the same process as Hayhooks, which may not be ideal for high-traffic scenarios
-- **Basic authentication**: For production use with authentication, consider Open WebUI or LibreChat
+- **Basic authentication**: For production use with authentication, consider an external frontend like [Open WebUI](openwebui-integration.md)
 
 ## Next Steps
 
