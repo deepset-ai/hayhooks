@@ -109,13 +109,13 @@ from haystack.components.builders import ChatPromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage
 
-from hayhooks import BasePipelineWrapper, get_last_user_message, streaming_generator
+from hayhooks import BasePipelineWrapper, streaming_generator
 
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        template = [ChatMessage.from_user("Answer this question: {{query}}")]
-        chat_prompt_builder = ChatPromptBuilder(template=template)
+        self.system_message = ChatMessage.from_system("You are a funny assistant that makes jokes.")
+        chat_prompt_builder = ChatPromptBuilder()
         llm = OpenAIChatGenerator(model="gpt-4o-mini")
 
         self.pipeline = Pipeline()
@@ -124,12 +124,13 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
-        question = get_last_user_message(messages)
+        chat_messages = [self.system_message] + [
+            ChatMessage.from_openai_dict_format(msg) for msg in messages
+        ]
         return streaming_generator(
             pipeline=self.pipeline,
-            pipeline_run_args={"chat_prompt_builder": {"query": question}},
+            pipeline_run_args={"chat_prompt_builder": {"template": chat_messages}},
         )
-```
 
 ### 2. Run Hayhooks with UI
 
