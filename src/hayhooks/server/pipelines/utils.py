@@ -1,3 +1,5 @@
+from fastapi_openai_compat import Message
+
 from hayhooks.server.pipelines.streaming import (
     OnPipelineEnd,
     OnToolCallEnd,
@@ -8,7 +10,6 @@ from hayhooks.server.pipelines.streaming import (
     parse_streaming_components_setting,
     streaming_generator,
 )
-from hayhooks.server.routers.openai import Message
 
 __all__ = [
     "OnPipelineEnd",
@@ -33,7 +34,7 @@ def is_user_message(msg: Message | dict) -> bool:
 
 def get_content(msg: Message | dict) -> str:
     if isinstance(msg, Message):
-        return msg.content
+        return msg.content or ""
     return msg.get("content", "")
 
 
