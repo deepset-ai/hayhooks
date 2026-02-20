@@ -65,6 +65,14 @@ class AppSettings(BaseSettings):
     cors_expose_headers: list[str] = []
     cors_max_age: int = 600
 
+    # Chainlit UI Settings
+    # Enable embedded Chainlit UI frontend
+    ui_enabled: bool = False
+    # URL path where Chainlit UI will be mounted
+    ui_path: str = "/ui"
+    # Custom Chainlit app file (optional, uses default if not set)
+    ui_app: str = ""
+
     # Prefix for the environment variables to avoid conflicts
     # with other similar environment variables
     model_config = SettingsConfigDict(env_prefix="hayhooks_")

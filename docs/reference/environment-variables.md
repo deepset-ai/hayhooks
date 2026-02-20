@@ -82,6 +82,26 @@ export HAYHOOKS_STREAMING_COMPONENTS="llm_1, llm_2, llm_3"
 - Default: `1417`
 - Description: Port for the MCP server
 
+## Chainlit UI
+
+### HAYHOOKS_UI_ENABLED
+
+- Default: `false`
+- Description: Enable the embedded Chainlit chat UI
+
+### HAYHOOKS_UI_PATH
+
+- Default: `/ui`
+- Description: URL path where the Chainlit UI is mounted
+
+### HAYHOOKS_UI_APP
+
+- Default: `""` (uses built-in default app)
+- Description: Path to a custom Chainlit app file
+
+!!! note "Installation Required"
+    The Chainlit UI requires the `ui` extra: `pip install "hayhooks[ui]"`
+
 ## CORS
 
 These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.AppSettings`.

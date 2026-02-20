@@ -21,6 +21,7 @@ nav:
   - Features:
     - OpenAI Compatibility: features/openai-compatibility.md
     - MCP Support: features/mcp-support.md
+    - Chainlit Integration: features/chainlit-integration.md
     - Open WebUI Integration: features/openwebui-integration.md
     - File Upload Support: features/file-upload-support.md
     - File Response Support: features/file-response-support.md
@@ -103,6 +104,7 @@ plugins:
         Features:
           - features/openai-compatibility.md: Use Hayhooks with OpenAI-compatible clients.
           - features/mcp-support.md: Using Hayhooks as an MCP Server for Haystack Pipelines and Agents.
+          - features/chainlit-integration.md: Embed a Chainlit chat UI directly in Hayhooks.
           - features/openwebui-integration.md: Connect Hayhooks to Open WebUI.
           - features/file-upload-support.md: Handle file uploads inside pipeline runs.
           - features/file-response-support.md: Return binary files (images, PDFs, audio) from pipeline endpoints.
