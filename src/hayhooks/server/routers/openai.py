@@ -46,6 +46,7 @@ async def _run_completion(model: str, messages: list[dict], body: dict) -> str |
     if not sync_implemented and not async_implemented:
         raise HTTPException(status_code=501, detail="Chat endpoint not implemented for this model")
 
+    # Determine which run_chat_completion method to use (prefer async if available)
     if async_implemented:
         log.debug("Using run_chat_completion_async for model: {}", model)
         result = await pipeline_wrapper.run_chat_completion_async(
