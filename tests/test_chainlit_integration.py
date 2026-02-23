@@ -119,7 +119,6 @@ class TestCreateAppWithUI:
 
 class TestCLIUIWarning:
     def test_warns_when_ui_path_without_with_ui(self, monkeypatch, caplog):
-        """--ui-path provided without --with-ui should log a warning."""
         from hayhooks.cli.base import run
 
         monkeypatch.setattr(uvicorn, "run", MagicMock())
@@ -130,7 +129,6 @@ class TestCLIUIWarning:
         assert "--ui-path was provided but --with-ui is not set" in caplog.text
 
     def test_no_warning_when_both_flags_set(self, monkeypatch, caplog):
-        """--ui-path with --with-ui should not produce the mismatch warning."""
         from hayhooks.cli.base import run
 
         monkeypatch.setattr(uvicorn, "run", MagicMock())
