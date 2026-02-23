@@ -254,10 +254,11 @@ def _process_tool_call_end(
     """
     if on_tool_call_end and hasattr(chunk, "tool_call_result") and chunk.tool_call_result:
         try:
+            tool_result = chunk.tool_call_result.result
             result = on_tool_call_end(
                 chunk.tool_call_result.origin.tool_name,
                 chunk.tool_call_result.origin.arguments,
-                chunk.tool_call_result.result,
+                str(tool_result) if not isinstance(tool_result, str) else tool_result,
                 bool(chunk.tool_call_result.error),
             )
             yield from _yield_callback_results(result)
