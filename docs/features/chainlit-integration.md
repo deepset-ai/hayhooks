@@ -29,17 +29,17 @@ The simplest way to enable the Chainlit UI is via the `--with-ui` flag:
 hayhooks run --with-ui
 ```
 
-This starts Hayhooks with the embedded Chainlit UI available at `http://localhost:1416/ui`.
+This starts Hayhooks with the embedded Chainlit UI available at `http://localhost:1416/chat`.
 
 ### Custom UI Path
 
 You can customize the URL path where the UI is mounted:
 
 ```bash
-hayhooks run --with-ui --ui-path /chat
+hayhooks run --with-ui --ui-path /my-chat
 ```
 
-Now the UI will be available at `http://localhost:1416/chat`.
+Now the UI will be available at `http://localhost:1416/my-chat`.
 
 ### Using Environment Variables
 
@@ -47,7 +47,7 @@ You can also configure the UI via environment variables:
 
 ```bash
 export HAYHOOKS_UI_ENABLED=true
-export HAYHOOKS_UI_PATH=/ui
+export HAYHOOKS_UI_PATH=/chat
 
 hayhooks run
 ```
@@ -59,7 +59,7 @@ hayhooks run
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HAYHOOKS_UI_ENABLED` | Enable/disable the Chainlit UI | `false` |
-| `HAYHOOKS_UI_PATH` | URL path where UI is mounted | `/ui` |
+| `HAYHOOKS_UI_PATH` | URL path where UI is mounted | `/chat` |
 | `HAYHOOKS_UI_APP` | Custom Chainlit app file path | (uses default) |
 
 ### Chainlit App Configuration
@@ -76,7 +76,7 @@ The default Chainlit app also supports these environment variables:
 ```mermaid
 flowchart LR
     subgraph server ["Hayhooks Server"]
-        UI["Chainlit UI\n(mounted at /ui)"]
+        UI["Chainlit UI\n(mounted at /chat)"]
         API["/v1/chat/completions\n(OpenAI-compatible)"]
         Pipelines["Haystack Pipelines\n(with chat support)"]
 
@@ -138,7 +138,7 @@ hayhooks run --with-ui --pipelines-dir ./pipelines
 
 ### 3. Open the UI
 
-Navigate to `http://localhost:1416/ui` in your browser. You'll see your deployed pipeline and can start chatting!
+Navigate to `http://localhost:1416/chat` in your browser. You'll see your deployed pipeline and can start chatting!
 
 ## Custom Chainlit App
 
@@ -213,7 +213,7 @@ For production deployments requiring persistent conversation history, multi-user
 
 1. Ensure Chainlit is installed: `pip install "hayhooks[ui]"`
 2. Check that `--with-ui` flag is set or `HAYHOOKS_UI_ENABLED=true`
-3. Verify the UI path in logs (default: `/ui`)
+3. Verify the UI path in logs (default: `/chat`)
 
 ### No Pipelines Available
 

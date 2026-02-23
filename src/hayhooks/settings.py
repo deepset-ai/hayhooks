@@ -69,7 +69,7 @@ class AppSettings(BaseSettings):
     # Enable embedded Chainlit UI frontend
     ui_enabled: bool = False
     # URL path where Chainlit UI will be mounted
-    ui_path: str = "/ui"
+    ui_path: str = "/chat"
     # Custom Chainlit app file (optional, uses default if not set)
     ui_app: str = ""
 

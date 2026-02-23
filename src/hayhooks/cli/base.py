@@ -42,7 +42,7 @@ def run(  # noqa: PLR0913
         bool, typer.Option("--with-ui", help="Enable embedded Chainlit UI (requires hayhooks[ui])")
     ] = False,
     ui_path: Annotated[
-        str | None, typer.Option("--ui-path", help="URL path for the Chainlit UI (default: /ui)")
+        str | None, typer.Option("--ui-path", help="URL path for the Chainlit UI (default: /chat)")
     ] = None,
 ) -> None:
     """

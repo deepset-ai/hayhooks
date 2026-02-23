@@ -48,7 +48,7 @@ class TestMountChainlitApp:
         from fastapi import FastAPI
 
         app = FastAPI()
-        with pytest.raises(FileNotFoundError, match="not_a_real_app.py"):
+        with pytest.raises(FileNotFoundError, match="not\\_a\\_real\\_app\\_\\.py"):
             mount_chainlit_app(app, target="/nonexistent/not_a_real_app.py")
 
     def test_uses_default_app_when_no_target(self, mock_chainlit_modules):
@@ -90,13 +90,13 @@ class TestCreateAppWithUI:
         monkeypatch.setattr(server_app, "settings", test_settings)
 
         app = create_app()
-        route_paths = [r.path for r in app.routes]
-        assert not any("/ui" in p for p in route_paths)
+        mounted_paths = [getattr(r, "path", "") for r in app.routes if type(r).__name__ == "Mount"]
+        assert "/chat" not in mounted_paths
 
     def test_logs_warning_when_chainlit_not_installed(self, monkeypatch, caplog):
         from hayhooks.server.app import create_app
 
-        test_settings = AppSettings(pipelines_dir="", ui_enabled=True, ui_path="/ui")
+        test_settings = AppSettings(pipelines_dir="", ui_enabled=True, ui_path="/chat")
         monkeypatch.setattr(server_app, "settings", test_settings)
         monkeypatch.setattr(chainlit_utils_mod, "is_chainlit_available", lambda: False)
 

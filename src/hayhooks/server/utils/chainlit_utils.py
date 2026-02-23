@@ -34,7 +34,7 @@ def is_chainlit_available() -> bool:
 def mount_chainlit_app(
     app,
     target: str | Path | None = None,
-    path: str = "/ui",
+    path: str = "/chat",
 ) -> None:
     """
     Mount a Chainlit app as a sub-application on a FastAPI app.
@@ -45,7 +45,7 @@ def mount_chainlit_app(
     Args:
         app: FastAPI application instance to mount Chainlit on.
         target: Path to the Chainlit app file. If None, uses the default app.
-        path: URL path where Chainlit will be mounted (default: "/ui").
+        path: URL path where Chainlit will be mounted (default: "/chat").
 
     Raises:
         ImportError: If Chainlit is not installed.
