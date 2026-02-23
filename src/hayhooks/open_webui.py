@@ -39,6 +39,16 @@ class OpenWebUIEvent(BaseModel):
         """Convert to dictionary format for Open WebUI."""
         return self.model_dump()
 
+    def to_event_dict(self) -> dict[str, Any]:
+        """
+        Convert to dictionary format for SSE custom event serialization.
+
+        Used by fastapi_openai_compat to detect and serialize custom events
+        via duck typing (objects with a to_event_dict method are treated as
+        custom SSE events rather than content chunks).
+        """
+        return self.model_dump()
+
 
 def create_status_event(description: str, done: bool = False, hidden: bool = False) -> OpenWebUIEvent:
     """Create a status event to show progress updates in the UI."""
