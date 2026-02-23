@@ -78,7 +78,6 @@ def run(  # noqa: PLR0913
         settings.ui_enabled = True
         if ui_path:
             settings.ui_path = ui_path
-        log.info("Chainlit UI enabled at path '{}'", settings.ui_path)
 
     # Use string import path so server modules load only within uvicorn context
     uvicorn.run("hayhooks.server.app:create_app", host=host, port=port, workers=workers, reload=reload, factory=True)

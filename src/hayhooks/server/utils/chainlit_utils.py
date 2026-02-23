@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
 from hayhooks.server.logger import log
+from hayhooks.settings import settings
 
 # Path to the default Chainlit app directory and file
 DEFAULT_CHAINLIT_APP_DIR = Path(__file__).parent.parent / "chainlit_app"
@@ -93,4 +94,4 @@ def mount_chainlit_app(
 
     mount_chainlit(app=app, target=target, path=path)
 
-    log.info("Chainlit UI successfully mounted at '{}'", path)
+    log.success("Chainlit UI available at {}{}", settings.ui_base_url, path)
