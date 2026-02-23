@@ -77,12 +77,17 @@ class AppSettings(BaseSettings):
     # Timeout (seconds) for chat completion requests from the UI
     ui_request_timeout: float = 120.0
 
+    _WILDCARD_HOSTS = {"0.0.0.0", "::"}  # noqa: S104
+
     @property
     def ui_base_url(self) -> str:
         """Base URL for the Chainlit UI to reach the Hayhooks backend."""
         protocol = "https" if self.use_https else "http"
-        host = "localhost" if self.host in ("0.0.0.0", "::") else self.host
-        return f"{protocol}://{host}:{self.port}"
+        host = "127.0.0.1" if self.host in self._WILDCARD_HOSTS else self.host
+        base = f"{protocol}://{host}:{self.port}"
+        if self.root_path:
+            base = f"{base}/{self.root_path.strip('/')}"
+        return base
 
     # Prefix for the environment variables to avoid conflicts
     # with other similar environment variables

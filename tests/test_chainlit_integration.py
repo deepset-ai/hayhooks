@@ -30,7 +30,18 @@ class TestIsChainlitAvailable:
         assert is_chainlit_available() is True
 
     def test_returns_false_when_not_installed(self, monkeypatch):
-        monkeypatch.setitem(sys.modules, "chainlit", None)
+        import builtins
+
+        original_import = builtins.__import__
+
+        def _import_mock(name, *args, **kwargs):
+            if name == "chainlit":
+                msg = "No module named 'chainlit'"
+                raise ImportError(msg)
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.delitem(sys.modules, "chainlit", raising=False)
+        monkeypatch.setattr(builtins, "__import__", _import_mock)
         assert is_chainlit_available() is False
 
 

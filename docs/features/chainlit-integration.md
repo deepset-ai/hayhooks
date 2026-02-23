@@ -226,6 +226,14 @@ The UI requires at least one deployed pipeline with chat completion support:
 2. Use `streaming_generator` or `async_streaming_generator` helpers
 3. Check browser console for WebSocket errors
 
+### Assets Not Loading Behind a Reverse Proxy
+
+When Hayhooks is served behind a reverse proxy with a path prefix (`root_path`), Chainlit assets (logos, theme, favicon) may fail to load because their URLs don't include the prefix. If you experience this:
+
+1. Verify that `HAYHOOKS_ROOT_PATH` is set correctly
+2. Check your reverse proxy is forwarding requests to the correct paths
+3. As a workaround, consider serving static assets directly from the reverse proxy
+
 ## Limitations
 
 - **Session-based history**: Conversation history is stored in the browser session, not persisted
