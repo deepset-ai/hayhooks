@@ -1,4 +1,3 @@
-import os
 from typing import Any, TypedDict
 
 # Note: This file is executed only when chainlit is installed and running.
@@ -6,6 +5,7 @@ import chainlit as cl  # ty: ignore[unresolved-import]
 import httpx
 
 from hayhooks.server.chainlit_app import utils
+from hayhooks.settings import settings
 
 
 class StreamState(TypedDict):
@@ -15,7 +15,6 @@ class StreamState(TypedDict):
 
 
 # Configuration
-DEFAULT_MODEL = os.getenv("HAYHOOKS_DEFAULT_MODEL", "")
 MAX_PIPELINES_DISPLAY = 10
 
 # Session keys
@@ -61,8 +60,8 @@ async def on_chat_start() -> None:
 
     # Check backend health
     if not await utils.check_backend_health():
-        await send_message(MSG_BACKEND_UNREACHABLE.format(url=utils.HAYHOOKS_BASE_URL))
-        cl.logger.error(f"Backend unreachable at {utils.HAYHOOKS_BASE_URL}")
+        await send_message(MSG_BACKEND_UNREACHABLE.format(url=settings.ui_base_url))
+        cl.logger.error(f"Backend unreachable at {settings.ui_base_url}")
         return
 
     # Fetch available models
@@ -73,7 +72,7 @@ async def on_chat_start() -> None:
         return
 
     # Try to auto-select a model
-    selected_model = utils.select_model_automatically(models, DEFAULT_MODEL)
+    selected_model = utils.select_model_automatically(models, settings.ui_default_model)
 
     if selected_model:
         cl.user_session.set(SESSION_MODEL, selected_model)
@@ -247,9 +246,9 @@ async def stream_chat_completion(
         httpx.AsyncClient() as client,
         client.stream(
             "POST",
-            f"{utils.HAYHOOKS_BASE_URL}/v1/chat/completions",
+            f"{settings.ui_base_url}/v1/chat/completions",
             json=utils.build_chat_request(model, history),
-            timeout=utils.REQUEST_TIMEOUT,
+            timeout=settings.ui_request_timeout,
         ) as response,
     ):
         response.raise_for_status()

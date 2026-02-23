@@ -62,14 +62,12 @@ hayhooks run
 | `HAYHOOKS_UI_PATH` | URL path where UI is mounted | `/chat` |
 | `HAYHOOKS_UI_APP` | Custom Chainlit app file path | (uses default) |
 
-### Chainlit App Configuration
-
-The default Chainlit app also supports these environment variables:
+### Additional Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HAYHOOKS_BASE_URL` | Base URL for Hayhooks API calls | `http://localhost:1416` |
-| `HAYHOOKS_DEFAULT_MODEL` | Default pipeline to use | (auto-select) |
+| `HAYHOOKS_UI_DEFAULT_MODEL` | Default pipeline to auto-select | (auto-select if only one) |
+| `HAYHOOKS_UI_REQUEST_TIMEOUT` | Timeout (seconds) for chat requests | `120.0` |
 
 ## How It Works
 

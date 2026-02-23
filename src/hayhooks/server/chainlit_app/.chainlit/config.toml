@@ -21,6 +21,12 @@ default_expand_messages = false
 # Custom CSS file, relative to public directory
 # custom_css = "/public/custom.css"
 
+# Load assistant logo directly from URL (shown in header/sidebar)
+logo_file_url = "/public/logo_light.png"
+
+# Load assistant avatar image directly from URL (shown next to messages)
+default_avatar_file_url = "/public/logo_light.png"
+
 [features]
 # Show the prompt playground
 prompt_playground = false

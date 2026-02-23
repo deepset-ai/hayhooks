@@ -9,6 +9,8 @@ a chat interface.
 import os
 from pathlib import Path
 
+from fastapi.staticfiles import StaticFiles
+
 from hayhooks.server.logger import log
 
 # Path to the default Chainlit app directory and file
@@ -82,6 +84,12 @@ def mount_chainlit_app(
         log.debug("Set CHAINLIT_APP_ROOT to '{}'", app_root)
 
     log.info("Mounting Chainlit UI at path '{}' using app: {}", path, target)
+
+    # Mount the public directory as static files for theme, logos, etc.
+    public_dir = Path(app_root) / "public"
+    if public_dir.exists() and public_dir.is_dir():
+        app.mount("/public", StaticFiles(directory=str(public_dir)), name="chainlit_public")
+        log.debug("Mounted Chainlit public directory at '/public'")
 
     mount_chainlit(app=app, target=target, path=path)
 

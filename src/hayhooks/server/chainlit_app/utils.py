@@ -1,14 +1,13 @@
 import json
-import os
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
-# Configuration - override via environment variables
-HAYHOOKS_BASE_URL = os.getenv("HAYHOOKS_BASE_URL", "http://localhost:1416")
-REQUEST_TIMEOUT = 120.0
+from hayhooks.settings import settings
+
+# Internal timeouts for lightweight requests
 MODELS_FETCH_TIMEOUT = 10.0
 HEALTH_CHECK_TIMEOUT = 5.0
 
@@ -33,7 +32,7 @@ async def check_backend_health() -> bool:
     """
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"{HAYHOOKS_BASE_URL}/status", timeout=HEALTH_CHECK_TIMEOUT)
+            response = await client.get(f"{settings.ui_base_url}/status", timeout=HEALTH_CHECK_TIMEOUT)
             return response.status_code == HTTP_OK
     except Exception:
         return False
@@ -48,12 +47,12 @@ async def get_available_models() -> list[dict[str, Any]]:
     """
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"{HAYHOOKS_BASE_URL}/v1/models", timeout=MODELS_FETCH_TIMEOUT)
+            response = await client.get(f"{settings.ui_base_url}/v1/models", timeout=MODELS_FETCH_TIMEOUT)
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict):
                 return []
-            return data.get("data", [])
+            return data.get("data") or []
     except Exception:
         # Log errors are handled by caller
         return []

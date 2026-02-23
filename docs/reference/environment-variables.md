@@ -91,13 +91,23 @@ export HAYHOOKS_STREAMING_COMPONENTS="llm_1, llm_2, llm_3"
 
 ### HAYHOOKS_UI_PATH
 
-- Default: `/ui`
+- Default: `/chat`
 - Description: URL path where the Chainlit UI is mounted
 
 ### HAYHOOKS_UI_APP
 
 - Default: `""` (uses built-in default app)
 - Description: Path to a custom Chainlit app file
+
+### HAYHOOKS_UI_DEFAULT_MODEL
+
+- Default: `""` (auto-selects if only one pipeline is deployed)
+- Description: Default pipeline/model to auto-select in the Chainlit UI
+
+### HAYHOOKS_UI_REQUEST_TIMEOUT
+
+- Default: `120.0`
+- Description: Timeout in seconds for chat completion requests from the Chainlit UI
 
 !!! note "Installation Required"
     The Chainlit UI requires the `ui` extra: `pip install "hayhooks[ui]"`

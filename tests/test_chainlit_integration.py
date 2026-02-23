@@ -81,6 +81,16 @@ class TestMountChainlitApp:
     def test_default_chainlit_app_file_exists(self):
         assert DEFAULT_CHAINLIT_APP.exists(), f"Default Chainlit app not found at {DEFAULT_CHAINLIT_APP}"
 
+    def test_mounts_public_directory_when_it_exists(self, mock_chainlit_modules):
+        from fastapi import FastAPI
+
+        app = FastAPI()
+        mount_chainlit_app(app, path="/chat")
+
+        # Verify that public directory was mounted
+        mounted_paths = {route.path for route in app.routes if hasattr(route, "path")}
+        assert "/public" in mounted_paths, "Public directory should be mounted at /public"
+
 
 class TestCreateAppWithUI:
     def test_ui_not_mounted_by_default(self, monkeypatch):
