@@ -47,8 +47,9 @@ async def initialize_session() -> None:
 async def prompt_model_selection(models: list[dict[str, Any]]) -> None:
     """Show model selection UI to user."""
     actions = [
-        cl.Action(name="select_model", payload={"model": m["id"]}, label=m["id"])
+        cl.Action(name="select_model", payload={"model": m.get("id", "")}, label=m.get("id", "unknown"))
         for m in models[:MAX_PIPELINES_DISPLAY]
+        if m.get("id")
     ]
     await send_message(MSG_SELECT_PIPELINE, actions)
 
@@ -240,7 +241,7 @@ async def stream_chat_completion(
         httpx.TimeoutException: If request times out.
     """
     stream_state: StreamState = {"current_step": None}
-    full_response = ""
+    response_parts: list[str] = []
 
     async with (
         httpx.AsyncClient() as client,
@@ -256,13 +257,13 @@ async def stream_chat_completion(
         async for line in response.aiter_lines():
             content = await process_stream_line(line, stream_state)
             if content:
-                full_response += content
+                response_parts.append(content)
                 await response_msg.stream_token(content)
 
         # Cleanup any open steps
         await close_current_step(stream_state)
 
-    return full_response
+    return "".join(response_parts)
 
 
 @cl.on_message

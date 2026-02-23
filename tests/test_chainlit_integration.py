@@ -48,7 +48,7 @@ class TestMountChainlitApp:
         from fastapi import FastAPI
 
         app = FastAPI()
-        with pytest.raises(FileNotFoundError, match="not\\_a\\_real\\_app\\_\\.py"):
+        with pytest.raises(FileNotFoundError, match="not_a_real_app\\.py"):
             mount_chainlit_app(app, target="/nonexistent/not_a_real_app.py")
 
     def test_uses_default_app_when_no_target(self, mock_chainlit_modules):

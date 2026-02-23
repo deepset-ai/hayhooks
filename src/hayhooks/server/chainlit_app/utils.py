@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -14,12 +15,8 @@ HEALTH_CHECK_TIMEOUT = 5.0
 # HTTP Status Codes
 HTTP_OK = 200
 
-# Constants for tool name extraction
-TOOL_CALL_PREFIX = "Calling '"
-TOOL_CALL_SUFFIX = "' tool"
-# Used to detect if prefix was found: find() returns -1 if not found,
-# so -1 + len(prefix) equals this value, failing the > check
-TOOL_CALL_PREFIX_LEN = len(TOOL_CALL_PREFIX) - 1
+# Pattern for extracting tool names from status descriptions like "Calling 'weather_tool' tool..."
+_TOOL_CALL_RE = re.compile(r"Calling '(.+?)' tool")
 
 # Event types
 EVENT_STATUS = "status"
@@ -96,12 +93,8 @@ def extract_tool_name(description: str) -> tuple[str, str]:
     Returns:
         Tuple of (step_name, step_type)
     """
-    if TOOL_CALL_PREFIX in description and TOOL_CALL_SUFFIX in description:
-        start = description.find(TOOL_CALL_PREFIX) + len(TOOL_CALL_PREFIX)
-        end = description.find(TOOL_CALL_SUFFIX)
-        if start > TOOL_CALL_PREFIX_LEN and end > start:
-            tool_name = description[start:end]
-            return f"🔧 {tool_name}", "tool"
+    if match := _TOOL_CALL_RE.search(description):
+        return f"🔧 {match.group(1)}", "tool"
     return "Processing", "run"
 
 

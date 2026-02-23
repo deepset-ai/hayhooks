@@ -81,7 +81,6 @@ def mount_chainlit_app(
         os.environ["CHAINLIT_APP_ROOT"] = app_root
         log.debug("Set CHAINLIT_APP_ROOT to '{}'", app_root)
 
-
     log.info("Mounting Chainlit UI at path '{}' using app: {}", path, target)
 
     mount_chainlit(app=app, target=target, path=path)
