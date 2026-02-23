@@ -48,5 +48,5 @@ jobs:
       - name: Ruff - check format and linting
         run: hatch run fmt-check
 
-      - name: Mypy - check types
+      - name: Ty - check types
         run: hatch run test:types
