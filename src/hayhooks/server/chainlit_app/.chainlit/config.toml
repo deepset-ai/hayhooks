@@ -1,0 +1,44 @@
+[project]
+# Whether to enable telemetry (default: true)
+enable_telemetry = false
+
+[UI]
+# Name of the app
+name = "Hayhooks"
+
+# Description of the app
+description = "Chat with your Haystack pipelines"
+
+# Large size content are by default collapsed for a cleaner ui
+default_collapse_content = true
+
+# Hide the chain of thought reasoning from the user
+hide_cot = false
+
+# The default value for the expand messages settings.
+default_expand_messages = false
+
+# Custom CSS file, relative to public directory
+# custom_css = "/public/custom.css"
+
+# Load assistant logo directly from URL (shown in header/sidebar)
+logo_file_url = "/public/logo_light.png"
+
+# Load assistant avatar image directly from URL (shown next to messages)
+default_avatar_file_url = "/public/logo_light.png"
+
+[features]
+# Show the prompt playground
+prompt_playground = false
+
+# Allows user to use speech to text
+speech_to_text.enabled = false
+
+# Allows user to generate audio from text messages
+text_to_speech.enabled = false
+
+# File upload support - disabled as Hayhooks OpenAI endpoint doesn't support multimodal inputs yet
+spontaneous_file_upload.enabled = false
+
+[meta]
+generated_by = "hayhooks"

@@ -53,6 +53,7 @@ cover/
 *.png
 
 !docs/**/*.png
+!src/hayhooks/server/chainlit_app/public/*.png
 
 # Translations
 *.mo
@@ -171,3 +172,28 @@ cython_debug/
 
 # PyCharm
 .idea/
+
+# VSCode
+.vscode/
+
+# Cursor IDE
+.cursor/
+
+# Chainlit
+.chainlit/
+.chainlit.db
+.chainlit.sqlite
+.files/
+chainlit.md
+
+# Local environment overrides
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# OS-specific
+Thumbs.db
