@@ -242,6 +242,39 @@ Available imports include `@/components/ui/*` (shadcn), `lucide-react`, `react`,
 !!! tip
     If a custom file has the same name as a built-in element, the custom version takes precedence. A warning is logged when this happens.
 
+## Branding & Theme
+
+The default Chainlit UI ships with Hayhooks logos, favicons, and a `theme.json`. To override any of these, place your own files in a `public/` directory next to your custom Chainlit app:
+
+```text
+my_chainlit/
+  my_app.py               # Custom Chainlit app
+  public/
+    logo_dark.png          # Overrides the default dark-mode logo
+    theme.json             # Overrides the default theme
+```
+
+```bash
+export HAYHOOKS_CHAINLIT_APP=my_chainlit/my_app.py
+hayhooks run --with-chainlit
+```
+
+When `HAYHOOKS_CHAINLIT_APP` is set, Hayhooks uses the parent directory of that file as the Chainlit app root. Built-in assets (logos, favicons, theme) are automatically seeded into the `public/` directory, so you only need to provide the files you want to override -- anything you don't provide keeps the default.
+
+The built-in public assets are:
+
+| File | Description |
+|------|-------------|
+| `logo_dark.png` | Logo displayed in dark mode |
+| `logo_light.png` | Logo displayed in light mode |
+| `favicon.ico` | Browser tab icon (ICO) |
+| `favicon.png` | Browser tab icon (PNG) |
+| `favicon.svg` | Browser tab icon (SVG) |
+| `apple-touch-icon.png` | iOS home screen icon |
+| `theme.json` | Chainlit theme (colors, fonts, etc.) |
+
+For theme configuration options, see the [Chainlit theme documentation](https://docs.chainlit.io/customisation/overview).
+
 ## Why Embedded Chainlit
 
 The embedded Chainlit UI is designed for simplicity and fast iteration:

@@ -93,9 +93,15 @@ def run(  # noqa: PLR0913
         sys.path.append(additional_python_path)
         log.trace("Added '{}' to sys.path", additional_python_path)
 
-    # Configure Chainlit UI
+    # Handling Chainlit CLI flags
     if chainlit_path and not with_chainlit:
         log.warning("--chainlit-path was provided but --with-chainlit is not set. The UI will not be mounted.")
+
+    if chainlit_custom_elements_dir and not with_chainlit:
+        log.warning(
+            "--chainlit-custom-elements-dir was provided but --with-chainlit is not set. "
+            "Custom elements will not be loaded."
+        )
 
     if with_chainlit:
         if workers > 1:
@@ -108,9 +114,11 @@ def run(  # noqa: PLR0913
             )
         _set_env("HAYHOOKS_CHAINLIT_ENABLED", "true")
         settings.chainlit_enabled = True
+
         if chainlit_path:
             _set_env("HAYHOOKS_CHAINLIT_PATH", chainlit_path)
             settings.chainlit_path = chainlit_path
+
         if chainlit_custom_elements_dir:
             _set_env("HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR", chainlit_custom_elements_dir)
             settings.chainlit_custom_elements_dir = chainlit_custom_elements_dir

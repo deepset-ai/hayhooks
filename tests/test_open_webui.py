@@ -1,6 +1,10 @@
 import pytest
 from pydantic import ValidationError
 
+from hayhooks.chainlit_events import ChainlitEvent, create_custom_element_event
+from hayhooks.events import PipelineEvent
+from hayhooks.events import create_notification_event as create_base_notification_event
+from hayhooks.events import create_status_event as create_base_status_event
 from hayhooks.open_webui import (
     MessageEventData,
     NotificationEventData,
@@ -206,3 +210,90 @@ class TestEdgeCases:
 
         assert dict1 == dict2
         assert dict1 == {"type": "status", "data": {"description": "Test", "done": True, "hidden": False}}
+
+
+class TestPipelineEvent:
+    def test_creation_with_status_data(self):
+        event = PipelineEvent(type="status", data=StatusEventData(description="loading"))
+        assert event.type == "status"
+        assert event.data.description == "loading"
+
+    def test_creation_with_dict_data(self):
+        event = PipelineEvent(type="custom", data={"key": "value"})
+        assert event.data == {"key": "value"}
+
+    def test_to_dict(self):
+        event = PipelineEvent(type="status", data=StatusEventData(description="x"))
+        result = event.to_dict()
+        assert result == {"type": "status", "data": {"description": "x", "done": False, "hidden": False}}
+
+    def test_to_event_dict_matches_to_dict(self):
+        event = PipelineEvent(type="test", data={"a": 1})
+        assert event.to_event_dict() == event.to_dict()
+
+    def test_base_create_status_event(self):
+        event = create_base_status_event("processing", done=True)
+        assert isinstance(event, PipelineEvent)
+        assert event.type == "status"
+        assert event.data.description == "processing"
+        assert event.data.done is True
+
+    def test_base_create_notification_event(self):
+        event = create_base_notification_event("done!", notification_type="success")
+        assert isinstance(event, PipelineEvent)
+        assert event.type == "notification"
+        assert event.data.content == "done!"
+        assert event.data.type == "success"
+
+    def test_is_base_of_open_webui_event(self):
+        assert issubclass(OpenWebUIEvent, PipelineEvent)
+
+    def test_is_base_of_chainlit_event(self):
+        assert issubclass(ChainlitEvent, PipelineEvent)
+
+
+class TestChainlitEvent:
+    def test_creation(self):
+        event = ChainlitEvent(type="custom_element", data={"name": "Card", "props": {}})
+        assert event.type == "custom_element"
+        assert event.data["name"] == "Card"
+
+    def test_isinstance_of_pipeline_event(self):
+        event = ChainlitEvent(type="x", data={})
+        assert isinstance(event, PipelineEvent)
+
+    def test_to_event_dict(self):
+        event = ChainlitEvent(type="custom_element", data={"name": "W", "props": {"a": 1}})
+        result = event.to_event_dict()
+        assert result == {"type": "custom_element", "data": {"name": "W", "props": {"a": 1}}}
+
+
+class TestCreateCustomElementEvent:
+    def test_returns_chainlit_event(self):
+        event = create_custom_element_event(name="WeatherCard", props={"temp": 20})
+        assert isinstance(event, ChainlitEvent)
+
+    def test_event_type(self):
+        event = create_custom_element_event(name="Chart", props={})
+        assert event.type == "custom_element"
+
+    def test_event_data_structure(self):
+        props = {"location": "Berlin", "temperature": 15}
+        event = create_custom_element_event(name="WeatherCard", props=props)
+        assert event.data == {"name": "WeatherCard", "props": props}
+
+    def test_empty_props(self):
+        event = create_custom_element_event(name="Empty", props={})
+        assert event.data["props"] == {}
+
+    def test_nested_props(self):
+        props = {"data": {"series": [1, 2, 3], "labels": ["a", "b", "c"]}}
+        event = create_custom_element_event(name="Chart", props=props)
+        assert event.data["props"]["data"]["series"] == [1, 2, 3]
+
+    def test_serialization_roundtrip(self):
+        event = create_custom_element_event(name="Card", props={"x": 42})
+        d = event.to_event_dict()
+        assert d["type"] == "custom_element"
+        assert d["data"]["name"] == "Card"
+        assert d["data"]["props"]["x"] == 42

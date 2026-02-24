@@ -35,6 +35,31 @@ def is_chainlit_available() -> bool:
         return False
 
 
+def _seed_public_assets(app_root: str) -> None:
+    """
+    Copy built-in public assets into the app root without overwriting.
+
+    Seeds the ``public/`` directory with default logos, favicons, and theme so
+    that custom Chainlit apps inherit branding automatically.  Files already
+    present in the target directory are left untouched.
+    """
+    builtin_public = DEFAULT_CHAINLIT_APP_DIR / "public"
+    if not builtin_public.is_dir():
+        return
+
+    target_public = Path(app_root) / "public"
+    target_public.mkdir(parents=True, exist_ok=True)
+
+    for src_file in builtin_public.iterdir():
+        if not src_file.is_file():
+            continue
+        dest = target_public / src_file.name
+        if dest.exists():
+            continue
+        shutil.copy2(src_file, dest)
+        log.debug("Seeded default asset: {}", src_file.name)
+
+
 def _merge_custom_elements(app_root: str) -> None:
     """
     Copy custom ``.jsx`` element files into the Chainlit ``public/elements/`` directory.
@@ -118,6 +143,10 @@ def mount_chainlit_app(
     if current_root != app_root:
         os.environ["CHAINLIT_APP_ROOT"] = app_root
         log.debug("Set CHAINLIT_APP_ROOT to '{}'", app_root)
+
+    # Seed the public directory with built-in assets (logos, favicons, theme)
+    # so that custom apps inherit them without having to copy everything manually.
+    _seed_public_assets(app_root)
 
     # Merge user-provided custom elements into public/elements/
     _merge_custom_elements(app_root)
