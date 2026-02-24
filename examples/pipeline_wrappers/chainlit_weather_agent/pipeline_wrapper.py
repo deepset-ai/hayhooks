@@ -1,14 +1,3 @@
-"""
-Weather Agent with Chainlit Custom Widget
-
-This example demonstrates how to:
-- Use a Haystack Agent with a real weather API tool (Open-Meteo)
-- Emit a `custom_element` SSE event that renders as a WeatherCard widget in the Chainlit UI
-
-Run with:
-    hayhooks run --pipelines-dir examples/pipeline_wrappers/chainlit_weather_agent --ui
-"""
-
 import json
 from collections.abc import AsyncGenerator
 
@@ -19,12 +8,8 @@ from haystack.dataclasses import ChatMessage
 from haystack.tools import Tool
 
 from hayhooks import BasePipelineWrapper, async_streaming_generator
-from hayhooks.open_webui import (
-    OpenWebUIEvent,
-    create_custom_element_event,
-    create_notification_event,
-    create_status_event,
-)
+from hayhooks.chainlit_events import create_custom_element_event
+from hayhooks.events import PipelineEvent, create_notification_event, create_status_event
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -131,7 +116,7 @@ class PipelineWrapper(BasePipelineWrapper):
         tool_name: str,  # noqa: ARG002
         arguments: dict,
         id: str,  # noqa: ARG002, A002
-    ) -> list[OpenWebUIEvent]:
+    ) -> list[PipelineEvent]:
         location = arguments.get("location", "unknown")
         return [
             create_status_event(description=f"Fetching weather for {location}..."),
@@ -144,8 +129,8 @@ class PipelineWrapper(BasePipelineWrapper):
         arguments: dict,  # noqa: ARG002
         result: str,
         error: bool,
-    ) -> list[OpenWebUIEvent]:
-        events: list[OpenWebUIEvent] = [
+    ) -> list[PipelineEvent]:
+        events: list[PipelineEvent] = [
             create_status_event(description=f"Weather data received from {tool_name}", done=True),
         ]
 

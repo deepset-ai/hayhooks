@@ -14,7 +14,7 @@ from haystack.utils import Secret
 from loguru import logger
 
 from hayhooks import callbacks
-from hayhooks.open_webui import OpenWebUIEvent, create_notification_event
+from hayhooks.events import PipelineEvent, create_notification_event
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.pipelines.utils import (
     async_streaming_generator,
@@ -457,14 +457,14 @@ def test_streaming_generator_with_tool_calls_and_default_callbacks(mocked_pipeli
     chunks = list(generator)
 
     assert len(chunks) == 7
-    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert isinstance(chunks[0], PipelineEvent)
     assert chunks[0].type == "status"
     assert "Calling 'test_tool' tool..." in chunks[0].data.description
     assert chunks[1] == mock_chunks_from_pipeline[0]
 
     assert chunks[2] == mock_chunks_from_pipeline[1]
 
-    assert isinstance(chunks[3], OpenWebUIEvent)
+    assert isinstance(chunks[3], PipelineEvent)
     assert chunks[3].type == "status"
     assert "Called 'test_tool' tool" in chunks[3].data.description
     assert isinstance(chunks[4], str)
@@ -510,7 +510,7 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
     assert len(chunks) == 6
 
     # First chunk should be the result from default_on_tool_call_start
-    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert isinstance(chunks[0], PipelineEvent)
     assert chunks[0].type == "status"
     assert "Calling 'test_tool' tool..." in chunks[0].data.description
 
@@ -518,7 +518,7 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
     assert chunks[1] == mock_chunks_from_pipeline[0]
 
     # Third chunk should be the status event from default_on_tool_call_end
-    assert isinstance(chunks[2], OpenWebUIEvent)
+    assert isinstance(chunks[2], PipelineEvent)
     assert chunks[2].type == "status"
     assert "Called 'test_tool' tool" in chunks[2].data.description
 
@@ -573,14 +573,14 @@ async def test_async_streaming_generator_with_tool_calls_and_default_callbacks(
 
     assert len(chunks) == 7
 
-    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert isinstance(chunks[0], PipelineEvent)
     assert chunks[0].type == "status"
     assert "Calling 'test_tool' tool..." in chunks[0].data.description
 
     assert chunks[1] == mock_chunks_from_pipeline[0]
     assert chunks[2] == mock_chunks_from_pipeline[1]
 
-    assert isinstance(chunks[3], OpenWebUIEvent)
+    assert isinstance(chunks[3], PipelineEvent)
     assert chunks[3].type == "status"
     assert "Called 'test_tool' tool" in chunks[3].data.description
     assert isinstance(chunks[4], str)
@@ -629,7 +629,7 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
     assert len(chunks) == 6
 
     # First chunk should be the result from default_on_tool_call_start
-    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert isinstance(chunks[0], PipelineEvent)
     assert chunks[0].type == "status"
     assert "Calling 'test_tool' tool..." in chunks[0].data.description
 
@@ -637,7 +637,7 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
     assert chunks[1] == mock_chunks_from_pipeline[0]
 
     # Third chunk should be the status event from default_on_tool_call_end
-    assert isinstance(chunks[2], OpenWebUIEvent)
+    assert isinstance(chunks[2], PipelineEvent)
     assert chunks[2].type == "status"
     assert "Called 'test_tool' tool" in chunks[2].data.description
 
@@ -703,11 +703,11 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
     assert len(chunks) == 6
 
     # First two chunks should be the results from custom_on_tool_call_start
-    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert isinstance(chunks[0], PipelineEvent)
     assert chunks[0].type == "notification"
     assert "Calling 'test_tool' tool... (1/2)" in chunks[0].data.content
 
-    assert isinstance(chunks[1], OpenWebUIEvent)
+    assert isinstance(chunks[1], PipelineEvent)
     assert chunks[1].type == "notification"
     assert "Calling 'test_tool' tool... (2/2)" in chunks[1].data.content
 
@@ -715,11 +715,11 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
     assert chunks[2] == mock_chunks_from_pipeline[0]
 
     # Fourth and fifth chunks should be the results from custom_on_tool_call_end
-    assert isinstance(chunks[3], OpenWebUIEvent)
+    assert isinstance(chunks[3], PipelineEvent)
     assert chunks[3].type == "notification"
     assert "Called 'test_tool' tool (1/2)" in chunks[3].data.content
 
-    assert isinstance(chunks[4], OpenWebUIEvent)
+    assert isinstance(chunks[4], PipelineEvent)
     assert chunks[4].type == "notification"
     assert "Called 'test_tool' tool (2/2)" in chunks[4].data.content
 
@@ -780,11 +780,11 @@ async def test_async_streaming_generator_with_custom_callbacks_returning_list(
     assert len(chunks) == 6
 
     # First two chunks should be the results from custom_on_tool_call_start
-    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert isinstance(chunks[0], PipelineEvent)
     assert chunks[0].type == "notification"
     assert "Calling 'test_tool' tool... (1/2)" in chunks[0].data.content
 
-    assert isinstance(chunks[1], OpenWebUIEvent)
+    assert isinstance(chunks[1], PipelineEvent)
     assert chunks[1].type == "notification"
     assert "Calling 'test_tool' tool... (2/2)" in chunks[1].data.content
 
@@ -792,11 +792,11 @@ async def test_async_streaming_generator_with_custom_callbacks_returning_list(
     assert chunks[2] == mock_chunks_from_pipeline[0]
 
     # Fourth and fifth chunks should be the results from custom_on_tool_call_end
-    assert isinstance(chunks[3], OpenWebUIEvent)
+    assert isinstance(chunks[3], PipelineEvent)
     assert chunks[3].type == "notification"
     assert "Called 'test_tool' tool (1/2)" in chunks[3].data.content
 
-    assert isinstance(chunks[4], OpenWebUIEvent)
+    assert isinstance(chunks[4], PipelineEvent)
     assert chunks[4].type == "notification"
     assert "Called 'test_tool' tool (2/2)" in chunks[4].data.content
 
@@ -1519,7 +1519,7 @@ def test_streaming_generator_external_queue_merges_events(mocked_pipeline_with_s
 
     assert len(chunks) == 4
     assert chunks[0] == event1
-    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert isinstance(chunks[0], PipelineEvent)
     assert chunks[1] == event2
     assert isinstance(chunks[1], dict)
     assert chunks[2] == event3
@@ -1575,7 +1575,7 @@ async def test_async_streaming_generator_external_queue_merges_events(mocker, mo
 
     assert len(chunks) == 4
     assert chunks[0] == event1
-    assert isinstance(chunks[0], OpenWebUIEvent)
+    assert isinstance(chunks[0], PipelineEvent)
     assert chunks[1] == event2
     assert isinstance(chunks[1], dict)
     assert chunks[2] == event3

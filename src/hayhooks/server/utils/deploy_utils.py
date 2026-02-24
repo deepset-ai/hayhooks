@@ -18,7 +18,7 @@ from fastapi.routing import APIRoute
 from haystack.dataclasses import StreamingChunk
 from pydantic import BaseModel
 
-from hayhooks.open_webui import OpenWebUIEvent
+from hayhooks.events import PipelineEvent
 from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
@@ -151,8 +151,8 @@ def handle_pipeline_exceptions() -> Callable:
 def _format_run_stream_chunk(stream_item: Any) -> str | bytes | None:
     if isinstance(stream_item, StreamingChunk):
         return stream_item.content or ""
-    if isinstance(stream_item, OpenWebUIEvent):
-        log.warning("OpenWebUIEvent emitted during /run streaming; skipping. Use OpenAI chat endpoints for UI events.")
+    if isinstance(stream_item, PipelineEvent):
+        log.warning("PipelineEvent emitted during /run streaming; skipping. Use OpenAI chat endpoints for UI events.")
         return None
     if isinstance(stream_item, (str, bytes)):
         return stream_item

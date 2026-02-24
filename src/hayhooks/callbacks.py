@@ -2,20 +2,20 @@ from typing import Any
 
 from haystack.tracing.utils import coerce_tag_value
 
-from hayhooks.open_webui import OpenWebUIEvent, create_details_tag, create_notification_event, create_status_event
+from hayhooks.events import PipelineEvent, create_notification_event, create_status_event
+from hayhooks.open_webui import create_details_tag
 
 
 def default_on_tool_call_start(
     tool_name: str,
     arguments: str | None,  # noqa: ARG001
     tool_call_id: str | None,  # noqa: ARG001
-) -> OpenWebUIEvent | None:
+) -> PipelineEvent | None:
     """
     Default callback function when a tool call starts.
 
     This callback creates a status event to indicate that a tool is being invoked.
-    It provides real-time feedback to users about ongoing tool execution in the
-    Open WebUI interface.
+    It provides real-time feedback to users about ongoing tool execution in the UI.
 
     Args:
         tool_name (str): The name of the tool being called. If empty or falsy,
@@ -24,8 +24,8 @@ def default_on_tool_call_start(
         tool_call_id (str | None): A unique identifier for the tool call.
 
     Returns:
-        OpenWebUIEvent | None: A status event object that can be rendered
-            by Open WebUI to show tool execution progress. Returns None if the
+        PipelineEvent | None: A status event object that can be rendered
+            by the UI to show tool execution progress. Returns None if the
             tool_name is empty or falsy.
     """
     if tool_name:
@@ -38,7 +38,7 @@ def default_on_tool_call_start(
 
 def default_on_tool_call_end(
     tool_name: str, arguments: dict[str, Any], result: str, error: bool
-) -> list[OpenWebUIEvent | str]:
+) -> list[PipelineEvent | str]:
     """
     Default callback function when a tool call ends.
 
@@ -53,10 +53,10 @@ def default_on_tool_call_end(
         error (bool): Whether the tool call resulted in an error.
 
     Returns:
-        list[OpenWebUIEvent | str]: A list of events to be processed by Open WebUI.
+        list[PipelineEvent | str]: A list of events to be processed by the UI.
             For successful calls, returns a status event and a details tag with the tool's arguments and response.
             For failed calls, returns a hidden status event and an error notification.
-            The list can contain both OpenWebUIEvent and str objects.
+            The list can contain both PipelineEvent and str objects.
     """
     if error:
         return [
