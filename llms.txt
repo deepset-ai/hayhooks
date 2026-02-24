@@ -1,0 +1,63 @@
+# Hayhooks
+
+> Deploy and serve Haystack Pipelines and Agents as REST APIs
+
+Hayhooks turns Haystack Pipelines and Agents into production-ready REST APIs, bundling deployment, observability, lifecycle tooling, and native Model Context Protocol (MCP) endpoints for MCP-aware clients such as Cursor or Claude Desktop.
+
+
+## Overview
+
+- [Home](https://deepset-ai.github.io/hayhooks/index.md): Project overview and key capabilities.
+
+## Getting Started
+
+- [Quick Start](https://deepset-ai.github.io/hayhooks/getting-started/quick-start/index.md): Launch Hayhooks locally with the default settings.
+- [Quick Start with Docker Compose](https://deepset-ai.github.io/hayhooks/getting-started/quick-start-docker/index.md): Run Hayhooks with Docker Compose for a managed setup.
+- [Installation](https://deepset-ai.github.io/hayhooks/getting-started/installation/index.md): Install Hayhooks and its dependencies.
+- [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md): Configure Hayhooks for your environment.
+
+## Core Concepts
+
+- [PipelineWrapper](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md): Understand the PipelineWrapper abstraction.
+- [Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/pipeline-deployment/index.md): Learn how to deploy Haystack Pipelines with Hayhooks.
+- [Agent Deployment](https://deepset-ai.github.io/hayhooks/concepts/agent-deployment/index.md): Learn how to deploy Haystack Agents with Hayhooks.
+- [YAML Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/yaml-pipeline-deployment/index.md): Define and deploy Haystack Pipelines from YAML.
+
+## Features
+
+- [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md): Use Hayhooks with OpenAI-compatible clients.
+- [MCP Support](https://deepset-ai.github.io/hayhooks/features/mcp-support/index.md): Using Hayhooks as an MCP Server for Haystack Pipelines and Agents.
+- [Chainlit Integration](https://deepset-ai.github.io/hayhooks/features/chainlit-integration/index.md): Embed a Chainlit chat UI directly in Hayhooks.
+- [Open WebUI Integration](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md): Connect Hayhooks to Open WebUI.
+- [File Upload Support](https://deepset-ai.github.io/hayhooks/features/file-upload-support/index.md): Handle file uploads inside pipeline runs.
+- [File Response Support](https://deepset-ai.github.io/hayhooks/features/file-response-support/index.md): Return binary files (images, PDFs, audio) from pipeline endpoints.
+- [CLI Commands](https://deepset-ai.github.io/hayhooks/features/cli-commands/index.md): Discover the Hayhooks command-line tooling.
+
+## Advanced Usage
+
+- [Running Pipelines](https://deepset-ai.github.io/hayhooks/advanced/running-pipelines/index.md): Execute Haystack Pipelines and manage runs programmatically.
+- [Advanced Configuration](https://deepset-ai.github.io/hayhooks/advanced/advanced-configuration/index.md): Fine-tune advanced configuration settings.
+- [Code Sharing](https://deepset-ai.github.io/hayhooks/advanced/code-sharing/index.md): Share Python code securely across deployments.
+
+## Deployment
+
+- [Deployment Guidelines](https://deepset-ai.github.io/hayhooks/deployment/deployment_guidelines/index.md): Follow best practices for production deployments.
+
+## Examples
+
+- [Examples Overview](https://deepset-ai.github.io/hayhooks/examples/overview/index.md): Explore the examples shipped with Hayhooks.
+- [Chat with Website](https://deepset-ai.github.io/hayhooks/examples/chat-with-website/index.md): Build a Haystack website-aware chat assistant.
+- [RAG System](https://deepset-ai.github.io/hayhooks/examples/rag-system/index.md): Assemble a Haystack RAG system with Hayhooks.
+- [Async Operations](https://deepset-ai.github.io/hayhooks/examples/async-operations/index.md): Run asynchronous operations with Haystack Pipelines and Agents.
+- [Open WebUI Events](https://deepset-ai.github.io/hayhooks/examples/openwebui-events/index.md): Handle Open WebUI event integrations.
+
+## Reference
+
+- [API Reference](https://deepset-ai.github.io/hayhooks/reference/api-reference/index.md): REST API reference for Haystack Pipelines and Agents endpoints.
+- [Environment Variables](https://deepset-ai.github.io/hayhooks/reference/environment-variables/index.md): Environment variables and their defaults.
+- [Logging](https://deepset-ai.github.io/hayhooks/reference/logging/index.md): Logging configuration and observability guidance.
+
+## About
+
+- [License](https://deepset-ai.github.io/hayhooks/about/license/index.md): Project licensing details.
+

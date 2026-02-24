@@ -1,0 +1,5709 @@
+# Hayhooks
+
+> Deploy and serve Haystack Pipelines and Agents as REST APIs
+
+Hayhooks turns Haystack Pipelines and Agents into production-ready REST APIs, bundling deployment, observability, lifecycle tooling, and native Model Context Protocol (MCP) endpoints for MCP-aware clients such as Cursor or Claude Desktop.
+
+
+# Overview
+
+# Hayhooks
+
+**Hayhooks** makes it easy to deploy and serve [Haystack](https://haystack.deepset.ai/) [Pipelines](https://docs.haystack.deepset.ai/docs/pipelines) and [Agents](https://docs.haystack.deepset.ai/docs/agents).
+
+With Hayhooks, you can:
+
+- 📦 **Deploy your Haystack pipelines and agents as REST APIs** with maximum flexibility and minimal boilerplate code.
+- 🛠️ **Expose your Haystack pipelines and agents over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline and agent as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
+- 💬 **Integrate your Haystack pipelines and agents with [Open WebUI](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
+- 🖥️ **Embed a [Chainlit](https://chainlit.io/) chat UI** directly in Hayhooks with `pip install "hayhooks[chainlit]"` and `hayhooks run --with-chainlit` -- zero-configuration frontend with streaming, pipeline selection, and custom UI widgets.
+- 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
+
+## Quick Start
+
+### 1. Install Hayhooks
+
+```
+# Install Hayhooks
+pip install hayhooks
+```
+
+### 2. Start Hayhooks
+
+```
+hayhooks run
+```
+
+### 3. Create a simple agent
+
+Create a minimal agent wrapper with streaming chat support and a simple HTTP POST API:
+
+```
+from typing import AsyncGenerator
+from haystack.components.agents import Agent
+from haystack.dataclasses import ChatMessage
+from haystack.tools import Tool
+from haystack.components.generators.chat import OpenAIChatGenerator
+from hayhooks import BasePipelineWrapper, async_streaming_generator
+
+
+# Define a Haystack Tool that provides weather information for a given location.
+def weather_function(location):
+    return f"The weather in {location} is sunny."
+
+weather_tool = Tool(
+    name="weather_tool",
+    description="Provides weather information for a given location.",
+    parameters={
+        "type": "object",
+        "properties": {"location": {"type": "string"}},
+        "required": ["location"],
+    },
+    function=weather_function,
+)
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.agent = Agent(
+            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            system_prompt="You're a helpful agent",
+            tools=[weather_tool],
+        )
+
+    # This will create a POST /my_agent/run endpoint
+    # `question` will be the input argument and will be auto-validated by a Pydantic model
+    async def run_api_async(self, question: str) -> str:
+        result = await self.agent.run_async(messages=[ChatMessage.from_user(question)])
+        return result["replies"][0].text
+
+    # This will create an OpenAI-compatible /chat/completions endpoint
+    async def run_chat_completion_async(
+        self, model: str, messages: list[dict], body: dict
+    ) -> AsyncGenerator[str, None]:
+        chat_messages = [
+            ChatMessage.from_openai_dict_format(message) for message in messages
+        ]
+
+        return async_streaming_generator(
+            pipeline=self.agent,
+            pipeline_run_args={
+                "messages": chat_messages,
+            },
+        )
+```
+
+Save as `my_agent_dir/pipeline_wrapper.py`.
+
+### 4. Deploy it
+
+```
+hayhooks pipeline deploy-files -n my_agent ./my_agent_dir
+```
+
+### 5. Run it
+
+Call the HTTP POST API (`/my_agent/run`):
+
+```
+curl -X POST http://localhost:1416/my_agent/run \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "What can you do?"}'
+```
+
+Call the OpenAI-compatible chat completion API (streaming enabled):
+
+```
+curl -X POST http://localhost:1416/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "my_agent",
+    "messages": [{"role": "user", "content": "What can you do?"}]
+  }'
+```
+
+Or chat with it in the [embedded Chainlit UI](https://deepset-ai.github.io/hayhooks/features/chainlit-integration/index.md) (`hayhooks run --with-chainlit`) or [integrate it with Open WebUI](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md)!
+
+## Key Features
+
+### 🚀 Easy Deployment
+
+- Deploy Haystack pipelines and agents as REST APIs with minimal setup
+- Support for both YAML-based and wrapper-based pipeline deployment
+- Automatic OpenAI-compatible endpoint generation
+
+### 🌐 Multiple Integration Options
+
+- **MCP Protocol**: Expose pipelines as MCP tools for use in AI development environments
+- **Chainlit UI**: Embedded chat frontend with streaming, pipeline selection, and [custom UI widgets](https://deepset-ai.github.io/hayhooks/features/chainlit-integration/index.md)
+- **Open WebUI Integration**: Use Hayhooks as a backend for Open WebUI with streaming support
+- **OpenAI Compatibility**: Seamless integration with OpenAI-compatible tools and frameworks
+
+### 🔧 Developer Friendly
+
+- CLI for easy pipeline management
+- Flexible configuration options
+- Comprehensive logging and debugging support
+- Custom route and middleware support
+
+### 📁 File Upload Support
+
+- Built-in support for handling file uploads in pipelines
+- Perfect for RAG systems and document processing
+
+## Next Steps
+
+- [Quick Start Guide](https://deepset-ai.github.io/hayhooks/getting-started/quick-start/index.md) - Get started with Hayhooks
+- [Installation](https://deepset-ai.github.io/hayhooks/getting-started/installation/index.md) - Install Hayhooks and dependencies
+- [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md) - Configure Hayhooks for your needs
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Explore example implementations
+
+## Community & Support
+
+- **GitHub**: [deepset-ai/hayhooks](https://github.com/deepset-ai/hayhooks)
+- **Issues**: [GitHub Issues](https://github.com/deepset-ai/hayhooks/issues)
+- **Documentation**: [Full Documentation](https://deepset-ai.github.io/hayhooks/)
+
+Hayhooks is actively maintained by the [deepset](https://deepset.ai/) team.
+# Getting Started
+
+# Quick Start
+
+This guide will help you get started with Hayhooks quickly.
+
+## Prerequisites
+
+- Python 3.10+
+- A Haystack pipeline or agent to deploy
+
+## Installation
+
+See [Installation](https://deepset-ai.github.io/hayhooks/getting-started/installation/index.md) for detailed setup instructions.
+
+Quick install:
+
+```
+pip install hayhooks
+```
+
+## Basic Usage
+
+### 1. Start Hayhooks
+
+```
+hayhooks run
+```
+
+This will start the Hayhooks server on `http://localhost:1416` by default.
+
+### 2. Deploy a Pipeline
+
+Deploy a pipeline using the `deploy-files` command:
+
+```
+hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/chat_with_website_streaming
+```
+
+### 3. Check Status
+
+Verify your pipeline is deployed:
+
+```
+hayhooks status
+```
+
+### 4. Run Your Pipeline
+
+Run your pipeline via the API:
+
+```
+curl -X POST \
+  http://localhost:1416/chat_with_website/run \
+  -H 'Content-Type: application/json' \
+  -d '{"urls": ["https://haystack.deepset.ai"], "question": "What is Haystack?"}'
+```
+
+```
+import requests
+
+response = requests.post(
+    "http://localhost:1416/chat_with_website/run",
+    json={
+        "urls": ["https://haystack.deepset.ai"],
+        "question": "What is Haystack?"
+    }
+)
+print(response.json())
+```
+
+```
+hayhooks pipeline run chat_with_website \
+  --param 'urls=["https://haystack.deepset.ai"]' \
+  --param 'question="What is Haystack?"'
+```
+
+## Quick Start with Docker Compose
+
+For the fastest setup with Open WebUI integration, see [Quick Start with Docker Compose](https://deepset-ai.github.io/hayhooks/getting-started/quick-start-docker/index.md).
+
+## Next Steps
+
+- [Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/pipeline-deployment/index.md) - Learn deployment methods
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Explore example implementations
+
+# Quick Start with Docker Compose
+
+To quickly get started with Hayhooks, we provide a ready-to-use Docker Compose 🐳 setup with pre-configured integration with [Open WebUI](https://openwebui.com/).
+
+It's available in the [Hayhooks + Open WebUI Docker Compose repository](https://github.com/deepset-ai/hayhooks-open-webui-docker-compose).
+
+## Setup Instructions
+
+### 1. Clone the Repository
+
+```
+git clone https://github.com/deepset-ai/hayhooks-open-webui-docker-compose.git
+cd hayhooks-open-webui-docker-compose
+```
+
+### 2. Start the Services
+
+```
+docker-compose up -d
+```
+
+This will start:
+
+- Hayhooks server on port 1416
+- Hayhooks MCP server on port 1417
+- Open WebUI on port 3000
+
+### 3. Access the Services
+
+- **Hayhooks API**: <http://localhost:1416>
+- **Open WebUI**: <http://localhost:3000>
+- **Hayhooks API Documentation**: <http://localhost:1416/docs>
+
+### 4. Deploy Example Pipelines
+
+Install Hayhooks locally to use the CLI:
+
+```
+pip install hayhooks
+```
+
+Then deploy example pipelines:
+
+```
+# Deploy a sample pipeline
+hayhooks pipeline deploy-files -n chat_with_website pipelines/chat_with_website_streaming
+```
+
+Alternative: Deploy via API
+
+You can also deploy pipelines using the HTTP API endpoints: `POST /deploy_files` (PipelineWrapper files) or `POST /deploy-yaml` (YAML pipeline definition). See the [API Reference](https://deepset-ai.github.io/hayhooks/reference/api-reference/#pipeline-management) for details.
+
+## Configuration Options
+
+### Environment Variables
+
+The following environment variables can be configured in `.env`:
+
+| Variable           | Description              | Default |
+| ------------------ | ------------------------ | ------- |
+| `OPEN_WEBUI_PORT`  | Port for Open WebUI      | `3000`  |
+| `WEBUI_DOCKER_TAG` | Tag for Open WebUI image | `main`  |
+
+### Volume Mounts
+
+The Docker Compose setup includes the following volume mounts:
+
+- **Pipeline Directory**: `/pipelines` – Directory mounted inside the Hayhooks container where your pipeline wrappers or YAML files live. Hayhooks auto-deploys anything it finds here at startup.
+
+## Integrating with Open WebUI
+
+The Docker Compose setup comes pre-configured to integrate Hayhooks with Open WebUI:
+
+### 1. Configure Open WebUI
+
+1. Access Open WebUI at <http://localhost:3000>
+1. Go to **Settings → Connections**
+1. Add a new connection with:
+1. **API Base URL**: `http://hayhooks:1416/v1`
+1. **API Key**: `any-value` (not used by Hayhooks)
+
+### 2. Deploy a Pipeline
+
+Deploy a pipeline that supports chat completion:
+
+```
+hayhooks pipeline deploy-files -n chat_with_website pipelines/chat_with_website_streaming
+```
+
+Alternatively, use the [API endpoints](https://deepset-ai.github.io/hayhooks/reference/api-reference/#pipeline-management) (`POST /deploy_files` or `POST /deploy-yaml`).
+
+### 3. Test the Integration
+
+1. In Open WebUI, select the Hayhooks backend
+1. Start a conversation with your deployed pipeline
+1. The pipeline will respond through the Open WebUI interface
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Port Conflicts**: Ensure ports 1416, 1417, and 3000 are available
+1. **Permission Issues**: Make sure Docker has proper permissions
+1. **Network Issues**: Check that containers can communicate with each other
+
+### Logs
+
+Check logs for troubleshooting:
+
+```
+# Hayhooks logs
+docker-compose logs -f hayhooks
+
+# Open WebUI logs
+docker-compose logs -f openwebui
+```
+
+### Cleanup
+
+To stop and remove all containers:
+
+```
+docker-compose down -v
+```
+
+## Next Steps
+
+- [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md) - Learn about advanced configuration
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Explore more examples
+- [Open WebUI Integration](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md) - Deep dive into Open WebUI integration
+
+# Installation
+
+This guide covers how to install Hayhooks and its dependencies.
+
+## System Requirements
+
+- Python 3.10+
+- Operating System: Linux, macOS, or Windows
+- Memory: Minimum 512MB RAM, 2GB+ recommended
+- Storage: Minimum 100MB free space
+
+## Install from PyPI
+
+```
+pip install hayhooks
+```
+
+This includes all core features for deploying and running pipelines.
+
+```
+pip install hayhooks[mcp]
+```
+
+Includes all standard features plus [MCP Server](https://deepset-ai.github.io/hayhooks/features/mcp-support/index.md) support for integration with AI development tools like Cursor and Claude Desktop.
+
+Python 3.10+ Required
+
+You'll need to run at least Python 3.10+ to use the MCP Server.
+
+```
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+pip install -e .
+```
+
+Useful for development or testing the latest unreleased features.
+
+## Verify Installation
+
+After installation, verify that Hayhooks is installed correctly:
+
+```
+# Check version
+hayhooks --version
+
+# Show help
+hayhooks --help
+```
+
+## Development Installation
+
+If you want to contribute to Hayhooks, we recommend using [Hatch](https://hatch.pypa.io/), the project's build and environment management tool:
+
+```
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Install Hatch (if not already installed)
+pip install hatch
+
+# Run unit tests
+hatch run test:unit
+
+# Run integration tests
+hatch run test:integration
+
+# Run tests
+hatch run test:all
+
+# Format code
+hatch run fmt
+
+# Serve documentation locally
+hatch run docs:serve
+```
+
+Hatch automatically manages virtual environments and dependencies for you. See available commands in `pyproject.toml`.
+
+### Alternative: Manual Installation
+
+If you prefer manual setup:
+
+```
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Create a virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install in development mode
+pip install -e .
+```
+
+## Docker Installation
+
+### Using Docker Hub
+
+```
+# Pull the image corresponding to Hayhooks main branch
+docker pull deepset/hayhooks:main
+
+# Run Hayhooks
+docker run -p 1416:1416 deepset/hayhooks:main
+```
+
+You can inspect all available images on [Docker Hub](https://hub.docker.com/r/deepset/hayhooks/tags).
+
+### Building from Source
+
+```
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Build with Docker Buildx Bake (current platform) and load into Docker
+cd docker
+IMAGE_NAME=hayhooks IMAGE_TAG_SUFFIX=local docker buildx bake --load
+
+# Run the image
+docker run -p 1416:1416 hayhooks:local
+```
+
+## Next Steps
+
+After successful installation:
+
+- [Quick Start](https://deepset-ai.github.io/hayhooks/getting-started/quick-start/index.md) - Get started with basic usage
+- [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md) - Configure Hayhooks for your needs
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Explore example implementations
+
+# Configuration
+
+Hayhooks can be configured through environment variables, command-line arguments, or `.env` files.
+
+## Configuration Methods
+
+### Environment Variables
+
+Set environment variables before starting Hayhooks:
+
+```
+export HAYHOOKS_HOST=0.0.0.0
+export HAYHOOKS_PORT=1416
+hayhooks run
+```
+
+### .env File
+
+Create a `.env` file in your project root:
+
+```
+# .env
+HAYHOOKS_HOST=0.0.0.0
+HAYHOOKS_PORT=1416
+HAYHOOKS_PIPELINES_DIR=./pipelines
+LOG=INFO
+```
+
+### Command Line Arguments
+
+Pass options directly to `hayhooks run`:
+
+```
+hayhooks run --host 0.0.0.0 --port 1416 --pipelines-dir ./pipelines
+```
+
+## Common Configuration Options
+
+The most frequently used options:
+
+- `HAYHOOKS_HOST` - Host to bind to (default: `localhost`)
+- `HAYHOOKS_PORT` - Port to listen on (default: `1416`)
+- `HAYHOOKS_PIPELINES_DIR` - Pipeline directory for auto-deployment (default: `./pipelines`)
+- `LOG` - Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`)
+
+For the complete list of all environment variables and detailed descriptions, see the [Environment Variables Reference](https://deepset-ai.github.io/hayhooks/reference/environment-variables/index.md).
+
+## Example Configurations
+
+### Development
+
+```
+# .env.development
+HAYHOOKS_HOST=localhost
+HAYHOOKS_PORT=1416
+LOG=DEBUG
+HAYHOOKS_SHOW_TRACEBACKS=true
+```
+
+### Production
+
+```
+# .env.production
+HAYHOOKS_HOST=0.0.0.0
+HAYHOOKS_PORT=1416
+LOG=INFO
+HAYHOOKS_SHOW_TRACEBACKS=false
+```
+
+## Next Steps
+
+- [Quick Start](https://deepset-ai.github.io/hayhooks/getting-started/quick-start/index.md) - Get started with basic usage
+- [Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/pipeline-deployment/index.md) - Learn how to deploy pipelines
+- [Environment Variables Reference](https://deepset-ai.github.io/hayhooks/reference/environment-variables/index.md) - Complete configuration reference
+# Core Concepts
+
+# PipelineWrapper
+
+The `PipelineWrapper` class is the core component for deploying Haystack pipelines with Hayhooks. It provides maximum flexibility for pipeline initialization and execution.
+
+## Why PipelineWrapper?
+
+The pipeline wrapper provides a flexible foundation for deploying Haystack pipelines, agents or any other component by allowing users to:
+
+- Choose their preferred initialization method (YAML files, Haystack templates, or inline code)
+- Define custom execution logic with configurable inputs and outputs
+- Optionally expose OpenAI-compatible chat endpoints with streaming support for integration with interfaces like [open-webui](https://openwebui.com/)
+
+## Basic Structure
+
+```
+from collections.abc import AsyncGenerator, Generator
+from pathlib import Path
+
+from haystack import AsyncPipeline, Pipeline
+
+from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator, streaming_generator
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
+        self.pipeline = Pipeline.loads(pipeline_yaml)
+
+    def run_api(self, urls: list[str], question: str) -> str:
+        result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]
+```
+
+## Required Methods
+
+### setup()
+
+The `setup()` method is called once when the pipeline is deployed. It should initialize the `self.pipeline` attribute as a Haystack pipeline.
+
+```
+def setup(self) -> None:
+    # Initialize your pipeline here
+    pass
+```
+
+**Initialization patterns:**
+
+### 1. Programmatic Initialization (Recommended)
+
+Define your pipeline directly in code for maximum flexibility and control:
+
+```
+def setup(self) -> None:
+    from haystack import Pipeline
+    from haystack.components.fetchers import LinkContentFetcher
+    from haystack.components.converters import HTMLToDocument
+    from haystack.components.builders import ChatPromptBuilder
+    from haystack.components.generators.chat import OpenAIChatGenerator
+
+    # Create components
+    fetcher = LinkContentFetcher()
+    converter = HTMLToDocument()
+    prompt_builder = ChatPromptBuilder(
+        template="""{% message role="user" %}
+        According to the contents of this website:
+        {% for document in documents %}
+            {{document.content}}
+        {% endfor %}
+        Answer the given question: {{query}}
+        {% endmessage %}""",
+        required_variables="*"
+    )
+    llm = OpenAIChatGenerator(model="gpt-4o-mini")
+
+    # Build pipeline
+    self.pipeline = Pipeline()
+    self.pipeline.add_component("fetcher", fetcher)
+    self.pipeline.add_component("converter", converter)
+    self.pipeline.add_component("prompt", prompt_builder)
+    self.pipeline.add_component("llm", llm)
+
+    # Connect components
+    self.pipeline.connect("fetcher.streams", "converter.sources")
+    self.pipeline.connect("converter.documents", "prompt.documents")
+    self.pipeline.connect("prompt.prompt", "llm.messages")
+```
+
+Benefits of Programmatic Initialization
+
+- Full IDE support with autocomplete and type checking
+- Easier debugging and testing
+- Better refactoring capabilities
+- Dynamic component configuration based on runtime conditions
+
+### 2. Load from YAML
+
+Load an existing YAML pipeline file:
+
+```
+def setup(self) -> None:
+    from pathlib import Path
+    from haystack import Pipeline
+
+    pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
+    self.pipeline = Pipeline.loads(pipeline_yaml)
+```
+
+**When to use:**
+
+- You already have a YAML pipeline definition
+- You want to version control pipeline structure separately
+- You need to share pipeline definitions across different deployments
+
+Consider YAML-only deployment
+
+If your pipeline is simple and doesn't need custom logic, consider using [YAML Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/yaml-pipeline-deployment/index.md) instead, which doesn't require a wrapper at all.
+
+### run_api()
+
+The `run_api()` method is called for each API request to the `{pipeline_name}/run` endpoint.
+
+```
+def run_api(self, urls: list[str], question: str) -> str:
+    result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+    return result["llm"]["replies"][0]
+```
+
+**Key features:**
+
+- **Flexible Input**: You can define any input arguments you need
+- **Automatic Validation**: Hayhooks creates Pydantic models for request validation
+- **Type Safety**: Use proper type hints for better validation
+- **Error Handling**: Implement proper error handling for production use
+
+**Input argument rules:**
+
+- Arguments must be JSON-serializable
+- Use proper type hints (`list[str]`, `int | None`, etc.)
+- Default values are supported
+- Complex types like `dict[str, Any]` are allowed
+
+#### Streaming responses
+
+Hayhooks can stream results from `run_api()` or `run_api_async()` when you return a generator instead of a fully materialized value. This is especially useful when you already rely on `streaming_generator()` / `async_streaming_generator()` inside chat endpoints and want the same behaviour on the generic `/run` route.
+
+```
+from collections.abc import Generator
+from hayhooks import streaming_generator
+
+def run_api(self, query: str) -> Generator:
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": query}},
+    )
+```
+
+For async pipelines:
+
+```
+from collections.abc import AsyncGenerator
+from hayhooks import async_streaming_generator
+
+async def run_api_async(self, query: str) -> AsyncGenerator:
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": query}},
+    )
+```
+
+When a generator is detected, Hayhooks automatically wraps it in a FastAPI `StreamingResponse` using the `text/plain` media type. The behaviour is identical for both `run_api()` and `run_api_async()`—the only difference is whether the underlying generator is sync or async.
+
+| Method            | What you return                                    | Response media type | Notes                                                     |
+| ----------------- | -------------------------------------------------- | ------------------- | --------------------------------------------------------- |
+| `run_api()`       | generator / `streaming_generator(...)`             | `text/plain`        | Works out of the box with existing clients (CLI, curl).   |
+| `run_api_async()` | async generator / `async_streaming_generator(...)` | `text/plain`        | Same payload as sync version, emitted from an async task. |
+| Either            | `SSEStream(...)` around the generator              | `text/event-stream` | Opt-in Server-Sent Events with automatic frame wrapping.  |
+
+If you need SSE (for browsers, [EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource), or anything expecting `text/event-stream`), wrap the generator in `SSEStream(...)`. The wrapper is a tiny dataclass—the only thing it does is annotate “this stream should be served as SSE”, so you still write your pipeline logic exactly as before.
+
+```
+from hayhooks import SSEStream, streaming_generator
+
+def run_api(self, query: str):
+    return SSEStream(
+        streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": query}},
+        )
+    )
+```
+
+For async pipelines:
+
+```
+from hayhooks import SSEStream, async_streaming_generator
+
+async def run_api_async(self, query: str):
+    return SSEStream(
+        async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": query}},
+        )
+    )
+```
+
+#### File responses
+
+Hayhooks can return binary files (images, PDFs, audio, etc.) directly from `run_api()` when you return a FastAPI `Response` object instead of a JSON-serializable value. This is useful for pipelines that generate images, documents, or other binary content.
+
+```
+import tempfile
+from fastapi.responses import FileResponse
+
+def run_api(self, prompt: str) -> FileResponse:
+    image = self.generate_image(prompt)
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        image.save(tmp, format="PNG")
+
+    return FileResponse(path=tmp.name, media_type="image/png", filename="result.png")
+```
+
+Any `Response` subclass works — `FileResponse` for files on disk, `Response` for in-memory bytes, or `StreamingResponse` for large content. When Hayhooks detects a `Response` return type, it registers the endpoint with `response_model=None` (skipping JSON schema generation) and returns the response directly at runtime.
+
+| Method      | What you return           | Response media type | Notes                             |
+| ----------- | ------------------------- | ------------------- | --------------------------------- |
+| `run_api()` | `FileResponse`            | Set by `media_type` | Serves a file from disk.          |
+| `run_api()` | `Response(content=bytes)` | Set by `media_type` | Returns in-memory binary content. |
+| `run_api()` | `StreamingResponse`       | Set by `media_type` | Streams large content on the fly. |
+
+For a full working example, see the [Image Generation example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/image_generation) and the [File Response Support](https://deepset-ai.github.io/hayhooks/features/file-response-support/index.md) feature documentation.
+
+## Optional Methods
+
+### run_api_async()
+
+The asynchronous version of `run_api()` for better performance under high load.
+
+```
+async def run_api_async(self, urls: list[str], question: str) -> str:
+    result = await self.pipeline.run_async({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+    return result["llm"]["replies"][0]
+```
+
+**When to use `run_api_async`:**
+
+- Working with `AsyncPipeline` instances
+- Handling many concurrent requests
+- Integrating with async-compatible components
+- Better performance for I/O-bound operations
+
+### run_chat_completion()
+
+Enable OpenAI-compatible chat endpoints for integration with chat interfaces.
+
+```
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
+    question = get_last_user_message(messages)
+    result = self.pipeline.run({"prompt": {"query": question}})
+    return result["llm"]["replies"][0]
+```
+
+**Fixed signature:**
+
+- `model`: The pipeline name
+- `messages`: OpenAI-format message list
+- `body`: Full request body (for additional parameters)
+
+### run_chat_completion_async()
+
+Async version of chat completion with streaming support.
+
+```
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+    question = get_last_user_message(messages)
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": question}},
+    )
+```
+
+## Hybrid Streaming: Mixing Async and Sync Components
+
+Compatibility for Legacy Components
+
+When working with legacy pipelines or components that only support sync streaming callbacks (like `OpenAIGenerator`), use `allow_sync_streaming_callbacks=True` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
+
+Some Haystack components only support synchronous streaming callbacks and don't have async equivalents. Examples include:
+
+- `OpenAIGenerator` - Legacy OpenAI text generation (⚠️ Note: `OpenAIChatGenerator` IS async-compatible)
+- Other components without `run_async()` support
+
+### The Problem
+
+By default, `async_streaming_generator` requires all streaming components to support async callbacks:
+
+```
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+    # This will FAIL if pipeline contains OpenAIGenerator
+    return async_streaming_generator(
+        pipeline=self.pipeline,  # AsyncPipeline with OpenAIGenerator
+        pipeline_run_args={"prompt": {"query": question}},
+    )
+```
+
+**Error:**
+
+```
+ValueError: Component 'llm' of type 'OpenAIGenerator' seems to not support
+async streaming callbacks...
+```
+
+### The Solution: Hybrid Streaming Mode
+
+Enable hybrid streaming mode to automatically handle both async and sync components:
+
+```
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+    question = get_last_user_message(messages)
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": question}},
+        allow_sync_streaming_callbacks=True  # ✅ Auto-detect and enable hybrid mode
+    )
+```
+
+### What `allow_sync_streaming_callbacks=True` Does
+
+When you set `allow_sync_streaming_callbacks=True`, the system enables **intelligent auto-detection**:
+
+1. **Scans Components**: Automatically inspects all streaming components in your pipeline
+1. **Detects Capabilities**: Checks if each component has `run_async()` support
+1. **Enables Hybrid Mode Only If Needed**:
+1. ✅ If **all components support async** → Uses pure async mode (no overhead)
+1. ✅ If **any component is sync-only** → Automatically enables hybrid mode
+1. **Bridges Sync to Async**: For sync-only components, wraps their callbacks to work seamlessly with the async event loop
+1. **Zero Configuration**: You don't need to know which components are sync/async - it figures it out automatically
+
+Smart Behavior
+
+Setting `allow_sync_streaming_callbacks=True` does NOT force hybrid mode. It only enables it when actually needed. If your pipeline is fully async-capable, you get pure async performance with no overhead!
+
+### Configuration Options
+
+```
+# Option 1: Strict mode (Default - Recommended)
+allow_sync_streaming_callbacks=False
+# → Raises error if sync-only components found
+# → Best for: New code, ensuring proper async components, best performance
+
+# Option 2: Auto-detection (Compatibility mode)
+allow_sync_streaming_callbacks=True
+# → Automatically detects and enables hybrid mode only when needed
+# → Best for: Legacy pipelines, components without async support, gradual migration
+```
+
+### Example: Legacy OpenAI Generator with Async Pipeline
+
+```
+from collections.abc import AsyncGenerator
+
+from haystack import AsyncPipeline
+from haystack.components.builders import PromptBuilder
+from haystack.components.generators import OpenAIGenerator
+from haystack.utils import Secret
+from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator
+
+class LegacyOpenAIWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        # OpenAIGenerator only supports sync streaming (legacy component)
+        llm = OpenAIGenerator(
+            api_key=Secret.from_env_var("OPENAI_API_KEY"),
+            model="gpt-4o-mini"
+        )
+
+        prompt_builder = PromptBuilder(
+            template="Answer this question: {{question}}"
+        )
+
+        self.pipeline = AsyncPipeline()
+        self.pipeline.add_component("prompt", prompt_builder)
+        self.pipeline.add_component("llm", llm)
+        self.pipeline.connect("prompt.prompt", "llm.prompt")
+
+    async def run_chat_completion_async(
+        self, model: str, messages: list[dict], body: dict
+    ) -> AsyncGenerator:
+        question = get_last_user_message(messages)
+
+        # Enable hybrid mode for OpenAIGenerator
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"question": question}},
+            allow_sync_streaming_callbacks=True  # ✅ Handles sync component
+        )
+```
+
+### When to Use Each Mode
+
+**Use strict mode (default) when:**
+
+- Building new pipelines (recommended default)
+- You want to ensure all components are **async-compatible**
+- Performance is critical (pure async is **~1-2μs faster** per chunk)
+- You're building a production system with controlled dependencies
+
+**Use `allow_sync_streaming_callbacks=True` when:**
+
+- Working with legacy pipelines that use `OpenAIGenerator` or other sync-only components
+- Deploying YAML pipelines with unknown/legacy component types
+- Migrating old code that doesn't have async equivalents yet
+- Third-party components without async support
+
+### Performance Considerations
+
+- **Pure async pipeline**: No overhead
+- **Hybrid mode (auto-detected)**: Minimal overhead (~1-2 microseconds per streaming chunk for sync components)
+- **Network-bound operations**: The overhead is negligible compared to LLM generation time
+
+Best Practice
+
+**For new code**: Use the default strict mode (`allow_sync_streaming_callbacks=False`) to ensure you're using proper async components.
+
+**For legacy/compatibility**: Use `allow_sync_streaming_callbacks=True` when working with older pipelines or components that don't support async streaming yet.
+
+## Streaming from Multiple Components
+
+Smart Streaming Behavior
+
+By default, Hayhooks streams only the **last** streaming-capable component in your pipeline. This is usually what you want - the final output streaming to users.
+
+For advanced use cases, you can control which components stream using the `streaming_components` parameter.
+
+When your pipeline contains multiple components that support streaming (e.g., multiple LLMs), you can control which ones stream their outputs as the pipeline executes.
+
+### Default Behavior: Stream Only the Last Component
+
+By default, only the last streaming-capable component will stream:
+
+```
+class MultiLLMWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        from haystack.components.builders import ChatPromptBuilder
+        from haystack.components.generators.chat import OpenAIChatGenerator
+        from haystack.dataclasses import ChatMessage
+
+        self.pipeline = Pipeline()
+
+        # First LLM - initial answer
+        self.pipeline.add_component(
+            "prompt_1",
+            ChatPromptBuilder(
+                template=[
+                    ChatMessage.from_system("You are a helpful assistant."),
+                    ChatMessage.from_user("{{query}}")
+                ]
+            )
+        )
+        self.pipeline.add_component("llm_1", OpenAIChatGenerator(model="gpt-4o-mini"))
+
+        # Second LLM - refines the answer using Jinja2 to access ChatMessage attributes
+        self.pipeline.add_component(
+            "prompt_2",
+            ChatPromptBuilder(
+                template=[
+                    ChatMessage.from_system("You are a helpful assistant that refines responses."),
+                    ChatMessage.from_user(
+                        "Previous response: {{previous_response[0].text}}\n\nRefine this."
+                    )
+                ]
+            )
+        )
+        self.pipeline.add_component("llm_2", OpenAIChatGenerator(model="gpt-4o-mini"))
+
+        # Connect components - LLM 1's replies go directly to prompt_2
+        self.pipeline.connect("prompt_1.prompt", "llm_1.messages")
+        self.pipeline.connect("llm_1.replies", "prompt_2.previous_response")
+        self.pipeline.connect("prompt_2.prompt", "llm_2.messages")
+
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+        question = get_last_user_message(messages)
+
+        # By default, only llm_2 (the last streaming component) will stream
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt_1": {"query": question}}
+        )
+```
+
+**What happens:** Only `llm_2` (the last streaming-capable component) streams its responses token by token. The first LLM (`llm_1`) executes normally without streaming, and only the final refined output streams to the user.
+
+### Advanced: Stream Multiple Components with `streaming_components`
+
+For advanced use cases where you want to see outputs from multiple components, use the `streaming_components` parameter:
+
+```
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+    question = get_last_user_message(messages)
+
+    # Enable streaming for BOTH LLMs
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt_1": {"query": question}},
+        streaming_components=["llm_1", "llm_2"]  # Stream both components
+    )
+```
+
+**What happens:** Both LLMs stream their responses token by token. First you'll see the initial answer from `llm_1` streaming, then the refined answer from `llm_2` streaming.
+
+You can also selectively enable streaming for specific components:
+
+```
+# Stream only the first LLM
+streaming_components=["llm_1"]
+
+# Stream only the second LLM (same as default)
+streaming_components=["llm_2"]
+
+# Stream ALL capable components (shorthand)
+streaming_components="all"
+
+# Stream ALL capable components (specific list)
+streaming_components=["llm_1", "llm_2"]
+```
+
+### Using the "all" Keyword
+
+The `"all"` keyword is a convenient shorthand to enable streaming for all capable components:
+
+```
+return streaming_generator(
+    pipeline=self.pipeline,
+    pipeline_run_args={...},
+    streaming_components="all"  # Enable all streaming components
+)
+```
+
+This is equivalent to explicitly enabling every streaming-capable component in your pipeline.
+
+### Global Configuration via Environment Variable
+
+You can set a global default using the `HAYHOOKS_STREAMING_COMPONENTS` environment variable. This applies to all pipelines unless overridden:
+
+```
+# Stream all components by default
+export HAYHOOKS_STREAMING_COMPONENTS="all"
+
+# Stream specific components (comma-separated)
+export HAYHOOKS_STREAMING_COMPONENTS="llm_1,llm_2"
+```
+
+**Priority order:**
+
+1. Explicit `streaming_components` parameter (highest priority)
+1. `HAYHOOKS_STREAMING_COMPONENTS` environment variable
+1. Default behavior: stream only last component (lowest priority)
+
+When to Use Each Approach
+
+- **Default (last component only)**: Best for most use cases - users see only the final output
+- **"all" keyword**: Useful for debugging, demos, or transparent multi-step workflows
+- **List of components**: Enable multiple specific components by name
+- **Environment variable**: For deployment-wide defaults without code changes
+
+Async Streaming
+
+All streaming_components options work identically with `async_streaming_generator()` for async pipelines.
+
+### YAML Pipeline Streaming Configuration
+
+You can also specify streaming configuration in YAML pipeline definitions:
+
+```
+components:
+  prompt_1:
+    init_parameters:
+      required_variables: "*"
+      template: |
+        {% message role="user" %}
+        Answer this question: {{query}}
+        Answer:
+        {% endmessage %}
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+
+  llm_1:
+    init_parameters:
+      ...
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+
+  prompt_2:
+    init_parameters:
+      required_variables: "*"
+      template: |
+        {% message role="user" %}
+        Refine this response: {{previous_reply[0].text}}
+        Improved answer:
+        {% endmessage %}
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+
+  llm_2:
+    init_parameters:
+      ...
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+
+connections:
+  - receiver: llm_1.messages
+    sender: prompt_1.prompt
+  - receiver: prompt_2.previous_reply
+    sender: llm_1.replies
+  - receiver: llm_2.messages
+    sender: prompt_2.prompt
+
+metadata: {}
+
+inputs:
+  query: prompt_1.query
+
+outputs:
+  replies: llm_2.replies
+
+# Option 1: List specific components
+streaming_components:
+  - llm_1
+  - llm_2
+
+# Option 2: Stream all components
+# streaming_components: all
+```
+
+YAML configuration follows the same priority rules: YAML setting > environment variable > default.
+
+See the [Multi-LLM Streaming Example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/multi_llm_streaming) for a complete working implementation.
+
+## Accessing Intermediate Outputs with `include_outputs_from`
+
+Understanding Pipeline Outputs
+
+By default, Haystack pipelines only return outputs from **leaf components** (final components with no downstream connections). Use `include_outputs_from` to also get outputs from intermediate components like retrievers, preprocessors, or parallel branches.
+
+### Streaming with `on_pipeline_end` Callback
+
+For streaming responses, pass `include_outputs_from` to `streaming_generator()` or `async_streaming_generator()`, and use the `on_pipeline_end` callback to access intermediate outputs. For example:
+
+```
+    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+        question = get_last_user_message(messages)
+
+        # Store retrieved documents for citations
+        self.retrieved_docs = []
+
+        def on_pipeline_end(result: dict[str, Any]) -> None:
+            # Access intermediate outputs here
+            if "retriever" in result:
+                self.retrieved_docs = result["retriever"]["documents"]
+                # Use for citations, logging, analytics, etc.
+
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={
+                "retriever": {"query": question},
+                "prompt_builder": {"query": question}
+            },
+            include_outputs_from={"retriever"},  # Make retriever outputs available
+            on_pipeline_end=on_pipeline_end
+        )
+```
+
+**What happens:** The `on_pipeline_end` callback receives both `llm` and `retriever` outputs in the `result` dict, allowing you to access retrieved documents alongside the generated response.
+
+The same pattern works with async streaming:
+
+```
+async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+    question = get_last_user_message(messages)
+
+    def on_pipeline_end(result: dict[str, Any]) -> None:
+        if "retriever" in result:
+            self.retrieved_docs = result["retriever"]["documents"]
+
+    return async_streaming_generator(
+        pipeline=self.async_pipeline,
+        pipeline_run_args={
+            "retriever": {"query": question},
+            "prompt_builder": {"query": question}
+        },
+        include_outputs_from={"retriever"},
+        on_pipeline_end=on_pipeline_end
+    )
+```
+
+### Non-Streaming API
+
+For non-streaming `run_api` or `run_api_async` endpoints, pass `include_outputs_from` directly to `pipeline.run()` or `pipeline.run_async()`. For example:
+
+```
+def run_api(self, query: str) -> dict:
+    result = self.pipeline.run(
+        data={"retriever": {"query": query}},
+        include_outputs_from={"retriever"}
+    )
+    # Build custom response with both answer and sources
+    return {"answer": result["llm"]["replies"][0], "sources": result["retriever"]["documents"]}
+```
+
+Same pattern for async:
+
+```
+async def run_api_async(self, query: str) -> dict:
+    result = await self.async_pipeline.run_async(
+        data={"retriever": {"query": query}},
+        include_outputs_from={"retriever"}
+    )
+    return {"answer": result["llm"]["replies"][0], "sources": result["retriever"]["documents"]}
+```
+
+When to Use `include_outputs_from`
+
+- **Streaming**: Pass `include_outputs_from` to `streaming_generator()` or `async_streaming_generator()` and use `on_pipeline_end` callback to access the outputs
+- **Non-streaming**: Pass `include_outputs_from` directly to `pipeline.run()` or `pipeline.run_async()`
+- **YAML Pipelines**: Automatically handled - see [YAML Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/yaml-pipeline-deployment/#output-mapping)
+
+## External Event Queue
+
+Both `streaming_generator` and `async_streaming_generator` support an optional `external_event_queue` parameter. This allows you to inject custom events (`dict`, `OpenWebUIEvent`, `str`, or `StreamingChunk`) into the streaming output alongside pipeline chunks. The external queue is checked before the internal queue in each iteration cycle, ensuring external events are delivered promptly.
+
+Typical Use Case
+
+A typical use case is passing the queue to pipeline components that need to emit events during execution—for example, a Human-in-the-Loop (HITL) confirmation strategy that pushes approval request events to the queue while waiting for user input.
+
+## File Upload Support
+
+Hayhooks can handle file uploads by adding a `files` parameter:
+
+```
+from fastapi import UploadFile
+
+def run_api(self, files: list[UploadFile] | None = None, query: str = "") -> str:
+    if files:
+        # Process uploaded files
+        filenames = [f.filename for f in files if f.filename]
+        file_contents = [f.file.read() for f in files]
+        return f"Processed {len(files)} files: {', '.join(filenames)}"
+
+    return "No files uploaded"
+```
+
+## PipelineWrapper Development
+
+### During Development
+
+Use the `--overwrite` flag for rapid development:
+
+```
+hayhooks pipeline deploy-files -n my_pipeline --overwrite ./path/to/pipeline
+```
+
+**Development workflow:**
+
+1. Make changes to your pipeline wrapper
+1. Redeploy with `--overwrite`
+1. Test the changes
+1. Repeat as needed
+
+### For even faster iterations
+
+Combine `--overwrite` with `--skip-saving-files`:
+
+```
+hayhooks pipeline deploy-files -n my_pipeline --overwrite --skip-saving-files ./path/to/pipeline
+```
+
+This avoids writing files to disk and speeds up development.
+
+## Additional Dependencies
+
+Your pipeline wrapper may require additional dependencies:
+
+```
+# pipeline_wrapper.py
+import trafilatura  # Additional dependency
+
+def run_api(self, urls: list[str], question: str) -> str:
+    # Use additional library
+    content = trafilatura.fetch(urls[0])
+    # ... rest of pipeline logic
+```
+
+**Install dependencies:**
+
+```
+pip install trafilatura
+```
+
+**Debugging tip:** Enable tracebacks to see full error messages:
+
+```
+HAYHOOKS_SHOW_TRACEBACKS=true hayhooks run
+```
+
+## Error Handling
+
+Implement proper error handling in production:
+
+```
+from hayhooks import log
+from fastapi import HTTPException
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        try:
+            self.pipeline = self._create_pipeline()
+        except Exception as e:
+            log.error("Failed to initialize pipeline: {}", e)
+            raise
+
+    def run_api(self, query: str) -> str:
+        if not query or not query.strip():
+            raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+        try:
+            result = self.pipeline.run({"prompt": {"query": query}})
+            return result["llm"]["replies"][0]
+        except Exception as e:
+            log.error("Pipeline execution failed: {}", e)
+            raise HTTPException(status_code=500, detail="Pipeline execution failed")
+```
+
+## MCP Tool Configuration
+
+### Skip MCP Tool Listing
+
+To skip MCP tool registration:
+
+```
+class PipelineWrapper(BasePipelineWrapper):
+    skip_mcp = True  # This pipeline won't be listed as an MCP tool
+
+    def setup(self) -> None:
+        ...
+
+    def run_api(self, ...) -> str:
+        ...
+```
+
+### MCP Tool Description
+
+Use docstrings to provide MCP tool descriptions:
+
+```
+def run_api(self, urls: list[str], question: str) -> str:
+    """
+    Ask questions about website content.
+
+    Args:
+        urls: List of website URLs to analyze
+        question: Question to ask about the content
+
+    Returns:
+        Answer to the question based on the website content
+    """
+    result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+    return result["llm"]["replies"][0]
+```
+
+## Examples
+
+For complete, working examples see:
+
+- **[Chat with Website (Streaming)](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_streaming)** - Pipeline with streaming chat completion support
+- **[Async Question Answer](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer)** - Async pipeline patterns with streaming
+- **[Image Generation (File Response)](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/image_generation)** - Returning binary files (images) from `run_api`
+- **[RAG Indexing & Query](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query)** - Complete RAG system with file uploads and Elasticsearch
+
+## Next Steps
+
+- [YAML Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/yaml-pipeline-deployment/index.md) - Alternative deployment method
+- [Agent Deployment](https://deepset-ai.github.io/hayhooks/concepts/agent-deployment/index.md) - Deploy Haystack agents
+
+# Pipeline Deployment
+
+Hayhooks provides flexible options for deploying Haystack pipelines and agents. This section covers the core concepts of pipeline deployment.
+
+## Deployment Methods
+
+### 1. PipelineWrapper Deployment (Recommended)
+
+The most flexible approach using a `PipelineWrapper` class that encapsulates your pipeline logic. This method provides maximum flexibility for initialization, custom execution logic, OpenAI-compatible endpoint support, streaming capabilities, and file upload handling.
+
+See [PipelineWrapper Details](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md) for complete implementation guide and examples.
+
+### 2. YAML Pipeline Deployment
+
+Deploy pipelines directly from YAML definitions with automatic schema generation. This approach offers simple deployment from YAML files with automatic request/response schema generation, no wrapper code required, making it perfect for straightforward pipelines. The YAML must include `inputs` and `outputs` sections with properly defined pipeline components.
+
+For a complete YAML example and detailed requirements, see [YAML Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/yaml-pipeline-deployment/index.md).
+
+YAML Pipeline Limitations
+
+YAML-deployed pipelines do not support OpenAI-compatible chat endpoints or streaming. For chat/streaming (e.g., Open WebUI), use a `PipelineWrapper` and implement `run_chat_completion`/`run_chat_completion_async` (see [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md)).
+
+## Core Components
+
+### BasePipelineWrapper Class
+
+All pipeline wrappers inherit from `BasePipelineWrapper`:
+
+#### Required Methods
+
+**`setup()`** is called once when the pipeline is deployed to initialize your pipeline instance and set up any required resources.
+
+**`run_api()`** is called for each API request to define your custom execution logic and return the pipeline result.
+
+#### Optional Methods
+
+**`run_api_async()`** is the async version of `run_api()`, providing better performance for concurrent requests and supporting async pipeline execution.
+
+**`run_chat_completion()`** enables OpenAI-compatible chat endpoints for Open WebUI integration with chat completion format support (see [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md)).
+
+**`run_chat_completion_async()`** provides async chat completion with streaming support for chat interfaces and better performance for concurrent chat requests (see [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md)).
+
+### Input/Output Handling
+
+Hayhooks automatically handles request validation using Pydantic models, JSON serialization of responses, multipart/form-data requests for file uploads (see [File Upload Support](https://deepset-ai.github.io/hayhooks/features/file-upload-support/index.md)), and automatic type conversion between JSON and Python types.
+
+## Lifecycle Management
+
+### Pipeline Registration
+
+When you deploy a pipeline, Hayhooks validates the wrapper implementation, creates the pipeline instance using `setup()`, registers the pipeline with the server, generates API endpoints and schemas, and creates OpenAI-compatible endpoints if implemented.
+
+### Pipeline Execution
+
+For each request, Hayhooks validates the request against the schema, calls the appropriate method (`run_api`, `run_chat_completion`, etc.), handles errors and exceptions, and returns the response in the correct format.
+
+### Pipeline Undeployment
+
+When you undeploy a pipeline, Hayhooks removes the pipeline from the registry, deletes the pipeline files if saved, unregisters all API endpoints, and cleans up resources.
+
+### MCP Integration
+
+All deployed pipelines can be exposed as MCP tools. Pipelines are automatically listed as available tools with input schemas generated from method signatures. Tools can be called from MCP clients (see [MCP Support](https://deepset-ai.github.io/hayhooks/features/mcp-support/index.md)).
+
+## Next Steps
+
+- [PipelineWrapper Details](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md) - Learn about PipelineWrapper implementation
+- [YAML Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/yaml-pipeline-deployment/index.md) - Deploy from YAML files
+
+# Agent Deployment
+
+This page summarizes how to deploy Haystack Agents with Hayhooks and points you to the canonical examples.
+
+## Overview
+
+Agents are deployed using the same `PipelineWrapper` mechanism as pipelines. Implement `run_chat_completion` or `run_chat_completion_async` to expose OpenAI-compatible chat endpoints (with streaming support).
+
+## Quick Start
+
+Deploy agents using the same `PipelineWrapper` mechanism as pipelines. The key is implementing `run_chat_completion` or `run_chat_completion_async` for OpenAI-compatible chat endpoints with streaming support.
+
+See the example below for a complete agent setup with tools, streaming, and Open WebUI events.
+
+## Example
+
+An agent deployment with tools, streaming, and Open WebUI events:
+
+### Agent with tool call interception and Open WebUI events
+
+This example demonstrates:
+
+- Agent setup with tools
+- Async streaming chat completion
+- Tool call lifecycle hooks (`on_tool_call_start`, `on_tool_call_end`)
+- Open WebUI status events and notifications
+
+See the full file: [open_webui_agent_on_tool_calls/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls/pipeline_wrapper.py)
+
+````
+import time
+from collections.abc import AsyncGenerator
+
+from haystack.components.agents import Agent
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage
+from haystack.tools import Tool
+
+from hayhooks import BasePipelineWrapper, async_streaming_generator
+from hayhooks.open_webui import (
+    OpenWebUIEvent,
+    create_details_tag,
+    create_notification_event,
+    create_status_event,
+)
+
+
+def weather_function(location):
+    """Mock weather API with a small delay"""
+    weather_info = {
+        "Berlin": {"weather": "mostly sunny", "temperature": 7, "unit": "celsius"},
+        "Paris": {"weather": "mostly cloudy", "temperature": 8, "unit": "celsius"},
+        "Rome": {"weather": "sunny", "temperature": 14, "unit": "celsius"},
+    }
+    time.sleep(3)
+    return weather_info.get(location, {"weather": "unknown", "temperature": 0, "unit": "celsius"})
+
+
+weather_tool = Tool(
+    name="weather_tool",
+    description="Provides weather information for a given location.",
+    parameters={
+        "type": "object",
+        "properties": {"location": {"type": "string"}},
+        "required": ["location"],
+    },
+    function=weather_function,
+)
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.agent = Agent(
+            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            system_prompt="You're a helpful agent",
+            tools=[weather_tool],
+        )
+
+    def on_tool_call_start(
+        self,
+        tool_name: str,
+        arguments: dict,  # noqa: ARG002
+        id: str,  # noqa: ARG002, A002
+    ) -> list[OpenWebUIEvent]:
+        return [
+            create_status_event(description=f"Tool call started: {tool_name}"),
+            create_notification_event(notification_type="info", content=f"Tool call started: {tool_name}"),
+        ]
+
+    def on_tool_call_end(
+        self,
+        tool_name: str,
+        arguments: dict,
+        result: str,
+        error: bool,  # noqa: ARG002
+    ) -> list[OpenWebUIEvent]:
+        return [
+            create_status_event(description=f"Tool call ended: {tool_name}", done=True),
+            create_notification_event(notification_type="success", content=f"Tool call ended: {tool_name}"),
+            create_details_tag(
+                tool_name=tool_name,
+                summary=f"Tool call result for {tool_name}",
+                content=(f"```\nArguments:\n{arguments}\n\nResponse:\n{result}\n```"),
+            ),
+        ]
+
+    async def run_chat_completion_async(
+        self,
+        model: str,  # noqa: ARG002
+        messages: list[dict],
+        body: dict,  # noqa: ARG002
+    ) -> AsyncGenerator[str, None]:
+        chat_messages = [ChatMessage.from_openai_dict_format(message) for message in messages]
+
+        return async_streaming_generator(
+            on_tool_call_start=self.on_tool_call_start,
+            on_tool_call_end=self.on_tool_call_end,
+            pipeline=self.agent,
+            pipeline_run_args={"messages": chat_messages},
+        )
+````
+
+## Next Steps
+
+- [PipelineWrapper Guide](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md) - Detailed implementation patterns
+- [Open WebUI Events Example](https://deepset-ai.github.io/hayhooks/examples/openwebui-events/index.md) - Interactive agent features
+
+# YAML Pipeline Deployment
+
+Hayhooks supports deploying Haystack pipelines directly from YAML definitions. This approach builds request/response schemas automatically from the YAML-declared `inputs` and `outputs`.
+
+## Overview
+
+YAML pipeline deployment is ideal for:
+
+- Simple pipelines with clear inputs and outputs
+- Quick deployment without wrapper code
+- Automatic schema generation
+- CI/CD pipeline deployments
+
+Converting Existing Pipelines
+
+If you already have a Haystack `Pipeline` instance, you can serialize it with `pipeline.dumps()` and then manually add the required `inputs` and `outputs` sections before deploying.
+
+## Requirements
+
+### YAML Structure
+
+Your YAML file must include both `inputs` and `outputs` sections:
+
+```
+components:
+  converter:
+    type: haystack.components.converters.html.HTMLToDocument
+    init_parameters:
+      extraction_kwargs: null
+
+  fetcher:
+    init_parameters:
+      raise_on_failure: true
+      retry_attempts: 2
+      timeout: 3
+      user_agents:
+        - haystack/LinkContentFetcher/2.0.0b8
+    type: haystack.components.fetchers.link_content.LinkContentFetcher
+
+  llm:
+    init_parameters:
+      api_key:
+        env_vars:
+          - OPENAI_API_KEY
+        strict: true
+        type: env_var
+      generation_kwargs: {}
+      model: gpt-4o-mini
+    type: haystack.components.generators.chat.openai.OpenAIChatGenerator
+
+  prompt:
+    init_parameters:
+      template: |
+        {% message role="user" %}
+        According to the contents of this website:
+        {% for document in documents %}
+          {{document.content}}
+        {% endfor %}
+        Answer the given question: {{query}}
+        {% endmessage %}
+      required_variables: "*"
+    type: haystack.components.builders.chat_prompt_builder.ChatPromptBuilder
+
+connections:
+  - receiver: converter.sources
+    sender: fetcher.streams
+  - receiver: prompt.documents
+    sender: converter.documents
+  - receiver: llm.messages
+    sender: prompt.prompt
+
+inputs:
+  urls: fetcher.urls
+  query: prompt.query
+
+outputs:
+  replies: llm.replies
+```
+
+### Key Requirements
+
+1. **`inputs` Section**: Maps friendly names to pipeline component fields
+1. **`outputs` Section**: Maps pipeline outputs to response fields
+1. **Valid Components**: All components must be properly defined
+1. **Valid Connections**: All connections must reference existing components
+
+## Deployment Methods
+
+```
+# Deploy with default settings
+hayhooks pipeline deploy-yaml pipelines/chat_pipeline.yml
+
+# Deploy with custom name
+hayhooks pipeline deploy-yaml -n my_chat_pipeline pipelines/chat_pipeline.yml
+
+# Deploy with description
+hayhooks pipeline deploy-yaml -n my_chat_pipeline --description "Chat pipeline for Q&A" pipelines/chat_pipeline.yml
+
+# Overwrite existing pipeline
+hayhooks pipeline deploy-yaml -n my_chat_pipeline --overwrite pipelines/chat_pipeline.yml
+```
+
+```
+curl -X POST \
+  http://localhost:1416/deploy-yaml \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "my_chat_pipeline",
+    "description": "Chat pipeline for Q&A",
+    "source_code": "...",
+    "overwrite": false
+  }'
+```
+
+```
+import requests
+
+response = requests.post(
+    "http://localhost:1416/deploy-yaml",
+    json={
+        "name": "my_chat_pipeline",
+        "description": "Chat pipeline for Q&A",
+        "source_code": "...",  # Your YAML content as string
+        "overwrite": False
+    }
+)
+print(response.json())
+```
+
+## CLI Options
+
+| Option           | Short | Description                  | Default        |
+| ---------------- | ----- | ---------------------------- | -------------- |
+| `--name`         | `-n`  | Override the pipeline name   | YAML file stem |
+| `--description`  |       | Human-readable description   | Pipeline name  |
+| `--overwrite`    | `-o`  | Overwrite if pipeline exists | `false`        |
+| `--skip-mcp`     |       | Skip MCP tool registration   | `false`        |
+| `--save-file`    |       | Save YAML to server          | `true`         |
+| `--no-save-file` |       | Don't save YAML to server    | `false`        |
+
+## Input/Output Mapping
+
+### Input Mapping
+
+The `inputs` section maps friendly names to pipeline component fields:
+
+```
+inputs:
+  # friendly_name: component.field
+  urls: fetcher.urls
+  query: prompt_builder.query
+```
+
+**Mapping rules:**
+
+- Use `component.field` syntax
+- Field must exist in the component
+- Multiple inputs can map to the same component field
+- Input names become API parameters
+- Use a YAML list when the same external field should feed **multiple** component inputs
+
+```
+inputs:
+  query:
+    - chat_summary_prompt_builder.query
+    - answer_builder.query
+```
+
+How multi-target inputs are resolved
+
+Hayhooks normalizes list-declared inputs by looking at the first valid target to derive type metadata and marks the input as **required** regardless of component-level metadata. At runtime the resolved value is fanned out to **all** listed component inputs, so the example above sends the same payload to both `chat_summary_prompt_builder.query` and `answer_builder.query` even if the external parameter is named differently (for example `a_query`). This ensures downstream components get the expected inputs while the API still exposes a single friendly field.
+
+### Output Mapping
+
+The `outputs` section maps pipeline outputs to response fields:
+
+```
+outputs:
+  # response_field: component.field
+  replies: llm.replies
+  documents: fetcher.documents
+```
+
+**Mapping rules:**
+
+- Use `component.field` syntax
+- Field must exist in the component
+- Response fields are serialized to JSON
+- Complex objects are automatically serialized
+
+Automatic `include_outputs_from` Derivation
+
+Hayhooks **automatically** derives the `include_outputs_from` parameter from your `outputs` section. This ensures that all components referenced in the outputs are included in the pipeline results, even if they're not leaf components.
+
+**Example:** If your outputs reference `retriever.documents` and `llm.replies`, Hayhooks automatically sets `include_outputs_from={"retriever", "llm"}` when running the pipeline.
+
+**What this means:** You don't need to configure anything extra - just declare your outputs in the YAML, and Hayhooks ensures those component outputs are available in the results!
+
+Comparison with PipelineWrapper
+
+**YAML Pipelines** (this page): `include_outputs_from` is **automatic** - derived from your `outputs` section
+
+**PipelineWrapper**: `include_outputs_from` must be **manually passed**:
+
+- For streaming: Pass to `streaming_generator()` / `async_streaming_generator()`
+- For non-streaming: Pass to `pipeline.run()` / `pipeline.run_async()`
+
+See [PipelineWrapper: include_outputs_from](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/#accessing-intermediate-outputs-with-include_outputs_from) for examples.
+
+## API Usage
+
+### After Deployment
+
+Once deployed, your pipeline is available at:
+
+- **Run Endpoint**: `/{pipeline_name}/run`
+- **Schema**: `/{pipeline_name}/schema`
+- **OpenAPI**: `/openapi.json`
+
+### Example Request
+
+```
+curl -X POST \
+  http://localhost:1416/my_chat_pipeline/run \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "urls": ["https://haystack.deepset.ai"],
+    "query": "What is Haystack?"
+  }'
+```
+
+### Example Response
+
+```
+{
+  "replies": ["Haystack is an open source framework..."],
+  "documents": [...],
+  "metadata": {...}
+}
+```
+
+## Schema Generation
+
+Hayhooks automatically generates:
+
+### Request Schema
+
+```
+{
+  "type": "object",
+  "properties": {
+    "urls": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "query": {"type": "string"}
+  },
+  "required": ["urls", "query"]
+}
+```
+
+### Response Schema
+
+```
+{
+  "type": "object",
+  "properties": {
+    "replies": {"type": "array"},
+    "documents": {"type": "array"},
+    "metadata": {"type": "object"}
+  }
+}
+```
+
+## Obtaining YAML from Existing Pipelines
+
+You can obtain YAML from existing Haystack pipelines:
+
+```
+from haystack import Pipeline
+
+# Create or load your pipeline
+pipeline = Pipeline()
+# ... add components and connections ...
+
+# Get YAML representation
+yaml_content = pipeline.dumps()
+
+# Save to file
+with open("pipeline.yml", "w") as f:
+    f.write(yaml_content)
+```
+
+Note
+
+You'll need to manually add the `inputs` and `outputs` sections to the generated YAML.
+
+## Limitations
+
+YAML Pipeline Limitations
+
+YAML-deployed pipelines have the following limitations:
+
+- **No OpenAI Compatibility**: Don't support OpenAI-compatible chat endpoints
+- **No Streaming**: Streaming responses are not supported
+- **No File Uploads**: File upload handling is not available
+- **Async Only**: Pipelines are run as `AsyncPipeline` instances
+
+Using PipelineWrapper for Advanced Features
+
+For advanced features, use `PipelineWrapper` instead:
+
+```
+# For OpenAI compatibility
+class PipelineWrapper(BasePipelineWrapper):
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
+        ...
+
+# For file uploads
+class PipelineWrapper(BasePipelineWrapper):
+    def run_api(self, files: list[UploadFile] | None = None, query: str = "") -> str:
+        ...
+
+# For streaming
+class PipelineWrapper(BasePipelineWrapper):
+    def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+        ...
+```
+
+## Example
+
+For a complete working example of a YAML pipeline with proper `inputs` and `outputs`, see:
+
+- [tests/test_files/yaml/inputs_outputs_pipeline.yml](https://github.com/deepset-ai/hayhooks/blob/main/tests/test_files/yaml/inputs_outputs_pipeline.yml)
+
+This example demonstrates:
+
+- Complete pipeline structure with components and connections
+- Proper `inputs` mapping to component fields
+- Proper `outputs` mapping from component results
+- Real-world usage with `LinkContentFetcher`, `HTMLToDocument`, `ChatPromptBuilder`, and `OpenAIChatGenerator`
+
+## Next Steps
+
+- [PipelineWrapper](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md) - For advanced features like streaming and chat completion
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - See working examples
+# Features
+
+# OpenAI Compatibility
+
+Hayhooks provides OpenAI-compatible endpoints for Haystack pipelines and agents, enabling integration with OpenAI-compatible tools and frameworks.
+
+Open WebUI Integration
+
+Looking to integrate with Open WebUI? Check out the complete [Open WebUI Integration](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md) guide for detailed setup instructions, event handling, and advanced features.
+
+## Overview
+
+Hayhooks can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` or `run_chat_completion_async` method in your pipeline wrapper. This makes Hayhooks compatible with any OpenAI-compatible client or tool, including chat interfaces, agent frameworks, and custom applications.
+
+## Key Features
+
+- **Automatic Endpoint Generation**: OpenAI-compatible endpoints are created automatically
+- **Streaming Support**: Real-time streaming responses for chat interfaces
+- **Async Support**: High-performance async chat completion
+- **Multiple Integration Options**: Works with various OpenAI-compatible clients
+- **Open WebUI Ready**: Full support for [Open WebUI](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md) with events and tool call interception
+
+## Implementation
+
+### Basic Chat Completion
+
+```
+from pathlib import Path
+from typing import Union, Generator
+from haystack import Pipeline
+from hayhooks import get_last_user_message, BasePipelineWrapper, log
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        # Initialize your pipeline
+        pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
+        self.pipeline = Pipeline.loads(pipeline_yaml)
+
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
+        log.trace("Running pipeline with model: {}, messages: {}, body: {}", model, messages, body)
+
+        question = get_last_user_message(messages)
+        log.trace("Question: {}", question)
+
+        # Pipeline run, returns a string
+        result = self.pipeline.run({"prompt": {"query": question}})
+        return result["llm"]["replies"][0]
+```
+
+### Async Chat Completion with Streaming
+
+```
+from collections.abc import AsyncGenerator
+
+from hayhooks import async_streaming_generator, get_last_user_message, log
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        # Initialize async pipeline
+        pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
+        self.pipeline = AsyncPipeline.loads(pipeline_yaml)
+
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+        log.trace("Running pipeline with model: {}, messages: {}, body: {}", model, messages, body)
+
+        question = get_last_user_message(messages)
+        log.trace("Question: {}", question)
+
+        # Async streaming pipeline run
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": question}},
+        )
+```
+
+## Method Signatures
+
+### run_chat_completion(...)
+
+```
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
+    """
+    Run the pipeline for OpenAI-compatible chat completion.
+
+    Args:
+        model: The pipeline name
+        messages: List of messages in OpenAI format
+        body: Full request body with additional parameters
+
+    Returns:
+        str: Non-streaming response
+        Generator: Streaming response generator
+    """
+```
+
+### run_chat_completion_async(...)
+
+```
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> str | AsyncGenerator:
+    """
+    Async version of run_chat_completion.
+
+    Args:
+        model: The pipeline name
+        messages: List of messages in OpenAI format
+        body: Full request body with additional parameters
+
+    Returns:
+        str: Non-streaming response
+        AsyncGenerator: Streaming response generator
+    """
+```
+
+## Generated Endpoints
+
+When you implement chat completion methods, Hayhooks automatically creates:
+
+### Chat Endpoints
+
+- `/{pipeline_name}/chat` - Direct chat endpoint for a specific pipeline
+- `/chat/completions` - OpenAI-compatible endpoint (routes to the model specified in request)
+- `/v1/chat/completions` - OpenAI API v1 compatible endpoint
+
+All endpoints support the standard OpenAI chat completion request format:
+
+```
+{
+  "model": "pipeline_name",
+  "messages": [
+    {"role": "user", "content": "Your message"}
+  ],
+  "stream": false
+}
+```
+
+### Available Models
+
+Use the `/v1/models` endpoint to list all deployed pipelines that support chat completion:
+
+```
+curl http://localhost:1416/v1/models
+```
+
+## Streaming Responses
+
+### Streaming Generator
+
+```
+from hayhooks import streaming_generator
+
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+    question = get_last_user_message(messages)
+
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": question}},
+    )
+```
+
+### Async Streaming Generator
+
+```
+from hayhooks import async_streaming_generator
+
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+    question = get_last_user_message(messages)
+
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": question}},
+    )
+```
+
+## Using Hayhooks with Haystack's OpenAIChatGenerator
+
+Hayhooks' OpenAI-compatible endpoints can be used as a backend for Haystack's `OpenAIChatGenerator`, enabling you to create pipelines that consume other Hayhooks-deployed pipelines:
+
+```
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.utils import Secret
+from haystack.dataclasses import ChatMessage
+
+# Connect to a Hayhooks-deployed pipeline
+client = OpenAIChatGenerator(
+    model="chat_with_website",  # Your deployed pipeline name
+    api_key=Secret.from_token("not-used"),  # Hayhooks doesn't require authentication
+    api_base_url="http://localhost:1416/v1/",
+    streaming_callback=lambda chunk: print(chunk.content, end="")
+)
+
+# Use it like any OpenAI client
+result = client.run([ChatMessage.from_user("What is Haystack?")])
+print(result["replies"][0].content)
+```
+
+This enables powerful use cases:
+
+- **Pipeline Composition**: Chain multiple Hayhooks pipelines together
+- **Testing**: Test your pipelines using Haystack's testing tools
+- **Hybrid Deployments**: Mix local and remote pipeline execution
+
+Limitations
+
+If you customize your Pipeline wrapper to emit [Open WebUI Events](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/#open-webui-events), it may break out-of-the-box compatibility with Haystack's `OpenAIChatGenerator`.
+
+## Examples
+
+### Sync Chat Pipeline (Non-Streaming)
+
+```
+class SyncChatWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        from haystack.components.builders import ChatPromptBuilder
+        from haystack.components.generators.chat import OpenAIChatGenerator
+        from haystack.dataclasses import ChatMessage
+
+        template = [ChatMessage.from_user("Answer: {{query}}")]
+        chat_prompt_builder = ChatPromptBuilder(template=template)
+        llm = OpenAIChatGenerator(model="gpt-4o-mini")
+
+        self.pipeline = Pipeline()
+        self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
+        self.pipeline.add_component("llm", llm)
+        self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
+
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str:
+        question = get_last_user_message(messages)
+        result = self.pipeline.run({"chat_prompt_builder": {"query": question}})
+        return result["llm"]["replies"][0].content
+```
+
+### Async Streaming Pipeline
+
+```
+class AsyncStreamingWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        from haystack import AsyncPipeline
+        from haystack.components.builders import ChatPromptBuilder
+        from haystack.components.generators.chat import OpenAIChatGenerator
+        from haystack.dataclasses import ChatMessage
+
+        template = [ChatMessage.from_user("Answer: {{query}}")]
+        chat_prompt_builder = ChatPromptBuilder(template=template)
+        llm = OpenAIChatGenerator(model="gpt-4o")
+
+        self.pipeline = AsyncPipeline()
+        self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
+        self.pipeline.add_component("llm", llm)
+        self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
+
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+        question = get_last_user_message(messages)
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"chat_prompt_builder": {"query": question}},
+        )
+```
+
+## Request Parameters
+
+The OpenAI-compatible endpoints support standard parameters from the `body` argument:
+
+```
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str:
+    # Access additional parameters
+    temperature = body.get("temperature", 0.7)
+    max_tokens = body.get("max_tokens", 150)
+    stream = body.get("stream", False)
+
+    # Use them in your pipeline
+    result = self.pipeline.run({
+        "llm": {
+            "generation_kwargs": {
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+        }
+    })
+    return result["llm"]["replies"][0].content
+```
+
+**Common parameters include:**
+
+- `temperature`: Controls randomness (0.0 to 2.0)
+- `max_tokens`: Maximum number of tokens to generate
+- `stream`: Enable streaming responses
+- `stop`: Stop sequences
+- `top_p`: Nucleus sampling parameter
+
+See the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create) for the complete list of parameters.
+
+## Next Steps
+
+- [Open WebUI Integration](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md) - Use Hayhooks with Open WebUI chat interface
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Working examples and use cases
+- [File Upload Support](https://deepset-ai.github.io/hayhooks/features/file-upload-support/index.md) - Handle file uploads in pipelines
+
+# MCP Support
+
+Hayhooks supports the [Model Context Protocol](https://modelcontextprotocol.io/) and can act as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing pipelines and agents as MCP tools for use in AI development environments.
+
+## Overview
+
+The Hayhooks MCP Server:
+
+- Exposes [Core Tools](#core-mcp-tools) for controlling Hayhooks directly from IDEs
+- Exposes deployed Haystack pipelines as usable [MCP Tools](#pipeline-tools)
+- Supports both [Server-Sent Events (SSE)](#sse-transport) and [Streamable HTTP](#streamable-http-transport) transports
+- Integrates with AI development environments like [Cursor](https://cursor.com) and [Claude Desktop](https://claude.ai/download)
+
+## Requirements
+
+- Python 3.10+ for MCP support
+- Install with `pip install hayhooks[mcp]`
+
+## Getting Started
+
+### Install with MCP Support
+
+```
+pip install hayhooks[mcp]
+```
+
+### Start MCP Server
+
+```
+hayhooks mcp run
+```
+
+This starts the MCP server on `HAYHOOKS_MCP_HOST:HAYHOOKS_MCP_PORT` (default: `localhost:1417`).
+
+### Configuration
+
+Environment variables for MCP server:
+
+```
+HAYHOOKS_MCP_HOST=localhost    # MCP server host
+HAYHOOKS_MCP_PORT=1417         # MCP server port
+```
+
+## Transports
+
+### Streamable HTTP (Recommended)
+
+The preferred transport for modern MCP clients:
+
+```
+import mcp
+
+client = mcp.Client("http://localhost:1417/mcp")
+```
+
+### Server-Sent Events (SSE)
+
+Legacy transport maintained for backward compatibility:
+
+```
+import mcp
+
+client = mcp.Client("http://localhost:1417/sse")
+```
+
+## Core MCP Tools
+
+Hayhooks provides core tools for managing pipelines:
+
+### get_all_pipeline_statuses
+
+Get status of all deployed pipelines:
+
+```
+result = await client.call_tool("get_all_pipeline_statuses")
+```
+
+### get_pipeline_status
+
+Get status of a specific pipeline:
+
+```
+result = await client.call_tool("get_pipeline_status", {"pipeline_name": "my_pipeline"})
+```
+
+### deploy_pipeline
+
+Deploy a pipeline from files:
+
+```
+result = await client.call_tool("deploy_pipeline", {
+    "name": "my_pipeline",
+    "files": [
+        {"name": "pipeline_wrapper.py", "content": "..."},
+        {"name": "pipeline.yml", "content": "..."}
+    ],
+    "save_files": True,
+    "overwrite": False
+})
+```
+
+### undeploy_pipeline
+
+Undeploy a pipeline:
+
+```
+result = await client.call_tool("undeploy_pipeline", {"pipeline_name": "my_pipeline"})
+```
+
+## Pipeline Tools
+
+### PipelineWrapper as MCP Tool
+
+When you deploy a pipeline with `PipelineWrapper`, it's automatically exposed as an MCP tool.
+
+**MCP Tool Requirements:**
+
+A [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools) requires:
+
+- `name`: The name of the tool
+- `description`: The description of the tool
+- `inputSchema`: JSON Schema describing the tool's input parameters
+
+**How Hayhooks Creates MCP Tools:**
+
+For each deployed pipeline, Hayhooks will:
+
+- Use the pipeline wrapper `name` as MCP Tool `name` (always present)
+- Parse **`run_api` method docstring**:
+- If you use Google-style or reStructuredText-style docstrings, use the first line as MCP Tool `description` and the rest as `parameters` (if present)
+- Each parameter description will be used as the `description` of the corresponding Pydantic model field (if present)
+- Generate a Pydantic model from the `inputSchema` using the **`run_api` method arguments as fields**
+
+**Example:**
+
+```
+from pathlib import Path
+from haystack import Pipeline
+from hayhooks import BasePipelineWrapper
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
+        self.pipeline = Pipeline.loads(pipeline_yaml)
+
+    def run_api(self, urls: list[str], question: str) -> str:
+        #
+        # NOTE: The following docstring will be used as MCP Tool description
+        #
+        """
+        Ask a question about one or more websites using a Haystack pipeline.
+        """
+        result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+        return result["llm"]["replies"][0]
+```
+
+### YAML Pipeline as MCP Tool
+
+YAML-deployed pipelines are also automatically exposed as MCP tools. When you deploy via `hayhooks pipeline deploy-yaml`, the pipeline becomes available as an MCP tool with its input schema derived from the YAML `inputs` section.
+
+For complete examples and detailed information, see [YAML Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/yaml-pipeline-deployment/index.md).
+
+### Skip MCP Tool Listing
+
+To prevent a pipeline from being listed as an MCP tool:
+
+```
+class PipelineWrapper(BasePipelineWrapper):
+    skip_mcp = True  # This pipeline won't be listed as an MCP tool
+
+    def setup(self) -> None:
+        ...
+
+    def run_api(self, ...) -> str:
+        ...
+```
+
+## IDE Integration
+
+### Cursor Integration
+
+Add Hayhooks MCP Server in Cursor Settings → MCP:
+
+```
+{
+  "mcpServers": {
+    "hayhooks": {
+      "url": "http://localhost:1417/mcp"
+    }
+  }
+}
+```
+
+Once configured, you can deploy, manage, and run pipelines directly from Cursor chat using the Core MCP Tools.
+
+For more information about MCP in Cursor, see the [Cursor MCP Documentation](https://cursor.com/docs/context/mcp).
+
+### Claude Desktop Integration
+
+Configure Claude Desktop to connect to Hayhooks MCP Server:
+
+Claude Desktop Tiers
+
+Use [supergateway](https://github.com/supercorp-ai/supergateway) to bridge the connection
+
+```
+{
+  "mcpServers": {
+    "hayhooks": {
+      "command": "npx",
+      "args": ["-y", "supergateway", "--streamableHttp", "http://localhost:1417/mcp"]
+    }
+  }
+}
+```
+
+Direct connection via Streamable HTTP or SSE
+
+```
+{
+  "mcpServers": {
+    "hayhooks": {
+      "url": "http://localhost:1417/mcp"
+    }
+  }
+}
+```
+
+## Development Workflow
+
+**Basic workflow:**
+
+1. Start Hayhooks server: `hayhooks run`
+1. Start MCP server: `hayhooks mcp run` (in another terminal)
+1. Configure your IDE to connect to the MCP server
+1. Deploy and manage pipelines through your IDE using natural language
+
+## Tool Development
+
+### Custom Tool Descriptions
+
+Use docstrings to provide better tool descriptions:
+
+```
+def run_api(self, urls: list[str], question: str) -> str:
+    """
+    Ask questions about website content using AI.
+
+    This tool analyzes website content and provides answers to user questions.
+    It's perfect for research, content analysis, and information extraction.
+
+    Args:
+        urls: List of website URLs to analyze
+        question: Question to ask about the content
+
+    Returns:
+        Answer to the question based on the website content
+    """
+    result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
+    return result["llm"]["replies"][0]
+```
+
+### Input Validation
+
+Hayhooks automatically validates inputs based on your method signature:
+
+```
+def run_api(
+    self,
+    urls: list[str],           # Required: List of URLs
+    question: str,             # Required: User question
+    max_tokens: int = 1000     # Optional: Max tokens
+) -> str:
+    ...
+```
+
+## Security Considerations
+
+### Authentication
+
+Currently, Hayhooks MCP server doesn't include built-in authentication. Consider:
+
+- Running behind a reverse proxy with authentication
+- Using network-level security (firewalls, VPNs)
+- Implementing custom middleware for authentication
+
+### Resource Management
+
+- Monitor tool execution for resource usage
+- Implement timeouts for long-running operations
+- Consider rate limiting for production deployments
+
+## Troubleshooting
+
+### Common Issues
+
+#### Connection Refused
+
+If you cannot connect to the MCP server, ensure the MCP server is running with `hayhooks mcp run`. Check that the port configuration matches (default is `1417`), and verify network connectivity between the client and server.
+
+#### Tool Not Found
+
+If an MCP tool is not showing up, verify that the pipeline is properly deployed using `hayhooks status`. Check if the `skip_mcp` class attribute is set to `True` in your `PipelineWrapper`, which would prevent it from being listed. Ensure the `run_api` method is properly implemented with correct type hints.
+
+#### Input Validation Errors
+
+If you're getting validation errors when calling tools, check that your method signatures match the expected input types. Verify that all required parameters are being passed and that data types match the type hints in your `run_api` method signature. Review the MCP tool's `inputSchema` to ensure parameter names and types are correct.
+
+### Debug Commands
+
+The MCP server exposes the following endpoints:
+
+- **Streamable HTTP endpoint**: `http://localhost:1417/mcp` - Main MCP protocol endpoint
+- **SSE endpoint**: `http://localhost:1417/sse` - Server-Sent Events transport (deprecated)
+- **Status/Health Check**: `http://localhost:1417/status` - Returns `{"status": "ok"}` for health monitoring
+
+#### Testing the health endpoint
+
+```
+# Check if MCP server is running
+curl http://localhost:1417/status
+
+# Expected response:
+# {"status":"ok"}
+```
+
+This status endpoint is useful for:
+
+- Container health checks in Docker/Kubernetes deployments
+- Load balancer health probes
+- Monitoring and alerting systems
+- Verifying the MCP server is running before connecting clients
+
+Use an MCP-capable client like [supergateway](https://github.com/supercorp-ai/supergateway), [Cursor](https://cursor.com), or [Claude Desktop](https://claude.ai/download) to list and call tools. Example supergateway usage is shown above.
+
+## Next Steps
+
+- [PipelineWrapper Guide](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md) - Learn how to create MCP-compatible pipeline wrappers
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - See working examples of deployed pipelines
+
+# Chainlit Integration
+
+Hayhooks provides optional integration with [Chainlit](https://chainlit.io/), allowing you to embed a chat UI directly within your Hayhooks server. This provides a zero-configuration frontend for interacting with your deployed Haystack pipelines.
+
+## Overview
+
+The Chainlit integration offers:
+
+- **Single Deployment**: Run both backend and frontend in one process/container
+- **Zero Configuration**: Works out-of-the-box with Hayhooks' OpenAI-compatible endpoints
+- **Streaming Support**: Real-time streaming responses in the chat interface
+- **Pipeline Selection**: Automatically discovers and lists deployed pipelines
+
+## Installation
+
+Install Hayhooks with the `chainlit` extra:
+
+```
+pip install "hayhooks[chainlit]"
+```
+
+## Quick Start
+
+### Using CLI
+
+The simplest way to enable the Chainlit UI is via the `--with-chainlit` flag:
+
+```
+hayhooks run --with-chainlit
+```
+
+This starts Hayhooks with the embedded Chainlit UI available at `http://localhost:1416/chat`.
+
+### Custom UI Path
+
+You can customize the URL path where the UI is mounted:
+
+```
+hayhooks run --with-chainlit --chainlit-path /my-chat
+```
+
+Now the UI will be available at `http://localhost:1416/my-chat`.
+
+### Using Environment Variables
+
+You can also configure the UI via environment variables:
+
+```
+export HAYHOOKS_CHAINLIT_ENABLED=true
+export HAYHOOKS_CHAINLIT_PATH=/chat
+
+hayhooks run
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable                    | Description                    | Default        |
+| --------------------------- | ------------------------------ | -------------- |
+| `HAYHOOKS_CHAINLIT_ENABLED` | Enable/disable the Chainlit UI | `false`        |
+| `HAYHOOKS_CHAINLIT_PATH`    | URL path where UI is mounted   | `/chat`        |
+| `HAYHOOKS_CHAINLIT_APP`     | Custom Chainlit app file path  | (uses default) |
+
+### Additional Settings
+
+| Variable                            | Description                         | Default                   |
+| ----------------------------------- | ----------------------------------- | ------------------------- |
+| `HAYHOOKS_CHAINLIT_DEFAULT_MODEL`   | Default pipeline to auto-select     | (auto-select if only one) |
+| `HAYHOOKS_CHAINLIT_REQUEST_TIMEOUT` | Timeout (seconds) for chat requests | `120.0`                   |
+
+## How It Works
+
+```
+flowchart LR
+    subgraph server ["Hayhooks Server"]
+        UI["Chainlit UI\n(mounted at /chat)"]
+        API["/v1/chat/completions\n(OpenAI-compatible)"]
+        Pipelines["Haystack Pipelines\n(with chat support)"]
+
+        UI -- "HTTP streaming" --> API
+        API --> Pipelines
+    end
+
+    Browser["🌐 Browser"] --> UI
+```
+
+The Chainlit UI is mounted as a FastAPI sub-application and communicates with your pipelines through Hayhooks' OpenAI-compatible endpoints. This means:
+
+1. Your pipelines must implement `run_chat_completion` or `run_chat_completion_async`
+1. The UI automatically discovers available pipelines via `/v1/models`
+1. Streaming is supported out-of-the-box
+
+## Example: Complete Setup
+
+### 1. Create a Pipeline Wrapper
+
+```
+# pipelines/my_chat/pipeline_wrapper.py
+from typing import Generator
+
+from haystack import Pipeline
+from haystack.components.builders import ChatPromptBuilder
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage
+
+from hayhooks import BasePipelineWrapper, streaming_generator
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.system_message = ChatMessage.from_system("You are a helpful assistant.")
+        chat_prompt_builder = ChatPromptBuilder()
+        llm = OpenAIChatGenerator(model="gpt-4o-mini")
+
+        self.pipeline = Pipeline()
+        self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
+        self.pipeline.add_component("llm", llm)
+        self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
+
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+        chat_messages = [self.system_message] + [
+            ChatMessage.from_openai_dict_format(msg) for msg in messages
+        ]
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"chat_prompt_builder": {"template": chat_messages}},
+        )
+```
+
+### 2. Run Hayhooks with UI
+
+```
+hayhooks run --with-chainlit --pipelines-dir ./pipelines
+```
+
+### 3. Open the UI
+
+Navigate to `http://localhost:1416/chat` in your browser. You'll see your deployed pipeline and can start chatting!
+
+## Custom Chainlit App
+
+You can provide your own Chainlit app for more customization:
+
+```
+hayhooks run --with-chainlit
+```
+
+With environment variable:
+
+```
+export HAYHOOKS_CHAINLIT_APP=/path/to/my_chainlit_app.py
+hayhooks run --with-chainlit
+```
+
+### Example Custom App
+
+```
+# my_chainlit_app.py
+import os
+import chainlit as cl
+import httpx
+
+HAYHOOKS_URL = os.getenv("HAYHOOKS_BASE_URL", "http://localhost:1416")
+
+@cl.on_chat_start
+async def start():
+    await cl.Message(content="Welcome! How can I help you today?").send()
+
+@cl.on_message
+async def main(message: cl.Message):
+    response_msg = cl.Message(content="")
+    await response_msg.send()
+
+    async with httpx.AsyncClient() as client:
+        async with client.stream(
+            "POST",
+            f"{HAYHOOKS_URL}/v1/chat/completions",
+            json={
+                "model": "my_pipeline",  # Your pipeline name
+                "messages": [{"role": "user", "content": message.content}],
+                "stream": True,
+            },
+            timeout=120.0,
+        ) as response:
+            async for line in response.aiter_lines():
+                if line.startswith("data: ") and line[6:] != "[DONE]":
+                    import json
+                    chunk = json.loads(line[6:])
+                    content = chunk["choices"][0].get("delta", {}).get("content", "")
+                    if content:
+                        await response_msg.stream_token(content)
+
+    await response_msg.update()
+```
+
+## Custom Elements
+
+Chainlit supports [custom elements](https://docs.chainlit.io/api-reference/elements/custom) -- JSX components that pipelines can push to the UI at runtime for rich, interactive widgets (charts, cards, maps, etc.).
+
+The [chainlit_weather_agent example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chainlit_weather_agent) includes a `WeatherCard` element that demonstrates this feature. To use your own elements, point Hayhooks at a directory of `.jsx` files:
+
+### Using CLI
+
+```
+hayhooks run --with-chainlit --chainlit-custom-elements-dir ./my_elements
+```
+
+### Using Environment Variable
+
+```
+export HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR=./my_elements
+hayhooks run --with-chainlit
+```
+
+At startup, Hayhooks copies every `.jsx` file from that directory into the Chainlit `public/elements/` folder. The file name (minus `.jsx`) becomes the element name you reference from your pipeline:
+
+```
+my_elements/
+  StockChart.jsx
+  MapView.jsx
+```
+
+```
+# In your pipeline wrapper
+from hayhooks.chainlit_events import create_custom_element_event
+
+def on_tool_call_end(self, tool_name, arguments, result, error):
+    return [create_custom_element_event(name="StockChart", props={"symbol": "AAPL", ...})]
+```
+
+### JSX Requirements
+
+Custom elements must:
+
+- Be written in **JSX** (not TSX) and export a default component
+- Access data via the global `props` object (not function arguments)
+- Use **Tailwind CSS** classes for styling (shadcn + tailwind environment)
+
+Available imports include `@/components/ui/*` (shadcn), `lucide-react`, `react`, and `recharts`. See the [Chainlit custom element docs](https://docs.chainlit.io/api-reference/elements/custom) for the full list.
+
+Tip
+
+If a custom file has the same name as a built-in element, the custom version takes precedence. A warning is logged when this happens.
+
+## Branding & Theme
+
+The default Chainlit UI ships with Hayhooks logos, favicons, and a `theme.json`. To override any of these, place your own files in a `public/` directory next to your custom Chainlit app:
+
+```
+my_chainlit/
+  my_app.py               # Custom Chainlit app
+  public/
+    logo_dark.png          # Overrides the default dark-mode logo
+    theme.json             # Overrides the default theme
+```
+
+```
+export HAYHOOKS_CHAINLIT_APP=my_chainlit/my_app.py
+hayhooks run --with-chainlit
+```
+
+When `HAYHOOKS_CHAINLIT_APP` is set, Hayhooks uses the parent directory of that file as the Chainlit app root. Built-in assets (logos, favicons, theme) are automatically seeded into the `public/` directory, so you only need to provide the files you want to override -- anything you don't provide keeps the default.
+
+The built-in public assets are:
+
+| File                   | Description                          |
+| ---------------------- | ------------------------------------ |
+| `logo_dark.png`        | Logo displayed in dark mode          |
+| `logo_light.png`       | Logo displayed in light mode         |
+| `favicon.ico`          | Browser tab icon (ICO)               |
+| `favicon.png`          | Browser tab icon (PNG)               |
+| `favicon.svg`          | Browser tab icon (SVG)               |
+| `apple-touch-icon.png` | iOS home screen icon                 |
+| `theme.json`           | Chainlit theme (colors, fonts, etc.) |
+
+For theme configuration options, see the [Chainlit theme documentation](https://docs.chainlit.io/customisation/overview).
+
+## Why Embedded Chainlit
+
+The embedded Chainlit UI is designed for simplicity and fast iteration:
+
+- **Single process deployment**: No extra containers or services to manage
+- **Minimal setup**: Just `pip install "hayhooks[chainlit]"` and `--with-chainlit`
+- **Zero configuration**: Automatically discovers deployed pipelines via `/v1/models`
+- **Streaming out of the box**: Real-time token streaming with tool call visualization
+
+For production deployments requiring persistent conversation history, multi-user authentication, or advanced features, consider pairing Hayhooks with an external frontend like [Open WebUI](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md) which connects through the same OpenAI-compatible endpoints.
+
+## Troubleshooting
+
+### UI Not Loading
+
+1. Ensure Chainlit is installed: `pip install "hayhooks[chainlit]"`
+1. Check that `--with-chainlit` flag is set or `HAYHOOKS_CHAINLIT_ENABLED=true`
+1. Verify the UI path in logs (default: `/chat`)
+
+### No Pipelines Available
+
+The UI requires at least one deployed pipeline with chat completion support:
+
+1. Ensure your pipeline implements `run_chat_completion` or `run_chat_completion_async`
+1. Check that pipelines are deployed: `curl http://localhost:1416/v1/models`
+
+### Streaming Not Working
+
+1. Ensure your pipeline returns a `Generator` or `AsyncGenerator`
+1. Use `streaming_generator` or `async_streaming_generator` helpers
+1. Check browser console for WebSocket errors
+
+### Assets Not Loading Behind a Reverse Proxy
+
+When Hayhooks is served behind a reverse proxy with a path prefix (`root_path`), Chainlit assets (logos, theme, favicon) may fail to load because their URLs don't include the prefix. If you experience this:
+
+1. Verify that `HAYHOOKS_ROOT_PATH` is set correctly
+1. Check your reverse proxy is forwarding requests to the correct paths
+1. As a workaround, consider serving static assets directly from the reverse proxy
+
+## Production Notes
+
+### Multiple Workers and Sticky Sessions
+
+Chainlit uses WebSockets via socket.io, which keeps session state in-memory. Running with `--workers > 1` requires **sticky sessions** (session affinity) on your load balancer so that all requests from the same client hit the same worker.
+
+Even with sticky sessions, some load balancers struggle to consistently route WebSocket upgrades. If you experience intermittent disconnects, set `transports = ["websocket"]` in your `.chainlit/config.toml` to skip the HTTP long-polling fallback:
+
+```
+[project]
+# Use WebSocket transport only (recommended behind load balancers with sticky sessions)
+transports = ["websocket"]
+```
+
+### Authentication
+
+The embedded Chainlit UI is **public by default** -- anyone with network access to the URL can use it. To restrict access:
+
+- Set the `CHAINLIT_AUTH_SECRET` environment variable (generate one with `chainlit create-secret`)
+- Implement an [authentication callback](https://docs.chainlit.io/authentication/overview) in a custom Chainlit app via `HAYHOOKS_CHAINLIT_APP`
+- Or place Hayhooks behind a reverse proxy with its own authentication layer
+
+### Conversation Persistence
+
+By default, conversation history lives only in the server's memory and is lost on page refresh or server restart. Chainlit supports pluggable [data layers](https://docs.chainlit.io/data-persistence/overview) for persistent storage:
+
+- **SQLite** (file-based, zero infrastructure) or **PostgreSQL** via the community [SQLAlchemy data layer](https://github.com/Chainlit/chainlit-community)
+- **DynamoDB** for cloud-native deployments
+- Custom implementations via Chainlit's `BaseDataLayer` API
+
+To configure a data layer, provide a custom Chainlit app (`HAYHOOKS_CHAINLIT_APP`) that registers the data layer at startup.
+
+Note
+
+Chainlit sessions are server-side only. Fully client-side storage (cookies, localStorage) is not supported by Chainlit's architecture.
+
+### Endpoint Ordering
+
+`mount_chainlit()` must be called **after** all other FastAPI routes are registered -- it captures all unmatched URL space. Hayhooks handles this correctly in `create_app()`, but if you add custom middleware or routes, ensure they are registered before the Chainlit mount.
+
+## Limitations
+
+- **Single worker without sticky sessions**: Use `--workers 1` (the default) when running with `--with-chainlit`, or configure sticky sessions on your load balancer. See [Production Notes](#production-notes) above.
+- **No conversation persistence out of the box**: History is in-memory only. Configure a [data layer](#conversation-persistence) for persistence.
+- **No built-in authentication**: The UI is public by default. See [Authentication](#authentication) above.
+- **No client-side session storage**: Chainlit's architecture requires server-side sessions over WebSocket. Page refreshes create a new session.
+
+## Next Steps
+
+- [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md) - Learn about chat completion implementation
+- [Open WebUI Integration](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md) - For a more feature-rich frontend
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Working pipeline examples
+
+# Open WebUI Integration
+
+Hayhooks provides seamless integration with [Open WebUI](https://openwebui.com/), enabling you to use Haystack pipelines and agents as chat completion backends with full feature support.
+
+## Overview
+
+Open WebUI integration allows you to:
+
+- Use Haystack pipelines as OpenAI-compatible chat backends
+- Support streaming responses in real-time
+- Send status events to enhance user experience
+- Intercept tool calls for better feedback
+
+## Getting Started
+
+### Prerequisites
+
+- Open WebUI instance running
+- Hayhooks server running
+- Pipeline with chat completion support
+
+### Configuration
+
+#### 1. Install Open WebUI
+
+Please follow the [Open WebUI installation guide](https://docs.openwebui.com/getting-started/quick-start) to install Open WebUI.
+
+We recommend [using Docker to install Open WebUI](https://docs.openwebui.com/getting-started/quick-start/#quick-start-with-docker-).
+
+A quick command to install Open WebUI using Docker is:
+
+```
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -e WEBUI_AUTH=False -v open-webui:/app/backend/data --name open-webui ghcr.io/open-webui/open-webui:main
+```
+
+This will start Open WebUI on local port 3000, with no authentication, and with the data stored in the `open-webui` volume. It's the easiest way to get started.
+
+#### 2. Disable Auto-generated Content
+
+Open WebUI automatically generates content for your pipelines. More precisely, it calls your pipelines to generate tags, title and follow-up messages. Depending on your pipeline, this may not be suitable for this use case.
+
+We recommend disabling those features as a starting point, then you can enable them if you need them.
+
+Go to **Admin Settings → Interface** and turn off the following features:
+
+#### 3. Add Hayhooks as an OpenAI compatible API endpoint
+
+You have two options to connect Hayhooks to Open WebUI:
+
+##### Option 1: Direct Connection (Recommended)
+
+First, enable **Direct Connections** in Open WebUI.
+
+Go to **Admin Settings → Connections** and enable **Direct Connections**:
+
+Then go to **Settings → Connections** and add a new connection:
+
+- **API Base URL**: `http://localhost:1416`
+- **API Key**: `any-value` (or leave it empty, it's not used by Hayhooks)
+
+##### Option 2: OpenAI API Connection
+
+Alternatively, you can add Hayhooks as an additional **OpenAI API Connection** from **Admin Settings → Connections**:
+
+In both cases, remember to **fill a random value as API key** (Hayhooks doesn't require authentication).
+
+## Pipeline Implementation
+
+To make your pipeline work with Open WebUI, implement the `run_chat_completion` or `run_chat_completion_async` method in your `PipelineWrapper`. See the [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md) guide for detailed implementation examples.
+
+### Non-Streaming Example
+
+Here's how a non-streaming chat completion looks in Open WebUI:
+
+### Streaming Example
+
+With streaming enabled, responses appear in real-time:
+
+## Open WebUI Events
+
+Hayhooks supports sending events to Open WebUI for enhanced user experience:
+
+### Available Events
+
+- **status**: Show progress updates and loading indicators
+- **message**: Append content to the current message
+- **replace**: Replace the current message content entirely
+- **notification**: Show toast notifications (info, success, warning, error)
+- **source**: Add references, citations, or code execution results
+
+Limitations
+
+Customizing your Pipeline wrapper to emit Open WebUI Events may break out-of-the-box compatibility with [Haystack's `OpenAIChatGenerator`](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/#using-hayhooks-with-haystacks-openaichatgenerator). Your pipeline will still function normally, but it may not be directly consumable through `OpenAIChatGenerator`.
+
+### Event Implementation
+
+```
+from typing import AsyncGenerator
+from hayhooks import async_streaming_generator, get_last_user_message, BasePipelineWrapper
+from hayhooks.open_webui import create_status_event, create_message_event, OpenWebUIEvent
+
+class PipelineWrapper(BasePipelineWrapper):
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator[str | OpenWebUIEvent, None]:
+        # Indicate loading
+        yield create_status_event("Processing your request...", done=False)
+
+        question = get_last_user_message(messages)
+
+        try:
+            # Stream model output alongside events
+            result = async_streaming_generator(
+                pipeline=self.pipeline,
+                pipeline_run_args={"prompt_builder": {"query": question}},
+            )
+
+            # Optional UI hint
+            yield create_message_event("✍️ Generating response...")
+
+            async for chunk in result:
+                yield chunk
+
+            yield create_status_event("Request completed successfully", done=True)
+        except Exception as e:
+            yield create_status_event("Request failed", done=True)
+            yield create_message_event(f"Error: {str(e)}")
+            raise
+```
+
+Here's how Open WebUI events enhance the user experience:
+
+## Tool Call Interception
+
+For agent pipelines, you can intercept tool calls to provide real-time feedback:
+
+```
+def on_tool_call_start(tool_name: str, arguments: dict, tool_id: str):
+    """Called when a tool call starts"""
+    print(f"Tool call started: {tool_name}")
+
+
+def on_tool_call_end(tool_name: str, arguments: dict, result: dict, error: bool):
+    """Called when a tool call ends"""
+    print(f"Tool call ended: {tool_name}, Error: {error}")
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"messages": messages},
+            on_tool_call_start=on_tool_call_start,
+            on_tool_call_end=on_tool_call_end,
+        )
+```
+
+Here's an example of tool call interception in action:
+
+## Streaming the Final Pipeline Output
+
+The `on_pipeline_end` callback lets you customize what happens after a pipeline finishes running when using `streaming_generator` or `async_streaming_generator`. You can use it to return the final output of the pipeline, or add additional information (e.g. adding sources).
+
+Here’s how you can define and use `on_pipeline_end`:
+
+```
+def on_pipeline_end(result: dict):
+    """Called after the pipeline completes. Can format or summarize results."""
+    documents = result.get("documents", [])
+    references_str = "\n\n### All Sources:\n"
+    if documents:
+        for idx, doc in enumerate(documents):
+            references_str += f"- [{idx + 1}] {doc.meta['url']}\n"
+    return references_str
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"messages": messages},
+            on_pipeline_end=on_pipeline_end,
+        )
+```
+
+With this setup, after the pipeline finishes, the `on_pipeline_end` function is called with the pipeline’s result. You can use it to append a list of sources, add a summary, or perform any other final formatting. This final output is then sent to Open WebUI as part of the chat response.
+
+Here’s an example of post-processing with `on_pipeline_end` in action:
+
+## OpenAPI Tool Server
+
+Hayhooks can serve as an [OpenAPI Tool Server](https://docs.openwebui.com/openapi-servers/) for Open WebUI, exposing its core API endpoints as tools that can be used directly from the chat interface.
+
+[OpenAPI Tool Servers](https://docs.openwebui.com/openapi-servers/) are a standard way to integrate external tools and data sources into LLM agents using the widely-adopted OpenAPI specification. This approach offers several advantages:
+
+- **Standard Protocol**: Uses the established OpenAPI specification - no proprietary protocols to learn
+- **Easy Integration**: If you build REST APIs today, you're already familiar with the approach
+- **Secure**: Built on HTTP/REST with standard authentication methods (OAuth, JWT, API Keys)
+- **Flexible Deployment**: Can be hosted locally or externally without vendor lock-in
+
+Since Hayhooks exposes its OpenAPI schema at `/openapi.json`, Open WebUI can automatically discover and integrate all available Hayhooks endpoints as tools.
+
+### Setup
+
+1. Go to **Settings → Tools** in Open WebUI
+1. Add OpenAPI Tool Server:
+1. **Name**: Hayhooks
+1. **URL**: `http://localhost:1416/openapi.json`
+
+### Available Tools
+
+Once configured, the following Hayhooks operations become available as tools in your Open WebUI chat:
+
+- **Deploy Pipeline**: Deploy new pipelines from your chat interface
+- **Undeploy Pipeline**: Remove existing pipelines
+- **Run Pipeline**: Execute deployed pipelines with parameters
+- **Get Status**: Check the status and list of all deployed pipelines
+
+This enables you to manage your entire Hayhooks deployment directly through natural language conversations.
+
+### Example: Deploy a Haystack pipeline from `open-webui` chat interface
+
+Here's a video example of how to deploy a Haystack pipeline from the `open-webui` chat interface:
+
+## Example: Chat with Website
+
+Here's a complete example for a website chat pipeline:
+
+```
+from typing import AsyncGenerator
+from haystack import AsyncPipeline
+from haystack.components.fetchers import LinkContentFetcher
+from haystack.components.converters import HTMLToDocument
+from haystack.components.builders import ChatPromptBuilder
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage
+from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_user_message
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        fetcher = LinkContentFetcher()
+        converter = HTMLToDocument()
+
+        template = [
+            ChatMessage.from_user(
+                "Based on this content: {{documents}}\nAnswer: {{query}}"
+            )
+        ]
+        chat_prompt_builder = ChatPromptBuilder(template=template)
+
+        llm = OpenAIChatGenerator(model="gpt-4o")
+
+        self.pipeline = AsyncPipeline()
+        self.pipeline.add_component("fetcher", fetcher)
+        self.pipeline.add_component("converter", converter)
+        self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
+        self.pipeline.add_component("llm", llm)
+        self.pipeline.connect("fetcher.content", "converter")
+        self.pipeline.connect("converter.documents", "chat_prompt_builder.documents")
+        self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
+
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+        question = get_last_user_message(messages)
+
+        # Extract URLs from messages or use defaults
+        urls = ["https://haystack.deepset.ai"]  # Default URL
+
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={
+                "fetcher": {"urls": urls},
+                "chat_prompt_builder": {"query": question}
+            },
+        )
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Connection Failed**
+1. Verify Hayhooks server is running
+1. Check API URL in Open WebUI settings
+1. Ensure correct port (1416 by default)
+1. **No Response**
+1. Check if pipeline implements `run_chat_completion`
+1. Verify pipeline is deployed
+1. Check server logs for errors
+1. **Streaming Not Working**
+1. Ensure `streaming_callback` is set on generator
+1. Check if `run_chat_completion_async` is implemented
+1. Verify Open WebUI streaming is enabled
+
+### Debug Commands
+
+```
+# Check Hayhooks status
+hayhooks status
+
+# Check deployed pipelines
+curl http://localhost:1416/status
+
+# Test chat completion endpoint (OpenAI-compatible)
+curl -X POST http://localhost:1416/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "my_pipeline",
+    "messages": [{"role": "user", "content": "test message"}],
+    "stream": false
+  }'
+
+# Test streaming chat completion
+curl -X POST http://localhost:1416/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "my_pipeline",
+    "messages": [{"role": "user", "content": "test message"}],
+    "stream": true
+  }'
+```
+
+## Next Steps
+
+- [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md) - Implementation details for chat completion methods
+- [Open WebUI Events Example](https://deepset-ai.github.io/hayhooks/examples/openwebui-events/index.md) - Advanced UI integration patterns
+
+# File Upload Support
+
+Hayhooks provides built-in support for handling file uploads in your pipelines, making it easy to create applications that process documents, images, and other files.
+
+## Overview
+
+File upload support enables you to:
+
+- Accept file uploads through REST APIs
+- Process multiple files in a single request
+- Combine file uploads with other parameters
+- Build document processing and RAG pipelines
+
+## Basic Implementation
+
+To accept file uploads in your pipeline, add a `files` parameter to your `run_api` method:
+
+```
+from fastapi import UploadFile
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_api(self, files: list[UploadFile] | None = None, query: str = "") -> str:
+        if not files:
+            return "No files provided"
+
+        # Process files here...
+        return f"Processed {len(files)} files"
+```
+
+For a complete implementation, see the [RAG System Example](https://deepset-ai.github.io/hayhooks/examples/rag-system/index.md).
+
+## API Usage
+
+### Multipart Form Data Requests
+
+File uploads use `multipart/form-data` format:
+
+```
+# Upload single file
+curl -X POST \
+  http://localhost:1416/my_pipeline/run \
+  -F 'files=@document.pdf' \
+  -F 'query="Summarize this document"'
+
+# Upload multiple files
+curl -X POST \
+  http://localhost:1416/my_pipeline/run \
+  -F 'files=@document1.pdf' \
+  -F 'files=@document2.txt' \
+  -F 'query="Compare these documents"'
+
+# Upload with additional parameters
+curl -X POST \
+  http://localhost:1416/my_pipeline/run \
+  -F 'files=@document.pdf' \
+  -F 'query="Analyze this document"'
+```
+
+### Python Client Example
+
+```
+import requests
+
+# Upload files
+files = [
+    ('files', open('document.pdf', 'rb')),
+    ('files', open('notes.txt', 'rb'))
+]
+
+data = {
+    'query': 'Analyze these documents'
+}
+
+response = requests.post(
+    'http://localhost:1416/my_pipeline/run',
+    files=files,
+    data=data
+)
+
+print(response.json())
+```
+
+## CLI Usage
+
+Hayhooks CLI supports file uploads:
+
+```
+# Upload single file
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Summarize this"'
+
+# Upload directory
+hayhooks pipeline run my_pipeline --dir ./documents --param 'query="Analyze all documents"'
+
+# Upload multiple files
+hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare documents"'
+
+# Upload with parameters
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Analyze"'
+```
+
+## Combining Files with Other Parameters
+
+You can handle both files and parameters in the same request by adding them as arguments to the `run_api` method:
+
+```
+from fastapi import UploadFile
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_api(
+        self,
+        files: list[UploadFile] | None = None,
+        query: str = "",
+        additional_param: str = "default"
+    ) -> str:
+        if files and len(files) > 0:
+            filenames = [f.filename for f in files if f.filename is not None]
+            return f"Received files: {', '.join(filenames)} with query: {query}"
+
+        return "No files received"
+```
+
+## Complete Example: RAG System with File Upload
+
+For a complete, production-ready example of a RAG system with file uploads, including document indexing and querying with Elasticsearch, see:
+
+- [RAG System Example](https://deepset-ai.github.io/hayhooks/examples/rag-system/index.md) - Full RAG implementation guide
+- [examples/rag_indexing_query](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query) - Complete working code with:
+- Document indexing pipeline with file upload support
+- Query pipeline for retrieving and generating answers
+- Elasticsearch integration
+- Support for PDF, Markdown, and text files
+
+## Next Steps
+
+- [PipelineWrapper](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md) - Learn about wrapper implementation
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - See working examples
+- [CLI Commands](https://deepset-ai.github.io/hayhooks/features/cli-commands/index.md) - CLI usage for file uploads
+
+# File Response Support
+
+Hayhooks supports returning binary files (images, PDFs, audio, etc.) directly from `run_api` endpoints. When `run_api` returns a FastAPI [`Response`](https://fastapi.tiangolo.com/advanced/response-directly/) object, Hayhooks passes it straight to the client — bypassing JSON serialization entirely. See also the FastAPI docs on [custom responses](https://fastapi.tiangolo.com/advanced/custom-response/).
+
+## Overview
+
+File response support enables you to:
+
+- Return images, PDFs, audio files, or any binary content from pipelines
+- Use FastAPI's `FileResponse`, `StreamingResponse`, or plain `Response`
+- Serve generated content (e.g. AI-generated images) directly to clients
+- Set custom headers like `Content-Disposition` for download behavior
+
+## Basic Implementation
+
+To return a file from your pipeline, return a FastAPI `Response` (or any subclass) from `run_api`:
+
+```
+from fastapi.responses import FileResponse
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pass
+
+    def run_api(self, prompt: str) -> FileResponse:
+        # Generate or retrieve a file...
+        image_path = generate_image(prompt)
+
+        return FileResponse(
+            path=image_path,
+            media_type="image/png",
+            filename="result.png",
+        )
+```
+
+## Response Types
+
+You can use any FastAPI/Starlette response class:
+
+### FileResponse
+
+Best for serving files from disk:
+
+```
+from fastapi.responses import FileResponse
+
+def run_api(self, document_id: str) -> FileResponse:
+    path = self.get_document_path(document_id)
+    return FileResponse(
+        path=path,
+        media_type="application/pdf",
+        filename="document.pdf",
+    )
+```
+
+### Response
+
+Best for returning in-memory bytes:
+
+```
+from fastapi.responses import Response
+
+def run_api(self, prompt: str) -> Response:
+    image_bytes = self.generate_image(prompt)
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={"Content-Disposition": 'inline; filename="image.png"'},
+    )
+```
+
+### StreamingResponse
+
+Best for large files or on-the-fly generation:
+
+```
+import io
+from fastapi.responses import StreamingResponse
+
+def run_api(self, query: str) -> StreamingResponse:
+    audio_buffer = self.generate_audio(query)
+    return StreamingResponse(
+        content=io.BytesIO(audio_buffer),
+        media_type="audio/wav",
+        headers={"Content-Disposition": 'attachment; filename="audio.wav"'},
+    )
+```
+
+## How It Works
+
+When Hayhooks deploys a pipeline whose `run_api` return type is a `Response` subclass (or a generator), three things happen at deploy time:
+
+1. **`response_model=None`**: `create_response_model_from_callable` detects the `Response` return type and returns `None` instead of a Pydantic model. This tells FastAPI to skip response validation and not generate a JSON schema for this endpoint.
+
+1. **`response_class`**: `get_response_class_from_callable` returns the concrete response class (e.g. `FileResponse`, `StreamingResponse`) so that OpenAPI docs show the correct Content-Type for the endpoint instead of `application/json`.
+
+1. **At runtime**: The endpoint handler checks if the result is a `Response` instance and returns it directly, skipping JSON wrapping:
+
+   ```
+   # From deploy_utils.py
+   if isinstance(result, Response):
+       return result
+   ```
+
+This is the same mechanism used for streaming generators — both bypass Pydantic serialization. Generators additionally get `StreamingResponse` as their `response_class`.
+
+## API Usage
+
+### curl
+
+```
+# Generate and download an image
+curl -X POST "http://localhost:1416/image_pipeline/run" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A sunset over mountains"}' \
+  --output result.png
+```
+
+### Python
+
+```
+import requests
+
+response = requests.post(
+    "http://localhost:1416/image_pipeline/run",
+    json={"prompt": "A sunset over mountains"},
+)
+
+# Save the binary content
+with open("result.png", "wb") as f:
+    f.write(response.content)
+```
+
+### Browser
+
+File responses with `Content-Disposition: inline` will display directly in the browser. Use `Content-Disposition: attachment` to trigger a download.
+
+## Complete Example: Image Generation
+
+This example uses the Hugging Face Inference API to generate images from text prompts:
+
+```
+import tempfile
+
+from fastapi.responses import FileResponse
+
+from hayhooks import BasePipelineWrapper, log
+
+DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell"
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    """Generate images from text prompts using Hugging Face Inference API."""
+
+    def setup(self) -> None:
+        from huggingface_hub import InferenceClient
+
+        self.client = InferenceClient()
+
+    def run_api(
+        self,
+        prompt: str,
+        width: int = 512,
+        height: int = 512,
+        model: str = DEFAULT_MODEL,
+    ) -> FileResponse:
+        """Generate an image from a text prompt and return it as a PNG file."""
+        log.info("Generating image for prompt: '{}'", prompt)
+
+        image = self.client.text_to_image(
+            prompt=prompt, model=model, width=width, height=height,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            image.save(tmp, format="PNG")
+
+        return FileResponse(
+            path=tmp.name,
+            media_type="image/png",
+            filename="generated_image.png",
+        )
+```
+
+Deploy and test:
+
+```
+# Deploy
+hayhooks run --pipelines-dir examples/pipeline_wrappers/image_generation
+
+# Generate an image
+curl -X POST "http://localhost:1416/image_generation/run" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A cat sitting on a rainbow"}' \
+  --output generated_image.png
+```
+
+For the full example code, see [examples/pipeline_wrappers/image_generation](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/image_generation).
+
+## Next Steps
+
+- [PipelineWrapper](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md) - Learn about wrapper implementation
+- [File Upload Support](https://deepset-ai.github.io/hayhooks/features/file-upload-support/index.md) - Accept file uploads in pipelines
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - See working examples
+
+# CLI Commands
+
+Hayhooks provides a comprehensive command-line interface for managing pipelines and the server. This section covers all available CLI commands and their usage.
+
+## Overview
+
+The Hayhooks CLI allows you to:
+
+- Start and manage the Hayhooks server
+- Deploy and undeploy pipelines
+- Run pipelines with custom inputs
+- Monitor server status and health
+- Manage MCP server operations
+
+## Installation
+
+The CLI is automatically installed with the Hayhooks package:
+
+```
+pip install hayhooks
+```
+
+## Global Commands
+
+### Help
+
+Get help for any command:
+
+```
+# Show main help
+hayhooks --help
+
+# Show help for specific command
+hayhooks run --help
+hayhooks pipeline --help
+```
+
+### Version
+
+Check the installed version:
+
+```
+hayhooks --version
+```
+
+## Server Commands
+
+### run (HTTP vs CLI example)
+
+Start the Hayhooks server:
+
+```
+# Basic server start
+hayhooks run
+
+# With custom host and port
+hayhooks run --host 0.0.0.0 --port 1416
+
+# With multiple workers
+hayhooks run --workers 4
+
+# With custom pipelines directory
+hayhooks run --pipelines-dir ./my_pipelines
+
+# With additional Python path
+hayhooks run --additional-python-path ./custom_code
+
+# Reload on changes (development)
+hayhooks run --reload
+```
+
+#### Options for `run`
+
+| Option                     | Short | Description                          | Default       |
+| -------------------------- | ----- | ------------------------------------ | ------------- |
+| `--host`                   |       | Host to bind to                      | `localhost`   |
+| `--port`                   |       | Port to listen on                    | `1416`        |
+| `--workers`                |       | Number of worker processes           | `1`           |
+| `--pipelines-dir`          |       | Directory for pipeline definitions   | `./pipelines` |
+| `--additional-python-path` |       | Additional Python path               | `None`        |
+| `--root-path`              |       | Root path for API                    | `/`           |
+| `--reload`                 |       | Reload on code changes (development) | `false`       |
+
+### mcp run
+
+Start the MCP server:
+
+```
+# Start MCP server
+hayhooks mcp run
+
+# With custom host and port
+hayhooks mcp run --host 0.0.0.0 --port 1417
+```
+
+#### Options for `mcp run`
+
+| Option                     | Short | Description                        | Default       |
+| -------------------------- | ----- | ---------------------------------- | ------------- |
+| `--host`                   |       | MCP server host                    | `localhost`   |
+| `--port`                   |       | MCP server port                    | `1417`        |
+| `--pipelines-dir`          |       | Directory for pipeline definitions | `./pipelines` |
+| `--additional-python-path` |       | Additional Python path             | `None`        |
+
+## Pipeline Management Commands
+
+### pipeline deploy-files
+
+Deploy a pipeline from wrapper files:
+
+```
+# Basic deployment
+hayhooks pipeline deploy-files -n my_pipeline ./path/to/pipeline
+
+# With custom name and description
+hayhooks pipeline deploy-files -n my_pipeline --description "My pipeline" ./path/to/pipeline
+
+# Overwrite existing pipeline
+hayhooks pipeline deploy-files -n my_pipeline --overwrite ./path/to/pipeline
+
+# Skip saving files to server
+hayhooks pipeline deploy-files -n my_pipeline --skip-saving-files ./path/to/pipeline
+
+# Skip MCP tool registration
+hayhooks pipeline deploy-files -n my_pipeline --skip-mcp ./path/to/pipeline
+```
+
+#### Options for `pipeline deploy-files`
+
+| Option                | Short | Description                 | Default       |
+| --------------------- | ----- | --------------------------- | ------------- |
+| `--name`              | `-n`  | Pipeline name               | Required      |
+| `--description`       |       | Human-readable description  | Pipeline name |
+| `--overwrite`         | `-o`  | Overwrite existing pipeline | `false`       |
+| `--skip-saving-files` |       | Don't save files to server  | `false`       |
+| `--skip-mcp`          |       | Skip MCP tool registration  | `false`       |
+
+### pipeline deploy-yaml
+
+Deploy a pipeline from YAML definition:
+
+```
+# Deploy from YAML file
+hayhooks pipeline deploy-yaml pipelines/my_pipeline.yml
+
+# With custom name
+hayhooks pipeline deploy-yaml -n my_custom_name pipelines/my_pipeline.yml
+
+# With description
+hayhooks pipeline deploy-yaml -n my_pipeline --description "YAML pipeline" pipelines/my_pipeline.yml
+
+# Overwrite existing
+hayhooks pipeline deploy-yaml -n my_pipeline --overwrite pipelines/my_pipeline.yml
+
+# Don't save YAML file
+hayhooks pipeline deploy-yaml -n my_pipeline --no-save-file pipelines/my_pipeline.yml
+```
+
+#### Options for `pipeline deploy-yaml`
+
+| Option           | Short | Description                 | Default        |
+| ---------------- | ----- | --------------------------- | -------------- |
+| `--name`         | `-n`  | Pipeline name               | YAML file stem |
+| `--description`  |       | Human-readable description  | Pipeline name  |
+| `--overwrite`    | `-o`  | Overwrite existing pipeline | `false`        |
+| `--skip-mcp`     |       | Skip MCP tool registration  | `false`        |
+| `--save-file`    |       | Save YAML to server         | `true`         |
+| `--no-save-file` |       | Don't save YAML to server   | `false`        |
+
+### pipeline undeploy
+
+Undeploy a pipeline:
+
+```
+# Undeploy by name
+hayhooks pipeline undeploy my_pipeline
+
+# Force undeploy (ignore errors)
+hayhooks pipeline undeploy my_pipeline --force
+```
+
+#### Options for `pipeline undeploy`
+
+| Option    | Short | Description                | Default |
+| --------- | ----- | -------------------------- | ------- |
+| `--force` |       | Force undeploy (if needed) | `false` |
+
+### pipeline run
+
+Run a deployed pipeline:
+
+```
+# Run with JSON parameters
+hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
+
+# Run with multiple parameters
+hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"' --param 'max_results=5'
+
+# Upload files
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Summarize this"'
+
+# Upload directory
+hayhooks pipeline run my_pipeline --dir ./documents --param 'query="Analyze all documents"'
+
+# Upload multiple files
+hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare documents"'
+```
+
+#### Options for `pipeline run`
+
+| Option    | Short | Description             | Default |
+| --------- | ----- | ----------------------- | ------- |
+| `--file`  |       | Upload single file      | None    |
+| `--dir`   |       | Upload directory        | None    |
+| `--param` |       | Pass parameters as JSON | None    |
+
+## Status and Monitoring Commands
+
+### status
+
+Check server and pipeline status:
+
+```
+# Check server status
+hayhooks status
+```
+
+Note
+
+There is no `hayhooks health` command in the CLI. Use `hayhooks status` or call HTTP endpoints directly.
+
+CLI Limitations
+
+- Configuration is managed via environment variables and CLI flags. See [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md).
+- Development flows (testing, linting) are not exposed as CLI commands.
+- Use your process manager or container logs to view logs; Hayhooks uses standard output.
+- Advanced export/import/migrate commands are not provided by the Hayhooks CLI at this time.
+
+## HTTP API Commands
+
+All CLI commands have corresponding HTTP API endpoints.
+
+Interactive API Documentation
+
+Explore and test all HTTP API endpoints interactively:
+
+- **Swagger UI**: `http://localhost:1416/docs`
+- **ReDoc**: `http://localhost:1416/redoc`
+
+See the [API Reference](https://deepset-ai.github.io/hayhooks/reference/api-reference/index.md) for complete documentation.
+
+**Common HTTP API equivalents:**
+
+### deploy-files
+
+```
+# CLI
+hayhooks pipeline deploy-files -n my_pipeline ./path/to/pipeline
+
+# HTTP API
+curl -X POST http://localhost:1416/deploy_files \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "my_pipeline",
+    "description": "My pipeline",
+    "files": [...],
+    "overwrite": false
+  }'
+```
+
+### deploy-yaml
+
+```
+# CLI
+hayhooks pipeline deploy-yaml -n my_pipeline pipelines/my_pipeline.yml
+
+# HTTP API
+curl -X POST http://localhost:1416/deploy-yaml \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "my_pipeline",
+    "description": "My pipeline",
+    "source_code": "...",
+    "overwrite": false
+  }'
+```
+
+### run
+
+```
+# CLI
+hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
+
+# HTTP API
+curl -X POST http://localhost:1416/my_pipeline/run \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "What is Haystack?"}'
+```
+
+## Configuration Files
+
+### .env File
+
+Create a `.env` file for configuration:
+
+```
+# .env
+HAYHOOKS_HOST=0.0.0.0
+HAYHOOKS_PORT=1416
+HAYHOOKS_MCP_PORT=1417
+HAYHOOKS_PIPELINES_DIR=./pipelines
+LOG=INFO
+```
+
+## Error Handling
+
+### Common Errors
+
+1. **Server already running**
+
+```
+# Check if server is running
+hayhooks status
+
+# Kill existing process
+pkill -f "hayhooks run"
+```
+
+1. **Pipeline deployment failed**
+
+```
+# Check server logs with your process manager or container runtime
+
+# Enable debug logging
+LOG=DEBUG hayhooks run
+```
+
+1. **Permission denied**
+
+```
+# Check file permissions
+ls -la ./path/to/pipeline
+
+# Fix permissions if needed
+chmod +x ./path/to/pipeline/pipeline_wrapper.py
+```
+
+### Debug Mode
+
+Enable debug mode for troubleshooting:
+
+```
+# Set debug logging
+export LOG=DEBUG
+
+# Start server with debug logging
+hayhooks run
+```
+
+## Examples
+
+### Basic Workflow
+
+```
+# 1. Start server
+hayhooks run --port 1416
+
+# 2. In another terminal, deploy pipeline
+hayhooks pipeline deploy-files -n chat_pipeline ./pipelines/chat
+
+# 3. Check status
+hayhooks status
+
+# 4. Run pipeline
+hayhooks pipeline run chat_pipeline --param 'query="Hello!"'
+
+# 5. Check logs
+# Use your process manager or container logs
+```
+
+### Production Deployment
+
+```
+# 1. Set environment variables
+export HAYHOOKS_HOST=0.0.0.0
+export HAYHOOKS_PORT=1416
+export LOG=INFO
+
+# 2. Start server with multiple workers
+hayhooks run --workers 4
+
+# 3. Deploy pipelines
+hayhooks pipeline deploy-files -n production_pipeline ./pipelines/production
+
+# 4. Monitor status
+hayhooks status
+```
+
+## Next Steps
+
+- [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md) - Configuration options
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Working examples
+# Advanced Usage
+
+# Running Pipelines
+
+Execute deployed pipelines via CLI, HTTP API, or programmatically.
+
+## Quick Reference
+
+```
+hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
+```
+
+```
+curl -X POST http://localhost:1416/my_pipeline/run \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"What is Haystack?"}'
+```
+
+```
+import requests
+
+resp = requests.post(
+    "http://localhost:1416/my_pipeline/run",
+    json={"query": "What is Haystack?"}
+)
+print(resp.json())
+```
+
+```
+import httpx
+import asyncio
+
+async def main():
+    async with httpx.AsyncClient() as client:
+        r = await client.post(
+            "http://localhost:1416/my_pipeline/run",
+            json={"query": "What is Haystack?"}
+        )
+        print(r.json())
+
+asyncio.run(main())
+```
+
+```
+curl -X POST http://localhost:1416/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "my_pipeline",
+    "messages": [{"role": "user", "content": "What is Haystack?"}]
+  }'
+```
+
+See [Open WebUI Integration](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md) for setup details.
+
+For more CLI examples, see [CLI Commands](https://deepset-ai.github.io/hayhooks/features/cli-commands/index.md).
+
+## File Uploads
+
+### CLI
+
+```
+# Single file
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Summarize"'
+
+# Multiple files
+hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt
+
+# Directory
+hayhooks pipeline run my_pipeline --dir ./documents
+```
+
+### HTTP
+
+```
+curl -X POST http://localhost:1416/my_pipeline/run \
+  -F 'files=@document.pdf' \
+  -F 'query="Summarize this document"'
+```
+
+See [File Upload Support](https://deepset-ai.github.io/hayhooks/features/file-upload-support/index.md) for implementation details.
+
+## Python Integration
+
+### Requests
+
+```
+import requests
+
+resp = requests.post(
+    "http://localhost:1416/my_pipeline/run",
+    json={"query": "What is Haystack?"}
+)
+print(resp.json())
+```
+
+### Async (httpx)
+
+```
+import httpx
+import asyncio
+
+async def main():
+    async with httpx.AsyncClient() as client:
+        r = await client.post(
+            "http://localhost:1416/my_pipeline/run",
+            json={"query": "What is Haystack?"}
+        )
+        print(r.json())
+
+asyncio.run(main())
+```
+
+## Streaming
+
+Implement `run_chat_completion` or `run_chat_completion_async` in your wrapper. See [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md) for details.
+
+## Error Handling & Retry Logic
+
+```
+import requests
+from requests.exceptions import RequestException
+import time
+
+def run_with_retry(pipeline_name, params, max_retries=3):
+    url = f"http://localhost:1416/{pipeline_name}/run"
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, json=params)
+            response.raise_for_status()
+            return response.json()
+        except RequestException as e:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(2 ** attempt)  # Exponential backoff
+```
+
+## Logging
+
+Add logging to your pipeline wrappers:
+
+```
+from hayhooks import log
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_api(self, query: str) -> str:
+        log.info("Processing query: {}", query)
+        result = self.pipeline.run({"prompt": {"query": query}})
+        log.info("Pipeline completed")
+        return result["llm"]["replies"][0]
+```
+
+See [Logging Reference](https://deepset-ai.github.io/hayhooks/reference/logging/index.md) for details.
+
+## Next Steps
+
+- [CLI Commands](https://deepset-ai.github.io/hayhooks/features/cli-commands/index.md) - Complete CLI reference
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Working examples
+
+# Advanced Configuration
+
+This guide covers programmatic customization, custom routes, and middleware for advanced Hayhooks usage.
+
+For basic configuration, see [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md). For deployment and performance tuning, see [Deployment Guidelines](https://deepset-ai.github.io/hayhooks/deployment/deployment_guidelines/index.md).
+
+## Custom Routes and Middleware
+
+### When to add custom routes
+
+- Add specialized endpoints for application-specific logic
+- Provide admin/operations endpoints (restart, status, maintenance tasks)
+- Expose health checks, metrics, and webhook handlers for integrations
+- Implement authentication/authorization flows
+- Offer file management or other utility endpoints
+
+### When to add middleware
+
+- Apply cross-cutting concerns (logging/tracing, correlation IDs)
+- Enforce security controls (authn/z, rate limiting, quotas)
+- Control headers, CORS, compression, and caching
+- Normalize inputs/outputs and error handling consistently
+
+## Programmatic Customization
+
+You can create a custom Hayhooks app instance to add routes or middleware:
+
+```
+import uvicorn
+from hayhooks.settings import settings
+from fastapi import Request
+from hayhooks import create_app
+
+# Create the Hayhooks app
+hayhooks = create_app()
+
+# Add a custom route
+@hayhooks.get("/custom")
+async def custom_route():
+    return {"message": "Custom route"}
+
+# Add custom middleware
+@hayhooks.middleware("http")
+async def custom_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Custom-Header"] = "value"
+    return response
+
+if __name__ == "__main__":
+    uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
+```
+
+This allows you to build custom applications with Hayhooks as the core engine while adding your own business logic and integrations.
+
+## Next Steps
+
+- [Deployment Guidelines](https://deepset-ai.github.io/hayhooks/deployment/deployment_guidelines/index.md) - Performance tuning, workers, scaling, and deployment strategies
+- [Code Sharing](https://deepset-ai.github.io/hayhooks/advanced/code-sharing/index.md) - Reusable components across pipelines
+
+# Code Sharing Between Wrappers
+
+Hayhooks provides two ways to organize and share code in pipeline wrappers:
+
+1. **Relative Imports** - Import from sibling modules within the same pipeline folder
+1. **Shared Python Path** - Share code across multiple pipeline wrappers
+
+## Relative Imports (Recommended)
+
+Pipeline wrappers are loaded as Python packages, enabling you to use **relative imports** to organize your code into multiple files within the same pipeline folder.
+
+### Structure
+
+```
+my_pipeline/
+├── pipeline_wrapper.py    # Main wrapper
+├── utils.py               # Helper functions
+├── prompts.py             # Prompt templates
+└── config.py              # Configuration
+```
+
+### Usage
+
+Use Python's relative import syntax (`from .module import ...`):
+
+```
+# pipeline_wrapper.py
+from haystack import Pipeline
+from hayhooks import BasePipelineWrapper
+
+# Relative imports from sibling modules
+from .utils import process_text, format_response
+from .prompts import SYSTEM_PROMPT
+from .config import DEFAULT_MODEL
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.pipeline = Pipeline()
+        # ... setup using imported utilities
+
+    def run_api(self, query: str) -> str:
+        processed = process_text(query)
+        result = self.pipeline.run({"prompt": {"query": processed}})
+        return format_response(result)
+```
+
+### Benefits
+
+- **No configuration needed** - Works out of the box
+- **Clean organization** - Split large wrappers into logical modules
+- **IDE support** - Full autocomplete and type checking
+- **Tracing compatibility** - Works with Phoenix/OpenInference and other tracing libraries
+
+Ruff Linting
+
+If your project uses [ruff](https://docs.astral.sh/ruff/) with the `flake8-tidy-imports` plugin, you may need to disable the [`TID252`](https://docs.astral.sh/ruff/rules/relative-imports/) rule which bans relative imports. Add this comment at the top of your `pipeline_wrapper.py`:
+
+```
+# ruff: noqa: TID252
+```
+
+Or configure it in your `pyproject.toml`:
+
+```
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"  # Allow sibling relative imports
+```
+
+### Example
+
+See [examples/pipeline_wrappers/relative_imports](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/relative_imports) for a complete working example.
+
+______________________________________________________________________
+
+## Shared Python Path
+
+For sharing code **across multiple pipeline wrappers**, add a common folder to the Hayhooks Python path.
+
+### Configuration
+
+Set `HAYHOOKS_ADDITIONAL_PYTHON_PATH` to point to your shared code directory:
+
+```
+export HAYHOOKS_ADDITIONAL_PYTHON_PATH='./common'
+hayhooks run
+```
+
+```
+# .env
+HAYHOOKS_ADDITIONAL_PYTHON_PATH=./common
+```
+
+```
+hayhooks run --additional-python-path ./common
+```
+
+### Usage
+
+Once configured, import shared code in your wrappers:
+
+```
+# In your pipeline_wrapper.py
+from my_custom_lib import sum_two_numbers
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_api(self, a: int, b: int) -> int:
+        return sum_two_numbers(a, b)
+```
+
+### Example
+
+See [examples/shared_code_between_wrappers](https://github.com/deepset-ai/hayhooks/tree/main/examples/shared_code_between_wrappers) for a complete working example.
+
+______________________________________________________________________
+
+## Choosing the Right Approach
+
+| Use Case                                | Recommended Approach   |
+| --------------------------------------- | ---------------------- |
+| Splitting a large wrapper into modules  | **Relative Imports**   |
+| Helpers specific to one pipeline        | **Relative Imports**   |
+| Sharing utilities across many pipelines | **Shared Python Path** |
+| Company-wide libraries                  | **Shared Python Path** |
+# Deployment
+
+# Deployment Guidelines
+
+This guide describes how to deploy Hayhooks in production environments.
+
+Since Hayhooks is a FastAPI application, you can deploy it using any standard ASGI server deployment strategy. For comprehensive deployment concepts, see the [FastAPI deployment documentation](https://fastapi.tiangolo.com/deployment/concepts/).
+
+This guide focuses on Hayhooks-specific considerations for production deployments.
+
+## Quick Recommendations
+
+- Use `HAYHOOKS_PIPELINES_DIR` to deploy pipelines in production environments
+- Start with a single worker for I/O-bound pipelines, use multiple workers for CPU-bound workloads
+- Implement async methods (`run_api_async`) for better I/O performance
+- Configure health checks for container orchestration
+- Set appropriate resource limits and environment variables
+- Review security settings (CORS, tracebacks, logging levels)
+
+Configuration Resources
+
+Review [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md) and [Environment Variables Reference](https://deepset-ai.github.io/hayhooks/reference/environment-variables/index.md) before deploying.
+
+## Pipeline Deployment Strategy
+
+For production deployments, use `HAYHOOKS_PIPELINES_DIR` to deploy pipelines at startup.
+
+### Using HAYHOOKS_PIPELINES_DIR
+
+Set the environment variable to point to a directory containing your pipeline definitions:
+
+```
+export HAYHOOKS_PIPELINES_DIR=/app/pipelines
+hayhooks run
+```
+
+When Hayhooks starts, it automatically loads all pipelines from this directory.
+
+**Benefits:**
+
+- Pipelines are available immediately on startup
+- Consistent across all workers/instances
+- No runtime deployment API calls needed
+- Simple to version control and deploy
+
+**Directory structure:**
+
+```
+pipelines/
+├── my_pipeline/
+│   ├── pipeline_wrapper.py
+│   └── pipeline.yml
+└── another_pipeline/
+    ├── pipeline_wrapper.py
+    └── pipeline.yml
+```
+
+See [YAML Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/yaml-pipeline-deployment/index.md) and [PipelineWrapper](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/index.md) for file structure details.
+
+Development vs Production
+
+For local development, you can use CLI commands (`hayhooks pipeline deploy-files`) or API endpoints (`POST /deploy-files`). For production, always use `HAYHOOKS_PIPELINES_DIR`.
+
+## Performance Tuning
+
+### Single Worker vs Multiple Workers
+
+**Single Worker Environment:**
+
+```
+hayhooks run
+```
+
+Best for:
+
+- Development and testing
+- I/O-bound pipelines (HTTP requests, file operations, database queries)
+- Low to moderate concurrent requests
+- Simpler deployment and debugging
+
+**Multiple Workers Environment:**
+
+```
+hayhooks run --workers 4
+```
+
+Best for:
+
+- CPU-bound pipelines (embedding generation, heavy computation)
+- High concurrent request volumes
+- Production environments with available CPU cores
+
+Worker Count Formula
+
+A common starting point: `workers = (2 x CPU_cores) + 1`. Adjust based on your workload - I/O-bound: More workers can help; CPU-bound: Match CPU cores to avoid context switching overhead.
+
+### Concurrency Behavior
+
+Pipeline `run()` methods execute synchronously but are wrapped in `run_in_threadpool` to avoid blocking the async event loop.
+
+**I/O-bound pipelines** (HTTP requests, file operations, database queries):
+
+- Can handle concurrent requests effectively in a single worker
+- Worker switches between tasks during I/O waits
+- Consider implementing async methods for even better performance
+
+**CPU-bound pipelines** (embedding generation, heavy computation):
+
+- Limited by Python's Global Interpreter Lock (GIL)
+- Requests are queued and processed sequentially in a single worker
+- Use multiple workers or horizontal scaling to improve throughput
+
+### Async Pipelines
+
+Implement async methods for better I/O-bound performance:
+
+```
+from haystack import AsyncPipeline
+from hayhooks import BasePipelineWrapper
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.pipeline = AsyncPipeline.loads(
+            (Path(__file__).parent / "pipeline.yml").read_text()
+        )
+
+    async def run_api_async(self, query: str) -> str:
+        result = await self.pipeline.run_async({"prompt": {"query": query}})
+        return result["llm"]["replies"][0]
+```
+
+### Streaming
+
+Use streaming for chat endpoints to reduce perceived latency:
+
+```
+from hayhooks import async_streaming_generator, get_last_user_message
+
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict):
+    question = get_last_user_message(messages)
+    return async_streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"prompt": {"query": question}},
+    )
+```
+
+See [OpenAI Compatibility](https://deepset-ai.github.io/hayhooks/features/openai-compatibility/index.md) for more details on streaming.
+
+### Horizontal Scaling
+
+Deploy multiple instances behind a load balancer for increased throughput.
+
+**Key considerations:**
+
+- Use `HAYHOOKS_PIPELINES_DIR` to ensure all instances have the same pipelines
+- Configure session affinity if using stateful components
+- Distribute traffic evenly across instances
+- Monitor individual instance health
+
+**Example setup** (Docker Swarm, Kubernetes, or cloud load balancers):
+
+```
+# Each instance should use the same pipeline directory
+export HAYHOOKS_PIPELINES_DIR=/app/pipelines
+hayhooks run
+```
+
+GIL Limitations
+
+Even with multiple workers, individual workers have GIL limitations. CPU-bound pipelines benefit more from horizontal scaling (multiple instances) than vertical scaling (multiple workers per instance).
+
+## Docker Deployment
+
+### Single Container
+
+```
+docker run -d \
+  -p 1416:1416 \
+  -e HAYHOOKS_HOST=0.0.0.0 \
+  -e HAYHOOKS_PIPELINES_DIR=/app/pipelines \
+  -v "$PWD/pipelines:/app/pipelines:ro" \
+  deepset/hayhooks:main
+```
+
+### Docker Compose
+
+```
+version: '3.8'
+services:
+  hayhooks:
+    image: deepset/hayhooks:main
+    ports:
+      - "1416:1416"
+    environment:
+      HAYHOOKS_HOST: 0.0.0.0
+      HAYHOOKS_PIPELINES_DIR: /app/pipelines
+      LOG: INFO
+    volumes:
+      - ./pipelines:/app/pipelines:ro
+    restart: unless-stopped
+```
+
+See [Quick Start with Docker Compose](https://deepset-ai.github.io/hayhooks/getting-started/quick-start-docker/index.md) for a complete example with Open WebUI integration.
+
+### Health Checks
+
+Add health checks to monitor container health:
+
+```
+services:
+  hayhooks:
+    image: deepset/hayhooks:main
+    ports:
+      - "1416:1416"
+    environment:
+      HAYHOOKS_HOST: 0.0.0.0
+      HAYHOOKS_PIPELINES_DIR: /app/pipelines
+    volumes:
+      - ./pipelines:/app/pipelines:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1416/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+```
+
+The `/status` endpoint returns the server status and can be used for health monitoring.
+
+## Production Deployment Options
+
+### Docker
+
+Deploy Hayhooks using Docker containers for consistent, portable deployments across environments. Docker provides isolation, easy versioning, and simplified dependency management. See the [Docker documentation](https://docs.docker.com/get-started/) for container deployment best practices.
+
+### Kubernetes
+
+Deploy Hayhooks on Kubernetes for automated scaling, self-healing, and advanced orchestration capabilities. Use Deployments, Services, and ConfigMaps to manage pipeline definitions and configuration. See the [Kubernetes documentation](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) for deployment strategies.
+
+### Server/VPS Deployment
+
+Deploy Hayhooks directly on a server or VPS using systemd or process managers like supervisord for production reliability. This approach offers full control over the environment and is suitable for dedicated workloads. See the [FastAPI deployment documentation](https://fastapi.tiangolo.com/deployment/manually/) for manual deployment guidance.
+
+### AWS ECS
+
+Deploy Hayhooks on AWS Elastic Container Service for managed container orchestration in the AWS ecosystem. ECS handles container scheduling, load balancing, and integrates seamlessly with other AWS services. See the [AWS ECS documentation](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/Welcome.html) for deployment details.
+
+## Production Best Practices
+
+### Environment Variables
+
+Store sensitive configuration in environment variables or secrets:
+
+```
+# Use a .env file
+HAYHOOKS_PIPELINES_DIR=/app/pipelines
+LOG=INFO
+HAYHOOKS_SHOW_TRACEBACKS=false
+```
+
+See [Environment Variables Reference](https://deepset-ai.github.io/hayhooks/reference/environment-variables/index.md) for all options.
+
+### Logging
+
+Configure appropriate log levels for production:
+
+```
+# Production: INFO or WARNING
+export LOG=INFO
+
+# Development: DEBUG
+export LOG=DEBUG
+```
+
+See [Logging](https://deepset-ai.github.io/hayhooks/reference/logging/index.md) for details.
+
+### CORS Configuration
+
+Configure CORS for production environments:
+
+```
+# Restrict to specific origins
+export HAYHOOKS_CORS_ALLOW_ORIGINS='["https://yourdomain.com"]'
+export HAYHOOKS_CORS_ALLOW_CREDENTIALS=true
+```
+
+## Troubleshooting
+
+### Pipeline Not Available
+
+If pipelines aren't available after startup:
+
+1. Check `HAYHOOKS_PIPELINES_DIR` is correctly set
+1. Verify pipeline files exist in the directory
+1. Check logs for deployment errors: `docker logs <container_id>`
+1. Verify pipeline wrapper syntax and imports
+
+### High Memory Usage
+
+For memory-intensive pipelines:
+
+1. Increase container memory limits in Docker Compose
+1. Profile pipeline components for memory leaks
+1. Optimize component initialization and caching
+1. Consider using smaller models or batch sizes
+
+### Slow Response Times
+
+For performance issues:
+
+1. Check component initialization in `setup()` vs `run_api()`
+1. Verify pipeline directory is mounted correctly
+1. Review logs for errors or warnings
+1. Consider implementing async methods or adding workers (see [Performance Tuning](#performance-tuning) above)
+
+## Next Steps
+
+- [Advanced Configuration](https://deepset-ai.github.io/hayhooks/advanced/advanced-configuration/index.md) - Custom routes, middleware, and programmatic customization
+- [Environment Variables Reference](https://deepset-ai.github.io/hayhooks/reference/environment-variables/index.md) - Complete configuration reference
+- [Pipeline Deployment](https://deepset-ai.github.io/hayhooks/concepts/pipeline-deployment/index.md) - Pipeline deployment concepts
+- [Quick Start with Docker Compose](https://deepset-ai.github.io/hayhooks/getting-started/quick-start-docker/index.md) - Complete Docker Compose example
+# Examples
+
+# Examples Overview
+
+This page lists all maintained Hayhooks examples with detailed descriptions and links to the source code.
+
+## Pipeline wrapper examples
+
+| Example                           | Docs                                                                                                      | Code                                                                                                                 | Description                                    |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Chat with Website (Streaming)     | [chat-with-website.md](https://deepset-ai.github.io/hayhooks/examples/chat-with-website/index.md)         | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_streaming)    | Website Q&A with streaming                     |
+| Chat with Website (basic)         | —                                                                                                         | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website)              | Minimal website Q&A wrapper                    |
+| Chat with Website (MCP)           | —                                                                                                         | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_mcp)          | Exposes website Q&A as MCP Tool                |
+| Async Question Answer (Streaming) | [async-operations.md](https://deepset-ai.github.io/hayhooks/examples/async-operations/index.md)           | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer)          | Async pipeline and streaming patterns          |
+| Open WebUI Agent Events           | [openwebui-events.md](https://deepset-ai.github.io/hayhooks/examples/openwebui-events/index.md)           | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_events)        | UI events and status updates                   |
+| Open WebUI Agent on Tool Calls    | [openwebui-events.md](https://deepset-ai.github.io/hayhooks/examples/openwebui-events/index.md)           | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls) | Tool call interception & feedback              |
+| Image Generation (File Response)  | [file-response-support.md](https://deepset-ai.github.io/hayhooks/features/file-response-support/index.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/image_generation)               | Returning binary files (images) from `run_api` |
+| Shared Code Between Wrappers      | —                                                                                                         | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/shared_code_between_wrappers)                     | Reusing code across wrappers                   |
+
+## End-to-end examples & patterns
+
+| Example                                    | Docs                                                                                | Code                                                                                   | Description                                      |
+| ------------------------------------------ | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| RAG: Indexing and Query with Elasticsearch | [rag-system.md](https://deepset-ai.github.io/hayhooks/examples/rag-system/index.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query) | Full indexing/query pipelines with Elasticsearch |
+
+## How to use examples
+
+**Prerequisites:**
+
+- Install Hayhooks: `pip install hayhooks` (additional deps per example may apply)
+
+**Deployment:**
+
+- Pipeline wrappers: deploy directly with `hayhooks pipeline deploy-files -n <name> <example_dir>` and run via API (`POST /<name>/run`) or OpenAI-compatible chat endpoints if implemented
+- End-to-end examples: follow the example's documentation for full setup (services like Elasticsearch, multi-pipeline deployment, datasets, etc.)
+
+For general usage and CLI commands, see the [Getting Started Guide](https://deepset-ai.github.io/hayhooks/getting-started/quick-start/index.md).
+
+## Try all examples with Docker Compose
+
+The repository includes a `compose.yml` file that automatically deploys all pipeline wrapper examples:
+
+```
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Set your API key (required for most examples)
+export OPENAI_API_KEY=your-api-key
+
+# Start Hayhooks with all examples
+docker compose up -d
+```
+
+This will:
+
+- Start Hayhooks on port `1416` (API) and `1417` (MCP server)
+- Auto-deploy all pipeline wrappers from `examples/pipeline_wrappers/`
+- Install required dependencies like `trafilatura`
+
+Check deployed pipelines:
+
+```
+curl localhost:1416/status
+```
+
+Access the API documentation at <http://localhost:1416/docs>.
+
+# Chat with Website Example
+
+Build a pipeline that answers questions about one or more websites. Uses fetching, cleaning and an LLM to generate answers, and supports streaming via OpenAI-compatible chat endpoints when implemented in the wrapper.
+
+## Where is the code?
+
+- Wrapper example directory: [examples/pipeline_wrappers/chat_with_website_streaming](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_streaming)
+- See the main docs for `PipelineWrapper` basics and OpenAI compatibility
+
+## Deploy
+
+```
+hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/chat_with_website_streaming
+```
+
+## Run
+
+- API mode:
+
+```
+curl -X POST http://localhost:1416/chat_with_website/run \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "What is this website about?", "urls": ["https://python.org"]}'
+```
+
+- Chat (OpenAI-compatible), when `run_chat_completion`/`_async` is implemented:
+
+```
+curl -X POST http://localhost:1416/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "chat_with_website",
+    "messages": [{"role": "user", "content": "Tell me about https://github.com"}]
+  }'
+```
+
+Development Tips
+
+- For development, use `--overwrite` to redeploy a changed wrapper: `hayhooks pipeline deploy-files -n chat_with_website --overwrite <dir>`
+- Some examples may require extra Python packages (e.g., `trafilatura`). Install as needed.
+
+## Related
+
+- General guide: [Main docs](https://deepset-ai.github.io/hayhooks/index.md)
+- Examples index: [Examples Overview](https://deepset-ai.github.io/hayhooks/examples/overview/index.md)
+
+# RAG System Example
+
+Build a Retrieval-Augmented Generation flow: ingest documents, embed and store them, retrieve by similarity, and answer questions with an LLM.
+
+## Where is the code?
+
+- End-to-end example: [examples/rag_indexing_query](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query)
+- `indexing_pipeline/` - Handles document upload and indexing
+- `query_pipeline/` - Retrieves and generates answers
+
+## Quick Start (from repository root)
+
+```
+# 1) Enter the example
+cd examples/rag_indexing_query
+
+# 2) (Recommended) Create and activate a virtual env, then install deps
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 3) Launch Hayhooks (in a separate terminal if you prefer)
+hayhooks run
+
+# 4) Launch Elasticsearch
+docker compose up
+
+# 5) Deploy the pipelines
+hayhooks pipeline deploy-files -n indexing indexing_pipeline
+hayhooks pipeline deploy-files -n query query_pipeline
+
+# 6) Index sample files
+hayhooks pipeline run indexing --dir files_to_index
+
+# 7) Ask a question
+hayhooks pipeline run query --param 'question="is this recipe vegan?"'
+
+# Optional: check API docs
+# http://localhost:1416/docs
+```
+
+Additional Information
+
+- See [File Upload Support](https://deepset-ai.github.io/hayhooks/features/file-upload-support/index.md) for wrapper signature and request format
+- Choose appropriate embedding models and document stores for your scale
+
+## Related
+
+- General guide: [Main docs](https://deepset-ai.github.io/hayhooks/index.md)
+- Examples index: [Examples Overview](https://deepset-ai.github.io/hayhooks/examples/overview/index.md)
+
+# Async Operations Example
+
+Patterns for async pipelines in Hayhooks: streaming responses, concurrency, and background work. Use these patterns when you need high throughput or to avoid blocking.
+
+## Where is the code?
+
+- Async wrapper: [async_question_answer](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer)
+- See main docs for async `run_api_async` and `run_chat_completion_async`
+
+## Deploy (example)
+
+```
+hayhooks pipeline deploy-files -n async-question-answer examples/pipeline_wrappers/async_question_answer
+```
+
+## Run
+
+- OpenAI-compatible chat (async streaming):
+
+```
+curl -X POST http://localhost:1416/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "async-question-answer",
+    "messages": [{"role": "user", "content": "Tell me a joke about programming"}]
+  }'
+```
+
+Best Practices
+
+- Prefer `run_chat_completion_async` for streaming and concurrency
+- Use async-compatible components (e.g., `OpenAIChatGenerator`) for best performance
+- For legacy pipelines with sync-only components (like `OpenAIGenerator`), use `allow_sync_streaming_callbacks=True` to enable hybrid mode
+- See [Hybrid Streaming](https://deepset-ai.github.io/hayhooks/concepts/pipeline-wrapper/#hybrid-streaming-mixing-async-and-sync-components) for handling legacy components
+
+## Related
+
+- General guide: [Main docs](https://deepset-ai.github.io/hayhooks/index.md)
+- Examples index: [Examples Overview](https://deepset-ai.github.io/hayhooks/examples/overview/index.md)
+
+# Open WebUI Events Example
+
+Send status updates and UI events to Open WebUI during streaming, and optionally intercept tool calls for richer feedback.
+
+## Where is the code?
+
+- Event examples: [open_webui_agent_events](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_events), [open_webui_agent_on_tool_calls](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls)
+- See the main docs → Open WebUI integration and event hooks
+
+## Deploy (example)
+
+```
+hayhooks pipeline deploy-files -n agent_events examples/pipeline_wrappers/open_webui_agent_events
+```
+
+## Run
+
+- OpenAI-compatible chat (events stream to Open WebUI):
+
+```
+curl -X POST http://localhost:1416/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "agent_events",
+    "messages": [{"role": "user", "content": "Tell me about machine learning"}]
+  }'
+```
+
+Working with Events
+
+- Use helpers from `hayhooks.open_webui`: `create_status_event`, `create_message_event`, `create_replace_event`, `create_source_event`, `create_notification_event`, `create_details_tag`
+- Intercept tool calls via `on_tool_call_start`/`on_tool_call_end` with `streaming_generator`/`async_streaming_generator`
+- For recommended Open WebUI settings, see the [Open WebUI Integration](https://deepset-ai.github.io/hayhooks/features/openwebui-integration/index.md) guide
+
+## Related
+
+- General guide: [Main docs](https://deepset-ai.github.io/hayhooks/index.md)
+- Examples index: [Examples Overview](https://deepset-ai.github.io/hayhooks/examples/overview/index.md)
+# Reference
+
+# API Reference
+
+Hayhooks provides a comprehensive REST API for managing and executing Haystack pipelines and agents.
+
+## Base URL
+
+```
+http://localhost:1416
+```
+
+## Authentication
+
+Currently, Hayhooks does not include built-in authentication. Consider implementing:
+
+- Reverse proxy authentication
+- Network-level security
+- Custom middleware
+
+## Endpoints
+
+### Pipeline Management
+
+#### Deploy Pipeline (files)
+
+```
+POST /deploy_files
+```
+
+**Request Body:**
+
+```
+{
+  "name": "pipeline_name",
+  "files": {
+    "pipeline_wrapper.py": "...file content...",
+    "other.py": "..."
+  },
+  "save_files": true,
+  "overwrite": false
+}
+```
+
+**Response:**
+
+```
+{
+  "status": "success",
+  "message": "Pipeline deployed successfully"
+}
+```
+
+#### Undeploy Pipeline
+
+```
+POST /undeploy/{pipeline_name}
+```
+
+Remove a deployed pipeline.
+
+**Response:**
+
+```
+{
+  "status": "success",
+  "message": "Pipeline undeployed successfully"
+}
+```
+
+#### Get Pipeline Status
+
+```
+GET /status/{pipeline_name}
+```
+
+Check the status of a specific pipeline.
+
+**Response:**
+
+```
+{
+  "status": "Up!",
+  "pipeline": "pipeline_name"
+}
+```
+
+#### Get All Pipeline Statuses
+
+```
+GET /status
+```
+
+Get status of all deployed pipelines.
+
+**Response:**
+
+```
+{
+  "pipelines": [
+    "pipeline1",
+    "pipeline2"
+  ],
+  "status": "Up!"
+}
+```
+
+### Pipeline Execution
+
+#### Run Pipeline
+
+```
+POST /{pipeline_name}/run
+```
+
+Execute a deployed pipeline.
+
+**Request Body:**
+
+```
+{
+  "query": "What is the capital of France?"
+}
+```
+
+**Response:**
+
+```
+{
+  "result": "The capital of France is Paris."
+}
+```
+
+### OpenAI Compatibility
+
+#### Chat Completion
+
+```
+POST /chat/completions
+POST /v1/chat/completions
+```
+
+OpenAI-compatible chat completion endpoint.
+
+**Request Body:**
+
+```
+{
+  "model": "pipeline_name",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, how are you?"
+    }
+  ],
+  "stream": false
+}
+```
+
+**Response:**
+
+```
+{
+  "id": "chat-123",
+  "object": "chat.completion",
+  "created": 1677652288,
+  "model": "pipeline_name",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! I'm doing well, thank you for asking."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 20,
+    "total_tokens": 32
+  }
+}
+```
+
+#### Streaming Chat Completion
+
+Use the same endpoints with `"stream": true`. Hayhooks streams chunks in OpenAI-compatible format.
+
+### MCP Server
+
+> MCP runs in a separate Starlette app when invoked via `hayhooks mcp run`. Use the configured Streamable HTTP endpoint `/mcp` or SSE `/sse` depending on your client. See the MCP feature page for details.
+
+### Interactive API Documentation
+
+Hayhooks provides interactive API documentation for exploring and testing endpoints:
+
+- **Swagger UI**: `http://localhost:1416/docs` - Interactive API explorer with built-in request testing
+- **ReDoc**: `http://localhost:1416/redoc` - Clean, responsive API documentation
+
+### OpenAPI Schema
+
+#### Get OpenAPI Schema
+
+```
+GET /openapi.json
+GET /openapi.yaml
+```
+
+Get the complete OpenAPI specification for programmatic access or tooling integration.
+
+## Error Handling
+
+### Error Response Format
+
+```
+{
+  "error": {
+    "message": "Error description",
+    "type": "invalid_request_error",
+    "code": 400
+  }
+}
+```
+
+### Common Error Codes
+
+- **400 Bad Request**: Invalid request parameters
+- **404 Not Found**: Pipeline or endpoint not found
+- **500 Internal Server Error**: Server-side error
+
+## Rate Limiting
+
+Currently, Hayhooks does not include built-in rate limiting. Consider implementing:
+
+- Reverse proxy rate limiting
+- Custom middleware
+- Request throttling
+
+## Examples
+
+### Running a Pipeline
+
+```
+curl -X POST http://localhost:1416/chat_pipeline/run \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "Hello!"}'
+```
+
+```
+import requests
+
+response = requests.post(
+    "http://localhost:1416/chat_pipeline/run",
+    json={"query": "Hello!"}
+)
+print(response.json())
+```
+
+```
+hayhooks pipeline run chat_pipeline --param 'query="Hello!"'
+```
+
+### OpenAI-Compatible Chat Completion
+
+```
+curl -X POST http://localhost:1416/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "chat_pipeline",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'
+```
+
+```
+import requests
+
+response = requests.post(
+    "http://localhost:1416/v1/chat/completions",
+    json={
+        "model": "chat_pipeline",
+        "messages": [
+            {"role": "user", "content": "Hello!"}
+        ]
+    }
+)
+print(response.json())
+```
+
+```
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:1416/v1",
+    api_key="not-needed"  # Hayhooks doesn't require auth by default
+)
+
+response = client.chat.completions.create(
+    model="chat_pipeline",
+    messages=[
+        {"role": "user", "content": "Hello!"}
+    ]
+)
+print(response.choices[0].message.content)
+```
+
+## Next Steps
+
+- [Environment Variables](https://deepset-ai.github.io/hayhooks/reference/environment-variables/index.md) - Configuration options
+- [Logging](https://deepset-ai.github.io/hayhooks/reference/logging/index.md) - Logging configuration
+
+# Environment Variables
+
+Hayhooks can be configured via environment variables (loaded with prefix `HAYHOOKS_` or `LOG`). This page lists the canonical variables supported by the codebase.
+
+## Server
+
+### HAYHOOKS_HOST
+
+- Default: `localhost`
+- Description: Host for the FastAPI app
+
+### HAYHOOKS_PORT
+
+- Default: `1416`
+- Description: Port for the FastAPI app
+
+### HAYHOOKS_ROOT_PATH
+
+- Default: `""`
+- Description: Root path to mount the API under (FastAPI `root_path`)
+
+### HAYHOOKS_PIPELINES_DIR
+
+- Default: `./pipelines`
+- Description: Directory containing pipelines to auto-deploy on startup
+
+### HAYHOOKS_ADDITIONAL_PYTHON_PATH
+
+- Default: `""`
+- Description: Additional path appended to `sys.path` for wrapper imports
+
+### HAYHOOKS_USE_HTTPS
+
+- Default: `false`
+- Description: Use HTTPS when the CLI calls the server (affects CLI only)
+
+### HAYHOOKS_DISABLE_SSL
+
+- Default: `false`
+- Description: Disable SSL verification for CLI calls
+
+### HAYHOOKS_SHOW_TRACEBACKS
+
+- Default: `false`
+- Description: Include tracebacks in error messages (server and MCP)
+
+### HAYHOOKS_STREAMING_COMPONENTS
+
+- Default: `""` (empty string)
+- Description: Global configuration for which pipeline components should stream
+- Options:
+- `""` (empty): Stream only the last capable component (default)
+- `"all"`: Stream all streaming-capable components
+- Comma-separated list: `"llm_1,llm_2"` to enable specific components
+
+Priority Order
+
+Pipeline-specific settings (via `streaming_components` parameter or YAML) override this global default.
+
+Component-Specific Control
+
+For component-specific control, use the `streaming_components` parameter in your code or YAML configuration instead of the environment variable to specify exactly which components should stream.
+
+**Examples:**
+
+```
+# Stream all components globally
+export HAYHOOKS_STREAMING_COMPONENTS="all"
+
+# Stream specific components (comma-separated, spaces are trimmed)
+export HAYHOOKS_STREAMING_COMPONENTS="llm_1,llm_2"
+export HAYHOOKS_STREAMING_COMPONENTS="llm_1, llm_2, llm_3"
+```
+
+## MCP
+
+### HAYHOOKS_MCP_HOST
+
+- Default: `localhost`
+- Description: Host for the MCP server
+
+### HAYHOOKS_MCP_PORT
+
+- Default: `1417`
+- Description: Port for the MCP server
+
+## Chainlit UI
+
+### HAYHOOKS_CHAINLIT_ENABLED
+
+- Default: `false`
+- Description: Enable the embedded Chainlit chat UI
+
+### HAYHOOKS_CHAINLIT_PATH
+
+- Default: `/chat`
+- Description: URL path where the Chainlit UI is mounted
+
+### HAYHOOKS_CHAINLIT_APP
+
+- Default: `""` (uses built-in default app)
+- Description: Path to a custom Chainlit app file
+
+### HAYHOOKS_CHAINLIT_DEFAULT_MODEL
+
+- Default: `""` (auto-selects if only one pipeline is deployed)
+- Description: Default pipeline/model to auto-select in the Chainlit UI
+
+### HAYHOOKS_CHAINLIT_REQUEST_TIMEOUT
+
+- Default: `120.0`
+- Description: Timeout in seconds for chat completion requests from the Chainlit UI
+
+### HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR
+
+- Default: `""` (no custom elements)
+- Description: Path to a directory containing custom `.jsx` element files. These files are copied into the Chainlit `public/elements/` directory at startup and become available as `cl.CustomElement` targets. See [Custom Elements](https://deepset-ai.github.io/hayhooks/features/chainlit-integration/#custom-elements).
+
+Installation Required
+
+The Chainlit UI requires the `chainlit` extra: `pip install "hayhooks[chainlit]"`
+
+## CORS
+
+These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.AppSettings`.
+
+### HAYHOOKS_CORS_ALLOW_ORIGINS
+
+- Default: `["*"]`
+- Description: List of allowed origins
+
+### HAYHOOKS_CORS_ALLOW_METHODS
+
+- Default: `["*"]`
+- Description: List of allowed HTTP methods
+
+### HAYHOOKS_CORS_ALLOW_HEADERS
+
+- Default: `["*"]`
+- Description: List of allowed headers
+
+### HAYHOOKS_CORS_ALLOW_CREDENTIALS
+
+- Default: `false`
+- Description: Allow credentials
+
+### HAYHOOKS_CORS_ALLOW_ORIGIN_REGEX
+
+- Default: `null`
+- Description: Regex pattern for allowed origins
+
+### HAYHOOKS_CORS_EXPOSE_HEADERS
+
+- Default: `[]`
+- Description: Headers to expose in response
+
+### HAYHOOKS_CORS_MAX_AGE
+
+- Default: `600`
+- Description: Maximum age for CORS preflight responses in seconds
+
+## Logging
+
+### LOG (log level)
+
+- Default: `INFO`
+- Description: Global log level (consumed by Loguru). Example: `LOG=DEBUG hayhooks run`
+
+Logging Configuration
+
+Format/handlers are configured internally; Hayhooks does not expose `HAYHOOKS_LOG_FORMAT` or `HAYHOOKS_LOG_FILE` env vars at this time.
+
+## Usage Examples
+
+### Docker
+
+```
+docker run -d \
+  -e HAYHOOKS_HOST=0.0.0.0 \
+  -e HAYHOOKS_PORT=1416 \
+  -e HAYHOOKS_PIPELINES_DIR=/app/pipelines \
+  -v "$PWD/pipelines:/app/pipelines:ro" \
+  -p 1416:1416 \
+  deepset/hayhooks:main
+```
+
+Pipeline Directory Required
+
+Without mounting a pipelines directory (or baking pipelines into the image), the server will start but no pipelines will be deployed.
+
+### Development
+
+```
+export HAYHOOKS_HOST=127.0.0.1
+export HAYHOOKS_PORT=1416
+export HAYHOOKS_PIPELINES_DIR=./pipelines
+export LOG=DEBUG
+
+hayhooks run
+```
+
+### MCP Server startup
+
+```
+export HAYHOOKS_MCP_HOST=0.0.0.0
+export HAYHOOKS_MCP_PORT=1417
+
+hayhooks mcp run
+```
+
+### .env file example
+
+```
+HAYHOOKS_HOST=0.0.0.0
+HAYHOOKS_PORT=1416
+HAYHOOKS_MCP_HOST=0.0.0.0
+HAYHOOKS_MCP_PORT=1417
+HAYHOOKS_PIPELINES_DIR=./pipelines
+HAYHOOKS_ADDITIONAL_PYTHON_PATH=./custom_code
+HAYHOOKS_USE_HTTPS=false
+HAYHOOKS_DISABLE_SSL=false
+HAYHOOKS_SHOW_TRACEBACKS=false
+HAYHOOKS_STREAMING_COMPONENTS=all
+HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
+LOG=INFO
+```
+
+Configuration Note
+
+- Worker count, timeouts, and other server process settings are CLI flags (e.g., `hayhooks run --workers 4`).
+- YAML/file saving and MCP exposure are controlled per-deploy via API/CLI flags, not global env vars.
+
+## Next Steps
+
+- [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md)
+- [Logging](https://deepset-ai.github.io/hayhooks/reference/logging/index.md)
+
+# Logging
+
+Hayhooks provides comprehensive logging capabilities for monitoring, debugging, and auditing pipeline execution and server operations.
+
+## Log Levels
+
+### Available Levels
+
+- **TRACE**: Detailed information for debugging
+- **DEBUG**: Detailed information for debugging
+- **INFO**: General information about server operations
+- **SUCCESS**: Success messages
+- **WARNING**: Warning messages that don't stop execution
+- **ERROR**: Error messages that affect functionality
+- **CRITICAL**: Critical errors that may cause server failure
+
+### Setting Log Level
+
+```
+export LOG=debug # or LOG=DEBUG
+hayhooks run
+```
+
+Or in your `.env` file:
+
+```
+LOG=info # or LOG=INFO
+```
+
+Or inline:
+
+```
+LOG=debug hayhooks run
+```
+
+## Log Configuration
+
+### Environment Variables
+
+#### LOG
+
+- **Default**: `info`
+- **Description**: Minimum log level to display (consumed by Loguru)
+- **Options**: `debug`, `info`, `warning`, `error`
+
+> Note: Hayhooks does not expose `HAYHOOKS_LOG_FORMAT` or `HAYHOOKS_LOG_FILE` env vars; formatting/handlers are configured internally in the code.
+
+### Custom Log Format
+
+> If you need custom formatting, handle it in your host app via Loguru sinks.
+
+## File Logging
+
+### Basic File Logging
+
+> Configure file sinks in your host app using `log.add(...)`.
+
+### Rotating File Logs
+
+If you embed Hayhooks programmatically and want custom logging, set up logging in your host app and direct Hayhooks logs there.
+
+## Pipeline Logging
+
+The `log` object in Hayhooks is a [Loguru](https://loguru.readthedocs.io/) logger instance. You can use all Loguru features and capabilities in your pipeline code.
+
+### Basic Usage
+
+```
+from hayhooks import log
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        log.info("Setting up pipeline")
+        # ... setup code
+
+    def run_api(self, query: str) -> str:
+        log.debug("Processing query: {query}")
+        try:
+            result = self.pipeline.run({"prompt": {"query": query}})
+            log.info("Pipeline execution completed successfully")
+            return result["llm"]["replies"][0]
+        except Exception as e:
+            log.error("Pipeline execution failed: {}", e)
+            raise
+```
+
+### Execution Time Logging
+
+```
+import time
+from hayhooks import log
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_api(self, query: str) -> str:
+        start_time = time.time()
+
+        result = self.pipeline.run({"prompt": {"query": query}})
+
+        execution_time = time.time() - start_time
+        log.info("Pipeline executed in {} seconds", execution_time.round(2))
+
+        return result["llm"]["replies"][0]
+```
+
+For more advanced logging patterns (structured logging, custom sinks, formatting, etc.), refer to the [Loguru documentation](https://loguru.readthedocs.io/).
+
+## Next Steps
+
+- [API Reference](https://deepset-ai.github.io/hayhooks/reference/api-reference/index.md) - Complete API documentation
+- [Environment Variables](https://deepset-ai.github.io/hayhooks/reference/environment-variables/index.md) - Configuration options
+# About
+
+# License
+
+Hayhooks is open-source software released under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+## Trademarks
+
+Haystack and the Haystack logo are trademarks of [deepset GmbH](https://www.deepset.ai/). All other trademarks are the property of their respective owners.
+
+## Contact
+
+For licensing questions or inquiries:
+
+- Email: [info@deepset.ai](mailto:info@deepset.ai)
+- Website: <https://deepset.ai>
+- GitHub: <https://github.com/deepset-ai/hayhooks>
+- Contact form: <https://www.deepset.ai/contact-us>
+- Phone number: +49 30 726210544
+
+## Editorial responsibility
+
+deepset GmbH\
+Zinnowitzerstr. 1\
+10115 Berlin, Germany\
+Court: Amtgericht Berlin-Charlottenburg\
+Handelsregister: HRB 197429 B\
+Managing Directors: Milos Rusic; Malte Pietsch\
+Umsatzsteuer-ID: DE319210575
+
+Authorized Information according to § 5 TMG (Telekommunikationsgesetz)\
+Malte Pietsch\
+deepset GmbH\
+Zinnowitzerstr. 1\
+10115 Berlin\
+Germany
+
+Responsible for the Content According to § 55 RStV (Rundfunkstaatsvertrag)\
+Malte Pietsch\
+Milos Rusic
+
+## Data Protection
+
+Data protection officer contact email:\
+dsb at secjur.com
+
+## Disclaimer
+
+Accountability for content The contents of our pages have been created with the utmost care. However, we cannot guarantee the contents' accuracy, completeness or topicality. According to statutory provisions, we are furthermore responsible for our own content on these web pages. In this context, please note that we are accordingly not obliged to monitor merely the transmitted or saved information of third parties, or investigate circumstances pointing to illegal activity. Our obligations to remove or block the use of information under generally applicable laws remain unaffected by this as per §§ 8 to 10 of the Telemedia Act (TMG).
+
+Accountability for links Responsibility for the content of external links (to web pages of third parties) lies solely with the operators of the linked pages. No violations were evident to us at the time of linking. Should any legal infringement become known to us, we will remove the respective link immediately.
+
+## Additional Resources
+
+- [Apache License 2.0 FAQ](https://www.apache.org/foundation/license-faq.html)
+- [Open Source Initiative](https://opensource.org/)
+- [Software Freedom Law Center](https://www.softwarefreedom.org/)
