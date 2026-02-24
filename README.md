@@ -7,7 +7,7 @@ With Hayhooks, you can:
 - 📦 **Deploy your Haystack pipelines and agents as REST APIs** with maximum flexibility and minimal boilerplate code.
 - 🛠️ **Expose your Haystack pipelines and agents over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline and agent as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
 - 💬 **Integrate your Haystack pipelines and agents with [Open WebUI](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
-- 🖥️ **Embed a [Chainlit](https://chainlit.io/) chat UI** directly in Hayhooks with `pip install "hayhooks[ui]"` and `hayhooks run --with-ui` -- zero-configuration frontend with streaming, pipeline selection, and custom UI widgets.
+- 🖥️ **Embed a [Chainlit](https://chainlit.io/) chat UI** directly in Hayhooks with `pip install "hayhooks[chainlit]"` and `hayhooks run --with-chainlit` -- zero-configuration frontend with streaming, pipeline selection, and custom UI widgets.
 - 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
@@ -121,7 +121,7 @@ curl -X POST http://localhost:1416/chat/completions \
   }'
 ```
 
-Or chat with it in the [embedded Chainlit UI](docs/features/chainlit-integration.md) (`hayhooks run --with-ui`) or [integrate it with Open WebUI](docs/features/openwebui-integration.md)!
+Or chat with it in the [embedded Chainlit UI](docs/features/chainlit-integration.md) (`hayhooks run --with-chainlit`) or [integrate it with Open WebUI](docs/features/openwebui-integration.md)!
 
 ## Key Features
 

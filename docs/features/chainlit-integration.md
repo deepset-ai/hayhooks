@@ -13,20 +13,20 @@ The Chainlit integration offers:
 
 ## Installation
 
-Install Hayhooks with the `ui` extra:
+Install Hayhooks with the `chainlit` extra:
 
 ```bash
-pip install "hayhooks[ui]"
+pip install "hayhooks[chainlit]"
 ```
 
 ## Quick Start
 
 ### Using CLI
 
-The simplest way to enable the Chainlit UI is via the `--with-ui` flag:
+The simplest way to enable the Chainlit UI is via the `--with-chainlit` flag:
 
 ```bash
-hayhooks run --with-ui
+hayhooks run --with-chainlit
 ```
 
 This starts Hayhooks with the embedded Chainlit UI available at `http://localhost:1416/chat`.
@@ -36,7 +36,7 @@ This starts Hayhooks with the embedded Chainlit UI available at `http://localhos
 You can customize the URL path where the UI is mounted:
 
 ```bash
-hayhooks run --with-ui --ui-path /my-chat
+hayhooks run --with-chainlit --chainlit-path /my-chat
 ```
 
 Now the UI will be available at `http://localhost:1416/my-chat`.
@@ -46,8 +46,8 @@ Now the UI will be available at `http://localhost:1416/my-chat`.
 You can also configure the UI via environment variables:
 
 ```bash
-export HAYHOOKS_UI_ENABLED=true
-export HAYHOOKS_UI_PATH=/chat
+export HAYHOOKS_CHAINLIT_ENABLED=true
+export HAYHOOKS_CHAINLIT_PATH=/chat
 
 hayhooks run
 ```
@@ -58,16 +58,16 @@ hayhooks run
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HAYHOOKS_UI_ENABLED` | Enable/disable the Chainlit UI | `false` |
-| `HAYHOOKS_UI_PATH` | URL path where UI is mounted | `/chat` |
-| `HAYHOOKS_UI_APP` | Custom Chainlit app file path | (uses default) |
+| `HAYHOOKS_CHAINLIT_ENABLED` | Enable/disable the Chainlit UI | `false` |
+| `HAYHOOKS_CHAINLIT_PATH` | URL path where UI is mounted | `/chat` |
+| `HAYHOOKS_CHAINLIT_APP` | Custom Chainlit app file path | (uses default) |
 
 ### Additional Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HAYHOOKS_UI_DEFAULT_MODEL` | Default pipeline to auto-select | (auto-select if only one) |
-| `HAYHOOKS_UI_REQUEST_TIMEOUT` | Timeout (seconds) for chat requests | `120.0` |
+| `HAYHOOKS_CHAINLIT_DEFAULT_MODEL` | Default pipeline to auto-select | (auto-select if only one) |
+| `HAYHOOKS_CHAINLIT_REQUEST_TIMEOUT` | Timeout (seconds) for chat requests | `120.0` |
 
 ## How It Works
 
@@ -131,7 +131,7 @@ class PipelineWrapper(BasePipelineWrapper):
 ### 2. Run Hayhooks with UI
 
 ```bash
-hayhooks run --with-ui --pipelines-dir ./pipelines
+hayhooks run --with-chainlit --pipelines-dir ./pipelines
 ```
 
 ### 3. Open the UI
@@ -143,14 +143,14 @@ Navigate to `http://localhost:1416/chat` in your browser. You'll see your deploy
 You can provide your own Chainlit app for more customization:
 
 ```bash
-hayhooks run --with-ui
+hayhooks run --with-chainlit
 ```
 
 With environment variable:
 
 ```bash
-export HAYHOOKS_UI_APP=/path/to/my_chainlit_app.py
-hayhooks run --with-ui
+export HAYHOOKS_CHAINLIT_APP=/path/to/my_chainlit_app.py
+hayhooks run --with-chainlit
 ```
 
 ### Example Custom App
@@ -194,12 +194,60 @@ async def main(message: cl.Message):
     await response_msg.update()
 ```
 
+## Custom Elements
+
+Chainlit supports [custom elements](https://docs.chainlit.io/api-reference/elements/custom) -- JSX components that pipelines can push to the UI at runtime for rich, interactive widgets (charts, cards, maps, etc.).
+
+The [chainlit_weather_agent example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chainlit_weather_agent) includes a `WeatherCard` element that demonstrates this feature. To use your own elements, point Hayhooks at a directory of `.jsx` files:
+
+### Using CLI
+
+```bash
+hayhooks run --with-chainlit --chainlit-custom-elements-dir ./my_elements
+```
+
+### Using Environment Variable
+
+```bash
+export HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR=./my_elements
+hayhooks run --with-chainlit
+```
+
+At startup, Hayhooks copies every `.jsx` file from that directory into the Chainlit `public/elements/` folder. The file name (minus `.jsx`) becomes the element name you reference from your pipeline:
+
+```text
+my_elements/
+  StockChart.jsx
+  MapView.jsx
+```
+
+```python
+# In your pipeline wrapper
+from hayhooks.chainlit_events import create_custom_element_event
+
+def on_tool_call_end(self, tool_name, arguments, result, error):
+    return [create_custom_element_event(name="StockChart", props={"symbol": "AAPL", ...})]
+```
+
+### JSX Requirements
+
+Custom elements must:
+
+- Be written in **JSX** (not TSX) and export a default component
+- Access data via the global `props` object (not function arguments)
+- Use **Tailwind CSS** classes for styling (shadcn + tailwind environment)
+
+Available imports include `@/components/ui/*` (shadcn), `lucide-react`, `react`, and `recharts`. See the [Chainlit custom element docs](https://docs.chainlit.io/api-reference/elements/custom) for the full list.
+
+!!! tip
+    If a custom file has the same name as a built-in element, the custom version takes precedence. A warning is logged when this happens.
+
 ## Why Embedded Chainlit
 
 The embedded Chainlit UI is designed for simplicity and fast iteration:
 
 - **Single process deployment**: No extra containers or services to manage
-- **Minimal setup**: Just `pip install "hayhooks[ui]"` and `--with-ui`
+- **Minimal setup**: Just `pip install "hayhooks[chainlit]"` and `--with-chainlit`
 - **Zero configuration**: Automatically discovers deployed pipelines via `/v1/models`
 - **Streaming out of the box**: Real-time token streaming with tool call visualization
 
@@ -209,8 +257,8 @@ For production deployments requiring persistent conversation history, multi-user
 
 ### UI Not Loading
 
-1. Ensure Chainlit is installed: `pip install "hayhooks[ui]"`
-2. Check that `--with-ui` flag is set or `HAYHOOKS_UI_ENABLED=true`
+1. Ensure Chainlit is installed: `pip install "hayhooks[chainlit]"`
+2. Check that `--with-chainlit` flag is set or `HAYHOOKS_CHAINLIT_ENABLED=true`
 3. Verify the UI path in logs (default: `/chat`)
 
 ### No Pipelines Available
@@ -253,7 +301,7 @@ transports = ["websocket"]
 The embedded Chainlit UI is **public by default** -- anyone with network access to the URL can use it. To restrict access:
 
 - Set the `CHAINLIT_AUTH_SECRET` environment variable (generate one with `chainlit create-secret`)
-- Implement an [authentication callback](https://docs.chainlit.io/authentication/overview) in a custom Chainlit app via `HAYHOOKS_UI_APP`
+- Implement an [authentication callback](https://docs.chainlit.io/authentication/overview) in a custom Chainlit app via `HAYHOOKS_CHAINLIT_APP`
 - Or place Hayhooks behind a reverse proxy with its own authentication layer
 
 ### Conversation Persistence
@@ -264,7 +312,7 @@ By default, conversation history lives only in the server's memory and is lost o
 - **DynamoDB** for cloud-native deployments
 - Custom implementations via Chainlit's `BaseDataLayer` API
 
-To configure a data layer, provide a custom Chainlit app (`HAYHOOKS_UI_APP`) that registers the data layer at startup.
+To configure a data layer, provide a custom Chainlit app (`HAYHOOKS_CHAINLIT_APP`) that registers the data layer at startup.
 
 !!! note
     Chainlit sessions are server-side only. Fully client-side storage (cookies, localStorage) is not supported by Chainlit's architecture.
@@ -275,7 +323,7 @@ To configure a data layer, provide a custom Chainlit app (`HAYHOOKS_UI_APP`) tha
 
 ## Limitations
 
-- **Single worker without sticky sessions**: Use `--workers 1` (the default) when running with `--with-ui`, or configure sticky sessions on your load balancer. See [Production Notes](#production-notes) above.
+- **Single worker without sticky sessions**: Use `--workers 1` (the default) when running with `--with-chainlit`, or configure sticky sessions on your load balancer. See [Production Notes](#production-notes) above.
 - **No conversation persistence out of the box**: History is in-memory only. Configure a [data layer](#conversation-persistence) for persistence.
 - **No built-in authentication**: The UI is public by default. See [Authentication](#authentication) above.
 - **No client-side session storage**: Chainlit's architecture requires server-side sessions over WebSocket. Page refreshes create a new session.

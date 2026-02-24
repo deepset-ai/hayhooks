@@ -7,6 +7,7 @@ a chat interface.
 """
 
 import os
+import shutil
 from pathlib import Path
 
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +33,40 @@ def is_chainlit_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def _merge_custom_elements(app_root: str) -> None:
+    """
+    Copy custom ``.jsx`` element files into the Chainlit ``public/elements/`` directory.
+
+    Reads the source directory from ``settings.chainlit_custom_elements_dir``.
+    Only files with a ``.jsx`` extension are copied.  If a custom file has the
+    same name as a built-in element, the built-in is overridden and a warning
+    is logged.
+    """
+    custom_dir_str = settings.chainlit_custom_elements_dir
+    if not custom_dir_str:
+        return
+
+    custom_dir = Path(custom_dir_str).resolve()
+    if not custom_dir.is_dir():
+        log.warning("HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR '{}' is not a directory, skipping", custom_dir)
+        return
+
+    jsx_files = list(custom_dir.glob("*.jsx"))
+    if not jsx_files:
+        log.warning("No .jsx files found in '{}'", custom_dir)
+        return
+
+    elements_dir = Path(app_root) / "public" / "elements"
+    elements_dir.mkdir(parents=True, exist_ok=True)
+
+    for jsx_file in jsx_files:
+        dest = elements_dir / jsx_file.name
+        if dest.exists():
+            log.warning("Custom element '{}' overrides built-in element", jsx_file.name)
+        shutil.copy2(jsx_file, dest)
+        log.info("Loaded custom Chainlit element: {}", jsx_file.stem)
 
 
 def mount_chainlit_app(
@@ -62,7 +97,7 @@ def mount_chainlit_app(
     try:
         from chainlit.utils import mount_chainlit  # ty: ignore[unresolved-import]
     except ImportError as e:
-        msg = "Run 'pip install \"hayhooks[ui]\"' to install Chainlit UI support."
+        msg = "Run 'pip install \"hayhooks[chainlit]\"' to install Chainlit UI support."
         raise ImportError(msg) from e
 
     if target is None:
@@ -84,6 +119,9 @@ def mount_chainlit_app(
         os.environ["CHAINLIT_APP_ROOT"] = app_root
         log.debug("Set CHAINLIT_APP_ROOT to '{}'", app_root)
 
+    # Merge user-provided custom elements into public/elements/
+    _merge_custom_elements(app_root)
+
     log.info("Mounting Chainlit UI at path '{}' using app: {}", path, target)
 
     # Mount the public directory as static files for theme, logos, etc.
@@ -94,4 +132,4 @@ def mount_chainlit_app(
 
     mount_chainlit(app=app, target=target, path=path)
 
-    log.success("Chainlit UI available at {}{}", settings.ui_base_url, path)
+    log.success("Chainlit UI available at {}{}", settings.chainlit_base_url, path)

@@ -45,11 +45,18 @@ def run(  # noqa: PLR0913
     reload: Annotated[
         bool, typer.Option("--reload", "-r", help="Whether to reload the server on file changes")
     ] = False,
-    with_ui: Annotated[
-        bool, typer.Option("--with-ui", help="Enable embedded Chainlit UI (requires hayhooks[ui])")
+    with_chainlit: Annotated[
+        bool, typer.Option("--with-chainlit", help="Enable embedded Chainlit UI (requires hayhooks[chainlit])")
     ] = False,
-    ui_path: Annotated[
-        str | None, typer.Option("--ui-path", help="URL path for the Chainlit UI (default: /chat)")
+    chainlit_path: Annotated[
+        str | None, typer.Option("--chainlit-path", help="URL path for the Chainlit UI (default: /chat)")
+    ] = None,
+    chainlit_custom_elements_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--chainlit-custom-elements-dir",
+            help="Directory with custom .jsx element files for the Chainlit UI",
+        ),
     ] = None,
 ) -> None:
     """
@@ -87,22 +94,26 @@ def run(  # noqa: PLR0913
         log.trace("Added '{}' to sys.path", additional_python_path)
 
     # Configure Chainlit UI
-    if ui_path and not with_ui:
-        log.warning("--ui-path was provided but --with-ui is not set. The UI will not be mounted.")
+    if chainlit_path and not with_chainlit:
+        log.warning("--chainlit-path was provided but --with-chainlit is not set. The UI will not be mounted.")
 
-    if with_ui:
+    if with_chainlit:
         if workers > 1:
             log.warning(
                 "Chainlit UI uses WebSockets (socket.io) which requires sticky sessions. "
                 "With --workers {}, requests may hit different worker processes, causing WebSocket failures. "
-                "Use --workers 1 when running with --with-ui, or place a reverse proxy with sticky sessions in front.",
+                "Use --workers 1 when running with --with-chainlit, "
+                "or place a reverse proxy with sticky sessions in front.",
                 workers,
             )
-        _set_env("HAYHOOKS_UI_ENABLED", "true")
-        settings.ui_enabled = True
-        if ui_path:
-            _set_env("HAYHOOKS_UI_PATH", ui_path)
-            settings.ui_path = ui_path
+        _set_env("HAYHOOKS_CHAINLIT_ENABLED", "true")
+        settings.chainlit_enabled = True
+        if chainlit_path:
+            _set_env("HAYHOOKS_CHAINLIT_PATH", chainlit_path)
+            settings.chainlit_path = chainlit_path
+        if chainlit_custom_elements_dir:
+            _set_env("HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR", chainlit_custom_elements_dir)
+            settings.chainlit_custom_elements_dir = chainlit_custom_elements_dir
 
     # Use string import path so server modules load only within uvicorn context
     uvicorn.run("hayhooks.server.app:create_app", host=host, port=port, workers=workers, reload=reload, factory=True)
