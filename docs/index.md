@@ -117,7 +117,7 @@ curl -X POST http://localhost:1416/chat/completions \
   }'
 ```
 
-Or chat with it in the [embedded Chainlit UI](features/chainlit-integration.md) (`hayhooks run --with-ui`) or [integrate it with Open WebUI](features/openai-compatibility.md#open-webui-integration)!
+Or chat with it in the [embedded Chainlit UI](features/chainlit-integration.md) (`hayhooks run --with-ui`) or [integrate it with Open WebUI](features/openwebui-integration.md)!
 
 ## Key Features
 
