@@ -63,8 +63,7 @@ source = "vcs"
 packages = ["src/hayhooks"]
 
 [tool.hatch.build.targets.wheel.force-include]
-# Include Chainlit app assets (logos, theme, config)
-"src/hayhooks/server/chainlit_app/public" = "hayhooks/server/chainlit_app/public"
+# .chainlit is a hidden dir excluded by default, so force-include is needed
 "src/hayhooks/server/chainlit_app/.chainlit" = "hayhooks/server/chainlit_app/.chainlit"
 
 [tool.hatch.envs.default]
