@@ -43,7 +43,7 @@ dependencies = [
 mcp = [
   "mcp>=1.8.0 ; python_version >= '3.10'",
 ]
-ui = [
+chainlit = [
   "chainlit>=2.0.0",
   "httpx>=0.27.0",
 ]

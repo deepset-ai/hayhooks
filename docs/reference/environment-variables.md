@@ -84,33 +84,38 @@ export HAYHOOKS_STREAMING_COMPONENTS="llm_1, llm_2, llm_3"
 
 ## Chainlit UI
 
-### HAYHOOKS_UI_ENABLED
+### HAYHOOKS_CHAINLIT_ENABLED
 
 - Default: `false`
 - Description: Enable the embedded Chainlit chat UI
 
-### HAYHOOKS_UI_PATH
+### HAYHOOKS_CHAINLIT_PATH
 
 - Default: `/chat`
 - Description: URL path where the Chainlit UI is mounted
 
-### HAYHOOKS_UI_APP
+### HAYHOOKS_CHAINLIT_APP
 
 - Default: `""` (uses built-in default app)
 - Description: Path to a custom Chainlit app file
 
-### HAYHOOKS_UI_DEFAULT_MODEL
+### HAYHOOKS_CHAINLIT_DEFAULT_MODEL
 
 - Default: `""` (auto-selects if only one pipeline is deployed)
 - Description: Default pipeline/model to auto-select in the Chainlit UI
 
-### HAYHOOKS_UI_REQUEST_TIMEOUT
+### HAYHOOKS_CHAINLIT_REQUEST_TIMEOUT
 
 - Default: `120.0`
 - Description: Timeout in seconds for chat completion requests from the Chainlit UI
 
+### HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR
+
+- Default: `""` (no custom elements)
+- Description: Path to a directory containing custom `.jsx` element files. These files are copied into the Chainlit `public/elements/` directory at startup and become available as `cl.CustomElement` targets. See [Custom Elements](../features/chainlit-integration.md#custom-elements).
+
 !!! note "Installation Required"
-    The Chainlit UI requires the `ui` extra: `pip install "hayhooks[ui]"`
+    The Chainlit UI requires the `chainlit` extra: `pip install "hayhooks[chainlit]"`
 
 ## CORS
 

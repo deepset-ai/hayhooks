@@ -65,22 +65,24 @@ class AppSettings(BaseSettings):
     cors_expose_headers: list[str] = []
     cors_max_age: int = 600
 
-    # Chainlit UI Settings
+    # Chainlit Settings
     # Enable embedded Chainlit UI frontend
-    ui_enabled: bool = False
+    chainlit_enabled: bool = False
     # URL path where Chainlit UI will be mounted
-    ui_path: str = "/chat"
+    chainlit_path: str = "/chat"
     # Custom Chainlit app file (optional, uses default if not set)
-    ui_app: str = ""
-    # Default pipeline/model to auto-select in the UI (empty = auto-select if only one)
-    ui_default_model: str = ""
-    # Timeout (seconds) for chat completion requests from the UI
-    ui_request_timeout: float = 120.0
+    chainlit_app: str = ""
+    # Default pipeline/model to auto-select in the Chainlit UI (empty = auto-select if only one)
+    chainlit_default_model: str = ""
+    # Timeout (seconds) for chat completion requests from the Chainlit UI
+    chainlit_request_timeout: float = 120.0
+    # Directory containing custom .jsx element files for the Chainlit UI
+    chainlit_custom_elements_dir: str = ""
 
     _WILDCARD_HOSTS = {"0.0.0.0", "::"}  # noqa: S104
 
     @property
-    def ui_base_url(self) -> str:
+    def chainlit_base_url(self) -> str:
         """Base URL for the Chainlit UI to reach the Hayhooks backend."""
         protocol = "https" if self.use_https else "http"
         host = "127.0.0.1" if self.host in self._WILDCARD_HOSTS else self.host

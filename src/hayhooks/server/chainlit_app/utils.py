@@ -33,7 +33,7 @@ async def check_backend_health() -> bool:
     """
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"{settings.ui_base_url}/status", timeout=HEALTH_CHECK_TIMEOUT)
+            response = await client.get(f"{settings.chainlit_base_url}/status", timeout=HEALTH_CHECK_TIMEOUT)
             return response.status_code == HTTP_OK
     except Exception:
         return False
@@ -48,7 +48,7 @@ async def get_available_models() -> list[dict[str, Any]]:
     """
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"{settings.ui_base_url}/v1/models", timeout=MODELS_FETCH_TIMEOUT)
+            response = await client.get(f"{settings.chainlit_base_url}/v1/models", timeout=MODELS_FETCH_TIMEOUT)
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict):

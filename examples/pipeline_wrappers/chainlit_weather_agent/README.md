@@ -23,10 +23,10 @@ When you invoke the pipeline from the Chainlit UI you will see:
 
 ```text
 pipeline_wrapper.py        # Pipeline implementation
+elements/
+  WeatherCard.jsx          # Custom Chainlit element for weather display
 README.md                  # You are reading it
 ```
-
-The matching `WeatherCard.jsx` custom element lives in `src/hayhooks/server/chainlit_app/public/elements/WeatherCard.jsx` and is shipped with the `hayhooks[ui]` package.
 
 ## Prerequisites
 
@@ -42,19 +42,20 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-Install Hayhooks with the UI extra:
+Install Hayhooks with the Chainlit extra:
 
 ```shell
-pip install "hayhooks[ui]"
+pip install "hayhooks[chainlit]"
 ```
 
-Launch Hayhooks with the Chainlit UI enabled:
+Launch Hayhooks with the Chainlit UI enabled and the custom elements directory pointed at this example's `elements/` folder (from the repository root):
 
 ```shell
-hayhooks run --with-ui
+hayhooks run --with-chainlit \
+  --chainlit-custom-elements-dir examples/pipeline_wrappers/chainlit_weather_agent/elements
 ```
 
-Deploy the pipeline wrapper (from the repository root):
+Deploy the pipeline wrapper:
 
 ```shell
 hayhooks pipeline deploy-files -n weather_agent examples/pipeline_wrappers/chainlit_weather_agent
@@ -66,9 +67,9 @@ Open `http://localhost:1416/chat` in your browser, select the **weather_agent** 
 
 ## How custom elements work
 
-The pipeline emits a `custom_element` event via `create_custom_element_event("WeatherCard", props)`. The Chainlit app receives this event over the SSE stream and renders a `cl.CustomElement(name="WeatherCard", props=...)`, which Chainlit maps to the `WeatherCard.jsx` file in `public/elements/`.
+The pipeline emits a `custom_element` event via `create_custom_element_event("WeatherCard", props)`. The Chainlit app receives this event over the SSE stream and renders a `cl.CustomElement(name="WeatherCard", props=...)`.
 
-This mechanism lets pipelines push rich, interactive UI widgets to the Chainlit frontend without modifying the Chainlit app itself.
+Chainlit resolves custom elements by name from the `public/elements/` directory. The `--chainlit-custom-elements-dir` flag (or `HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR` env var) tells Hayhooks to copy `.jsx` files from the given directory into that location at startup, so no modification to the Chainlit app is needed.
 
 ## Open WebUI compatibility
 
