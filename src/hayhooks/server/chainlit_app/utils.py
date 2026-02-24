@@ -21,6 +21,7 @@ _TOOL_CALL_RE = re.compile(r"Calling '(.+?)' tool")
 EVENT_STATUS = "status"
 EVENT_TOOL_RESULT = "tool_result"
 EVENT_NOTIFICATION = "notification"
+EVENT_CUSTOM_ELEMENT = "custom_element"
 
 
 async def check_backend_health() -> bool:

@@ -88,6 +88,20 @@ def create_notification_event(
     return OpenWebUIEvent(type="notification", data=NotificationEventData(type=notification_type, content=content))
 
 
+def create_custom_element_event(name: str, props: dict[str, Any]) -> OpenWebUIEvent:
+    """
+    Create a custom element event for rendering rich UI widgets in the Chainlit frontend.
+
+    This event is specific to the embedded Chainlit UI and will be ignored by Open WebUI.
+    The Chainlit app renders the element using a matching JSX file in public/elements/.
+
+    Args:
+        name: Name of the custom element (must match a JSX file, e.g. "WeatherCard").
+        props: Dictionary of props to pass to the JSX component.
+    """
+    return OpenWebUIEvent(type="custom_element", data={"name": name, "props": props})
+
+
 def create_details_tag(
     tool_name: str,
     summary: str,

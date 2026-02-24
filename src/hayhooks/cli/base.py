@@ -1,3 +1,4 @@
+import os
 import sys
 from typing import Annotated
 
@@ -11,6 +12,12 @@ from hayhooks.cli.utils import get_console, get_server_url, make_request, show_s
 hayhooks_cli = typer.Typer(name="hayhooks")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
 hayhooks_cli.add_typer(mcp, name="mcp")
+
+
+def _set_env(key: str, value: str | None) -> None:
+    """Set an environment variable if the value is truthy, so worker child processes inherit it."""
+    if value:
+        os.environ[key] = value
 
 
 def get_app() -> FastAPI:
@@ -60,12 +67,21 @@ def run(  # noqa: PLR0913
     pipelines_dir = pipelines_dir or settings.pipelines_dir
     root_path = root_path or settings.root_path
 
+    # Propagate CLI overrides via env vars so that worker child processes
+    # (spawned by uvicorn when workers > 1) pick them up when they create
+    # their own AppSettings instance.
+    _set_env("HAYHOOKS_HOST", host)
+    _set_env("HAYHOOKS_PORT", str(port))
+    _set_env("HAYHOOKS_PIPELINES_DIR", pipelines_dir)
+    _set_env("HAYHOOKS_ROOT_PATH", root_path)
+
     settings.host = host
     settings.port = port
     settings.pipelines_dir = pipelines_dir
     settings.root_path = root_path
 
     if additional_python_path:
+        _set_env("HAYHOOKS_ADDITIONAL_PYTHON_PATH", additional_python_path)
         settings.additional_python_path = additional_python_path
         sys.path.append(additional_python_path)
         log.trace("Added '{}' to sys.path", additional_python_path)
@@ -75,8 +91,17 @@ def run(  # noqa: PLR0913
         log.warning("--ui-path was provided but --with-ui is not set. The UI will not be mounted.")
 
     if with_ui:
+        if workers > 1:
+            log.warning(
+                "Chainlit UI uses WebSockets (socket.io) which requires sticky sessions. "
+                "With --workers {}, requests may hit different worker processes, causing WebSocket failures. "
+                "Use --workers 1 when running with --with-ui, or place a reverse proxy with sticky sessions in front.",
+                workers,
+            )
+        _set_env("HAYHOOKS_UI_ENABLED", "true")
         settings.ui_enabled = True
         if ui_path:
+            _set_env("HAYHOOKS_UI_PATH", ui_path)
             settings.ui_path = ui_path
 
     # Use string import path so server modules load only within uvicorn context

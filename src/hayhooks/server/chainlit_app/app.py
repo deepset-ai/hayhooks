@@ -159,6 +159,18 @@ async def handle_notification_event(data: dict[str, Any]) -> None:
     await send_message(f"{icon} {content}")
 
 
+async def handle_custom_element_event(data: dict[str, Any]) -> None:
+    """Handle custom_element event by rendering a Chainlit CustomElement."""
+    name = data.get("name", "")
+    props = data.get("props", {})
+    if not name:
+        cl.logger.warning("Received custom_element event with no name, skipping")
+        return
+
+    element = cl.CustomElement(name=name, props=props, display="inline")
+    await cl.Message(content="", elements=[element]).send()
+
+
 async def handle_open_webui_event(event: dict[str, Any], state: StreamState) -> None:
     """
     Handle Open WebUI events from the streaming response.
@@ -169,6 +181,7 @@ async def handle_open_webui_event(event: dict[str, Any], state: StreamState) -> 
     - status: Progress updates (shown as Steps with spinner)
     - tool_result: Tool call results (shown in code block)
     - notification: Toast notifications
+    - custom_element: Rich UI widgets rendered via JSX CustomElements
     """
     event_type = event.get("type", "")
     data = event.get("data", {})
@@ -177,6 +190,7 @@ async def handle_open_webui_event(event: dict[str, Any], state: StreamState) -> 
         utils.EVENT_STATUS: lambda: handle_status_event(data, state),
         utils.EVENT_TOOL_RESULT: lambda: handle_tool_result_event(data, state),
         utils.EVENT_NOTIFICATION: lambda: handle_notification_event(data),
+        utils.EVENT_CUSTOM_ELEMENT: lambda: handle_custom_element_event(data),
     }
 
     handler = handlers.get(event_type)

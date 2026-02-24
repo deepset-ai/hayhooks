@@ -234,11 +234,51 @@ When Hayhooks is served behind a reverse proxy with a path prefix (`root_path`),
 2. Check your reverse proxy is forwarding requests to the correct paths
 3. As a workaround, consider serving static assets directly from the reverse proxy
 
+## Production Notes
+
+### Multiple Workers and Sticky Sessions
+
+Chainlit uses WebSockets via socket.io, which keeps session state in-memory. Running with `--workers > 1` requires **sticky sessions** (session affinity) on your load balancer so that all requests from the same client hit the same worker.
+
+Even with sticky sessions, some load balancers struggle to consistently route WebSocket upgrades. If you experience intermittent disconnects, set `transports = ["websocket"]` in your `.chainlit/config.toml` to skip the HTTP long-polling fallback:
+
+```toml
+[project]
+# Use WebSocket transport only (recommended behind load balancers with sticky sessions)
+transports = ["websocket"]
+```
+
+### Authentication
+
+The embedded Chainlit UI is **public by default** -- anyone with network access to the URL can use it. To restrict access:
+
+- Set the `CHAINLIT_AUTH_SECRET` environment variable (generate one with `chainlit create-secret`)
+- Implement an [authentication callback](https://docs.chainlit.io/authentication/overview) in a custom Chainlit app via `HAYHOOKS_UI_APP`
+- Or place Hayhooks behind a reverse proxy with its own authentication layer
+
+### Conversation Persistence
+
+By default, conversation history lives only in the server's memory and is lost on page refresh or server restart. Chainlit supports pluggable [data layers](https://docs.chainlit.io/data-persistence/overview) for persistent storage:
+
+- **SQLite** (file-based, zero infrastructure) or **PostgreSQL** via the community [SQLAlchemy data layer](https://github.com/Chainlit/chainlit-community)
+- **DynamoDB** for cloud-native deployments
+- Custom implementations via Chainlit's `BaseDataLayer` API
+
+To configure a data layer, provide a custom Chainlit app (`HAYHOOKS_UI_APP`) that registers the data layer at startup.
+
+!!! note
+    Chainlit sessions are server-side only. Fully client-side storage (cookies, localStorage) is not supported by Chainlit's architecture.
+
+### Endpoint Ordering
+
+`mount_chainlit()` must be called **after** all other FastAPI routes are registered -- it captures all unmatched URL space. Hayhooks handles this correctly in `create_app()`, but if you add custom middleware or routes, ensure they are registered before the Chainlit mount.
+
 ## Limitations
 
-- **Session-based history**: Conversation history is stored in the browser session, not persisted
-- **Single process**: The UI runs in the same process as Hayhooks, which may not be ideal for high-traffic scenarios
-- **Basic authentication**: For production use with authentication, consider an external frontend like [Open WebUI](openwebui-integration.md)
+- **Single worker without sticky sessions**: Use `--workers 1` (the default) when running with `--with-ui`, or configure sticky sessions on your load balancer. See [Production Notes](#production-notes) above.
+- **No conversation persistence out of the box**: History is in-memory only. Configure a [data layer](#conversation-persistence) for persistence.
+- **No built-in authentication**: The UI is public by default. See [Authentication](#authentication) above.
+- **No client-side session storage**: Chainlit's architecture requires server-side sessions over WebSocket. Page refreshes create a new session.
 
 ## Next Steps
 
