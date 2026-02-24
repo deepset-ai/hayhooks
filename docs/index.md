@@ -7,6 +7,7 @@ With Hayhooks, you can:
 - 📦 **Deploy your Haystack pipelines and agents as REST APIs** with maximum flexibility and minimal boilerplate code.
 - 🛠️ **Expose your Haystack pipelines and agents over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline and agent as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
 - 💬 **Integrate your Haystack pipelines and agents with [Open WebUI](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
+- 🖥️ **Embed a [Chainlit](https://chainlit.io/) chat UI** directly in Hayhooks with `pip install "hayhooks[ui]"` and `hayhooks run --with-ui` -- zero-configuration frontend with streaming, pipeline selection, and custom UI widgets.
 - 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
@@ -116,7 +117,7 @@ curl -X POST http://localhost:1416/chat/completions \
   }'
 ```
 
-Or [integrate it with Open WebUI](features/openai-compatibility.md#open-webui-integration) and start chatting with it!
+Or chat with it in the [embedded Chainlit UI](features/chainlit-integration.md) (`hayhooks run --with-ui`) or [integrate it with Open WebUI](features/openai-compatibility.md#open-webui-integration)!
 
 ## Key Features
 
@@ -129,6 +130,7 @@ Or [integrate it with Open WebUI](features/openai-compatibility.md#open-webui-in
 ### 🌐 Multiple Integration Options
 
 - **MCP Protocol**: Expose pipelines as MCP tools for use in AI development environments
+- **Chainlit UI**: Embedded chat frontend with streaming, pipeline selection, and [custom UI widgets](features/chainlit-integration.md)
 - **Open WebUI Integration**: Use Hayhooks as a backend for Open WebUI with streaming support
 - **OpenAI Compatibility**: Seamless integration with OpenAI-compatible tools and frameworks
 
