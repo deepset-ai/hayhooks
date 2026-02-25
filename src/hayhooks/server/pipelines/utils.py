@@ -7,6 +7,7 @@ from hayhooks.server.pipelines.streaming import (
     ToolCallbackReturn,
     async_streaming_generator,
     find_all_streaming_components,
+    is_streaming_component,
     parse_streaming_components_setting,
     streaming_generator,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "find_all_streaming_components",
     "get_content",
     "get_last_user_message",
+    "is_streaming_component",
     "is_user_message",
     "parse_streaming_components_setting",
     "streaming_generator",

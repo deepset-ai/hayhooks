@@ -31,6 +31,34 @@ OnPipelineEnd = Callable[[Any], str | None] | None
 StreamingCallback = Callable[[StreamingChunk], None] | Callable[[StreamingChunk], Awaitable[None]]
 
 
+def is_streaming_component(component: Component) -> bool:
+    """
+    Checks whether a component supports streaming via a ``streaming_callback`` parameter.
+
+    Detection strategy:
+      1. Inspect the ``run()`` method signature for a ``streaming_callback`` parameter.
+      2. Fallback: check Haystack input sockets (``__haystack_input__._sockets_dict``).
+         This handles wrapper components (e.g. ``CodeComponent``) that expose inner-component
+         sockets without reflecting them in their own ``run()`` signature.
+
+    Args:
+        component: The Haystack component to check.
+
+    Returns:
+        True if the component accepts a streaming callback, False otherwise.
+    """
+    if hasattr(component, "run"):
+        sig = inspect.signature(component.run)
+        if "streaming_callback" in sig.parameters:
+            return True
+
+        sockets_dict = getattr(getattr(component, "__haystack_input__", None), "_sockets_dict", None)
+        if sockets_dict is not None and "streaming_callback" in sockets_dict:
+            return True
+
+    return False
+
+
 def find_all_streaming_components(pipeline: Pipeline | AsyncPipeline) -> list[tuple[Component, str]]:
     """
     Finds all components in the pipeline that support streaming_callback.
@@ -41,12 +69,9 @@ def find_all_streaming_components(pipeline: Pipeline | AsyncPipeline) -> list[tu
     streaming_components = []
 
     for name, component in pipeline.walk():
-        # Check if the component's run() method accepts streaming_callback parameter
-        if hasattr(component, "run"):
-            sig = inspect.signature(component.run)
-            if "streaming_callback" in sig.parameters:
-                log.trace("streaming_callback run parameter found in '{}'", name)
-                streaming_components.append((component, name))
+        if is_streaming_component(component):
+            log.trace("streaming_callback found in '{}'", name)
+            streaming_components.append((component, name))
 
     if not streaming_components:
         msg = "No streaming-capable components found in the pipeline"
