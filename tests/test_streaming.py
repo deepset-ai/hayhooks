@@ -11,9 +11,11 @@ from haystack.components.builders import ChatPromptBuilder, PromptBuilder
 from haystack.components.generators import OpenAIGenerator
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
+from haystack.dataclasses.streaming_chunk import ToolCallDelta
 from haystack.utils import Secret
 
-from hayhooks.server.pipelines.streaming import async_streaming_generator, streaming_generator
+from hayhooks.events import PipelineEvent
+from hayhooks.server.pipelines.streaming import _process_tool_call_start, async_streaming_generator, streaming_generator
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
@@ -411,3 +413,102 @@ def test_streaming_generator_propagates_context_vars():
 
     assert len(chunks) > 0
     assert chunks[0].content == "propagated_value"
+
+
+def _make_tool_call_chunk(
+    tool_name: str | None = "get_weather",
+    arguments: str | None = '{"location": "Berlin"}',
+    call_id: str | None = "call_1",
+) -> StreamingChunk:
+    return StreamingChunk(
+        content="",
+        index=0,
+        tool_calls=[ToolCallDelta(index=0, tool_name=tool_name, arguments=arguments, id=call_id)],
+    )
+
+
+class TestProcessToolCallStart:
+    def test_parses_json_arguments_to_dict(self):
+        captured: list[tuple] = []
+
+        def callback(name: str, args: dict[str, Any], call_id: str | None) -> None:
+            captured.append((name, args, call_id))
+
+        chunk = _make_tool_call_chunk(arguments='{"location": "Berlin"}')
+        list(_process_tool_call_start(chunk, callback))
+
+        assert len(captured) == 1
+        assert captured[0] == ("get_weather", {"location": "Berlin"}, "call_1")
+
+    def test_none_arguments_become_empty_dict(self):
+        captured: list[tuple] = []
+
+        def callback(name: str, args: dict[str, Any], call_id: str | None) -> None:
+            captured.append((name, args, call_id))
+
+        chunk = _make_tool_call_chunk(arguments=None)
+        list(_process_tool_call_start(chunk, callback))
+
+        assert len(captured) == 1
+        assert captured[0] == ("get_weather", {}, "call_1")
+
+    def test_empty_string_arguments_become_empty_dict(self):
+        captured: list[tuple] = []
+
+        def callback(name: str, args: dict[str, Any], call_id: str | None) -> None:
+            captured.append((name, args, call_id))
+
+        chunk = _make_tool_call_chunk(arguments="")
+        list(_process_tool_call_start(chunk, callback))
+
+        assert len(captured) == 1
+        assert captured[0] == ("get_weather", {}, "call_1")
+
+    def test_invalid_json_arguments_become_empty_dict(self):
+        captured: list[tuple] = []
+
+        def callback(name: str, args: dict[str, Any], call_id: str | None) -> None:
+            captured.append((name, args, call_id))
+
+        chunk = _make_tool_call_chunk(arguments='{"location": ')
+        list(_process_tool_call_start(chunk, callback))
+
+        assert len(captured) == 1
+        assert captured[0] == ("get_weather", {}, "call_1")
+
+    def test_skips_tool_calls_without_tool_name(self):
+        captured: list[tuple] = []
+
+        def callback(name: str, args: dict[str, Any], call_id: str | None) -> None:
+            captured.append((name, args, call_id))
+
+        chunk = _make_tool_call_chunk(tool_name=None)
+        list(_process_tool_call_start(chunk, callback))
+
+        assert len(captured) == 0
+
+    def test_callback_returning_events(self):
+        def callback(name: str, args: dict[str, Any], call_id: str | None) -> list[PipelineEvent]:
+            return [
+                PipelineEvent(type="status", data={"description": f"Calling {name}"}),
+            ]
+
+        chunk = _make_tool_call_chunk()
+        results = list(_process_tool_call_start(chunk, callback))
+
+        assert len(results) == 1
+        assert results[0].type == "status"
+
+    def test_callback_error_is_swallowed(self):
+        def callback(name: str, args: dict[str, Any], call_id: str | None) -> None:
+            msg = "callback boom"
+            raise ValueError(msg)
+
+        chunk = _make_tool_call_chunk()
+        results = list(_process_tool_call_start(chunk, callback))
+        assert results == []
+
+    def test_no_callback_yields_nothing(self):
+        chunk = _make_tool_call_chunk()
+        results = list(_process_tool_call_start(chunk, None))
+        assert results == []

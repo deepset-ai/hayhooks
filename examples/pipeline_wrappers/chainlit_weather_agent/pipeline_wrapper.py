@@ -9,7 +9,7 @@ from haystack.tools import Tool
 
 from hayhooks import BasePipelineWrapper, async_streaming_generator
 from hayhooks.chainlit_events import create_custom_element_event
-from hayhooks.events import PipelineEvent, create_notification_event, create_status_event
+from hayhooks.events import PipelineEvent, create_notification_event
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -111,18 +111,6 @@ class PipelineWrapper(BasePipelineWrapper):
             tools=[weather_tool],
         )
 
-    def on_tool_call_start(
-        self,
-        tool_name: str,  # noqa: ARG002
-        arguments: dict,
-        id: str,  # noqa: ARG002, A002
-    ) -> list[PipelineEvent]:
-        location = arguments.get("location", "unknown")
-        return [
-            create_status_event(description=f"Fetching weather for {location}..."),
-            create_notification_event(notification_type="info", content=f"Looking up weather for {location}"),
-        ]
-
     def on_tool_call_end(
         self,
         tool_name: str,
@@ -130,12 +118,14 @@ class PipelineWrapper(BasePipelineWrapper):
         result: str,
         error: bool,
     ) -> list[PipelineEvent]:
-        events: list[PipelineEvent] = [
-            create_status_event(description=f"Weather data received from {tool_name}", done=True),
-        ]
+        events: list[PipelineEvent] = []
 
         if error:
-            events.append(create_notification_event(notification_type="error", content="Failed to fetch weather data"))
+            events.append(
+                create_notification_event(
+                    notification_type="error", content=f"Failed to fetch weather data for {tool_name}: {result}"
+                )
+            )
             return events
 
         try:
@@ -169,7 +159,6 @@ class PipelineWrapper(BasePipelineWrapper):
         chat_messages = [ChatMessage.from_openai_dict_format(message) for message in messages]
 
         return async_streaming_generator(
-            on_tool_call_start=self.on_tool_call_start,
             on_tool_call_end=self.on_tool_call_end,
             pipeline=self.agent,
             pipeline_run_args={

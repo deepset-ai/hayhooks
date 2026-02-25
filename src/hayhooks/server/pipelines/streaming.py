@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 import contextvars
 import inspect
+import json
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from queue import Empty, Queue
@@ -23,7 +25,7 @@ _THREAD_JOIN_TIMEOUT_SECONDS = 1.0
 _QUEUE_POLL_TIMEOUT_SECONDS = 0.01
 
 ToolCallbackReturn = PipelineEvent | str | None | list[PipelineEvent | str]
-OnToolCallStart = Callable[[str, str | None, str | None], ToolCallbackReturn] | None
+OnToolCallStart = Callable[[str, dict[str, Any], str | None], ToolCallbackReturn] | None
 OnToolCallEnd = Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn] | None
 OnPipelineEnd = Callable[[Any], str | None] | None
 StreamingCallback = Callable[[StreamingChunk], None] | Callable[[StreamingChunk], Awaitable[None]]
@@ -221,6 +223,10 @@ def _process_tool_call_start(
     """
     Process tool call start events from a streaming chunk.
 
+    ToolCallDelta.arguments is Optional[str] (a JSON fragment or None) because arguments
+    arrive incrementally during streaming. We parse it into a dict here so that callbacks
+    receive a consistent dict[str, Any], matching the on_tool_call_end contract.
+
     Args:
         chunk: The streaming chunk that may contain tool calls
         on_tool_call_start: Callback function for tool call start
@@ -232,10 +238,13 @@ def _process_tool_call_start(
         for tool_call in chunk.tool_calls:
             if tool_call.tool_name:
                 try:
-                    result = on_tool_call_start(tool_call.tool_name, tool_call.arguments, tool_call.id)
+                    arguments: dict[str, Any] = {}
+                    if tool_call.arguments:
+                        with contextlib.suppress(json.JSONDecodeError, TypeError):
+                            arguments = json.loads(tool_call.arguments)
+                    result = on_tool_call_start(tool_call.tool_name, arguments, tool_call.id)
                     yield from _yield_callback_results(result)
                 except Exception as e:
-                    # Don't re-raise - callback errors shouldn't break the streaming flow
                     log.opt(exception=True).error("Error in on_tool_call_start callback: {}", e)
 
 

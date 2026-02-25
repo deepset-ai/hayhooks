@@ -533,7 +533,7 @@ def test_streaming_generator_with_custom_callbacks(mocker, mocked_pipeline_with_
     assert chunks[5] == StreamingChunk(content='{"result": "Final result"}')
 
     # Verify the spies were called correctly
-    on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
+    on_tool_call_start_spy.assert_called_once_with("test_tool", {}, None)
     on_tool_call_end_spy.assert_called_once_with("test_tool", {"city": "Berlin"}, "sunny", False)
     on_pipeline_end_spy.assert_called_once_with({"result": "Final result"})
 
@@ -652,7 +652,7 @@ async def test_async_streaming_generator_with_custom_callbacks(mocker, mocked_pi
     assert chunks[5] == StreamingChunk(content='{"result": "Final result"}')
 
     # Verify the spies were called correctly
-    on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
+    on_tool_call_start_spy.assert_called_once_with("test_tool", {}, None)
     on_tool_call_end_spy.assert_called_once_with("test_tool", {"city": "Berlin"}, "sunny", False)
     on_pipeline_end_spy.assert_called_once_with({"result": "Final result"})
 
@@ -727,7 +727,7 @@ def test_streaming_generator_with_custom_callbacks_returning_list(mocker, mocked
     assert chunks[5] == mock_chunks_from_pipeline[1]
 
     # Verify the spies were called correctly
-    on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
+    on_tool_call_start_spy.assert_called_once_with("test_tool", {}, None)
     on_tool_call_end_spy.assert_called_once_with("test_tool", {"city": "Berlin"}, "sunny", False)
 
 
@@ -804,7 +804,7 @@ async def test_async_streaming_generator_with_custom_callbacks_returning_list(
     assert chunks[5] == mock_chunks_from_pipeline[1]
 
     # Verify the spies were called correctly
-    on_tool_call_start_spy.assert_called_once_with("test_tool", "", None)
+    on_tool_call_start_spy.assert_called_once_with("test_tool", {}, None)
     on_tool_call_end_spy.assert_called_once_with("test_tool", {"city": "Berlin"}, "sunny", False)
 
 
