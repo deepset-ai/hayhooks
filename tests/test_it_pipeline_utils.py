@@ -19,6 +19,7 @@ from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.pipelines.utils import (
     async_streaming_generator,
     find_all_streaming_components,
+    is_streaming_component,
     streaming_generator,
 )
 from hayhooks.settings import AppSettings
@@ -156,8 +157,6 @@ async def test_async_pipeline_without_async_streaming_callback_support_should_ra
 
 
 class MockComponent:
-    """Mock component for testing"""
-
     def __init__(self, has_streaming=True, has_async_support=True):
         if has_streaming:
 
@@ -174,6 +173,26 @@ class MockComponent:
 
         if has_async_support:
             self.run_async = lambda: None
+
+
+class MockCodeComponent:
+    """
+    Simulates a CodeComponent wrapper that exposes streaming_callback via input sockets
+    rather than the run() signature (see deepset-cloud-custom-nodes CodeComponent).
+    """
+
+    def __init__(self, has_streaming_socket=True):
+        sockets = {"messages": object()}
+        if has_streaming_socket:
+            sockets["streaming_callback"] = object()
+
+        class _InputProxy:
+            _sockets_dict = sockets
+
+        self.__haystack_input__ = _InputProxy()
+
+    def run(self, messages=None):
+        pass
 
 
 @pytest.fixture
@@ -1098,6 +1117,35 @@ def test_find_all_streaming_components_ignores_attribute_only(mocker):
     # Should raise ValueError because the component doesn't have streaming_callback in method signature
     with pytest.raises(ValueError, match="No streaming-capable components found in the pipeline"):
         find_all_streaming_components(pipeline)
+
+
+@pytest.mark.parametrize(
+    ("component", "expected"),
+    [
+        pytest.param(MockComponent(has_streaming=True), True, id="run_param"),
+        pytest.param(MockComponent(has_streaming=False), False, id="no_run_param"),
+        pytest.param(object(), False, id="no_run_method"),
+        pytest.param(MockCodeComponent(has_streaming_socket=True), True, id="code_component_with_socket"),
+        pytest.param(MockCodeComponent(has_streaming_socket=False), False, id="code_component_without_socket"),
+    ],
+)
+def test_is_streaming_component(component, expected):
+    assert is_streaming_component(component) is expected
+
+
+def test_find_all_streaming_components_via_socket_fallback(mocker):
+    code_component = MockCodeComponent(has_streaming_socket=True)
+    non_streaming = MockComponent(has_streaming=False)
+
+    pipeline = mocker.Mock(spec=Pipeline)
+    pipeline.walk.return_value = [
+        ("non_streaming", non_streaming),
+        ("code_component", code_component),
+    ]
+
+    components = find_all_streaming_components(pipeline)
+    assert len(components) == 1
+    assert components[0] == (code_component, "code_component")
 
 
 @pytest.fixture
