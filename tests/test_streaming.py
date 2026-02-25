@@ -501,7 +501,8 @@ class TestProcessToolCallStart:
 
     def test_callback_error_is_swallowed(self):
         def callback(name: str, args: dict[str, Any], call_id: str | None) -> None:
-            raise ValueError("callback boom")
+            msg = "callback boom"
+            raise ValueError(msg)
 
         chunk = _make_tool_call_chunk()
         results = list(_process_tool_call_start(chunk, callback))
