@@ -25,7 +25,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install Hatch
-        run: pip install hatch==${{ env.HATCH_VERSION }}
+        uses: pypa/hatch@install
+        with:
+          version: "${{ env.HATCH_VERSION }}"
 
       - name: Configure Git
         run: |
