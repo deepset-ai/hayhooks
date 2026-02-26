@@ -28,7 +28,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Hatch
-        run: pip install hatch==${{ env.HATCH_VERSION }}
+        uses: pypa/hatch@install
+        with:
+          version: "${{ env.HATCH_VERSION }}"
 
       - name: Run tests and generate coverage report
         run: hatch run test:all-cov
@@ -43,7 +45,9 @@ jobs:
           python-version: "3.10"  # needed to check MCP features with mypy
 
       - name: Install Hatch
-        run: pip install hatch==${{ env.HATCH_VERSION }}
+        uses: pypa/hatch@install
+        with:
+          version: "${{ env.HATCH_VERSION }}"
 
       - name: Ruff - check format and linting
         run: hatch run fmt-check
