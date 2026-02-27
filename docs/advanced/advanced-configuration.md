@@ -52,6 +52,10 @@ if __name__ == "__main__":
 
 This allows you to build custom applications with Hayhooks as the core engine while adding your own business logic and integrations.
 
+### Example: API Key Authentication
+
+For a complete, production-oriented example that adds middleware-based API key authentication (multiple keys, Swagger Authorize button, timing-safe validation), see the [API Key Auth example](https://github.com/deepset-ai/hayhooks/tree/main/examples/programmatic/api_key_auth).
+
 ## Next Steps
 
 - [Deployment Guidelines](../deployment/deployment_guidelines.md) - Performance tuning, workers, scaling, and deployment strategies

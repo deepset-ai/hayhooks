@@ -20,6 +20,12 @@ This directory contains various examples demonstrating different use cases and f
 | [rag_indexing_query](./rag_indexing_query/) | Complete RAG system with Elasticsearch | • Document indexing pipeline<br/>• Query pipeline<br/>• Elasticsearch integration<br/>• Multiple file format support (PDF, Markdown, Text)<br/>• Sentence transformers embeddings | Implementing production-ready RAG systems for document search and knowledge retrieval |
 | [shared_code_between_wrappers](./shared_code_between_wrappers/) | Code sharing between pipeline wrappers | • Shared library imports<br/>• HAYHOOKS_ADDITIONAL_PYTHON_PATH<br/>• Multiple deployment strategies<br/>• Code reusability | Organizing complex projects with multiple pipelines that share common functionality |
 
+## Programmatic examples
+
+| Example | Description | Key Features | Use Case |
+|---------|-------------|--------------|----------|
+| [api_key_auth](./programmatic/api_key_auth/) | API key authentication with a weather agent | • Programmatic `create_app()` usage<br/>• Middleware-based auth enforcement<br/>• Multiple keys via `HAYHOOKS_API_KEYS`<br/>• Swagger **Authorize** button support<br/>• Weather agent with tool calling | Protecting all Hayhooks endpoints with API-key authentication |
+
 ## Getting Started
 
 Each example includes:
