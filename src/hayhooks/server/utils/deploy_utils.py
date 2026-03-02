@@ -45,6 +45,24 @@ from hayhooks.settings import DeployConcurrencyPolicy, settings
 _deploy_lock = threading.Lock()
 
 
+def _with_deploy_lock(func: Callable) -> Callable:
+    """Wrap *func* so it acquires ``_deploy_lock`` before executing."""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with _deploy_lock:
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+async def _offload(func: Callable, **kwargs: Any) -> Any:
+    """Run *func* in a thread, applying the deploy lock if policy is SERIALIZED."""
+    if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED:
+        func = _with_deploy_lock(func)
+    return await asyncio.to_thread(func, **kwargs)
+
+
 async def deploy_pipeline_yaml_async(
     pipeline_name: str,
     source_code: str,
@@ -59,11 +77,8 @@ async def deploy_pipeline_yaml_async(
     global lock ensures only one deploy/undeploy runs at a time; when *parallel*,
     the call runs in a thread without serialization.
     """
-    target_deploy_pipeline_yaml = deploy_pipeline_yaml
-    if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED:
-        target_deploy_pipeline_yaml = _locked_deploy_pipeline_yaml
-    return await asyncio.to_thread(
-        target_deploy_pipeline_yaml,
+    return await _offload(
+        deploy_pipeline_yaml,
         pipeline_name=pipeline_name,
         source_code=source_code,
         app=app,
@@ -79,11 +94,9 @@ async def deploy_pipeline_files_async(
     save_files: bool = True,
     overwrite: bool = False,
 ) -> dict[str, str]:
-    target_deploy_pipeline_files = deploy_pipeline_files
-    if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED:
-        deploy_pipeline_files = _locked_deploy_pipeline_files
-    return await asyncio.to_thread(
-        target_deploy_pipeline_files,
+    """Async wrapper that offloads ``deploy_pipeline_files`` off the event loop."""
+    return await _offload(
+        deploy_pipeline_files,
         pipeline_name=pipeline_name,
         files=files,
         app=app,
@@ -94,24 +107,7 @@ async def deploy_pipeline_files_async(
 
 async def undeploy_pipeline_async(pipeline_name: str, app: FastAPI | None = None) -> None:
     """Async wrapper that offloads ``undeploy_pipeline`` off the event loop."""
-    if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED:
-        return await asyncio.to_thread(_locked_undeploy_pipeline, pipeline_name=pipeline_name, app=app)
-    return await asyncio.to_thread(undeploy_pipeline, pipeline_name=pipeline_name, app=app)
-
-
-def _locked_deploy_pipeline_yaml(**kwargs: Any) -> dict[str, str]:
-    with _deploy_lock:
-        return deploy_pipeline_yaml(**kwargs)
-
-
-def _locked_deploy_pipeline_files(**kwargs: Any) -> dict[str, str]:
-    with _deploy_lock:
-        return deploy_pipeline_files(**kwargs)
-
-
-def _locked_undeploy_pipeline(**kwargs: Any) -> None:
-    with _deploy_lock:
-        undeploy_pipeline(**kwargs)
+    return await _offload(undeploy_pipeline, pipeline_name=pipeline_name, app=app)
 
 
 def _is_single_yaml_file(files: dict[str, str]) -> bool:

@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import (
-    _deploy_lock,
     commit_prepared_pipeline,
     deploy_pipeline_files_async,
     deploy_pipeline_yaml,
@@ -105,20 +104,21 @@ async def test_undeploy_pipeline_async(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_serialized_lock_calls_locked_wrapper(monkeypatch):
+async def test_serialized_policy_wraps_with_lock(monkeypatch):
     monkeypatch.setattr(settings, "deploy_concurrency", DeployConcurrencyPolicy.SERIALIZED)
 
-    calls = []
-    original = deploy_pipeline_yaml
+    lock_calls = []
+    original_with_lock = __import__(
+        "hayhooks.server.utils.deploy_utils", fromlist=["_with_deploy_lock"]
+    )._with_deploy_lock
 
-    def tracking_locked(**kwargs):
-        calls.append(True)
-        with _deploy_lock:
-            return original(**kwargs)
+    def tracking_with_lock(func):
+        lock_calls.append(func.__name__)
+        return original_with_lock(func)
 
     monkeypatch.setattr(
-        "hayhooks.server.utils.deploy_utils._locked_deploy_pipeline_yaml",
-        tracking_locked,
+        "hayhooks.server.utils.deploy_utils._with_deploy_lock",
+        tracking_with_lock,
     )
 
     await deploy_pipeline_yaml_async(
@@ -127,7 +127,7 @@ async def test_serialized_lock_calls_locked_wrapper(monkeypatch):
         options={"save_file": False},
     )
 
-    assert len(calls) == 1
+    assert lock_calls == ["deploy_pipeline_yaml"]
 
 
 def test_defer_openapi_rebuild_skips_setup():
