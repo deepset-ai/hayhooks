@@ -85,19 +85,11 @@ async def deploy_pipeline_files_async(
     save_files: bool = True,
     overwrite: bool = False,
 ) -> dict[str, str]:
-    """Async wrapper that offloads ``deploy_pipeline_files`` off the event loop."""
+    target_deploy_pipeline_files = deploy_pipeline_files
     if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED:
-        return await asyncio.to_thread(
-            _locked_deploy_pipeline_files,
-            pipeline_name=pipeline_name,
-            files=files,
-            app=app,
-            save_files=save_files,
-            overwrite=overwrite,
-        )
-
+        deploy_pipeline_files = _locked_deploy_pipeline_files
     return await asyncio.to_thread(
-        deploy_pipeline_files,
+        target_deploy_pipeline_files,
         pipeline_name=pipeline_name,
         files=files,
         app=app,
