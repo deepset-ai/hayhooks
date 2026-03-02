@@ -11,7 +11,7 @@ on:
       - synchronize
 
 env:
-  HATCH_VERSION: "1.14.2"
+  HATCH_VERSION: "1.16.5"
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 jobs:
@@ -28,9 +28,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Hatch
-        uses: pypa/hatch@install
-        with:
-          version: "${{ env.HATCH_VERSION }}"
+        run: pip install hatch==${{ env.HATCH_VERSION }}
 
       - name: Run tests and generate coverage report
         run: hatch run test:all-cov
@@ -45,9 +43,7 @@ jobs:
           python-version: "3.10"  # needed to check MCP features with mypy
 
       - name: Install Hatch
-        uses: pypa/hatch@install
-        with:
-          version: "${{ env.HATCH_VERSION }}"
+        run: pip install hatch==${{ env.HATCH_VERSION }}
 
       - name: Ruff - check format and linting
         run: hatch run fmt-check
