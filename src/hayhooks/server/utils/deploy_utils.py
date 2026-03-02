@@ -59,17 +59,11 @@ async def deploy_pipeline_yaml_async(
     global lock ensures only one deploy/undeploy runs at a time; when *parallel*,
     the call runs in a thread without serialization.
     """
+    target_deploy_pipeline_yaml = deploy_pipeline_yaml
     if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED:
-        return await asyncio.to_thread(
-            _locked_deploy_pipeline_yaml,
-            pipeline_name=pipeline_name,
-            source_code=source_code,
-            app=app,
-            overwrite=overwrite,
-            options=options,
-        )
+        target_deploy_pipeline_yaml = _locked_deploy_pipeline_yaml
     return await asyncio.to_thread(
-        deploy_pipeline_yaml,
+        target_deploy_pipeline_yaml,
         pipeline_name=pipeline_name,
         source_code=source_code,
         app=app,
