@@ -44,12 +44,12 @@ def test_run_app_explicit_overrides(monkeypatch):
     monkeypatch.setattr(uvicorn, "run", fake_run)
 
     app = FastAPI()
-    run_app(app, host="0.0.0.0", port=9999)
+    run_app(app, host="0.0.0.0", port=9999)  # noqa: S104
 
     assert len(calls) == 1
     args, kwargs = calls[0]
     assert args[0] is app
-    assert kwargs["host"] == "0.0.0.0"
+    assert kwargs["host"] == "0.0.0.0"  # noqa: S104
     assert kwargs["port"] == 9999
 
 

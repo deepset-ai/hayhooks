@@ -81,7 +81,6 @@ def test_run_command_single_worker(monkeypatch):
     the app object directly to uvicorn.run.
     """
     import uvicorn
-
     from fastapi import FastAPI
 
     calls = []
