@@ -20,38 +20,88 @@ def set_default_settings():
     settings.root_path = "/"
 
 
-def test_run_command(monkeypatch):
+def test_run_command_with_reload(monkeypatch):
     """
-    Test that the `run` command calls uvicorn.run with the provided options.
+    With --reload, the CLI must use uvicorn.run with a string import path
+    and factory=True (uvicorn requirement for reload/multi-worker).
     """
     import uvicorn
 
     calls = []
 
     def fake_uvicorn_run(*args, **kwargs):
-        calls.append(kwargs)
+        calls.append((args, kwargs))
 
     monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
 
-    # Invoke the run command with custom host, port, and reload flag.
     result = runner.invoke(
         hayhooks_cli,
-        [
-            "run",
-            "--host",
-            "localhost",
-            "--port",
-            "1416",
-            "--reload",
-        ],
+        ["run", "--host", "localhost", "--port", "1416", "--reload"],
     )
     assert result.exit_code == 0, result.output
     assert calls, "uvicorn.run was not called"
 
-    uvicorn_kwargs = calls[0]
-    assert uvicorn_kwargs.get("host") == "localhost"
-    assert uvicorn_kwargs.get("port") == 1416
-    assert uvicorn_kwargs.get("reload") is True
+    args, kwargs = calls[0]
+    assert args[0] == "hayhooks.server.app:create_app"
+    assert kwargs.get("host") == "localhost"
+    assert kwargs.get("port") == 1416
+    assert kwargs.get("reload") is True
+    assert kwargs.get("factory") is True
+
+
+def test_run_command_with_workers(monkeypatch):
+    """
+    With --workers > 1, the CLI must use the string import path (same as reload).
+    """
+    import uvicorn
+
+    calls = []
+
+    def fake_uvicorn_run(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
+
+    result = runner.invoke(
+        hayhooks_cli,
+        ["run", "--host", "localhost", "--port", "1416", "--workers", "4"],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls, "uvicorn.run was not called"
+
+    args, kwargs = calls[0]
+    assert args[0] == "hayhooks.server.app:create_app"
+    assert kwargs.get("workers") == 4
+    assert kwargs.get("factory") is True
+
+
+def test_run_command_single_worker(monkeypatch):
+    """
+    Without --reload or --workers > 1, the CLI uses run_app() which passes
+    the app object directly to uvicorn.run.
+    """
+    import uvicorn
+
+    from fastapi import FastAPI
+
+    calls = []
+
+    def fake_uvicorn_run(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
+
+    result = runner.invoke(
+        hayhooks_cli,
+        ["run", "--host", "localhost", "--port", "1416"],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls, "uvicorn.run was not called"
+
+    args, kwargs = calls[0]
+    assert isinstance(args[0], FastAPI), "run_app should pass a FastAPI object, not a string"
+    assert kwargs.get("host") == "localhost"
+    assert kwargs.get("port") == 1416
 
 
 def test_status_command(monkeypatch):

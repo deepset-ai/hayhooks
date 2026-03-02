@@ -28,10 +28,9 @@ How it works
 
 import sys
 
-import uvicorn
 from auth import API_KEY_ENV_VAR, API_KEYS_ENV_VAR, _add_api_key_middleware, _add_openapi_security, _load_api_keys
 
-from hayhooks import create_app, log
+from hayhooks import create_app, log, run_app
 from hayhooks.settings import settings
 
 
@@ -60,8 +59,8 @@ def create_authenticated_app():
 
 # The app object is created at module level so that Uvicorn can import it
 # directly (e.g. ``uvicorn app:hayhooks``).  We pass it as an object to
-# uvicorn.run() below to avoid double-import issues.
+# run_app() below to avoid double-import issues.
 hayhooks = create_authenticated_app()
 
 if __name__ == "__main__":
-    uvicorn.run(hayhooks, host=settings.host, port=settings.port)
+    run_app(hayhooks)

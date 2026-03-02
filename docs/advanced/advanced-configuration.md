@@ -26,10 +26,8 @@ For basic configuration, see [Configuration](../getting-started/configuration.md
 You can create a custom Hayhooks app instance to add routes or middleware:
 
 ```python
-import uvicorn
-from hayhooks.settings import settings
 from fastapi import Request
-from hayhooks import create_app
+from hayhooks import create_app, run_app
 
 # Create the Hayhooks app
 hayhooks = create_app()
@@ -47,7 +45,7 @@ async def custom_middleware(request: Request, call_next):
     return response
 
 if __name__ == "__main__":
-    uvicorn.run("app:hayhooks", host=settings.host, port=settings.port)
+    run_app(hayhooks)
 ```
 
 This allows you to build custom applications with Hayhooks as the core engine while adding your own business logic and integrations.
