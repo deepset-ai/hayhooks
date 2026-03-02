@@ -290,6 +290,33 @@ def create_app() -> FastAPI:
     return app
 
 
+def run_app(
+    app: FastAPI,
+    *,
+    host: str | None = None,
+    port: int | None = None,
+) -> None:
+    """
+    Run a Hayhooks FastAPI application with Uvicorn.
+
+    Reads host/port defaults from Hayhooks settings when not provided.
+    For multi-worker or auto-reload setups, use the ``hayhooks run`` CLI
+    or call ``uvicorn.run()`` directly with a string import path.
+
+    Args:
+        app: A FastAPI application (e.g. from ``create_app()``).
+        host: Bind address. Defaults to ``settings.host``.
+        port: Bind port. Defaults to ``settings.port``.
+    """
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host=host or settings.host,
+        port=port or settings.port,
+    )
+
+
 def _mount_chainlit_ui(app: FastAPI) -> None:
     """
     Mount Chainlit UI as a sub-application if enabled and available.
