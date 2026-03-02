@@ -10,7 +10,7 @@ on:
       - "mkdocs.yml"
 
 env:
-  HATCH_VERSION: "1.14.2"
+  HATCH_VERSION: "1.16.5"
 
 jobs:
   deploy-docs:
