@@ -62,9 +62,6 @@ def run(  # noqa: PLR0913
     """
     Run the Hayhooks server.
     """
-    # Lazy imports to avoid heavy deps on CLI startup
-    import uvicorn
-
     from hayhooks.server.logger import log
     from hayhooks.settings import settings
 
@@ -123,8 +120,18 @@ def run(  # noqa: PLR0913
             _set_env("HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR", chainlit_custom_elements_dir)
             settings.chainlit_custom_elements_dir = chainlit_custom_elements_dir
 
-    # Use string import path so server modules load only within uvicorn context
-    uvicorn.run("hayhooks.server.app:create_app", host=host, port=port, workers=workers, reload=reload, factory=True)
+    if workers > 1 or reload:
+        # Multi-worker and auto-reload require a string import path so each
+        # uvicorn worker/subprocess re-imports the app module independently.
+        import uvicorn
+
+        uvicorn.run(
+            "hayhooks.server.app:create_app", host=host, port=port, workers=workers, reload=reload, factory=True
+        )
+    else:
+        from hayhooks.server.app import run_app
+
+        run_app(get_app(), host=host, port=port)
 
 
 @hayhooks_cli.command()

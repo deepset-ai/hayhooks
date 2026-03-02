@@ -73,8 +73,8 @@ class PipelineWrapper(BasePipelineWrapper):
     # This will create a POST /my_agent/run endpoint
     # `question` will be the input argument and will be auto-validated by a Pydantic model
     async def run_api_async(self, question: str) -> str:
-        result = await self.agent.run_async({"messages": [ChatMessage.from_user(question)]})
-        return result["replies"][0].text
+        result = await self.agent.run_async(messages=[ChatMessage.from_user(question)])
+        return result["last_message"].text
 
     # This will create an OpenAI-compatible /chat/completions endpoint
     async def run_chat_completion_async(

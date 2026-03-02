@@ -20,6 +20,7 @@ This page lists all maintained Hayhooks examples with detailed descriptions and 
 | Example | Docs | Code | Description |
 |---|---|---|---|
 | RAG: Indexing and Query with Elasticsearch | [rag-system.md](rag-system.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query) | Full indexing/query pipelines with Elasticsearch |
+| API Key Authentication | [advanced-configuration.md](../advanced/advanced-configuration.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/programmatic/api_key_auth) | Middleware-based API key auth with multi-key support and Swagger Authorize |
 
 ## How to use examples
 
