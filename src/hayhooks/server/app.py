@@ -1,6 +1,7 @@
 import os
 import sys
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from os import PathLike
 from pathlib import Path
@@ -16,10 +17,19 @@ from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
-from hayhooks.server.logger import log
+from hayhooks.server.logger import log, log_elapsed
 from hayhooks.server.routers import deploy_router, draw_router, openai_router, status_router, undeploy_router
-from hayhooks.server.utils.deploy_utils import deploy_pipeline_files, deploy_pipeline_yaml, read_pipeline_files_from_dir
-from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, check_cors_settings, settings
+from hayhooks.server.utils.deploy_utils import (
+    commit_prepared_pipeline,
+    deploy_pipeline_files,
+    deploy_pipeline_yaml,
+    prepare_pipeline_files,
+    prepare_pipeline_yaml,
+    read_pipeline_files_from_dir,
+    rebuild_openapi,
+)
+from hayhooks.server.utils.models import PreparedPipeline
+from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy, check_cors_settings, settings
 
 
 def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
@@ -93,40 +103,105 @@ def init_pipeline_dir(pipelines_dir: PathLike | str) -> str:
     return str(pipelines_dir)
 
 
+def _deploy_pipelines_sequential(app: FastAPI, yaml_files: list[Path], pipeline_dirs: list[Path]) -> int:
+    """Deploy pipelines one at a time (original behaviour). Returns count of deployed."""
+    deployed = 0
+    for pipeline_file_path in yaml_files:
+        try:
+            deploy_yaml_pipeline(app, pipeline_file_path)
+            deployed += 1
+        except Exception as e:
+            log.warning("Skipping pipeline file '{}': {}", pipeline_file_path, e)
+
+    for pipeline_dir in pipeline_dirs:
+        try:
+            deploy_files_pipeline(app, pipeline_dir)
+            deployed += 1
+        except Exception as e:
+            log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
+    return deployed
+
+
+def _prepare_one(path: Path) -> PreparedPipeline | None:
+    """Prepare a single pipeline from a YAML file or a directory. Thread-safe."""
+    if path.is_file():
+        return prepare_pipeline_yaml(path.stem, source_code=path.read_text(encoding="utf-8"))
+
+    files = read_pipeline_files_from_dir(path)
+    if not files:
+        log.warning("No files found in pipeline directory: '{}'", path)
+        return None
+    return prepare_pipeline_files(path.name, files=files, save_files=False)
+
+
+def _safe_prepare(path: Path) -> PreparedPipeline | None:
+    try:
+        return _prepare_one(path)
+    except Exception as e:
+        log.warning("Skipping pipeline '{}' (prepare failed): {}", path, e)
+        return None
+
+
+def _deploy_pipelines_parallel(app: FastAPI, yaml_files: list[Path], pipeline_dirs: list[Path]) -> int:
+    """
+    Deploy pipelines with parallel prepare + serial commit.
+
+    The expensive work (file I/O, YAML/module loading, wrapper ``setup()``) runs
+    in a bounded thread pool.  Results are committed one-by-one on the calling
+    thread so ``app.routes`` and the registry are never mutated concurrently.
+    The OpenAPI schema is rebuilt exactly once after all commits.
+    """
+    max_workers = max(1, settings.startup_deploy_workers)
+    sources: list[Path] = [*yaml_files, *pipeline_dirs]
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        prepared = [pipeline for pipeline in pool.map(_safe_prepare, sources) if pipeline is not None]
+
+    deployed = 0
+    for p in prepared:
+        try:
+            commit_prepared_pipeline(p, app=app, _defer_openapi_rebuild=True)
+            deployed += 1
+        except Exception as e:
+            log.warning("Skipping pipeline '{}' (commit failed): {}", p.name, e)
+
+    if deployed:
+        rebuild_openapi(app)
+
+    return deployed
+
+
+@log_elapsed("INFO")
 def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
     """
     Deploy all pipelines from the specified directory.
+
+    Respects ``startup_deploy_strategy``:
+    - *sequential*: deploy one pipeline at a time (original behaviour).
+    - *parallel* (default): deploy in a bounded thread pool, rebuild OpenAPI once.
 
     Args:
         app: FastAPI application instance
         pipelines_dir: Path to the pipelines directory
     """
     pipelines_dir = init_pipeline_dir(pipelines_dir)
+    log.info("Pipelines dir set to: '{}'", pipelines_dir)
+    pipelines_path = Path(pipelines_dir)
 
-    if pipelines_dir:
-        log.info("Pipelines dir set to: '{}'", pipelines_dir)
-        pipelines_path = Path(pipelines_dir)
+    yaml_files = list(pipelines_path.glob("*.y*ml"))
+    pipeline_dirs = [d for d in pipelines_path.iterdir() if d.is_dir()]
 
-        yaml_files = list(pipelines_path.glob("*.y*ml"))
-        pipeline_dirs = [d for d in pipelines_path.iterdir() if d.is_dir()]
+    total = len(yaml_files) + len(pipeline_dirs)
+    if total == 0:
+        return
 
-        if yaml_files:
-            log.info("Deploying {} pipeline(s) from YAML files", len(yaml_files))
-            for pipeline_file_path in yaml_files:
-                try:
-                    deploy_yaml_pipeline(app, pipeline_file_path)
-                except Exception as e:
-                    log.warning("Skipping pipeline file '{}': {}", pipeline_file_path, e)
-                    continue
+    strategy = settings.startup_deploy_strategy
+    is_parallel = strategy == StartupDeployStrategy.PARALLEL
+    deploy_fn = _deploy_pipelines_parallel if is_parallel else _deploy_pipelines_sequential
 
-        if pipeline_dirs:
-            log.info("Deploying {} pipeline wrappers from dirs", len(pipeline_dirs))
-            for pipeline_dir in pipeline_dirs:
-                try:
-                    deploy_files_pipeline(app, pipeline_dir)
-                except Exception as e:
-                    log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
-                    continue
+    log.info("Deploying {} pipeline(s) using '{}' strategy", total, strategy.value)
+    deployed = deploy_fn(app, yaml_files, pipeline_dirs)
+    log.info("Startup deploy complete: {}/{} pipelines deployed", deployed, total)
 
 
 @asynccontextmanager

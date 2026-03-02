@@ -70,6 +70,43 @@ export HAYHOOKS_STREAMING_COMPONENTS="llm_1,llm_2"
 export HAYHOOKS_STREAMING_COMPONENTS="llm_1, llm_2, llm_3"
 ```
 
+## Deploy Performance
+
+### HAYHOOKS_DEPLOY_CONCURRENCY
+
+- Default: `serialized`
+- Description: Controls how runtime deploy/undeploy operations (via HTTP API and MCP) are synchronized
+- Options:
+  - `"serialized"` (default): One deploy/undeploy at a time. Safest option; prevents race conditions on the pipeline registry and FastAPI route table.
+  - `"parallel"`: Allow concurrent deploy/undeploy operations. Higher throughput for admin traffic, but carries a higher risk of race conditions.
+
+### HAYHOOKS_STARTUP_DEPLOY_STRATEGY
+
+- Default: `parallel`
+- Description: Controls how pipelines are deployed from `HAYHOOKS_PIPELINES_DIR` at startup
+- Options:
+  - `"sequential"`: Deploy one pipeline at a time (original behavior).
+  - `"parallel"` (default): Prepare pipelines in a bounded thread pool, then commit routes serially and rebuild the OpenAPI schema once at the end. Significantly faster when many pipelines are deployed.
+
+### HAYHOOKS_STARTUP_DEPLOY_WORKERS
+
+- Default: `4`
+- Description: Maximum number of worker threads used for parallel startup deployment (only effective when `HAYHOOKS_STARTUP_DEPLOY_STRATEGY=parallel`)
+
+**Examples:**
+
+```bash
+# Fastest startup: parallel with 8 workers
+export HAYHOOKS_STARTUP_DEPLOY_STRATEGY=parallel
+export HAYHOOKS_STARTUP_DEPLOY_WORKERS=8
+
+# Safe runtime: serialize all deploy/undeploy (default)
+export HAYHOOKS_DEPLOY_CONCURRENCY=serialized
+
+# Allow concurrent runtime deploys (advanced)
+export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
+```
+
 ## MCP
 
 ### HAYHOOKS_MCP_HOST
@@ -216,6 +253,9 @@ HAYHOOKS_USE_HTTPS=false
 HAYHOOKS_DISABLE_SSL=false
 HAYHOOKS_SHOW_TRACEBACKS=false
 HAYHOOKS_STREAMING_COMPONENTS=all
+HAYHOOKS_DEPLOY_CONCURRENCY=serialized
+HAYHOOKS_STARTUP_DEPLOY_STRATEGY=parallel
+HAYHOOKS_STARTUP_DEPLOY_WORKERS=4
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 LOG=INFO
 ```

@@ -1,6 +1,8 @@
+from enum import Enum
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from hayhooks.server.logger import log
@@ -10,6 +12,20 @@ load_dotenv(dotenv_path=find_dotenv(usecwd=True))
 
 APP_TITLE = "Hayhooks"
 APP_DESCRIPTION = "Hayhooks makes it easy to deploy and serve Haystack pipelines as REST APIs or MCP Tools"
+
+
+class DeployConcurrencyPolicy(str, Enum):
+    """Controls how runtime deploy/undeploy operations are synchronized."""
+
+    SERIALIZED = "serialized"
+    PARALLEL = "parallel"
+
+
+class StartupDeployStrategy(str, Enum):
+    """Controls how pipelines are deployed at startup."""
+
+    SEQUENTIAL = "sequential"
+    PARALLEL = "parallel"
 
 
 class AppSettings(BaseSettings):
@@ -55,6 +71,20 @@ class AppSettings(BaseSettings):
     # - "all": enable stream for ALL capable components
     # - Comma-separated list: "llm_1,llm_2" to enable stream for specific components
     streaming_components: str = ""
+
+    # Deploy concurrency policy for runtime (API/MCP) deploy/undeploy operations.
+    # "serialized" (default): one deploy/undeploy at a time (safe, predictable).
+    # "parallel": allow concurrent deploy/undeploy (higher throughput, higher risk).
+    deploy_concurrency: DeployConcurrencyPolicy = DeployConcurrencyPolicy.SERIALIZED
+
+    # Strategy for deploying pipelines at startup from HAYHOOKS_PIPELINES_DIR.
+    # "sequential": deploy one pipeline at a time (original behavior).
+    # "parallel" (default): prepare pipelines in parallel, then commit serially.
+    startup_deploy_strategy: StartupDeployStrategy = StartupDeployStrategy.PARALLEL
+
+    # Max worker threads for parallel startup deployment (only used when
+    # startup_deploy_strategy is "parallel"). Defaults to 4.
+    startup_deploy_workers: int = Field(default=4, gt=0, le=32)
 
     # CORS Settings
     cors_allow_origins: list[str] = ["*"]

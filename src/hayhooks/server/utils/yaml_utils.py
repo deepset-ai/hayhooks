@@ -197,7 +197,17 @@ def _resolve_declared_outputs(
     return resolutions
 
 
-def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
+def parse_yaml_pipeline(yaml_source_code: str) -> dict:
+    """
+    Parse YAML source into a dict, to be reused by downstream helpers.
+
+    This avoids redundant ``yaml.safe_load`` calls when extracting IO,
+    streaming components, etc. from the same source.
+    """
+    return yaml.safe_load(yaml_source_code) or {}
+
+
+def get_inputs_outputs_from_yaml(yaml_source_code: str, *, _parsed: dict | None = None) -> ResolvedIO:
     """
     Resolve inputs and outputs from a Haystack pipeline YAML.
 
@@ -207,6 +217,8 @@ def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
 
     Args:
         yaml_source_code: Pipeline YAML source code.
+        _parsed: Pre-parsed YAML dict (from ``parse_yaml_pipeline``). When provided,
+            the function skips its own ``yaml.safe_load`` call.
 
     Returns:
         A dictionary with two keys: "inputs" and "outputs". Each value is a mapping
@@ -216,7 +228,7 @@ def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
     Raises:
         InvalidYamlIOError: If both inputs and outputs are missing from the YAML definition.
     """
-    yaml_dict = yaml.safe_load(yaml_source_code) or {}
+    yaml_dict = _parsed if _parsed is not None else parse_yaml_pipeline(yaml_source_code)
     declared_inputs = yaml_dict.get("inputs", {}) or {}
     declared_outputs = yaml_dict.get("outputs", {}) or {}
 
@@ -236,7 +248,11 @@ def get_inputs_outputs_from_yaml(yaml_source_code: str) -> ResolvedIO:
     return {"inputs": input_resolutions, "outputs": output_resolutions}
 
 
-def get_streaming_components_from_yaml(yaml_source_code: str) -> list[str] | str | None:
+def get_streaming_components_from_yaml(
+    yaml_source_code: str,
+    *,
+    _parsed: dict | None = None,
+) -> list[str] | str | None:
     """
     Extract streaming components configuration from a Haystack pipeline YAML.
 
@@ -244,7 +260,9 @@ def get_streaming_components_from_yaml(yaml_source_code: str) -> list[str] | str
     By default (when not specified), only the last streaming-capable component will stream.
 
     Args:
-        yaml_source_code: Pipeline YAML source code.
+        yaml_source_code: Pipeline YAML source code (unused when ``_parsed`` is provided).
+        _parsed: Pre-parsed YAML dict (from ``parse_yaml_pipeline``). When provided,
+            the function skips its own ``yaml.safe_load`` call.
 
     Returns:
         - None if not specified (use default behavior)
@@ -252,7 +270,7 @@ def get_streaming_components_from_yaml(yaml_source_code: str) -> list[str] | str
         - list[str] of component names that should stream
         Example: ["llm_1", "llm_2"]
     """
-    yaml_dict = yaml.safe_load(yaml_source_code) or {}
+    yaml_dict = _parsed if _parsed is not None else parse_yaml_pipeline(yaml_source_code)
     streaming_components = yaml_dict.get("streaming_components")
 
     if streaming_components is None:

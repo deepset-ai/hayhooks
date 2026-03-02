@@ -105,6 +105,37 @@ Pipeline `run()` methods execute synchronously but are wrapped in `run_in_thread
 - Requests are queued and processed sequentially in a single worker
 - Use multiple workers or horizontal scaling to improve throughput
 
+### Startup Deploy Performance
+
+When many pipelines are deployed from `HAYHOOKS_PIPELINES_DIR`, startup latency can grow linearly. Hayhooks offers two strategies controlled by environment variables:
+
+- **Parallel** (default): Pipelines are prepared in a bounded thread pool, then committed to the registry serially with a single OpenAPI schema rebuild at the end. Set `HAYHOOKS_STARTUP_DEPLOY_WORKERS` to control parallelism (default: 4).
+- **Sequential**: Deploy one pipeline at a time (original behavior). Use this if you encounter issues with parallel startup.
+
+```bash
+# Parallel startup with 8 workers (recommended for many pipelines)
+export HAYHOOKS_STARTUP_DEPLOY_STRATEGY=parallel
+export HAYHOOKS_STARTUP_DEPLOY_WORKERS=8
+
+# Fall back to sequential if needed
+export HAYHOOKS_STARTUP_DEPLOY_STRATEGY=sequential
+```
+
+### Runtime Deploy Concurrency
+
+Runtime deploy/undeploy operations (via HTTP API and MCP) run off the event loop in a background thread, so they never block other requests. By default, these operations are serialized (one at a time) for safety:
+
+```bash
+# Default: safe, one deploy at a time
+export HAYHOOKS_DEPLOY_CONCURRENCY=serialized
+
+# Advanced: allow concurrent deploy/undeploy
+export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
+```
+
+!!! warning "Parallel Runtime Deploys"
+    The `parallel` policy allows multiple deploy/undeploy operations to run concurrently. This can improve throughput for heavy admin traffic but may cause race conditions if pipelines are deployed and undeployed rapidly. Use with caution.
+
 ### Async Pipelines
 
 Implement async methods for better I/O-bound performance:
