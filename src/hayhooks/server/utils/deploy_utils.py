@@ -718,7 +718,10 @@ def deploy_pipeline_files(
     """
     prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=save_files)
     return commit_prepared_pipeline(
-        prepared, app=app, overwrite=overwrite, _defer_openapi_rebuild=_defer_openapi_rebuild,
+        prepared,
+        app=app,
+        overwrite=overwrite,
+        _defer_openapi_rebuild=_defer_openapi_rebuild,
     )
 
 
