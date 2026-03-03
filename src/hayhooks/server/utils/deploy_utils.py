@@ -1,7 +1,9 @@
+import asyncio
 import inspect
 import json
 import shutil
 import tempfile
+import threading
 import traceback
 from collections.abc import AsyncGenerator as AsyncGeneratorABC
 from collections.abc import Callable
@@ -20,7 +22,7 @@ from pydantic import BaseModel
 
 from hayhooks.events import PipelineEvent
 from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
-from hayhooks.server.logger import log
+from hayhooks.server.logger import log, log_elapsed
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.models import (
     create_request_model_from_callable,
@@ -29,13 +31,83 @@ from hayhooks.server.pipelines.models import (
 )
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.models import PreparedPipeline
 from hayhooks.server.utils.module_loader import (
     create_pipeline_wrapper_instance,
     load_pipeline_module,
     unload_pipeline_modules,
 )
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
-from hayhooks.settings import settings
+from hayhooks.settings import DeployConcurrencyPolicy, settings
+
+# threading.Lock (not asyncio.Lock) because it's only acquired inside worker
+# threads spawned by asyncio.to_thread, so never on the event loop itself.
+_deploy_lock = threading.Lock()
+
+
+def _with_deploy_lock(func: Callable) -> Callable:
+    """Wrap *func* so it acquires ``_deploy_lock`` before executing."""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with _deploy_lock:
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+async def _offload(func: Callable, **kwargs: Any) -> Any:
+    """Run *func* in a thread, applying the deploy lock if policy is SERIALIZED."""
+    if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED:
+        func = _with_deploy_lock(func)
+    return await asyncio.to_thread(func, **kwargs)
+
+
+async def deploy_pipeline_yaml_async(
+    pipeline_name: str,
+    source_code: str,
+    app: FastAPI | None = None,
+    overwrite: bool = False,
+    options: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """
+    Async wrapper that offloads ``deploy_pipeline_yaml`` off the event loop.
+
+    Respects the ``deploy_concurrency`` setting: when *serialized* (default), a
+    global lock ensures only one deploy/undeploy runs at a time; when *parallel*,
+    the call runs in a thread without serialization.
+    """
+    return await _offload(
+        deploy_pipeline_yaml,
+        pipeline_name=pipeline_name,
+        source_code=source_code,
+        app=app,
+        overwrite=overwrite,
+        options=options,
+    )
+
+
+async def deploy_pipeline_files_async(
+    pipeline_name: str,
+    files: dict[str, str],
+    app: FastAPI | None = None,
+    save_files: bool = True,
+    overwrite: bool = False,
+) -> dict[str, str]:
+    """Async wrapper that offloads ``deploy_pipeline_files`` off the event loop."""
+    return await _offload(
+        deploy_pipeline_files,
+        pipeline_name=pipeline_name,
+        files=files,
+        app=app,
+        save_files=save_files,
+        overwrite=overwrite,
+    )
+
+
+async def undeploy_pipeline_async(pipeline_name: str, app: FastAPI | None = None) -> None:
+    """Async wrapper that offloads ``undeploy_pipeline`` off the event loop."""
+    return await _offload(undeploy_pipeline, pipeline_name=pipeline_name, app=app)
 
 
 def _is_single_yaml_file(files: dict[str, str]) -> bool:
@@ -310,7 +382,13 @@ def create_run_endpoint_handler(
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
 
 
-def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> None:
+def add_pipeline_api_route(
+    app: FastAPI,
+    pipeline_name: str,
+    pipeline_wrapper: BasePipelineWrapper,
+    *,
+    _defer_openapi_rebuild: bool = False,
+) -> None:
     """
     Create or replace the wrapper-based pipeline run endpoint at /{pipeline_name}/run.
 
@@ -318,10 +396,12 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
         app: FastAPI application instance.
         pipeline_name: Name of the pipeline.
         pipeline_wrapper: Initialized pipeline wrapper instance to use as handler target.
+        _defer_openapi_rebuild: When True, skip ``app.setup()`` / schema invalidation so
+            the caller can batch multiple route additions and rebuild once at the end.
 
     Side Effects:
         - Removes any existing route at /{pipeline_name}/run
-        - Rebuilds and invalidates the OpenAPI schema
+        - Rebuilds and invalidates the OpenAPI schema (unless ``_defer_openapi_rebuild``)
         - Updates registry metadata with request/response models and file requirement flag
     """
     clog = log.bind(pipeline_name=pipeline_name)
@@ -392,7 +472,14 @@ def add_pipeline_api_route(app: FastAPI, pipeline_name: str, pipeline_wrapper: B
         },
     )
 
-    clog.debug("Setting up FastAPI app")
+    if not _defer_openapi_rebuild:
+        clog.debug("Setting up FastAPI app")
+        app.openapi_schema = None
+        app.setup()
+
+
+def rebuild_openapi(app: FastAPI) -> None:
+    """Invalidate and rebuild the OpenAPI schema for *app*."""
     app.openapi_schema = None
     app.setup()
 
@@ -403,6 +490,8 @@ def _register_and_deploy_pipeline(
     app: FastAPI | None = None,
     overwrite: bool = False,
     extra_metadata: dict[str, Any] | None = None,
+    *,
+    _defer_openapi_rebuild: bool = False,
 ) -> dict[str, str]:
     """
     Common logic for registering and deploying any pipeline wrapper.
@@ -420,6 +509,8 @@ def _register_and_deploy_pipeline(
         app: Optional FastAPI app for route creation.
         overwrite: Whether to overwrite existing pipeline.
         extra_metadata: Additional metadata fields (e.g., streaming_components for YAML).
+        _defer_openapi_rebuild: Forward to ``add_pipeline_api_route`` to skip per-pipeline
+            OpenAPI rebuild during batch operations.
 
     Returns:
         A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
@@ -481,9 +572,98 @@ def _register_and_deploy_pipeline(
 
     # Create API route if app is provided
     if app:
-        add_pipeline_api_route(app, pipeline_name, pipeline_wrapper)
+        add_pipeline_api_route(app, pipeline_name, pipeline_wrapper, _defer_openapi_rebuild=_defer_openapi_rebuild)
 
     return {"name": pipeline_name}
+
+
+@log_elapsed()
+def prepare_pipeline_files(
+    pipeline_name: str,
+    files: dict[str, str],
+    save_files: bool = True,
+) -> PreparedPipeline:
+    """
+    Prepare a files-based pipeline without mutating registry or routes.
+
+    Does file I/O, module loading, wrapper creation, and ``setup()`` — all the
+    expensive work that is safe to run in a thread.  The returned
+    ``PreparedPipeline`` can be committed later via ``_register_and_deploy_pipeline``.
+    """
+    tmp_dir = None
+
+    if save_files:
+        save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
+        pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
+    else:
+        tmp_dir = tempfile.mkdtemp()
+        save_pipeline_files(pipeline_name, files=files, pipelines_dir=tmp_dir)
+        pipeline_dir = Path(tmp_dir) / pipeline_name
+
+    try:
+        module = load_pipeline_module(pipeline_name, dir_path=pipeline_dir)
+        pipeline_wrapper = create_pipeline_wrapper_instance(module)
+        pipeline_wrapper.setup()
+        return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper)
+    finally:
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@log_elapsed()
+def prepare_pipeline_yaml(
+    pipeline_name: str,
+    source_code: str,
+    options: dict[str, Any] | None = None,
+) -> PreparedPipeline:
+    """
+    Prepare a YAML pipeline without mutating registry or routes.
+
+    Does file I/O, YAML parsing, wrapper creation, and ``setup()`` — all the
+    expensive work that is safe to run in a thread.
+    """
+    save_file: bool = True if options is None else bool(options.get("save_file", True))
+    if save_file:
+        save_pipeline_files(pipeline_name, {f"{pipeline_name}.yml": source_code}, settings.pipelines_dir)
+
+    description = (options or {}).get("description")
+    pipeline_wrapper = YAMLPipelineWrapper.from_yaml(source_code, description=description)
+
+    skip_mcp = (options or {}).get("skip_mcp", False)
+    pipeline_wrapper.skip_mcp = bool(skip_mcp)
+
+    pipeline_wrapper.setup()
+
+    extra_metadata = {
+        "description": description or pipeline_name,
+        "streaming_components": pipeline_wrapper.streaming_components,
+        "include_outputs_from": pipeline_wrapper.include_outputs_from,
+        "input_resolutions": pipeline_wrapper.input_resolutions,
+    }
+
+    return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper, extra_metadata=extra_metadata)
+
+
+def commit_prepared_pipeline(
+    prepared: PreparedPipeline,
+    app: FastAPI | None = None,
+    overwrite: bool = False,
+    *,
+    _defer_openapi_rebuild: bool = False,
+) -> dict[str, str]:
+    """
+    Commit a prepared pipeline to the registry and (optionally) add its route.
+
+    This mutates shared state and must NOT be called concurrently.
+    """
+    return _register_and_deploy_pipeline(
+        pipeline_name=prepared.name,
+        pipeline_wrapper=prepared.wrapper,
+        app=app,
+        overwrite=overwrite,
+        extra_metadata=prepared.extra_metadata,
+        _defer_openapi_rebuild=_defer_openapi_rebuild,
+    )
 
 
 def deploy_pipeline_files(
@@ -492,6 +672,8 @@ def deploy_pipeline_files(
     app: FastAPI | None = None,
     save_files: bool = True,
     overwrite: bool = False,
+    *,
+    _defer_openapi_rebuild: bool = False,
 ) -> dict[str, str]:
     """
     Deploy a pipeline from Python files (pipeline_wrapper.py and other files).
@@ -505,6 +687,7 @@ def deploy_pipeline_files(
         app: Optional FastAPI application instance. If provided, the API route will be added.
         save_files: Whether to save the pipeline files to disk permanently
         overwrite: Whether to overwrite an existing pipeline
+        _defer_openapi_rebuild: Skip per-pipeline OpenAPI rebuild (for batch startup).
 
     Returns:
         A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
@@ -515,34 +698,13 @@ def deploy_pipeline_files(
         PipelineModuleLoadError: If loading the pipeline module fails.
         PipelineWrapperError: If wrapper creation or setup fails.
     """
-    tmp_dir = None
-
-    # Save files to disk (required for module loading)
-    if save_files:
-        save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
-        pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
-    else:
-        # Use temporary directory if not saving permanently
-        tmp_dir = tempfile.mkdtemp()
-        save_pipeline_files(pipeline_name, files=files, pipelines_dir=tmp_dir)
-        pipeline_dir = Path(tmp_dir) / pipeline_name
-
-    try:
-        # Load module and create wrapper instance
-        module = load_pipeline_module(pipeline_name, dir_path=pipeline_dir)
-        pipeline_wrapper = create_pipeline_wrapper_instance(module)
-
-        # Use shared helper for registration
-        return _register_and_deploy_pipeline(
-            pipeline_name=pipeline_name,
-            pipeline_wrapper=pipeline_wrapper,
-            app=app,
-            overwrite=overwrite,
-        )
-    finally:
-        # Clean up temp directory if used
-        if tmp_dir is not None:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+    prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=save_files)
+    return commit_prepared_pipeline(
+        prepared,
+        app=app,
+        overwrite=overwrite,
+        _defer_openapi_rebuild=_defer_openapi_rebuild,
+    )
 
 
 def deploy_pipeline_yaml(
@@ -551,6 +713,8 @@ def deploy_pipeline_yaml(
     app: FastAPI | None = None,
     overwrite: bool = False,
     options: dict[str, Any] | None = None,
+    *,
+    _defer_openapi_rebuild: bool = False,
 ) -> dict[str, str]:
     """
     Deploy a YAML pipeline to the FastAPI application with IO declared in the YAML.
@@ -567,6 +731,7 @@ def deploy_pipeline_yaml(
             - save_file: bool | None - whether to persist the YAML to disk (default: True)
             - description: str | None
             - skip_mcp: bool | None
+        _defer_openapi_rebuild: Skip per-pipeline OpenAPI rebuild (for batch startup).
 
     Returns:
         A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
@@ -576,33 +741,9 @@ def deploy_pipeline_yaml(
         ValueError: If the YAML cannot be parsed into an AsyncPipeline.
         InvalidYamlIOError: If the YAML is missing inputs/outputs declarations.
     """
-    # Optionally save YAML to disk as pipelines/{name}.yml (default True)
-    save_file: bool = True if options is None else bool(options.get("save_file", True))
-    if save_file:
-        save_pipeline_files(pipeline_name, {f"{pipeline_name}.yml": source_code}, settings.pipelines_dir)
-
-    # Create YAMLPipelineWrapper from source code
-    description = (options or {}).get("description")
-    pipeline_wrapper = YAMLPipelineWrapper.from_yaml(source_code, description=description)
-
-    # Set skip_mcp from options
-    skip_mcp = (options or {}).get("skip_mcp", False)
-    pipeline_wrapper.skip_mcp = bool(skip_mcp)
-
-    # YAML-specific metadata
-    extra_metadata = {
-        "description": description or pipeline_name,
-        "streaming_components": pipeline_wrapper.streaming_components,
-        "include_outputs_from": pipeline_wrapper.include_outputs_from,
-        "input_resolutions": pipeline_wrapper.input_resolutions,
-    }
-
-    return _register_and_deploy_pipeline(
-        pipeline_name=pipeline_name,
-        pipeline_wrapper=pipeline_wrapper,
-        app=app,
-        overwrite=overwrite,
-        extra_metadata=extra_metadata,
+    prepared = prepare_pipeline_yaml(pipeline_name, source_code=source_code, options=options)
+    return commit_prepared_pipeline(
+        prepared, app=app, overwrite=overwrite, _defer_openapi_rebuild=_defer_openapi_rebuild
     )
 
 

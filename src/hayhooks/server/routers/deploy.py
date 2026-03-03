@@ -9,7 +9,7 @@ from hayhooks.server.exceptions import (
     PipelineWrapperError,
     PipelineYamlError,
 )
-from hayhooks.server.utils.deploy_utils import deploy_pipeline_files, deploy_pipeline_yaml
+from hayhooks.server.utils.deploy_utils import deploy_pipeline_files_async, deploy_pipeline_yaml_async
 
 router = APIRouter()
 
@@ -104,7 +104,7 @@ class YamlDeployRequest(BaseModel):
 )
 async def deploy_yaml(yaml_request: YamlDeployRequest, request: Request) -> DeployResponse:
     try:
-        result = deploy_pipeline_yaml(
+        result = await deploy_pipeline_yaml_async(
             app=request.app,
             pipeline_name=yaml_request.name,
             source_code=yaml_request.source_code,
@@ -139,7 +139,7 @@ async def deploy_yaml(yaml_request: YamlDeployRequest, request: Request) -> Depl
 )
 async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Request) -> DeployResponse:
     try:
-        result = deploy_pipeline_files(
+        result = await deploy_pipeline_files_async(
             app=request.app,
             pipeline_name=pipeline_files_request.name,
             files=pipeline_files_request.files,

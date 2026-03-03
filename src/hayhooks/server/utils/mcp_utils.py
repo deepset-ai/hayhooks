@@ -1,4 +1,3 @@
-import asyncio
 import json
 import traceback
 from collections.abc import AsyncIterator
@@ -18,7 +17,12 @@ from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.utils.deploy_utils import deploy_pipeline_files, read_pipeline_files_from_dir, undeploy_pipeline
+from hayhooks.server.utils.deploy_utils import (
+    deploy_pipeline_files,
+    deploy_pipeline_files_async,
+    read_pipeline_files_from_dir,
+    undeploy_pipeline_async,
+)
 from hayhooks.settings import settings
 
 PIPELINE_NAME_SCHEMA = {
@@ -183,8 +187,7 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C
     async def call_tool(name: str, arguments: dict) -> list["TextContent"]:
         try:
             if name == CoreTools.DEPLOY_PIPELINE:
-                result = await asyncio.to_thread(
-                    deploy_pipeline_files,
+                result = await deploy_pipeline_files_async(
                     pipeline_name=arguments["name"],
                     files=arguments["files"],
                     app=None,
@@ -205,7 +208,8 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C
 
             elif name == CoreTools.UNDEPLOY_PIPELINE:
                 pipeline_name = arguments["pipeline_name"]
-                undeploy_pipeline(pipeline_name=pipeline_name)
+                # app=None: the MCP server doesn't own FastAPI routes
+                await undeploy_pipeline_async(pipeline_name=pipeline_name)
                 return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' undeployed")]
 
             else:

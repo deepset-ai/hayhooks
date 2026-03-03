@@ -13,6 +13,7 @@ from hayhooks.server.utils.yaml_utils import (
     get_components_from_outputs,
     get_inputs_outputs_from_yaml,
     get_streaming_components_from_yaml,
+    parse_yaml_pipeline,
 )
 
 
@@ -187,13 +188,16 @@ class YAMLPipelineWrapper(BasePipelineWrapper):
         """
         log.debug("Creating YAMLPipelineWrapper from YAML source")
 
+        # Parse YAML once and share the dict with downstream helpers
+        parsed = parse_yaml_pipeline(source_code)
+
         # Resolve inputs and outputs from YAML
-        resolved_io = get_inputs_outputs_from_yaml(source_code)
+        resolved_io = get_inputs_outputs_from_yaml(source_code, _parsed=parsed)
         input_resolutions = resolved_io["inputs"]
         output_resolutions = resolved_io["outputs"]
 
         # Extract streaming components configuration if present
-        streaming_components = get_streaming_components_from_yaml(source_code)
+        streaming_components = get_streaming_components_from_yaml(source_code, _parsed=parsed)
         if streaming_components:
             log.debug("Found streaming_components in YAML: {}", streaming_components)
 
