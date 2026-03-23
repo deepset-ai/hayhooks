@@ -20,6 +20,8 @@ __all__ = [
     "async_streaming_generator",
     "find_all_streaming_components",
     "get_content",
+    "get_input_files",
+    "get_last_user_input_text",
     "get_last_user_message",
     "is_streaming_component",
     "is_user_message",
@@ -46,4 +48,53 @@ def get_last_user_message(messages: list[Message | dict]) -> str | None:
     for message in user_messages:
         return get_content(message)
 
+    return None
+
+
+def get_input_files(input_items: list[dict]) -> list[dict]:
+    """
+    Extract all ``input_file`` content parts from OpenAI Responses API input items.
+
+    Returns a list of dicts, each containing at least ``"file_id"`` (and any
+    other keys present on the content part, e.g. ``"filename"``).  Items that
+    are not user messages or content parts that are not ``input_file`` are
+    silently skipped.
+    """
+    files: list[dict] = []
+    for item in input_items:
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        files.extend(
+            part
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "input_file" and part.get("file_id")
+        )
+    return files
+
+
+def get_last_user_input_text(input_items: list[dict]) -> str | None:
+    """
+    Extract the last user text from OpenAI Responses API input items.
+
+    Input items use a different structure than chat messages:
+    ``[{"role": "user", "type": "message", "content": [{"type": "input_text", "text": "..."}]}]``
+
+    String shorthand (``"content": "Hello"``) is also supported.
+    """
+    for item in reversed(input_items):
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        if item.get("type") not in ("message", None):
+            continue
+
+        content = item.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            for content_part in reversed(content):
+                if isinstance(content_part, dict) and content_part.get("type") == "input_text":
+                    return content_part.get("text")
     return None

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi_openai_compat import ChatCompletion, ChatRequest, ModelObject, ModelsResponse
+from fastapi_openai_compat import ChatCompletion, ChatRequest, FileObject, ModelObject, ModelsResponse, ResponseRequest
 
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import DeployResponse
@@ -40,6 +40,26 @@ TEST_FILES_DIR_ASYNC_STREAMING = Path(__file__).parent / "test_files/files/async
 SAMPLE_PIPELINE_FILES_ASYNC_STREAMING = {
     "pipeline_wrapper.py": (TEST_FILES_DIR_ASYNC_STREAMING / "pipeline_wrapper.py").read_text(),
     "chat_with_website.yml": (TEST_FILES_DIR_ASYNC_STREAMING / "chat_with_website.yml").read_text(),
+}
+
+TEST_FILES_DIR_RESPONSES = Path(__file__).parent / "test_files/files/responses_basic"
+SAMPLE_PIPELINE_FILES_RESPONSES = {
+    "pipeline_wrapper.py": (TEST_FILES_DIR_RESPONSES / "pipeline_wrapper.py").read_text(),
+}
+
+TEST_FILES_DIR_RESPONSES_STREAMING = Path(__file__).parent / "test_files/files/responses_streaming"
+SAMPLE_PIPELINE_FILES_RESPONSES_STREAMING = {
+    "pipeline_wrapper.py": (TEST_FILES_DIR_RESPONSES_STREAMING / "pipeline_wrapper.py").read_text(),
+}
+
+TEST_FILES_DIR_RESPONSES_ASYNC_STREAMING = Path(__file__).parent / "test_files/files/async_responses_streaming"
+SAMPLE_PIPELINE_FILES_RESPONSES_ASYNC_STREAMING = {
+    "pipeline_wrapper.py": (TEST_FILES_DIR_RESPONSES_ASYNC_STREAMING / "pipeline_wrapper.py").read_text(),
+}
+
+TEST_FILES_DIR_RESPONSES_FILE_UPLOAD = Path(__file__).parent / "test_files/files/responses_with_file_upload"
+SAMPLE_PIPELINE_FILES_RESPONSES_FILE_UPLOAD = {
+    "pipeline_wrapper.py": (TEST_FILES_DIR_RESPONSES_FILE_UPLOAD / "pipeline_wrapper.py").read_text(),
 }
 
 
@@ -284,3 +304,226 @@ def test_async_chat_completion_streaming(client, deploy_files) -> None:
     assert last_chat_completion.choices[0].delta.role == "assistant"
     assert last_chat_completion.choices[0].index == 0
     assert last_chat_completion.choices[0].logprobs is None
+
+
+# ── Responses API tests ──────────────────────────────────────────────
+
+
+def test_responses_api_success(client, deploy_files) -> None:
+    pipeline_name = "test_pipeline_responses"
+
+    response = deploy_files(client, pipeline_name, SAMPLE_PIPELINE_FILES_RESPONSES)
+    assert response.status_code == 200
+
+    request = ResponseRequest(
+        model=pipeline_name,
+        input=[{"role": "user", "type": "message", "content": [{"type": "input_text", "text": "what is Redis?"}]}],
+    )
+
+    response = client.post("/v1/responses", json=request.model_dump())
+    assert response.status_code == 200
+
+    response_data = response.json()
+    assert response_data["object"] == "response"
+    assert response_data["model"] == pipeline_name
+    assert response_data["status"] == "completed"
+    assert len(response_data["output"]) == 1
+
+    output_msg = response_data["output"][0]
+    assert output_msg["type"] == "message"
+    assert output_msg["role"] == "assistant"
+    assert len(output_msg["content"]) == 1
+    assert output_msg["content"][0]["type"] == "output_text"
+    assert output_msg["content"][0]["text"]
+
+
+def test_responses_api_non_streaming_pipeline_with_stream_flag(client, deploy_files) -> None:
+    pipeline_name = "test_pipeline_responses"
+
+    response = deploy_files(client, pipeline_name, SAMPLE_PIPELINE_FILES_RESPONSES)
+    assert response.status_code == 200
+
+    request = ResponseRequest(
+        model=pipeline_name,
+        input=[{"role": "user", "type": "message", "content": [{"type": "input_text", "text": "what is Redis?"}]}],
+        stream=True,
+    )
+
+    response = client.post("/v1/responses", json=request.model_dump())
+    assert response.status_code == 200
+
+    headers: dict[str, Any] = response.headers
+    assert headers["Content-Type"] == "text/event-stream; charset=utf-8"
+
+    lines = [line for line in response.iter_lines() if line]
+    assert len(lines) > 0
+
+    event_types = []
+    for line in lines:
+        if line.startswith("event:"):
+            event_types.append(line.split("event:")[1].strip())
+
+    assert "response.created" in event_types
+    assert "response.output_text.delta" in event_types
+    assert "response.completed" in event_types
+
+
+def test_responses_api_invalid_model(client) -> None:
+    request = ResponseRequest(
+        model="nonexistent_model",
+        input=[{"role": "user", "type": "message", "content": [{"type": "input_text", "text": "Hello"}]}],
+    )
+
+    response = client.post("/v1/responses", json=request.model_dump())
+    assert response.status_code == 404
+
+
+def test_responses_api_not_implemented(client, deploy_files) -> None:
+    pipeline_file = Path(__file__).parent / "test_files/files/no_chat/pipeline_wrapper.py"
+    pipeline_data = {
+        "name": "test_pipeline_no_response",
+        "files": {"pipeline_wrapper.py": pipeline_file.read_text()},
+    }
+
+    response = deploy_files(client, pipeline_data["name"], pipeline_data["files"])
+    assert response.status_code == 200
+
+    request = ResponseRequest(
+        model="test_pipeline_no_response",
+        input=[{"role": "user", "type": "message", "content": [{"type": "input_text", "text": "Hello"}]}],
+    )
+
+    response = client.post("/v1/responses", json=request.model_dump())
+    assert response.status_code == 501
+
+    err_body: dict[str, Any] = response.json()
+    assert err_body["detail"] == "Responses endpoint not implemented for this model"
+
+
+def test_responses_api_streaming_without_stream_flag(client, deploy_files) -> None:
+    pipeline_name = "test_pipeline_responses_streaming"
+
+    response = deploy_files(client, pipeline_name, SAMPLE_PIPELINE_FILES_RESPONSES_STREAMING)
+    assert response.status_code == 200
+
+    request = ResponseRequest(
+        model=pipeline_name,
+        input=[{"role": "user", "type": "message", "content": [{"type": "input_text", "text": "what is Redis?"}]}],
+        stream=False,
+    )
+
+    response = client.post("/v1/responses", json=request.model_dump())
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "application/json"
+
+    response_data = response.json()
+    assert response_data["object"] == "response"
+    assert response_data["model"] == pipeline_name
+    assert len(response_data["output"]) == 1
+    assert response_data["output"][0]["content"][0]["text"]
+
+
+def test_responses_api_streaming(client, deploy_files) -> None:
+    pipeline_name = "test_pipeline_responses_streaming"
+
+    response = deploy_files(client, pipeline_name, SAMPLE_PIPELINE_FILES_RESPONSES_STREAMING)
+    assert response.status_code == 200
+
+    request = ResponseRequest(
+        model=pipeline_name,
+        input=[{"role": "user", "type": "message", "content": [{"type": "input_text", "text": "what is Redis?"}]}],
+        stream=True,
+    )
+
+    response = client.post("/v1/responses", json=request.model_dump())
+    assert response.status_code == 200
+
+    headers: dict[str, Any] = response.headers
+    assert headers["Content-Type"] == "text/event-stream; charset=utf-8"
+
+    lines = [line for line in response.iter_lines() if line]
+    assert len(lines) > 0
+
+    event_types = []
+    for line in lines:
+        if line.startswith("event:"):
+            event_types.append(line.split("event:")[1].strip())
+
+    assert "response.created" in event_types
+    assert "response.output_text.delta" in event_types
+    assert "response.completed" in event_types
+
+
+def test_responses_api_async_streaming(client, deploy_files) -> None:
+    pipeline_name = "async-responses-streaming"
+    response = deploy_files(client, pipeline_name, SAMPLE_PIPELINE_FILES_RESPONSES_ASYNC_STREAMING)
+    assert response.status_code == 200
+
+    request = ResponseRequest(
+        model=pipeline_name,
+        input=[{"role": "user", "type": "message", "content": [{"type": "input_text", "text": "what is Redis?"}]}],
+        stream=True,
+    )
+
+    response = client.post("/v1/responses", json=request.model_dump())
+    assert response.status_code == 200
+
+    headers: dict[str, Any] = response.headers
+    assert headers["Content-Type"] == "text/event-stream; charset=utf-8"
+
+    lines = [line for line in response.iter_lines() if line]
+    assert len(lines) > 0
+
+    event_types = []
+    for line in lines:
+        if line.startswith("event:"):
+            event_types.append(line.split("event:")[1].strip())
+
+    assert "response.created" in event_types
+    assert "response.output_text.delta" in event_types
+    assert "response.completed" in event_types
+
+
+# ── Files API tests ──────────────────────────────────────────────────
+
+
+def test_file_upload_default_handler(client) -> None:
+    file_content = b"This is a test file for the Files API."
+
+    response = client.post(
+        "/v1/files",
+        files={"file": ("test_document.txt", file_content, "text/plain")},
+        data={"purpose": "user_data"},
+    )
+    assert response.status_code == 200
+
+    file_obj = FileObject(**response.json())
+    assert file_obj.object == "file"
+    assert file_obj.id.startswith("file-")
+    assert file_obj.bytes == len(file_content)
+    assert file_obj.filename == "test_document.txt"
+    assert file_obj.purpose == "user_data"
+    assert file_obj.status == "processed"
+
+
+def test_file_upload_delegated_to_wrapper(client, deploy_files) -> None:
+    pipeline_name = "test_pipeline_file_upload"
+
+    response = deploy_files(client, pipeline_name, SAMPLE_PIPELINE_FILES_RESPONSES_FILE_UPLOAD)
+    assert response.status_code == 200
+
+    file_content = b"File handled by pipeline wrapper."
+
+    response = client.post(
+        "/v1/files",
+        files={"file": ("delegated.txt", file_content, "text/plain")},
+        data={"purpose": "assistants"},
+    )
+    assert response.status_code == 200
+
+    file_obj = FileObject(**response.json())
+    assert file_obj.object == "file"
+    assert file_obj.id.startswith("custom-")
+    assert file_obj.bytes == len(file_content)
+    assert file_obj.filename == "delegated.txt"
+    assert file_obj.purpose == "assistants"

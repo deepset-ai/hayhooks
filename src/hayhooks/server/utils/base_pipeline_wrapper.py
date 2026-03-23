@@ -11,9 +11,12 @@ class BasePipelineWrapper(ABC):
     def __init__(self):
         self.pipeline = None
         self._is_run_api_implemented = False
-        self._is_run_chat_completion_implemented = False
         self._is_run_api_async_implemented = False
+        self._is_run_chat_completion_implemented = False
         self._is_run_chat_completion_async_implemented = False
+        self._is_run_response_implemented = False
+        self._is_run_response_async_implemented = False
+        self._is_run_file_upload_implemented = False
 
     @abstractmethod
     def setup(self) -> None:
@@ -72,4 +75,45 @@ class BasePipelineWrapper(ABC):
         Asynchronous version of run_chat_completion.
         """
         msg = "run_chat_completion_async not implemented"
+        raise NotImplementedError(msg)
+
+    def run_response(self, model: str, input_items: list[dict], body: dict) -> str | Generator:
+        """
+        Handle an OpenAI-compatible Responses API request.
+
+        This method processes requests sent to the `/v1/responses` endpoint,
+        using the Responses API input format instead of chat messages.
+
+        Args:
+            model: The `name` of the deployed Haystack pipeline to run
+            input_items: Normalized input items in OpenAI Responses API format
+            body: Additional parameters and configuration options (e.g. temperature, tools, instructions)
+        """
+        msg = "run_response not implemented"
+        raise NotImplementedError(msg)
+
+    async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> str | AsyncGenerator:
+        """
+        Asynchronous version of run_response.
+        """
+        msg = "run_response_async not implemented"
+        raise NotImplementedError(msg)
+
+    def run_file_upload(
+        self, filename: str | None, content_type: str | None, content: bytes, purpose: str
+    ) -> dict:
+        """
+        Handle a file uploaded via the ``/v1/files`` endpoint.
+
+        Override this method to store or process uploaded files.  The returned
+        dict must conform to the OpenAI ``FileObject`` schema (fields: ``id``,
+        ``object``, ``bytes``, ``created_at``, ``filename``, ``purpose``).
+
+        Args:
+            filename: Original uploaded filename (may be ``None``).
+            content_type: MIME content type (may be ``None``).
+            content: Raw file bytes.
+            purpose: Upload purpose string from the request.
+        """
+        msg = "run_file_upload not implemented"
         raise NotImplementedError(msg)
