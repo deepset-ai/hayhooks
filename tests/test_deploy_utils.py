@@ -584,7 +584,9 @@ def test_create_pipeline_wrapper_instance_missing_methods():
 
     with pytest.raises(
         PipelineWrapperError,
-        match=re.escape("At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, run_response, or run_response_async must be implemented"),
+        match=re.escape(
+            "At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, run_response, or run_response_async must be implemented"
+        ),
     ):
         create_pipeline_wrapper_instance(module)
 

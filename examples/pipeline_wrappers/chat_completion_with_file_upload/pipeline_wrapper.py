@@ -146,10 +146,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
     async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
         resolved = _resolve_file_references(messages)
-        chat_messages = [
-            ChatMessage.from_openai_dict_format(m) if isinstance(m, dict) else m
-            for m in resolved
-        ]
+        chat_messages = [ChatMessage.from_openai_dict_format(m) if isinstance(m, dict) else m for m in resolved]
         log.info("Running agent (chat) with {} message(s)", len(chat_messages))
 
         gen = async_streaming_generator(

@@ -123,6 +123,7 @@ exclude = ["tests/**/*"]
 
 [tool.ruff]
 line-length = 120
+extend-exclude = ["tests", "examples"]
 
 [tool.ruff.lint]
 isort.split-on-trailing-comma = false

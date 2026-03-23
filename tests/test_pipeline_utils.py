@@ -1,5 +1,3 @@
-import pytest
-
 from hayhooks.server.pipelines.utils import get_input_files, get_last_user_input_text
 
 

@@ -79,6 +79,7 @@ async def _run_pipeline_method(  # noqa: PLR0913
             return await _collect_async_generator(result)
 
     if stream_requested and isinstance(result, str):
+
         def _wrap_str_as_generator():
             yield StreamingChunk(content=result)
 
@@ -122,9 +123,7 @@ def _find_file_upload_wrapper() -> BasePipelineWrapper | None:
     return None
 
 
-async def _run_file_upload(
-    filename: str | None, content_type: str | None, content: bytes, purpose: str
-) -> FileObject:
+async def _run_file_upload(filename: str | None, content_type: str | None, content: bytes, purpose: str) -> FileObject:
     wrapper = _find_file_upload_wrapper()
     if wrapper is not None:
         result = await run_in_threadpool(wrapper.run_file_upload, filename, content_type, content, purpose)

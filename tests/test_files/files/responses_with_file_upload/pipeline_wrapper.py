@@ -8,9 +8,7 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.pipeline = None
 
-    def run_file_upload(
-        self, filename: str | None, content_type: str | None, content: bytes, purpose: str
-    ) -> dict:
+    def run_file_upload(self, filename: str | None, content_type: str | None, content: bytes, purpose: str) -> dict:
         # NOTE: This is used in tests, please don't change it
         return {
             "id": f"custom-{uuid4().hex[:12]}",

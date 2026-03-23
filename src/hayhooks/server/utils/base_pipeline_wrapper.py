@@ -99,9 +99,7 @@ class BasePipelineWrapper(ABC):
         msg = "run_response_async not implemented"
         raise NotImplementedError(msg)
 
-    def run_file_upload(
-        self, filename: str | None, content_type: str | None, content: bytes, purpose: str
-    ) -> dict:
+    def run_file_upload(self, filename: str | None, content_type: str | None, content: bytes, purpose: str) -> dict:
         """
         Handle a file uploaded via the ``/v1/files`` endpoint.
 
