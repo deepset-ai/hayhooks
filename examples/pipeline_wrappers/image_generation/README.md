@@ -19,10 +19,12 @@ pip install huggingface_hub
 
 ## Deploy and Run
 
-Start hayhooks and deploy this pipeline:
-
 ```bash
-hayhooks run --pipelines-dir examples/pipeline_wrappers/image_generation
+# 1. Start the server
+hayhooks run
+
+# 2. Deploy the pipeline
+hayhooks pipeline deploy-files -n image_generation examples/pipeline_wrappers/image_generation
 ```
 
 Then generate an image:

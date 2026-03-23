@@ -19,7 +19,11 @@ export OPENAI_API_KEY="sk-..."
 ## Deploy
 
 ```bash
-hayhooks run --pipelines-dir examples/pipeline_wrappers/responses_with_file_upload
+# 1. Start the server
+hayhooks run
+
+# 2. Deploy the pipeline
+hayhooks pipeline deploy-files -n responses_with_file_upload examples/pipeline_wrappers/responses_with_file_upload
 ```
 
 ## Usage

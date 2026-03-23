@@ -7,35 +7,24 @@ standard OpenAI multi-part content format::
     {"type": "file", "file": {"file_id": "file-abc123"}}
 
 The wrapper resolves file references to inline text before passing messages to
-a Haystack Agent.  The agent can also read local files by path via a tool.
+a Haystack Agent.
 
 Requires the ``OPENAI_API_KEY`` environment variable to be set.
 """
 
 import time
 from collections.abc import AsyncGenerator
-from pathlib import Path
 from uuid import uuid4
 
 from haystack.components.agents import Agent
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
-from haystack.tools import Tool
 
 from hayhooks import BasePipelineWrapper, async_streaming_generator, log
 
 _file_store: dict[str, dict] = {}
 
-
-def read_file(path: str) -> str:
-    """Read the contents of a text file from disk."""
-    p = Path(path).expanduser().resolve()
-    if not p.is_file():
-        return f"Error: '{path}' does not exist or is not a file."
-    try:
-        return p.read_text(errors="replace")
-    except Exception as e:
-        return f"Error reading '{path}': {e}"
+SYSTEM_PROMPT = "You are a helpful assistant that can read and analyze files. Be concise and accurate."
 
 
 def _read_uploaded_file(file_id: str) -> str:
@@ -43,24 +32,6 @@ def _read_uploaded_file(file_id: str) -> str:
     if not stored:
         return f"Error: file_id '{file_id}' not found in the upload store."
     return stored["content"].decode("utf-8", errors="replace")
-
-
-read_file_tool = Tool(
-    name="read_file",
-    description="Read a text file from disk given its absolute or relative path.",
-    parameters={
-        "type": "object",
-        "properties": {"path": {"type": "string", "description": "Path to the file to read."}},
-        "required": ["path"],
-    },
-    function=read_file,
-)
-
-SYSTEM_PROMPT = (
-    "You are a helpful assistant that can read and analyze files. "
-    "When the user asks about a file, use the read_file tool with an ABSOLUTE path. "
-    "Be concise and accurate."
-)
 
 
 def _resolve_file_references(messages: list[dict]) -> list[dict]:
@@ -124,7 +95,6 @@ class PipelineWrapper(BasePipelineWrapper):
         self.agent = Agent(
             chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
             system_prompt=SYSTEM_PROMPT,
-            tools=[read_file_tool],
         )
 
     def run_file_upload(self, filename: str | None, content_type: str | None, content: bytes, purpose: str) -> dict:

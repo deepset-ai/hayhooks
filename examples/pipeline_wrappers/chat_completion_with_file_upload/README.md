@@ -2,7 +2,7 @@
 
 Demonstrates how to use the OpenAI [Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create) (`/v1/chat/completions`) with [file inputs](https://platform.openai.com/docs/api-reference/chat/create) uploaded via the [Files API](https://platform.openai.com/docs/api-reference/files/create) (`/v1/files`).
 
-A Haystack **Agent** reads uploaded files and local files server-side, streaming answers back to the client.
+A Haystack **Agent** receives uploaded file content inline and streams answers back to the client.
 
 ## What this example shows
 
@@ -10,7 +10,6 @@ A Haystack **Agent** reads uploaded files and local files server-side, streaming
 - **`run_file_upload`** — stores uploaded file bytes in an in-memory dict
 - **`_resolve_file_references`** — converts `{"type": "file", "file": {"file_id": "..."}}` content parts into inline text, matching the [OpenAI file input format](https://platform.openai.com/docs/api-reference/chat/create)
 - **`_strip_tool_calls`** — filters internal Agent tool calls from the stream to prevent agentic clients from looping
-- **`read_file` tool** — the agent can also read local files by absolute path
 
 ## Requirements
 
@@ -21,7 +20,11 @@ export OPENAI_API_KEY="sk-..."
 ## Deploy
 
 ```bash
-hayhooks run --pipelines-dir examples/pipeline_wrappers/chat_completion_with_file_upload
+# 1. Start the server
+hayhooks run
+
+# 2. Deploy the pipeline
+hayhooks pipeline deploy-files -n chat_completion_with_file_upload examples/pipeline_wrappers/chat_completion_with_file_upload
 ```
 
 ## Usage
@@ -87,22 +90,6 @@ for chunk in stream:
 print()
 ```
 
-### Ask about a local file (no upload needed)
-
-The agent also has a `read_file` tool for reading files by path:
-
-```python
-from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:1416/v1", api_key="unused")
-
-response = client.chat.completions.create(
-    model="chat_completion_with_file_upload",
-    messages=[{"role": "user", "content": "What is in /absolute/path/to/README.md?"}],
-)
-print(response.choices[0].message.content)
-```
-
 ### curl
 
 ```bash
@@ -130,6 +117,5 @@ curl http://localhost:1416/v1/chat/completions \
 
 ## Notes
 
-- The `read_file` tool has no sandboxing — this is a demo. Production use should restrict allowed paths.
 - The in-memory upload store is for demonstration only — files are lost on restart.
 - The pipeline name in the `model` field must match the directory name (`chat_completion_with_file_upload`).
