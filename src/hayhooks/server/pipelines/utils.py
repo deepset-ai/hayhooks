@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi_openai_compat import Message
 
 from hayhooks.server.pipelines.streaming import (
@@ -51,7 +53,7 @@ def get_last_user_message(messages: list[Message | dict]) -> str | None:
     return None
 
 
-def get_input_files(input_items: list[dict]) -> list[dict]:
+def get_input_files(input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Extract all ``input_file`` content parts from OpenAI Responses API input items.
 
@@ -60,7 +62,7 @@ def get_input_files(input_items: list[dict]) -> list[dict]:
     are not user messages or content parts that are not ``input_file`` are
     silently skipped.
     """
-    files: list[dict] = []
+    files: list[dict[str, Any]] = []
     for item in input_items:
         if not isinstance(item, dict) or item.get("role") != "user":
             continue
@@ -75,7 +77,7 @@ def get_input_files(input_items: list[dict]) -> list[dict]:
     return files
 
 
-def get_last_user_input_text(input_items: list[dict]) -> str | None:
+def get_last_user_input_text(input_items: list[dict[str, Any]]) -> str | None:
     """
     Extract the last user text from OpenAI Responses API input items.
 
@@ -95,6 +97,8 @@ def get_last_user_input_text(input_items: list[dict]) -> str | None:
             return content
         if isinstance(content, list):
             for content_part in reversed(content):
-                if isinstance(content_part, dict) and content_part.get("type") == "input_text":
-                    return content_part.get("text")
+                if isinstance(content_part, dict) and content_part.get("type") == "input_text":  # type: ignore[invalid-argument-type]
+
+                    # InputItem is dict[str, Any]; ty narrows Any through isinstance to object, losing key type info
+                    return content_part.get("text")  # ty: ignore[invalid-argument-type]
     return None
