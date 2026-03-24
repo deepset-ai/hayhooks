@@ -1,14 +1,12 @@
 # Responses API with File-Reading Agent
 
-Demonstrates how to use the OpenAI Responses API (`/v1/responses`) with a Haystack **Agent** that can read files from disk. The agent uses server-side tool calling, so it works with any Responses API client — including Codex CLI.
+Server-side Responses API demo for OpenAI client and curl usage.
 
-## What this example shows
+The agent has two tools:
+- **`read_file`** — reads any local file by absolute path
+- **`read_uploaded_file`** — retrieves files uploaded via `/v1/files` from an in-memory store
 
-- **Haystack Agent with tools** — the agent has a `read_file` tool that reads any local file by path, and a `read_uploaded_file` tool for files uploaded via `/v1/files`
-- **`run_response_async`** — converts Responses API input items to `ChatMessage` objects and streams the agent's answer via `async_streaming_generator`
-- **`run_file_upload`** — stores uploaded file bytes in an in-memory dict for retrieval by `file_id`
-- **`_strip_tool_calls`** — filters internal Agent tool calls from the stream to prevent agentic clients (e.g. Codex CLI) from looping
-- **Works with Codex CLI** — the agent reads files server-side, so no client-side file upload or `input_file` references are needed
+Internal tool calls are stripped from the stream (`_strip_tool_calls`) so agentic clients don't try to execute them locally.
 
 ## Requirements
 
@@ -19,10 +17,7 @@ export OPENAI_API_KEY="sk-..."
 ## Deploy
 
 ```bash
-# 1. Start the server
 hayhooks run
-
-# 2. Deploy the pipeline
 hayhooks pipeline deploy-files -n responses_with_file_upload examples/pipeline_wrappers/responses_with_file_upload
 ```
 
@@ -35,11 +30,9 @@ curl http://localhost:1416/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
     "model": "responses_with_file_upload",
-    "input": "What is in the LICENSE file?"
+    "input": "What is in /absolute/path/to/LICENSE?"
   }'
 ```
-
-The agent calls its `read_file` tool to read `LICENSE` from disk and answers based on the content.
 
 ### Upload a file, then ask about it
 
@@ -58,11 +51,7 @@ curl http://localhost:1416/v1/responses \
   }'
 ```
 
-The agent calls its `read_uploaded_file` tool to retrieve the content from the in-memory store.
-
 ### OpenAI Python client
-
-#### Responses API
 
 ```python
 from openai import OpenAI
@@ -88,25 +77,21 @@ for event in stream:
 print()
 ```
 
-> **Note:** When using the OpenAI client (as opposed to Codex CLI), the agent
-> doesn't have access to the client's working directory — use **absolute paths**
-> when referencing files.
-
-#### Files API + Responses API
+### Files API + Responses API
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:1416/v1", api_key="unused")
 
-# 1. Upload a file
+# 1. Upload
 uploaded = client.files.create(
     file=open("document.txt", "rb"),
     purpose="user_data",
 )
 print(f"Uploaded: {uploaded.id}")
 
-# 2. Ask the agent about it (reference the file_id in the prompt)
+# 2. Ask
 response = client.responses.create(
     model="responses_with_file_upload",
     input=f"Summarize the uploaded file with id {uploaded.id}",
@@ -118,4 +103,3 @@ print(response.output_text)
 
 - The `read_file` tool has no sandboxing — this is a demo. Production use should restrict allowed paths.
 - The in-memory upload store is for demonstration only — files are lost on restart.
-- The pipeline name in the `model` field must match the directory name (`responses_with_file_upload`).

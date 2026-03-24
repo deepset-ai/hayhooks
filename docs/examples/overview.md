@@ -12,6 +12,8 @@ This page lists all maintained Hayhooks examples with detailed descriptions and 
 | Async Question Answer (Streaming) | [async-operations.md](async-operations.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer) | Async pipeline and streaming patterns |
 | Open WebUI Agent Events | [openwebui-events.md](openwebui-events.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_events) | UI events and status updates |
 | Open WebUI Agent on Tool Calls | [openwebui-events.md](openwebui-events.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls) | Tool call interception & feedback |
+| Responses File Upload (Server-side tools) | [openai-compatibility.md](../features/openai-compatibility.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/responses_with_file_upload) | Responses API file reading/upload via server-side agent tools |
+| Agent Codex (Client-Side Tools) | [openai-compatibility.md](../features/openai-compatibility.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/agent_codex) | Hybrid Responses API demo: server weather tool + Codex client-side tools (`exec_command`) |
 | Image Generation (File Response) | [file-response-support.md](../features/file-response-support.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/image_generation) | Returning binary files (images) from `run_api` |
 | Shared Code Between Wrappers | — | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/shared_code_between_wrappers) | Reusing code across wrappers |
 

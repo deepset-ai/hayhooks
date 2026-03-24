@@ -360,7 +360,7 @@ class PipelineWrapper(BasePipelineWrapper):
 !!! warning "Server-side tool calls and agentic clients"
     When the Agent handles tools internally, you **must** filter `tool_calls` from the streaming chunks with `_strip_tool_calls` (or equivalent). Otherwise, `fastapi-openai-compat` emits SSE function-call events that agentic clients like Codex CLI interpret as client-side calls — causing an infinite request loop.
 
-See the [responses_with_file_upload](../examples/overview.md) example for a complete implementation with file reading and CWD detection.
+See `examples/pipeline_wrappers/responses_with_file_upload` for the standard server-side file-reading flow (OpenAI client/curl), and `examples/pipeline_wrappers/agent_codex` for Codex-style client-side tool execution.
 
 ### Responses API Method Signatures
 

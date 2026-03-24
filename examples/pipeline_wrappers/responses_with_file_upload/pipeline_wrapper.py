@@ -4,7 +4,7 @@ Responses API wrapper with a file-reading Haystack Agent.
 Combines two ways of working with files:
 
 1. **Agent tool** — the LLM can call ``read_file`` to read any local file
-   by path.  Works with Codex CLI and any Responses API client.
+   by path. Works with standard Responses API clients (OpenAI client/curl).
 2. **``/v1/files`` upload** — clients can upload files via the Files API;
    ``run_file_upload`` stores them in an in-memory dict and the agent can
    retrieve them by ``file_id`` through the ``read_uploaded_file`` tool.
@@ -12,7 +12,6 @@ Combines two ways of working with files:
 Requires the ``OPENAI_API_KEY`` environment variable to be set.
 """
 
-import re
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -27,44 +26,22 @@ from hayhooks import BasePipelineWrapper, async_streaming_generator, log
 
 _file_store: dict[str, dict] = {}
 
-_CWD_PATTERN = re.compile(r"<cwd>(.*?)</cwd>")
+AGENT_MODEL = "gpt-4.1-mini"
 
 
-def _extract_cwd(input_items: list[dict]) -> str | None:
-    """Extract the client working directory from ``<cwd>`` tags in input items."""
-    for item in input_items:
-        if not isinstance(item, dict):
-            continue
-        content = item.get("content")
-        if isinstance(content, str):
-            m = _CWD_PATTERN.search(content)
-            if m:
-                return m.group(1).strip()
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict):
-                    text = part.get("text", "")
-                    if isinstance(text, str):
-                        m = _CWD_PATTERN.search(text)
-                        if m:
-                            return m.group(1).strip()
-    return None
-
-
-def _input_item_to_text(item: dict) -> str:
-    """Flatten a Responses API input item's content into a single string."""
-    content = item.get("content")
+def _content_to_text(content: object) -> str:
+    """Flatten a Responses API content field into plain text."""
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict):
-                text = part.get("text", "")
-                if text:
-                    parts.append(text)
-        return "\n".join(parts)
-    return ""
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for part in content:
+        if isinstance(part, dict):
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return "\n".join(parts)
 
 
 def _input_items_to_chat_messages(input_items: list[dict]) -> list[ChatMessage]:
@@ -74,7 +51,7 @@ def _input_items_to_chat_messages(input_items: list[dict]) -> list[ChatMessage]:
         if not isinstance(item, dict):
             continue
         role = item.get("role")
-        text = _input_item_to_text(item)
+        text = _content_to_text(item.get("content"))
         if not text:
             continue
         if role == "user":
@@ -139,9 +116,9 @@ async def _strip_tool_calls(gen: AsyncGenerator) -> AsyncGenerator:
     """
     Filter internal Agent tool calls from the stream.
 
-    The Haystack Agent executes tools server-side, but fastapi-openai-compat
-    v1.1.0+ translates StreamingChunk.tool_calls into SSE function-call events.
-    Clients like Codex would treat those as client-side calls and loop forever.
+    The Haystack Agent executes tools server-side, but the OpenAI-compat layer
+    translates StreamingChunk.tool_calls into SSE function-call events. Clients
+    like Codex would treat those as client-side calls and loop forever.
     """
     async for chunk in gen:
         if hasattr(chunk, "tool_calls") and chunk.tool_calls:
@@ -154,7 +131,7 @@ async def _strip_tool_calls(gen: AsyncGenerator) -> AsyncGenerator:
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.agent = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            chat_generator=OpenAIChatGenerator(model=AGENT_MODEL),
             system_prompt=SYSTEM_PROMPT,
             tools=[read_file_tool, read_uploaded_file_tool],
         )
@@ -177,15 +154,8 @@ class PipelineWrapper(BasePipelineWrapper):
         }
 
     async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> str | AsyncGenerator:
-        cwd = _extract_cwd(input_items)
-        if cwd:
-            log.info("Detected client CWD: {}", cwd)
-
-        messages: list[ChatMessage] = []
-        if cwd:
-            messages.append(ChatMessage.from_system(f"The user's working directory is: {cwd}"))
-        messages.extend(_input_items_to_chat_messages(input_items))
-        log.info("Running agent with {} message(s)", len(messages))
+        messages = _input_items_to_chat_messages(input_items)
+        log.info("Running file agent with {} message(s)", len(messages))
 
         gen = async_streaming_generator(
             pipeline=self.agent,
