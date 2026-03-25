@@ -345,7 +345,8 @@ def run_response(self, model: str, input_items: list[dict], body: dict) -> str |
 
     Args:
         model: The pipeline name
-        input_items: Normalized input items in OpenAI Responses API format
+        input_items: Conversation history as a list of input item dicts (messages,
+                     function_call, function_call_output). See "Input Items" below.
         body: Full request body with additional parameters (temperature, tools, instructions, etc.)
 
     Returns:
@@ -363,7 +364,8 @@ async def run_response_async(self, model: str, input_items: list[dict], body: di
 
     Args:
         model: The pipeline name
-        input_items: Normalized input items in OpenAI Responses API format
+        input_items: Conversation history as a list of input item dicts (messages,
+                     function_call, function_call_output). See "Input Items" below.
         body: Full request body with additional parameters
 
     Returns:
@@ -374,22 +376,36 @@ async def run_response_async(self, model: str, input_items: list[dict], body: di
 
 ### Input Items
 
-The `input_items` parameter contains normalized input items. The library converts string shorthand to a message item and `None` to an empty list. Common input item shapes:
+Input items are the Responses API equivalent of the `messages` list in Chat Completions. When a client sends a request to [`/v1/responses`](https://platform.openai.com/docs/api-reference/responses/create), the [`input`](https://platform.openai.com/docs/api-reference/responses/create#responses-create-input) field contains the conversation history as a list of typed items. Hayhooks normalizes this field (converting string shorthand to a message item and `None` to an empty list) and passes it to your wrapper as `input_items`.
+
+Each item is a `dict` with a `type` field that identifies what it represents. The three most common types:
 
 ```python
 # User text message
+# See: https://platform.openai.com/docs/api-reference/responses/input-item-list
 {"type": "message", "role": "user", "content": [
     {"type": "input_text", "text": "What is Haystack?"}
 ]}
 
-# Function call output (tool result)
-{"type": "function_call_output", "call_id": "call_abc", "output": "72°F"}
+# Function call (model asked the client to run a tool)
+# See: https://platform.openai.com/docs/api-reference/responses/input-item-list
+{"type": "function_call", "call_id": "call_abc", "name": "exec_command",
+ "arguments": "{\"command\": [\"ls\", \"-la\"]}"}
+
+# Function call output (client sends back the tool result)
+# See: https://platform.openai.com/docs/api-reference/responses/input-item-list
+{"type": "function_call_output", "call_id": "call_abc", "output": "total 42\n..."}
 ```
+
+Agentic clients like [Codex CLI](https://github.com/openai/codex) use all three item types in a multi-turn loop: the model emits a `function_call`, the client executes it locally, and sends the result back as `function_call_output` in the next request.
 
 Hayhooks provides helpers for working with input items:
 
-- `get_last_user_input_text(input_items)` — extract the last user text (similar to `get_last_user_message(messages)` for chat completions)
-- `get_input_files(input_items)` — extract all `input_file` content parts as a list of dicts, each containing at least `file_id`
+- **`chat_messages_from_openai_response(input_items)`** — convert the full input item list (messages + function calls + tool outputs) into Haystack [`ChatMessage`](https://docs.haystack.deepset.ai/reference/chat-message) objects, ready to pass to a pipeline or agent
+- **`get_last_user_input_text(input_items)`** — extract just the last user text (similar to `get_last_user_message(messages)` for Chat Completions)
+- **`get_input_files(input_items)`** — extract all `input_file` content parts as a list of dicts, each containing at least `file_id`
+
+For the full list of input item types, see the [OpenAI Responses API reference](https://platform.openai.com/docs/api-reference/responses/create#responses-create-input).
 
 ## Using Hayhooks with Haystack's OpenAIChatGenerator
 

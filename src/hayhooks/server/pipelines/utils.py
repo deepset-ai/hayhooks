@@ -101,7 +101,7 @@ def get_last_user_input_text(input_items: list[dict[str, Any]]) -> str | None:
             return content
         if isinstance(content, list):
             for content_part in reversed(content):
-                if isinstance(content_part, dict) and content_part.get("type") == "input_text":  # type: ignore[invalid-argument-type]
+                if isinstance(content_part, dict) and content_part.get("type") == "input_text":  # ty: ignore[invalid-argument-type]
                     # InputItem is dict[str, Any]; ty narrows Any through isinstance to object, losing key type info
                     return content_part.get("text")  # ty: ignore[invalid-argument-type]
     return None
@@ -118,7 +118,7 @@ def _content_to_text(content: object) -> str:
     for part in content:
         if not isinstance(part, dict):
             continue
-        text = part.get("text")
+        text = part.get("text")  # ty: ignore[invalid-argument-type]
         if isinstance(text, str) and text:
             parts.append(text)
     return "\n".join(parts)
