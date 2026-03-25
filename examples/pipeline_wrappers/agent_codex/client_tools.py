@@ -68,18 +68,3 @@ def build_generation_kwargs(body: dict) -> dict:
         generation_kwargs["max_completion_tokens"] = body["max_output_tokens"]
 
     return generation_kwargs
-
-
-def client_tool_names(chat_tools: list[dict]) -> list[str]:
-    """Extract function names from chat-completions tool definitions."""
-    names: list[str] = []
-    for tool in chat_tools:
-        if not isinstance(tool, dict):
-            continue
-        function_def = tool.get("function")
-        if not isinstance(function_def, dict):
-            continue
-        name = function_def.get("name")
-        if isinstance(name, str) and name:
-            names.append(name)
-    return names

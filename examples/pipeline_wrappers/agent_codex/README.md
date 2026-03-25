@@ -9,7 +9,6 @@ Demonstrates a **hybrid** pattern for the OpenAI Responses API (`/v1/responses`)
 ## Module layout
 
 - `pipeline_wrapper.py` — orchestration: message building, weather enrichment, LLM streaming
-- `input_utils.py` — Responses API input parsing and `ChatMessage` conversion
 - `client_tools.py` — Responses tool schema normalization and generation kwargs
 - `weather.py` — Open-Meteo weather tool + weather agent
 

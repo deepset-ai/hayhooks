@@ -14,17 +14,34 @@ from haystack import AsyncPipeline
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage
 
-from hayhooks import BasePipelineWrapper, async_streaming_generator, log
-
-from .client_tools import build_generation_kwargs, client_tool_names
-from .input_utils import (
-    input_items_to_chat_messages,
-    is_tool_followup_request,
-    last_user_input_text,
+from hayhooks import (
+    BasePipelineWrapper,
+    async_streaming_generator,
+    chat_messages_from_openai_response,
+    get_last_user_input_text,
+    log,
 )
+
+from .client_tools import build_generation_kwargs
 from .weather import NO_WEATHER_CONTEXT, create_weather_agent, looks_like_weather_request
 
 AGENT_MODEL = "gpt-4.1-mini"
+
+
+def _is_tool_followup(input_items: list[dict]) -> bool:
+    """True when the latest meaningful item is a function_call / function_call_output.
+
+    Used to skip server-side weather enrichment during the Codex tool loop.
+    """
+    for item in reversed(input_items):
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type in ("function_call", "function_call_output"):
+            return True
+        if item_type in ("message", None):
+            return False
+    return False
 
 
 class PipelineWrapper(BasePipelineWrapper):
@@ -33,22 +50,17 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline.add_component("llm", OpenAIChatGenerator(model=AGENT_MODEL))
         self.weather_agent = create_weather_agent()
 
-    def _build_messages(self, input_items: list[dict], body: dict) -> list[ChatMessage]:
-        messages: list[ChatMessage] = []
+    async def _enrich_with_weather(self, input_items: list[dict], messages: list[ChatMessage]) -> None:
+        """Run server-side weather lookup and inject context if relevant.
 
-        instructions = body.get("instructions")
-        if isinstance(instructions, str) and instructions.strip():
-            messages.append(ChatMessage.from_system(instructions))
-
-        messages.extend(input_items_to_chat_messages(input_items))
-        return messages
-
-    async def _add_server_weather_context(self, input_items: list[dict], messages: list[ChatMessage]) -> None:
-        if is_tool_followup_request(input_items):
-            log.opt(colors=True).debug("<yellow>[weather]</yellow> Skipping enrichment: tool-followup request")
+        Skipped when the request is a tool follow-up (Codex sending back
+        function_call_output) to avoid redundant lookups mid-tool-loop.
+        """
+        if _is_tool_followup(input_items):
+            log.opt(colors=True).debug("<yellow>[weather]</yellow> Skipping: tool-followup request")
             return
 
-        last_user_text = last_user_input_text(input_items)
+        last_user_text = get_last_user_input_text(input_items)
         if not looks_like_weather_request(last_user_text):
             return
 
@@ -70,23 +82,33 @@ class PipelineWrapper(BasePipelineWrapper):
                 )
             )
             log.opt(colors=True).info("<yellow>[weather]</yellow> Injected server context into model messages")
-        else:
-            log.opt(colors=True).debug("<yellow>[weather]</yellow> Agent returned no context to inject")
 
     async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> str | AsyncGenerator:
-        messages = self._build_messages(input_items, body)
-        await self._add_server_weather_context(input_items, messages)
+        # 1. Build ChatMessages from the Responses API input.
+        #    - Prepend system instructions from the request body (if any).
+        #    - Convert input_items (messages, function_call, function_call_output)
+        #      into Haystack ChatMessage objects so the LLM can process the full
+        #      conversation history including past client-side tool calls.
+        messages: list[ChatMessage] = []
+        instructions = body.get("instructions")
+        if isinstance(instructions, str) and instructions.strip():
+            messages.append(ChatMessage.from_system(instructions))
+        messages.extend(chat_messages_from_openai_response(input_items))
 
+        # 2. Server-side weather enrichment (optional).
+        #    If the latest user prompt looks weather-related, run a lightweight
+        #    Haystack Agent with the Open-Meteo tool and inject its answer as
+        #    extra system context. This happens before the main LLM call so the
+        #    model can reference real weather data in its response.
+        await self._enrich_with_weather(input_items, messages)
+
+        # 3. Forward client-side tool definitions to the LLM.
+        #    Codex sends its tool schemas (exec_command, etc.) in the request body.
+        #    We convert them from Responses API format to Chat Completions format
+        #    and pass them as generation_kwargs so the model can emit function_call
+        #    chunks that Codex will execute locally.
         generation_kwargs = build_generation_kwargs(body)
-        chat_tools = generation_kwargs.get("tools", [])
-        names = client_tool_names(chat_tools) if isinstance(chat_tools, list) else []
-        log.info(
-            "Running Codex + weather demo with {} message(s) and {} client tool(s)",
-            len(messages),
-            len(names),
-        )
-        if names:
-            log.opt(colors=True).debug("<blue>[client-tool]</blue> Forwarding: {}", ", ".join(names))
+        log.info("Streaming response with {} message(s)", len(messages))
 
         return async_streaming_generator(
             pipeline=self.pipeline,

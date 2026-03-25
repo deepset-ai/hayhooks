@@ -19,48 +19,14 @@ from uuid import uuid4
 
 from haystack.components.agents import Agent
 from haystack.components.generators.chat import OpenAIChatGenerator
-from haystack.dataclasses import ChatMessage, StreamingChunk
+from haystack.dataclasses import StreamingChunk
 from haystack.tools import Tool
 
-from hayhooks import BasePipelineWrapper, async_streaming_generator, log
+from hayhooks import BasePipelineWrapper, async_streaming_generator, chat_messages_from_openai_response, log
 
 _file_store: dict[str, dict] = {}
 
 AGENT_MODEL = "gpt-4.1-mini"
-
-
-def _content_to_text(content: object) -> str:
-    """Flatten a Responses API content field into plain text."""
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for part in content:
-        if isinstance(part, dict):
-            text = part.get("text")
-            if isinstance(text, str) and text:
-                parts.append(text)
-    return "\n".join(parts)
-
-
-def _input_items_to_chat_messages(input_items: list[dict]) -> list[ChatMessage]:
-    """Convert Responses API input items to Haystack ChatMessage objects."""
-    messages: list[ChatMessage] = []
-    for item in input_items:
-        if not isinstance(item, dict):
-            continue
-        role = item.get("role")
-        text = _content_to_text(item.get("content"))
-        if not text:
-            continue
-        if role == "user":
-            messages.append(ChatMessage.from_user(text))
-        elif role in ("system", "developer"):
-            messages.append(ChatMessage.from_system(text))
-        elif role == "assistant":
-            messages.append(ChatMessage.from_assistant(text))
-    return messages
 
 
 def read_file(path: str) -> str:
@@ -113,8 +79,7 @@ SYSTEM_PROMPT = (
 
 
 async def _strip_tool_calls(gen: AsyncGenerator) -> AsyncGenerator:
-    """
-    Filter internal Agent tool calls from the stream.
+    """Filter internal Agent tool calls from the stream.
 
     The Haystack Agent executes tools server-side, but the OpenAI-compat layer
     translates StreamingChunk.tool_calls into SSE function-call events. Clients
@@ -154,7 +119,7 @@ class PipelineWrapper(BasePipelineWrapper):
         }
 
     async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> str | AsyncGenerator:
-        messages = _input_items_to_chat_messages(input_items)
+        messages = chat_messages_from_openai_response(input_items)
         log.info("Running file agent with {} message(s)", len(messages))
 
         gen = async_streaming_generator(

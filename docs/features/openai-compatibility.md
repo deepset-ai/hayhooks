@@ -276,10 +276,10 @@ from pathlib import Path
 
 from haystack.components.agents import Agent
 from haystack.components.generators.chat import OpenAIChatGenerator
-from haystack.dataclasses import ChatMessage, StreamingChunk
+from haystack.dataclasses import StreamingChunk
 from haystack.tools import Tool
 
-from hayhooks import BasePipelineWrapper, async_streaming_generator
+from hayhooks import BasePipelineWrapper, async_streaming_generator, chat_messages_from_openai_response
 
 
 def read_file(path: str) -> str:
@@ -295,34 +295,6 @@ read_file_tool = Tool(
     },
     function=read_file,
 )
-
-
-def _input_items_to_chat_messages(input_items: list[dict]) -> list[ChatMessage]:
-    """Convert Responses API input items to Haystack ChatMessage objects.
-
-    Note: ``ChatMessage.from_openai_dict_format`` does not work with Responses
-    API input items — use this helper instead.
-    """
-    messages: list[ChatMessage] = []
-    for item in input_items:
-        if not isinstance(item, dict):
-            continue
-        role = item.get("role")
-        content = item.get("content")
-        text = content if isinstance(content, str) else ""
-        if isinstance(content, list):
-            text = "\n".join(
-                p.get("text", "") for p in content if isinstance(p, dict) and p.get("text")
-            )
-        if not text:
-            continue
-        if role == "user":
-            messages.append(ChatMessage.from_user(text))
-        elif role in ("system", "developer"):
-            messages.append(ChatMessage.from_system(text))
-        elif role == "assistant":
-            messages.append(ChatMessage.from_assistant(text))
-    return messages
 
 
 async def _strip_tool_calls(gen: AsyncGenerator) -> AsyncGenerator:
@@ -349,7 +321,7 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 
     async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> AsyncGenerator:
-        messages = _input_items_to_chat_messages(input_items)
+        messages = chat_messages_from_openai_response(input_items)
         gen = async_streaming_generator(
             pipeline=self.agent,
             pipeline_run_args={"messages": messages},
