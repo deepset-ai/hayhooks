@@ -273,6 +273,9 @@ Deploy Hayhooks on AWS Elastic Container Service for managed container orchestra
 
 ## Production Best Practices
 
+!!! tip
+    For a comprehensive, opinionated checklist covering CORS, authentication, tracebacks, logging, and more, see [Production Best Practices](../guides/production-best-practices.md).
+
 ### Environment Variables
 
 Store sensitive configuration in environment variables or secrets:
@@ -341,6 +344,7 @@ For performance issues:
 
 ## Next Steps
 
+- [Production Best Practices](../guides/production-best-practices.md) - Opinionated production hardening checklist
 - [Advanced Configuration](../advanced/advanced-configuration.md) - Custom routes, middleware, and programmatic customization
 - [Environment Variables Reference](../reference/environment-variables.md) - Complete configuration reference
 - [Pipeline Deployment](../concepts/pipeline-deployment.md) - Pipeline deployment concepts

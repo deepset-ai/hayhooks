@@ -30,6 +30,9 @@ nav:
     - Running Pipelines: advanced/running-pipelines.md
     - Advanced Configuration: advanced/advanced-configuration.md
     - Code Sharing: advanced/code-sharing.md
+  - Guides:
+    - Development Best Practices: guides/development-best-practices.md
+    - Production Best Practices: guides/production-best-practices.md
   - Deployment:
     - Deployment Guidelines: deployment/deployment_guidelines.md
   - Examples:
@@ -113,6 +116,9 @@ plugins:
           - advanced/running-pipelines.md: Execute Haystack Pipelines and manage runs programmatically.
           - advanced/advanced-configuration.md: Fine-tune advanced configuration settings.
           - advanced/code-sharing.md: Share Python code securely across deployments.
+        Guides:
+          - guides/development-best-practices.md: Development workflow tips for Hayhooks pipelines.
+          - guides/production-best-practices.md: Production hardening recommendations for Hayhooks.
         Deployment:
           - deployment/deployment_guidelines.md: Follow best practices for production deployments.
         Examples:
