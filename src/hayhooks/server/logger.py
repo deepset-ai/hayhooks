@@ -39,6 +39,6 @@ def log_elapsed(level: str = "DEBUG") -> Callable[[F], F]:
             log.opt(depth=1).log(level, "{}() completed in {:.0f}ms", func.__name__, elapsed_ms)
             return result
 
-        return wrapper  # type: ignore[return-value]
+        return wrapper  # ty: ignore[invalid-return-type]
 
     return decorator

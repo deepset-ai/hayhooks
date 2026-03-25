@@ -371,12 +371,12 @@ def create_run_endpoint_handler(
 
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(
-        run_req: request_model = Form(..., media_type="multipart/form-data"),  # type:ignore[valid-type] # noqa: B008
-    ) -> response_model:  # type:ignore[valid-type]
+        run_req: request_model = Form(..., media_type="multipart/form-data"),  # ty: ignore[invalid-type-form] # noqa: B008
+    ) -> response_model:  # ty: ignore[invalid-type-form]
         return await _handle_request(run_req)
 
     @handle_pipeline_exceptions()
-    async def run_endpoint_without_files(run_req: request_model) -> response_model:  # type:ignore[valid-type]
+    async def run_endpoint_without_files(run_req: request_model) -> response_model:  # ty: ignore[invalid-type-form]
         return await _handle_request(run_req)
 
     return run_endpoint_with_files if requires_files else run_endpoint_without_files

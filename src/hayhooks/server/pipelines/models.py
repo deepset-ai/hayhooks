@@ -116,7 +116,7 @@ def create_response_model_from_callable(
     return_type = inspect.signature(func).return_annotation
 
     if return_type is inspect.Signature.empty:
-        msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"  # type:ignore[attr-defined]
+        msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"  # ty: ignore[unresolved-attribute]
         raise PipelineWrapperError(msg)
 
     # Streaming generators and Response subclasses (e.g. FileResponse) produce non-JSON output

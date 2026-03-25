@@ -181,7 +181,7 @@ def chat_messages_from_openai_response(input_items: list[dict[str, Any]]) -> lis
             tool_name = item.get("name") or "function"
 
             tool_call = ToolCall(tool_name=tool_name, arguments=arguments, id=call_id)
-            tool_calls_by_id[call_id] = tool_call  # type: ignore[index]
+            tool_calls_by_id[call_id] = tool_call  # ty: ignore[invalid-assignment]
             messages.append(ChatMessage.from_assistant(tool_calls=[tool_call]))
             continue
 
