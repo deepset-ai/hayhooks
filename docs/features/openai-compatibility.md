@@ -7,13 +7,22 @@ Hayhooks provides OpenAI-compatible endpoints for Haystack pipelines and agents,
 
 ## Overview
 
-Hayhooks can automatically generate OpenAI-compatible endpoints if you implement the `run_chat_completion` or `run_chat_completion_async` method in your pipeline wrapper. This makes Hayhooks compatible with any OpenAI-compatible client or tool, including chat interfaces, agent frameworks, and custom applications.
+Hayhooks can automatically generate OpenAI-compatible endpoints if you implement the appropriate methods in your pipeline wrapper. This makes Hayhooks compatible with any OpenAI-compatible client or tool, including chat interfaces, agent frameworks, and custom applications.
+
+Hayhooks supports two OpenAI API surfaces:
+
+- **[Chat Completions API](https://platform.openai.com/docs/api-reference/chat)** (`/v1/chat/completions`) -- implement `run_chat_completion` or `run_chat_completion_async`
+- **[Responses API](https://platform.openai.com/docs/api-reference/responses)** (`/v1/responses`) -- implement `run_response` or `run_response_async`
+
+Both APIs are available simultaneously. A pipeline wrapper can implement one or both.
 
 ## Key Features
 
 - **Automatic Endpoint Generation**: OpenAI-compatible endpoints are created automatically
 - **Streaming Support**: Real-time streaming responses for chat interfaces
-- **Async Support**: High-performance async chat completion
+- **Async Support**: High-performance async chat completion and responses
+- **Responses API**: Full support for the OpenAI Responses API with streaming named SSE events
+- **Files API**: Upload files via `/v1/files` for use with the Responses API
 - **Multiple Integration Options**: Works with various OpenAI-compatible clients
 - **Open WebUI Ready**: Full support for [Open WebUI](openwebui-integration.md) with events and tool call interception
 
@@ -110,15 +119,21 @@ async def run_chat_completion_async(self, model: str, messages: list[dict], body
 
 ## Generated Endpoints
 
-When you implement chat completion methods, Hayhooks automatically creates:
+Hayhooks automatically creates the following OpenAI-compatible endpoints:
 
-### Chat Endpoints
+### Models
 
-- `/{pipeline_name}/chat` - Direct chat endpoint for a specific pipeline
-- `/chat/completions` - OpenAI-compatible endpoint (routes to the model specified in request)
-- `/v1/chat/completions` - OpenAI API v1 compatible endpoint
+- `/v1/models` - List all deployed pipelines
+- `/models` - Alias for `/v1/models`
 
-All endpoints support the standard OpenAI chat completion request format:
+```bash
+curl http://localhost:1416/v1/models
+```
+
+### Chat Completions
+
+- `/v1/chat/completions` - [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create)
+- `/chat/completions` - Alias for `/v1/chat/completions`
 
 ```json
 {
@@ -130,13 +145,36 @@ All endpoints support the standard OpenAI chat completion request format:
 }
 ```
 
-### Available Models
+### Responses API
 
-Use the `/v1/models` endpoint to list all deployed pipelines that support chat completion:
+- `/v1/responses` - [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses/create)
+- `/responses` - Alias for `/v1/responses`
+
+```json
+{
+  "model": "pipeline_name",
+  "input": [
+    {"role": "user", "type": "message", "content": [
+      {"type": "input_text", "text": "Your message"}
+    ]}
+  ],
+  "stream": false
+}
+```
+
+### Files API
+
+- `/v1/files` - [OpenAI Files API](https://platform.openai.com/docs/api-reference/files/create)
+- `/files` - Alias for `/v1/files`
 
 ```bash
-curl http://localhost:1416/v1/models
+curl http://localhost:1416/v1/files \
+  -F "file=@document.pdf" \
+  -F "purpose=user_data"
 ```
+
+!!! note
+    By default, the Files API returns file metadata (id, filename, size) but does not persist file bytes. See the [file store example](../examples/overview.md) for how to implement custom file storage.
 
 ## Streaming Responses
 
@@ -167,6 +205,207 @@ async def run_chat_completion_async(self, model: str, messages: list[dict], body
         pipeline_run_args={"prompt": {"query": question}},
     )
 ```
+
+## Responses API
+
+The [Responses API](https://platform.openai.com/docs/api-reference/responses) is an alternative to Chat Completions that uses named SSE events for streaming and supports a richer input format. Implement `run_response` or `run_response_async` in your pipeline wrapper to enable it.
+
+### Basic Response
+
+```python
+from hayhooks import BasePipelineWrapper, get_last_user_input_text, log
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.pipeline = Pipeline.loads(...)
+
+    def run_response(self, model: str, input_items: list[dict], body: dict) -> str:
+        question = get_last_user_input_text(input_items)
+        result = self.pipeline.run({"prompt": {"query": question}})
+        return result["llm"]["replies"][0]
+```
+
+### Sync Streaming Response
+
+```python
+from collections.abc import Generator
+
+from hayhooks import BasePipelineWrapper, get_last_user_input_text, streaming_generator
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.pipeline = Pipeline.loads(...)
+
+    def run_response(self, model: str, input_items: list[dict], body: dict) -> Generator:
+        question = get_last_user_input_text(input_items)
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": question}},
+        )
+```
+
+### Async Streaming Response
+
+```python
+from collections.abc import AsyncGenerator
+
+from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_user_input_text
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.pipeline = AsyncPipeline.loads(...)
+
+    async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> AsyncGenerator:
+        question = get_last_user_input_text(input_items)
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"prompt": {"query": question}},
+        )
+```
+
+### Agent with Tools
+
+Haystack Agents work with the Responses API too. The agent handles tool calling internally — the client just sends a question and gets an answer back. This is useful for clients like Codex CLI that don't support the `/v1/files` upload flow.
+
+```python
+from collections.abc import AsyncGenerator
+from pathlib import Path
+
+from haystack.components.agents import Agent
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import StreamingChunk
+from haystack.tools import Tool
+
+from hayhooks import BasePipelineWrapper, async_streaming_generator, chat_messages_from_openai_response
+
+
+def read_file(path: str) -> str:
+    return Path(path).expanduser().resolve().read_text()
+
+read_file_tool = Tool(
+    name="read_file",
+    description="Read a text file from disk given its path.",
+    parameters={
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+    },
+    function=read_file,
+)
+
+
+async def _strip_tool_calls(gen: AsyncGenerator) -> AsyncGenerator:
+    """Filter internal Agent tool calls from the stream.
+
+    Without this, fastapi-openai-compat translates StreamingChunk.tool_calls
+    into SSE function-call events. Agentic clients (e.g. Codex CLI) would
+    interpret those as client-side calls and loop forever.
+    """
+    async for chunk in gen:
+        if hasattr(chunk, "tool_calls") and chunk.tool_calls:
+            if hasattr(chunk, "content") and chunk.content:
+                yield StreamingChunk(content=chunk.content)
+        else:
+            yield chunk
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.agent = Agent(
+            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            system_prompt="You are a helpful assistant that can read files.",
+            tools=[read_file_tool],
+        )
+
+    async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> AsyncGenerator:
+        messages = chat_messages_from_openai_response(input_items)
+        gen = async_streaming_generator(
+            pipeline=self.agent,
+            pipeline_run_args={"messages": messages},
+        )
+        return _strip_tool_calls(gen)
+```
+
+!!! warning "Server-side tool calls and agentic clients"
+    When the Agent handles tools internally, you **must** filter `tool_calls` from the streaming chunks with `_strip_tool_calls` (or equivalent). Otherwise, `fastapi-openai-compat` emits SSE function-call events that agentic clients like Codex CLI interpret as client-side calls — causing an infinite request loop.
+
+See `examples/pipeline_wrappers/responses_with_file_upload` for the standard server-side file-reading flow (OpenAI client/curl), and `examples/pipeline_wrappers/agent_codex` for Codex-style client-side tool execution.
+
+### Responses API Method Signatures
+
+#### run_response(...)
+
+```python
+def run_response(self, model: str, input_items: list[dict], body: dict) -> str | Generator:
+    """
+    Handle an OpenAI Responses API request.
+
+    Args:
+        model: The pipeline name
+        input_items: Conversation history as a list of input item dicts (messages,
+                     function_call, function_call_output). See "Input Items" below.
+        body: Full request body with additional parameters (temperature, tools, instructions, etc.)
+
+    Returns:
+        str: Non-streaming response
+        Generator: Streaming response generator
+    """
+```
+
+#### run_response_async(...)
+
+```python
+async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> str | AsyncGenerator:
+    """
+    Async version of run_response.
+
+    Args:
+        model: The pipeline name
+        input_items: Conversation history as a list of input item dicts (messages,
+                     function_call, function_call_output). See "Input Items" below.
+        body: Full request body with additional parameters
+
+    Returns:
+        str: Non-streaming response
+        AsyncGenerator: Streaming response generator
+    """
+```
+
+### Input Items
+
+Input items are the Responses API equivalent of the `messages` list in Chat Completions. When a client sends a request to [`/v1/responses`](https://platform.openai.com/docs/api-reference/responses/create), the `input` field contains the conversation history as a list of typed items. Hayhooks normalizes this field (converting string shorthand to a message item and `None` to an empty list) and passes it to your wrapper as `input_items`.
+
+Each item is a `dict` with a `type` field that identifies what it represents. The three most common types:
+
+```python
+# User text message
+# See: https://platform.openai.com/docs/api-reference/responses/input-item-list
+{"type": "message", "role": "user", "content": [
+    {"type": "input_text", "text": "What is Haystack?"}
+]}
+
+# Function call (model asked the client to run a tool)
+# See: https://platform.openai.com/docs/api-reference/responses/input-item-list
+{"type": "function_call", "call_id": "call_abc", "name": "exec_command",
+ "arguments": "{\"command\": [\"ls\", \"-la\"]}"}
+
+# Function call output (client sends back the tool result)
+# See: https://platform.openai.com/docs/api-reference/responses/input-item-list
+{"type": "function_call_output", "call_id": "call_abc", "output": "total 42\n..."}
+```
+
+Agentic clients like [Codex CLI](https://github.com/openai/codex) use all three item types in a multi-turn loop: the model emits a `function_call`, the client executes it locally, and sends the result back as `function_call_output` in the next request.
+
+Hayhooks provides helpers for working with input items:
+
+- **`chat_messages_from_openai_response(input_items)`** — convert the full input item list (messages + function calls + tool outputs) into Haystack [`ChatMessage`](https://docs.haystack.deepset.ai/reference/chat-message) objects, ready to pass to a pipeline or agent
+- **`get_last_user_input_text(input_items)`** — extract just the last user text (similar to `get_last_user_message(messages)` for Chat Completions)
+- **`get_input_files(input_items)`** — extract all `input_file` content parts as a list of dicts, each containing at least `file_id`
+
+For the full list of input item types, see the [OpenAI Responses API reference](https://platform.openai.com/docs/api-reference/responses/create).
 
 ## Using Hayhooks with Haystack's OpenAIChatGenerator
 
@@ -283,7 +522,7 @@ def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> s
 - `stop`: Stop sequences
 - `top_p`: Nucleus sampling parameter
 
-See the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create) for the complete list of parameters.
+See the OpenAI API reference for [Chat Completions](https://platform.openai.com/docs/api-reference/chat/create) and [Responses](https://platform.openai.com/docs/api-reference/responses/create) for the complete list of parameters.
 
 ## Next Steps
 

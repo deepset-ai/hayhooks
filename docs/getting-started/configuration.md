@@ -72,3 +72,5 @@ HAYHOOKS_SHOW_TRACEBACKS=false
 - [Quick Start](quick-start.md) - Get started with basic usage
 - [Pipeline Deployment](../concepts/pipeline-deployment.md) - Learn how to deploy pipelines
 - [Environment Variables Reference](../reference/environment-variables.md) - Complete configuration reference
+- [Development Best Practices](../guides/development-best-practices.md) - Tips for fast local iteration
+- [Production Best Practices](../guides/production-best-practices.md) - Hardening your deployment for production

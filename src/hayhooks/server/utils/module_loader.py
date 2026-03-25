@@ -251,6 +251,9 @@ def _set_method_implementation_flags(pipeline_wrapper: BasePipelineWrapper) -> N
         ("_is_run_api_async_implemented", "run_api_async"),
         ("_is_run_chat_completion_implemented", "run_chat_completion"),
         ("_is_run_chat_completion_async_implemented", "run_chat_completion_async"),
+        ("_is_run_response_implemented", "run_response"),
+        ("_is_run_response_async_implemented", "run_response_async"),
+        ("_is_run_file_upload_implemented", "run_file_upload"),
     ]
 
     for attr_name, method_name in methods_to_check:
@@ -299,12 +302,14 @@ def _validate_run_methods(pipeline_wrapper: BasePipelineWrapper) -> None:
             pipeline_wrapper._is_run_api_async_implemented,
             pipeline_wrapper._is_run_chat_completion_implemented,
             pipeline_wrapper._is_run_chat_completion_async_implemented,
+            pipeline_wrapper._is_run_response_implemented,
+            pipeline_wrapper._is_run_response_async_implemented,
         ]
     )
 
     if not has_run_method:
         msg = (
-            "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async "
-            "must be implemented"
+            "At least one of run_api, run_api_async, run_chat_completion, "
+            "run_chat_completion_async, run_response, or run_response_async must be implemented"
         )
         raise PipelineWrapperError(msg)

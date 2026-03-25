@@ -734,6 +734,9 @@ def run_api(self, files: list[UploadFile] | None = None, query: str = "") -> str
 
 ## PipelineWrapper Development
 
+!!! tip
+    For a full collection of development workflow tips (stack traces, auto-reload, debugging, REST API testing, and more), see [Development Best Practices](../guides/development-best-practices.md).
+
 ### During Development
 
 Use the `--overwrite` flag for rapid development:

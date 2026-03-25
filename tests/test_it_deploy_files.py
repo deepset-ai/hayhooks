@@ -154,7 +154,7 @@ def test_deploy_files_missing_required_methods(client, deploy_files) -> None:
 
     err_body: dict[str, Any] = response.json()
     assert (
-        "At least one of run_api, run_api_async, run_chat_completion, or run_chat_completion_async must be implemented"
+        "At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, run_response, or run_response_async must be implemented"
         in err_body["detail"]
     )
 
