@@ -376,7 +376,7 @@ async def run_response_async(self, model: str, input_items: list[dict], body: di
 
 ### Input Items
 
-Input items are the Responses API equivalent of the `messages` list in Chat Completions. When a client sends a request to [`/v1/responses`](https://platform.openai.com/docs/api-reference/responses/create), the [`input`](https://platform.openai.com/docs/api-reference/responses/create#responses-create-input) field contains the conversation history as a list of typed items. Hayhooks normalizes this field (converting string shorthand to a message item and `None` to an empty list) and passes it to your wrapper as `input_items`.
+Input items are the Responses API equivalent of the `messages` list in Chat Completions. When a client sends a request to [`/v1/responses`](https://platform.openai.com/docs/api-reference/responses/create), the `input` field contains the conversation history as a list of typed items. Hayhooks normalizes this field (converting string shorthand to a message item and `None` to an empty list) and passes it to your wrapper as `input_items`.
 
 Each item is a `dict` with a `type` field that identifies what it represents. The three most common types:
 
@@ -405,7 +405,7 @@ Hayhooks provides helpers for working with input items:
 - **`get_last_user_input_text(input_items)`** — extract just the last user text (similar to `get_last_user_message(messages)` for Chat Completions)
 - **`get_input_files(input_items)`** — extract all `input_file` content parts as a list of dicts, each containing at least `file_id`
 
-For the full list of input item types, see the [OpenAI Responses API reference](https://platform.openai.com/docs/api-reference/responses/create#responses-create-input).
+For the full list of input item types, see the [OpenAI Responses API reference](https://platform.openai.com/docs/api-reference/responses/create).
 
 ## Using Hayhooks with Haystack's OpenAIChatGenerator
 

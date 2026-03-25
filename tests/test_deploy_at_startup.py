@@ -6,6 +6,7 @@ from packaging.version import InvalidVersion, Version
 
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
+from hayhooks.settings import StartupDeployStrategy
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +33,9 @@ def test_mixed_pipelines_dir():
 @pytest.fixture
 def app_with_files_pipelines(test_settings, test_files_pipelines_dir, monkeypatch):
     monkeypatch.setattr(test_settings, "pipelines_dir", str(test_files_pipelines_dir))
+    # Sequential deployment avoids concurrent-import race conditions with
+    # heavy transitive dependencies (tzlocal, lxml) on some Python versions.
+    monkeypatch.setattr(test_settings, "startup_deploy_strategy", StartupDeployStrategy.SEQUENTIAL)
     app = create_app()
     return app
 
