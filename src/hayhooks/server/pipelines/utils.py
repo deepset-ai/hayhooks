@@ -23,12 +23,12 @@ __all__ = [
     "OnToolCallStart",
     "ToolCallbackReturn",
     "async_streaming_generator",
+    "chat_messages_from_openai_response",
     "find_all_streaming_components",
     "get_content",
     "get_input_files",
     "get_last_user_input_text",
     "get_last_user_message",
-    "chat_messages_from_openai_response",
     "is_streaming_component",
     "is_user_message",
     "parse_streaming_components_setting",
@@ -149,7 +149,8 @@ def _extract_call_id(item: dict[str, Any], *, generate_if_missing: bool) -> str 
 
 
 def chat_messages_from_openai_response(input_items: list[dict[str, Any]]) -> list[ChatMessage]:
-    """Convert OpenAI Responses API input items to Haystack ``ChatMessage`` objects.
+    """
+    Convert OpenAI Responses API input items to Haystack ``ChatMessage`` objects.
 
     Accepts both ``InputItem`` dicts (from ``fastapi-openai-compat``) and plain
     ``dict[str, Any]`` — they are the same underlying type.
