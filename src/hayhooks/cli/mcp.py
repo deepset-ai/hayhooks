@@ -4,7 +4,7 @@ from typing import Annotated
 import typer
 from haystack.lazy_imports import LazyImport
 
-mcp = typer.Typer()
+mcp = typer.Typer(rich_markup_mode="rich")
 
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
     from mcp.server import Server
@@ -64,4 +64,4 @@ def run(  # noqa: PLR0913
 
     # Run the MCP server
     # NOTE: reload and workers options are not supported in this context
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, log_config=None)

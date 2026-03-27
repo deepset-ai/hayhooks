@@ -7,9 +7,12 @@ from fastapi import FastAPI
 
 from hayhooks.cli.mcp import mcp
 from hayhooks.cli.pipeline import pipeline
-from hayhooks.cli.utils import get_console, get_server_url, make_request, show_success_panel
+from hayhooks.cli.theme import apply_typer_theme
+from hayhooks.cli.utils import get_console, get_server_url, make_request, padded_output, show_success
 
-hayhooks_cli = typer.Typer(name="hayhooks")
+apply_typer_theme()
+
+hayhooks_cli = typer.Typer(name="hayhooks", rich_markup_mode="rich")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
 hayhooks_cli.add_typer(mcp, name="mcp")
 
@@ -126,7 +129,13 @@ def run(  # noqa: PLR0913
         import uvicorn
 
         uvicorn.run(
-            "hayhooks.server.app:create_app", host=host, port=port, workers=workers, reload=reload, factory=True
+            "hayhooks.server.app:create_app",
+            host=host,
+            port=port,
+            workers=workers,
+            reload=reload,
+            factory=True,
+            log_config=None,
         )
     else:
         from hayhooks.server.app import run_app
@@ -137,40 +146,45 @@ def run(  # noqa: PLR0913
 @hayhooks_cli.command()
 def status(ctx: typer.Context) -> None:
     """Get the status of the Hayhooks server."""
-    response = make_request(
-        host=ctx.obj["host"],
-        port=ctx.obj["port"],
-        endpoint="status",
-        use_https=ctx.obj["use_https"],
-        disable_ssl=ctx.obj["disable_ssl"],
-    )
-
-    server_url = get_server_url(host=ctx.obj["host"], port=ctx.obj["port"], https=ctx.obj["use_https"])
-
-    show_success_panel(
-        f"[bold]Hayhooks server is up and running at: {server_url}[/bold]",
-        title="",
-    )
-
-    assert isinstance(response, dict), "Status endpoint must return JSON"
-
-    if pipes := response.get("pipelines"):
-        from rich import box
-        from rich.table import Table
-
-        table = Table(
-            title="[bold]Deployed Pipelines[/bold]", box=box.ROUNDED, show_header=True, header_style="bold cyan"
+    with padded_output():
+        response = make_request(
+            host=ctx.obj["host"],
+            port=ctx.obj["port"],
+            endpoint="status",
+            use_https=ctx.obj["use_https"],
+            disable_ssl=ctx.obj["disable_ssl"],
         )
-        table.add_column("№", style="dim")
-        table.add_column("Pipeline Name", style="bright_blue")
-        table.add_column("Status", style="green")
 
-        for idx, pipeline in enumerate(pipes, 1):
-            table.add_row(str(idx), pipeline, "🟢 Active")
+        server_url = get_server_url(host=ctx.obj["host"], port=ctx.obj["port"], https=ctx.obj["use_https"])
+        show_success(f"Hayhooks server is up and running at: [accent.bold]{server_url}[/accent.bold]")
 
-        get_console().print("\n", table)
-    else:
-        get_console().print("\n[yellow]No pipelines currently deployed[/yellow]")
+        assert isinstance(response, dict), "Status endpoint must return JSON"
+
+        if pipes := response.get("pipelines"):
+            from rich import box
+            from rich.table import Table
+
+            console = get_console()
+            console.print()
+            console.print("[heading]Pipelines:[/heading]")
+
+            table = Table(
+                box=box.SIMPLE_HEAVY,
+                show_header=True,
+                header_style="table.header",
+                padding=(0, 2),
+                show_edge=False,
+            )
+            table.add_column("№", style="muted", width=4)
+            table.add_column("Name", style="pipeline.name")
+            table.add_column("Status", style="pipeline.status")
+
+            for idx, pipeline in enumerate(pipes, 1):
+                table.add_row(str(idx), pipeline, "Active")
+
+            console.print(table)
+        else:
+            get_console().print("[warning]  No pipelines currently deployed[/warning]")
 
 
 @hayhooks_cli.callback()

@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
-from hayhooks.server.logger import log, log_elapsed
+from hayhooks.server.logger import intercept_stdlib_logging, log, log_elapsed
 from hayhooks.server.routers import deploy_router, draw_router, openai_router, status_router, undeploy_router
 from hayhooks.server.utils.deploy_utils import (
     commit_prepared_pipeline,
@@ -245,6 +245,8 @@ def create_app() -> FastAPI:
     Returns:
         FastAPI: Configured FastAPI application instance
     """
+    intercept_stdlib_logging()
+
     if additional_path := settings.additional_python_path:
         sys.path.append(additional_path)
         log.trace("Added '{}' to sys.path", additional_path)
@@ -310,10 +312,12 @@ def run_app(
     """
     import uvicorn
 
+    intercept_stdlib_logging()
     uvicorn.run(
         app,
         host=host or settings.host,
         port=port or settings.port,
+        log_config=None,
     )
 
 

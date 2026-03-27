@@ -3,14 +3,13 @@ import contextlib
 import io
 import mimetypes
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any, Literal, TypeVar, overload
 from urllib.parse import urljoin
 
 import requests
 import typer
-from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -30,8 +29,21 @@ def get_console():
     if _console is None:
         from rich.console import Console
 
-        _console = Console()
+        from hayhooks.cli.theme import hayhooks_theme
+
+        _console = Console(theme=hayhooks_theme)
     return _console
+
+
+@contextlib.contextmanager
+def padded_output() -> Generator[None, None, None]:
+    """Add a blank line before and after the wrapped output."""
+    console = get_console()
+    console.print()
+    try:
+        yield
+    finally:
+        console.print()
 
 
 def get_server_url(host: str, port: int, https: bool = False) -> str:
@@ -105,58 +117,63 @@ def make_request(  # noqa: PLR0913
         if stream:
             return response
 
-        # Check if response is JSON or plain text (streaming response without --stream flag)
         content_type = response.headers.get("content-type", "")
         if "application/json" in content_type:
             return response.json()
         elif "text/plain" in content_type:
-            # Server returned streaming response but client didn't request streaming
-            get_console().print(
-                "[yellow][bold]Note:[/bold] This endpoint returns a streaming response. "
-                "Use --stream flag to see tokens as they arrive.[/yellow]\n"
+            show_warning(
+                "This endpoint returns a streaming response. "
+                "Use --stream flag to see tokens as they arrive."
             )
-            # Collect all the streamed content
             return {"result": response.text}
         else:
-            # Try JSON first, fallback to text
             try:
                 return response.json()
             except ValueError:
                 return {"result": response.text}
 
     except requests.ConnectionError as connection_error:
-        get_console().print(
-            "[red][bold]Hayhooks server is not responding.[/bold]\nTo start one, run `hayhooks run`[/red]."
-        )
+        show_error("Hayhooks server is not responding. To start one, run `hayhooks run`.")
         raise typer.Abort() from connection_error
     except requests.HTTPError as http_error:
         try:
             error_detail = response.json().get("detail", "Unknown error")
         except ValueError:
             error_detail = response.text or "Unknown error"
-        get_console().print(f"[red][bold]Server error[/bold]\n{error_detail}[/red]")
+        show_error(f"Server error: {error_detail}")
         raise typer.Abort() from http_error
     except Exception as e:
-        get_console().print(f"[red][bold]Unexpected error[/bold]\n{e!s}[/red]")
+        show_error(f"Unexpected error: {e!s}")
         raise typer.Abort() from e
 
 
+def show_error(message: str) -> None:
+    """Display an error message with a prefix."""
+    from hayhooks.cli.theme import ERROR_PREFIX
+
+    get_console().print(f"{ERROR_PREFIX} [error]{message}[/error]")
+
+
 def show_error_and_abort(message: str, highlight: str = "") -> None:
-    """Display error message in a panel and abort."""
+    """Display error message and abort."""
     if highlight:
-        message = message.replace(highlight, f"[red]{highlight}[/red]")
-    get_console().print(Panel.fit(message, border_style="red", title="Error"))
+        message = message.replace(highlight, f"[error.bold]{highlight}[/error.bold]")
+    show_error(message)
     raise typer.Abort()
 
 
-def show_success_panel(message: str, title: str = "Success") -> None:
-    """Display success message in a panel."""
-    get_console().print(Panel.fit(message, border_style="green", title=title))
+def show_success(message: str) -> None:
+    """Display a success message with a prefix."""
+    from hayhooks.cli.theme import SUCCESS_PREFIX
+
+    get_console().print(f"{SUCCESS_PREFIX} {message}")
 
 
-def show_warning_panel(message: str, title: str = "Warning") -> None:
-    """Display warning message in a panel."""
-    get_console().print(Panel.fit(message, border_style="yellow", title=title))
+def show_warning(message: str) -> None:
+    """Display a warning message with a prefix."""
+    from hayhooks.cli.theme import WARNING_PREFIX
+
+    get_console().print(f"{WARNING_PREFIX} [warning]{message}[/warning]")
 
 
 T = TypeVar("T")
@@ -224,27 +241,21 @@ def prepare_files_with_progress(
     Returns:
         Tuple containing (files_list for requests, file_handles to close later)
     """
-    # Initialize mimetypes
     mimetypes.init()
 
     files_list = []
     file_handles = []
 
     for file_path in files.values():
-        # Determine content type using mimetypes module
         content_type, _ = mimetypes.guess_type(file_path)
         if content_type is None:
-            content_type = "application/octet-stream"  # Default if type cannot be determined
+            content_type = "application/octet-stream"
 
-        # Get file size and open file (keep handle open for the duration of the upload)
         file_size = file_path.stat().st_size
         file_obj = file_path.open("rb")
         file_handles.append(file_obj)
 
-        # Create progress tracking wrapper
         progress_reader = ProgressFileReader(file_obj, progress, task_id, file_size)
-
-        # Add to files list with repeating 'files' field name
         files_list.append(("files", (file_path.name, progress_reader, content_type)))
 
     return files_list, file_handles
@@ -268,11 +279,10 @@ def upload_files_with_progress(
     if not form_data:
         form_data = {}
 
-    # Calculate total file size
     total_size_bytes = sum(file_path.stat().st_size for file_path in files.values())
     total_size_mb = total_size_bytes / (1024 * 1024)
 
-    get_console().print(f"Uploading {len(files)} files ({total_size_mb:.2f} MB)...")
+    get_console().print(f"[muted]Uploading {len(files)} files ({total_size_mb:.2f} MB)...[/muted]")
 
     start_time = time.time()
     result: dict[str, Any] = {}
@@ -280,7 +290,7 @@ def upload_files_with_progress(
 
     try:
         with Progress(
-            TextColumn("[bold blue]{task.description}"),
+            TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             "[progress.percentage]{task.percentage:>3.0f}%",
             "•",
@@ -291,17 +301,16 @@ def upload_files_with_progress(
             TimeRemainingColumn(),
             console=get_console(),
         ) as progress:
-            # Create a single progress bar for all files
-            upload_task = progress.add_task(f"[cyan]Uploading {len(files)} files", total=total_size_bytes, completed=0)
+            upload_task = progress.add_task(
+                f"[accent]Uploading {len(files)} files", total=total_size_bytes, completed=0
+            )
 
-            # Prepare tracking wrappers for each file
             files_list, file_handles = prepare_files_with_progress(files, progress, upload_task)
 
-            # Upload files with progress tracking
             response = requests.post(  # noqa: S113
                 url,
-                data=form_data,  # Form fields
-                files=files_list,  # Multiple files as a list of tuples
+                data=form_data,
+                files=files_list,
                 verify=verify_ssl,
             )
 
@@ -319,12 +328,11 @@ def upload_files_with_progress(
     except Exception as e:
         show_error_and_abort(f"Unexpected error: {e!s}")
     finally:
-        # Close all file handles
         for file_obj in file_handles:
             with contextlib.suppress(builtins.BaseException):
                 file_obj.close()
 
     elapsed_time = time.time() - start_time
-    get_console().print(f"Upload and execution completed in {elapsed_time:.2f} seconds")
+    get_console().print(f"[muted]Completed in {elapsed_time:.2f}s[/muted]")
 
     return result, elapsed_time
