@@ -72,7 +72,11 @@ class _InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        log.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+        if "color_message" in record.__dict__ and record.args:
+            msg = str(record.__dict__["color_message"]) % record.args
+        else:
+            msg = record.getMessage()
+        log.opt(depth=depth, exception=record.exc_info).log(level, msg)
 
 
 def intercept_stdlib_logging() -> None:
