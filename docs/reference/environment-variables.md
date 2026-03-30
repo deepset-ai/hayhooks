@@ -195,13 +195,37 @@ These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.A
 
 ## Logging
 
-### LOG (log level)
+### HAYHOOKS_LOG_LEVEL
 
 - Default: `INFO`
-- Description: Global log level (consumed by Loguru). Example: `LOG=DEBUG hayhooks run`
+- Alias: `LOG` (legacy, lower priority)
+- Description: Minimum log level to display (consumed by Loguru). When both `HAYHOOKS_LOG_LEVEL` and `LOG` are set, `HAYHOOKS_LOG_LEVEL` takes precedence.
 
-!!! info "Logging Configuration"
-    Format/handlers are configured internally; Hayhooks does not expose `HAYHOOKS_LOG_FORMAT` or `HAYHOOKS_LOG_FILE` env vars at this time.
+### HAYHOOKS_LOG_FORMAT
+
+- Default: `default`
+- Description: Controls log output verbosity
+- Options:
+  - `"default"`: Timestamp, level, and message
+  - `"verbose"`: Adds module, function, and line number metadata
+
+### HAYHOOKS_INTERCEPTED_LOGGERS
+
+- Default: `["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]`
+- Description: List of stdlib loggers to intercept and route through Loguru. Only the listed loggers are patched; all others (httpx, haystack, etc.) keep their default behaviour.
+
+**Examples:**
+
+```bash
+# Set log level
+export HAYHOOKS_LOG_LEVEL=DEBUG
+
+# Enable verbose log format (includes module:function:line)
+export HAYHOOKS_LOG_FORMAT=verbose
+
+# Also intercept haystack logs
+export HAYHOOKS_INTERCEPTED_LOGGERS='["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "haystack"]'
+```
 
 ## Usage Examples
 
@@ -226,7 +250,7 @@ docker run -d \
 export HAYHOOKS_HOST=127.0.0.1
 export HAYHOOKS_PORT=1416
 export HAYHOOKS_PIPELINES_DIR=./pipelines
-export LOG=DEBUG
+export HAYHOOKS_LOG_LEVEL=DEBUG
 
 hayhooks run
 ```
@@ -257,7 +281,8 @@ HAYHOOKS_DEPLOY_CONCURRENCY=serialized
 HAYHOOKS_STARTUP_DEPLOY_STRATEGY=parallel
 HAYHOOKS_STARTUP_DEPLOY_WORKERS=4
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
-LOG=INFO
+HAYHOOKS_LOG_LEVEL=INFO
+HAYHOOKS_LOG_FORMAT=default
 ```
 
 !!! info "Configuration Note"

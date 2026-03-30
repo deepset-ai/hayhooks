@@ -1,15 +1,10 @@
 from rich.theme import Theme
 
-BRAND_COLOR = "#4A7AFF"
-SUCCESS_COLOR = "#00C853"
-ERROR_COLOR = "#FF5252"
-WARNING_COLOR = "#FFB300"
-MUTED_COLOR = "#888888"
+from hayhooks.colors import BRAND_COLOR, ERROR_COLOR, MUTED_COLOR, SUCCESS_COLOR, WARNING_COLOR
 
 HAYHOOKS_STYLES = {
     "accent": BRAND_COLOR,
     "accent.bold": f"bold {BRAND_COLOR}",
-    "accent.dim": "#3A63D8",
     "success": SUCCESS_COLOR,
     "success.bold": f"bold {SUCCESS_COLOR}",
     "error": ERROR_COLOR,

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
+from rich.markup import escape
 
 from hayhooks.cli.utils import (
     get_console,
@@ -17,6 +18,11 @@ from hayhooks.cli.utils import (
 )
 
 pipeline = typer.Typer(rich_markup_mode="rich")
+
+
+def _pname(name: str) -> str:
+    """Wrap a pipeline name in Rich markup, escaping user-supplied chars."""
+    return f"[pipeline.name]{escape(name)}[/pipeline.name]"
 
 
 def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload: dict) -> None:
@@ -38,9 +44,9 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
     )
 
     if response.get("name") == name:
-        show_success(f"Pipeline [pipeline.name]{name}[/pipeline.name] successfully deployed!")
+        show_success(f"Pipeline {_pname(name)} successfully deployed!")
     else:
-        show_error_and_abort(f"Pipeline [pipeline.name]{name}[/pipeline.name] already exists!")
+        show_error_and_abort(f"Pipeline {_pname(name)} already exists!")
 
 
 @pipeline.command(name="deploy-yaml")
@@ -157,7 +163,7 @@ def undeploy(
         )
 
         if response and response.get("success"):
-            show_success(f"Pipeline [pipeline.name]{name}[/pipeline.name] successfully undeployed!")
+            show_success(f"Pipeline {_pname(name)} successfully undeployed!")
         else:
             error_message = (
                 response.get("detail", f"Failed to undeploy pipeline '{name}'")
@@ -251,7 +257,7 @@ def _run_with_files(ctx: typer.Context, pipeline_name: str, files: dict[str, Pat
             form_data[key] = str(value)
 
     get_console().print(
-        f"[muted]Running pipeline[/muted] [pipeline.name]{pipeline_name}[/pipeline.name][muted]...[/muted]"
+        f"[muted]Running pipeline[/muted] {_pname(pipeline_name)}[muted]...[/muted]"
     )
     result, _ = upload_files_with_progress(
         url=endpoint, files=files, form_data=form_data, verify_ssl=not ctx.obj["disable_ssl"]
@@ -263,7 +269,7 @@ def _run_with_streaming(ctx: typer.Context, pipeline_name: str, params: dict[str
     """Execute pipeline in streaming mode."""
     console = get_console()
     console.print(
-        f"[muted]Running pipeline[/muted] [pipeline.name]{pipeline_name}[/pipeline.name]"
+        f"[muted]Running pipeline[/muted] {_pname(pipeline_name)}"
         "[muted] in streaming mode...[/muted]"
     )
     console.print("\n[accent.bold]Streaming output:[/accent.bold]")
@@ -285,7 +291,7 @@ def _run_with_streaming(ctx: typer.Context, pipeline_name: str, params: dict[str
                 console.print(chunk, end="")
 
     console.print()
-    show_success(f"Pipeline [pipeline.name]{pipeline_name}[/pipeline.name] executed successfully!")
+    show_success(f"Pipeline {_pname(pipeline_name)} executed successfully!")
 
 
 def _run_regular(ctx: typer.Context, pipeline_name: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -333,5 +339,5 @@ def run_pipeline_with_files(
     else:
         result = _run_regular(ctx, pipeline_name, params)
 
-    show_success(f"Pipeline [pipeline.name]{pipeline_name}[/pipeline.name] executed successfully!")
+    show_success(f"Pipeline {_pname(pipeline_name)} executed successfully!")
     _display_result(result)

@@ -2,13 +2,14 @@ import logging
 import os
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from functools import wraps
 from typing import TypeVar
 
 from loguru import logger as log
 
-from hayhooks.cli.theme import BRAND_COLOR, ERROR_COLOR, MUTED_COLOR, SUCCESS_COLOR
+from hayhooks.colors import BRAND_COLOR, ERROR_COLOR, MUTED_COLOR, REQ_ID_COLOR, SUCCESS_COLOR
 
 F = TypeVar("F", bound=Callable)
 
@@ -18,7 +19,7 @@ _LOC = (
     f":<fg {BRAND_COLOR}>{{function}}</fg {BRAND_COLOR}>"
     f":<fg {BRAND_COLOR}>{{line}}</fg {BRAND_COLOR}>"
 )
-_EXTRA = f"<fg {MUTED_COLOR}>{{extra}}</fg {MUTED_COLOR}>"
+_REQ_ID = f"<fg {REQ_ID_COLOR}>{{extra[request_id]}}</fg {REQ_ID_COLOR}>"
 
 _MSG_STYLE = {
     "SUCCESS": ("<bold>", "</bold>"),
@@ -31,6 +32,10 @@ _VERBOSE = os.getenv("HAYHOOKS_LOG_FORMAT", "default").lower() == "verbose"
 
 def formatter(record):
     parts = [_TS, " | ", "<level>{level: <8}</level>", " | "]
+
+    if record["extra"].get("request_id"):
+        parts += [_REQ_ID, " | "]
+
     if _VERBOSE:
         parts += [_LOC, " | "]
 
@@ -40,8 +45,11 @@ def formatter(record):
     else:
         parts.append("{message}")
 
-    if record["extra"]:
-        parts += [" - ", _EXTRA]
+    extra = {k: v for k, v in record["extra"].items() if k != "request_id"}
+    if extra:
+        flat = ", ".join(f"{k}={v!r}" for k, v in extra.items())
+        escaped = flat.replace("{", "{{").replace("}", "}}")
+        parts.append(f" <fg {MUTED_COLOR}>| {escaped}</fg {MUTED_COLOR}>")
     parts.append("\n")
     return "".join(parts)
 
@@ -55,7 +63,8 @@ log.level("WARNING", color="<yellow><bold>")
 log.level("ERROR", color=f"<fg {ERROR_COLOR}><bold>")
 log.level("CRITICAL", color=f"<fg {ERROR_COLOR}><bold>")
 
-log.add(sys.stderr, level=os.getenv("LOG", "INFO").upper(), format=formatter)
+_log_level = os.getenv("HAYHOOKS_LOG_LEVEL") or os.getenv("LOG", "INFO")
+log.add(sys.stderr, level=_log_level.upper(), format=formatter)
 
 
 class _InterceptHandler(logging.Handler):
@@ -79,22 +88,51 @@ class _InterceptHandler(logging.Handler):
         log.opt(depth=depth, exception=record.exc_info).log(level, msg)
 
 
-def intercept_stdlib_logging() -> None:
-    """
-    Install loguru as the root handler so all stdlib logging flows through it.
+def generate_request_id() -> str:
+    return uuid.uuid4().hex[:8]
 
-    This must be called *after* uvicorn configures its loggers (i.e. inside
-    a lifespan/startup hook or right before ``uvicorn.run``).  We patch the
-    root logger so that any logger -- including ones uvicorn creates after
-    our call -- inherits the intercept handler via propagation.
-    """
-    logging.root.handlers = [_InterceptHandler()]
-    logging.root.setLevel(logging.DEBUG)
 
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
+class RequestIdMiddleware:
+    """ASGI middleware that assigns a request ID and binds it to loguru context."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        request_id = generate_request_id()
+        scope["state"] = {**scope.get("state", {}), "request_id": request_id}
+
+        async def send_with_request_id(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"x-request-id", request_id.encode()))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        with log.contextualize(request_id=request_id):
+            await self.app(scope, receive, send_with_request_id)
+
+
+_DEFAULT_INTERCEPTED_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi")
+
+
+def intercept_stdlib_logging(loggers: list[str] | tuple[str, ...] | None = None) -> None:
+    """
+    Replace handlers on the given loggers so they flow through loguru.
+
+    Args:
+        loggers: Logger names to intercept. Falls back to
+            ``_DEFAULT_INTERCEPTED_LOGGERS`` when *None*.
+    """
+    handler = _InterceptHandler()
+    for name in loggers or _DEFAULT_INTERCEPTED_LOGGERS:
         stdlib_logger = logging.getLogger(name)
-        stdlib_logger.handlers.clear()
-        stdlib_logger.propagate = True
+        stdlib_logger.handlers = [handler]
+        stdlib_logger.propagate = False
 
 
 def log_elapsed(level: str = "DEBUG") -> Callable[[F], F]:
@@ -106,7 +144,9 @@ def log_elapsed(level: str = "DEBUG") -> Callable[[F], F]:
             t0 = time.monotonic()
             result = func(*args, **kwargs)
             elapsed_ms = (time.monotonic() - t0) * 1000
-            log.opt(depth=1).log(level, "{}() completed in {:.0f}ms", func.__name__, elapsed_ms)
+            log.opt(depth=1, colors=True).log(
+                level, "<bold>{}</bold>() completed in <bold>{:.0f}ms</bold>", func.__name__, elapsed_ms
+            )
             return result
 
         return wrapper  # ty: ignore[invalid-return-type]
