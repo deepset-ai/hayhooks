@@ -4,6 +4,7 @@ import json
 import shutil
 import tempfile
 import threading
+import time
 import traceback
 from collections.abc import AsyncGenerator as AsyncGeneratorABC
 from collections.abc import Callable
@@ -331,6 +332,7 @@ async def _execute_pipeline_run(
 
 def create_run_endpoint_handler(
     pipeline_wrapper: BasePipelineWrapper,
+    pipeline_name: str,
     request_model: type[BaseModel],
     response_model: type[BaseModel] | None,
     requires_files: bool,
@@ -345,6 +347,7 @@ def create_run_endpoint_handler(
 
     Args:
         pipeline_wrapper: The pipeline wrapper instance
+        pipeline_name: Name of the pipeline (used for logging)
         request_model: The request model
         response_model: The response model, or None for streaming/file response endpoints
         requires_files: Whether the pipeline requires file uploads
@@ -356,10 +359,25 @@ def create_run_endpoint_handler(
     async def _handle_request(run_req: BaseModel) -> Response | BaseModel:
         payload = run_req.model_dump()
 
+        log.bind(params=payload).opt(colors=True).info("Running pipeline '<bold>{}</bold>'", pipeline_name)
+        t0 = time.monotonic()
         result = await _execute_pipeline_run(pipeline_wrapper, payload)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+
         streaming_response = _streaming_response_from_result(result)
         if streaming_response is not None:
+            log.opt(colors=True).info(
+                "Pipeline '<bold>{}</bold>' streaming response started (<bold>{:.0f}ms</bold>)",
+                pipeline_name,
+                elapsed_ms,
+            )
             return streaming_response
+
+        log.opt(colors=True).info(
+            "Pipeline '<bold>{}</bold>' completed in <bold>{:.0f}ms</bold>",
+            pipeline_name,
+            elapsed_ms,
+        )
 
         # response_model is None for streaming/file response endpoints, where
         # _streaming_response_from_result() always handles the result above.
@@ -435,6 +453,7 @@ def add_pipeline_api_route(
 
     run_endpoint = create_run_endpoint_handler(
         pipeline_wrapper=pipeline_wrapper,
+        pipeline_name=pipeline_name,
         request_model=RunRequest,
         response_model=RunResponse,
         requires_files=requires_files,

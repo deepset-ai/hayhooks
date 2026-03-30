@@ -3,24 +3,30 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
+from rich.markup import escape
 
 from hayhooks.cli.utils import (
     get_console,
     get_server_url,
     make_request,
+    padded_output,
     show_error_and_abort,
-    show_success_panel,
-    show_warning_panel,
+    show_success,
+    show_warning,
     upload_files_with_progress,
     with_progress_spinner,
 )
 
-pipeline = typer.Typer()
+pipeline = typer.Typer(rich_markup_mode="rich")
+
+
+def _pname(name: str) -> str:
+    """Wrap a pipeline name in Rich markup, escaping user-supplied chars."""
+    return f"[pipeline.name]{escape(name)}[/pipeline.name]"
 
 
 def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload: dict) -> None:
     """Handle deployment with progress spinner and response handling."""
-    # Deployment endpoints never stream, so response is always dict
     response = cast(
         dict[str, Any],
         with_progress_spinner(
@@ -38,9 +44,9 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
     )
 
     if response.get("name") == name:
-        show_success_panel(f"Pipeline '[bold]{name}[/bold]' successfully deployed! 🚀")
+        show_success(f"Pipeline {_pname(name)} successfully deployed!")
     else:
-        show_error_and_abort(f"Pipeline '[bold]{name}[/bold]' already exists! ⚠️")
+        show_error_and_abort(f"Pipeline {_pname(name)} already exists!")
 
 
 @pipeline.command(name="deploy-yaml")
@@ -68,24 +74,23 @@ def deploy_yaml(  # noqa: PLR0913
     ] = True,
 ) -> None:
     """Deploy a YAML pipeline using the /deploy-yaml endpoint."""
-    if not pipeline_file.exists():
-        show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
+    with padded_output():
+        if not pipeline_file.exists():
+            show_error_and_abort("Pipeline file does not exist.", str(pipeline_file))
 
-    if name is None:
-        name = pipeline_file.stem
+        if name is None:
+            name = pipeline_file.stem
 
-    payload = {
-        "name": name,
-        "source_code": pipeline_file.read_text(encoding="utf-8"),
-        "overwrite": overwrite,
-        "save_file": save_file,
-        "skip_mcp": skip_mcp,
-    }
+        payload = {
+            "name": name,
+            "source_code": pipeline_file.read_text(encoding="utf-8"),
+            "overwrite": overwrite,
+            "description": description,
+            "save_file": save_file,
+            "skip_mcp": skip_mcp,
+        }
 
-    if description is not None:
-        payload["description"] = description
-
-    _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy-yaml", payload=payload)
+        _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy-yaml", payload=payload)
 
 
 @pipeline.command()
@@ -103,34 +108,35 @@ def deploy_files(
     ] = False,
 ) -> None:
     """Deploy all pipeline files from a directory to the Hayhooks server."""
-    if not pipeline_dir.exists():
-        show_error_and_abort("Directory does not exist.", str(pipeline_dir))
+    with padded_output():
+        if not pipeline_dir.exists():
+            show_error_and_abort("Directory does not exist.", str(pipeline_dir))
 
-    # Lazy import to avoid importing heavy server dependencies on CLI startup
-    from hayhooks.server.utils.deploy_utils import read_pipeline_files_from_dir
+        # Lazy import to avoid importing heavy server dependencies on CLI startup
+        from hayhooks.server.utils.deploy_utils import read_pipeline_files_from_dir
 
-    files_dict = read_pipeline_files_from_dir(pipeline_dir)
+        files_dict = read_pipeline_files_from_dir(pipeline_dir)
 
-    if not files_dict:
-        show_warning_panel("No valid pipeline files found in the specified directory.")
-        raise typer.Abort()
+        if not files_dict:
+            show_warning("No valid pipeline files found in the specified directory.")
+            raise typer.Abort()
 
-    if name is None:
-        name = pipeline_dir.stem
+        if name is None:
+            name = pipeline_dir.stem
 
-    payload = {"name": name, "files": files_dict, "save_files": not skip_saving_files, "overwrite": overwrite}
-    _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy_files", payload=payload)
+        payload = {"name": name, "files": files_dict, "save_files": not skip_saving_files, "overwrite": overwrite}
+        _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy_files", payload=payload)
 
 
 @pipeline.command(name="deploy", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 def deploy(_ctx: typer.Context) -> None:
     """Removed command; use 'deploy-yaml' or 'deploy-files' instead."""
-    show_warning_panel(
-        "[bold yellow]`hayhooks pipeline deploy` has been removed.[/bold yellow]\n"
-        "Use: \n"
-        "`hayhooks pipeline deploy-yaml <pipeline.yml>` for YAML-based deployments or\n"
-        "`hayhooks pipeline deploy-files <pipeline_dir>` for PipelineWrapper-based deployments."
-    )
+    with padded_output():
+        show_warning(
+            "`hayhooks pipeline deploy` has been removed.\n"
+            "  Use `hayhooks pipeline deploy-yaml <pipeline.yml>` for YAML-based deployments or\n"
+            "  `hayhooks pipeline deploy-files <pipeline_dir>` for PipelineWrapper-based deployments."
+        )
 
 
 @pipeline.command()
@@ -139,30 +145,30 @@ def undeploy(
     name: Annotated[str, typer.Argument(help="The name of the pipeline to undeploy.")],
 ) -> None:
     """Undeploy a pipeline from the Hayhooks server."""
-    response = cast(
-        dict[str, Any],
-        with_progress_spinner(
-            f"Undeploying pipeline '{name}'...",
-            make_request,
-            host=ctx.obj["host"],
-            port=ctx.obj["port"],
-            endpoint=f"undeploy/{name}",
-            method="POST",
-            use_https=ctx.obj["use_https"],
-            disable_ssl=ctx.obj["disable_ssl"],
-        ),
-    )
-
-    # Check if the response indicates success
-    if response and response.get("success"):
-        show_success_panel(f"Pipeline '[bold]{name}[/bold]' successfully undeployed! 🚀")
-    else:
-        error_message = (
-            response.get("detail", f"Failed to undeploy pipeline '{name}'")
-            if response
-            else f"Pipeline '{name}' not found"
+    with padded_output():
+        response = cast(
+            dict[str, Any],
+            with_progress_spinner(
+                f"Undeploying pipeline '{name}'...",
+                make_request,
+                host=ctx.obj["host"],
+                port=ctx.obj["port"],
+                endpoint=f"undeploy/{name}",
+                method="POST",
+                use_https=ctx.obj["use_https"],
+                disable_ssl=ctx.obj["disable_ssl"],
+            ),
         )
-        show_error_and_abort(error_message)
+
+        if response and response.get("success"):
+            show_success(f"Pipeline {_pname(name)} successfully undeployed!")
+        else:
+            error_message = (
+                response.get("detail", f"Failed to undeploy pipeline '{name}'")
+                if response
+                else f"Pipeline '{name}' not found"
+            )
+            show_error_and_abort(error_message)
 
 
 @pipeline.command()
@@ -186,60 +192,52 @@ def run(  # noqa: PLR0912, C901, PLR0913
     ] = False,
 ) -> None:
     """Run a pipeline with the given files and parameters."""
-    # Initialize collections
-    files_to_upload = {}
-    params_dict = {}
+    with padded_output():
+        files_to_upload = {}
+        params_dict = {}
 
-    # Parse parameters
-    if param:
-        for p in param:
-            if "=" not in p:
-                show_error_and_abort(f"Invalid parameter format: {p}. Use key=value")
+        if param:
+            for p in param:
+                if "=" not in p:
+                    show_error_and_abort(f"Invalid parameter format: {p}. Use key=value")
 
-            key, value = p.split("=", 1)
+                key, value = p.split("=", 1)
 
-            # Try to parse as JSON first
-            try:
-                # First check if it looks like it might be JSON
-                if (
-                    (value.startswith("{") and value.endswith("}"))
-                    or (value.startswith("[") and value.endswith("]"))
-                    or value.lower() in ("true", "false", "null")
-                    or (value.replace(".", "", 1).isdigit())
-                ):
-                    params_dict[key] = json.loads(value)
-                else:
+                try:
+                    if (
+                        (value.startswith("{") and value.endswith("}"))
+                        or (value.startswith("[") and value.endswith("]"))
+                        or value.lower() in ("true", "false", "null")
+                        or (value.replace(".", "", 1).isdigit())
+                    ):
+                        params_dict[key] = json.loads(value)
+                    else:
+                        params_dict[key] = value
+                except json.JSONDecodeError:
                     params_dict[key] = value
-            except json.JSONDecodeError:
-                # If JSON parsing fails, use as a string
-                params_dict[key] = value
 
-    # Collect individual files
-    if file:
-        for f in file:
-            if not f.exists():
-                show_error_and_abort(f"File {f} does not exist")
-            if f.is_file():
-                files_to_upload[f.name] = f
-            else:
-                show_error_and_abort(f"{f} is not a file")
+        if file:
+            for f in file:
+                if not f.exists():
+                    show_error_and_abort(f"File {f} does not exist")
+                if f.is_file():
+                    files_to_upload[f.name] = f
+                else:
+                    show_error_and_abort(f"{f} is not a file")
 
-    # Collect files from directories
-    if directory:
-        for dir_path in directory:
-            if not dir_path.exists():
-                show_error_and_abort(f"Directory {dir_path} does not exist")
-            if not dir_path.is_dir():
-                show_error_and_abort(f"{dir_path} is not a directory")
+        if directory:
+            for dir_path in directory:
+                if not dir_path.exists():
+                    show_error_and_abort(f"Directory {dir_path} does not exist")
+                if not dir_path.is_dir():
+                    show_error_and_abort(f"{dir_path} is not a directory")
 
-            for file_path in dir_path.rglob("*"):
-                if file_path.is_file() and not file_path.name.startswith("."):
-                    # Use relative path as key to preserve directory structure
-                    rel_path = file_path.relative_to(dir_path)
-                    files_to_upload[str(rel_path)] = file_path
+                for file_path in dir_path.rglob("*"):
+                    if file_path.is_file() and not file_path.name.startswith("."):
+                        rel_path = file_path.relative_to(dir_path)
+                        files_to_upload[str(rel_path)] = file_path
 
-    # Run pipeline
-    run_pipeline_with_files(ctx=ctx, pipeline_name=name, files=files_to_upload, params=params_dict, stream=stream)
+        run_pipeline_with_files(ctx=ctx, pipeline_name=name, files=files_to_upload, params=params_dict, stream=stream)
 
 
 def _run_with_files(ctx: typer.Context, pipeline_name: str, files: dict[str, Path], params: dict[str, Any]) -> dict:
@@ -247,7 +245,6 @@ def _run_with_files(ctx: typer.Context, pipeline_name: str, files: dict[str, Pat
     server_url = get_server_url(host=ctx.obj["host"], port=ctx.obj["port"], https=ctx.obj["use_https"])
     endpoint = f"{server_url}/{pipeline_name}/run"
 
-    # Prepare form data (parameters)
     form_data = {}
     for key, value in params.items():
         if isinstance(value, (dict, list)):
@@ -255,7 +252,7 @@ def _run_with_files(ctx: typer.Context, pipeline_name: str, files: dict[str, Pat
         else:
             form_data[key] = str(value)
 
-    get_console().print(f"Running pipeline '[bold]{pipeline_name}[/bold]'...")
+    get_console().print(f"[muted]Running pipeline[/muted] {_pname(pipeline_name)}[muted]...[/muted]")
     result, _ = upload_files_with_progress(
         url=endpoint, files=files, form_data=form_data, verify_ssl=not ctx.obj["disable_ssl"]
     )
@@ -264,8 +261,9 @@ def _run_with_files(ctx: typer.Context, pipeline_name: str, files: dict[str, Pat
 
 def _run_with_streaming(ctx: typer.Context, pipeline_name: str, params: dict[str, Any]) -> None:
     """Execute pipeline in streaming mode."""
-    get_console().print(f"Running pipeline '[bold]{pipeline_name}[/bold]' in streaming mode...")
-    get_console().print("\n[bold cyan]Streaming output:[/bold cyan]")
+    console = get_console()
+    console.print(f"[muted]Running pipeline[/muted] {_pname(pipeline_name)}[muted] in streaming mode...[/muted]")
+    console.print("\n[accent.bold]Streaming output:[/accent.bold]")
 
     response = make_request(
         host=ctx.obj["host"],
@@ -281,15 +279,15 @@ def _run_with_streaming(ctx: typer.Context, pipeline_name: str, params: dict[str
     if hasattr(response, "iter_content"):
         for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
             if chunk:
-                get_console().print(chunk, end="")
+                console.print(chunk, end="")
 
-    get_console().print()  # New line after streaming
-    show_success_panel(f"Pipeline '[bold]{pipeline_name}[/bold]' executed successfully!")
+    console.print()
+    show_success(f"Pipeline {_pname(pipeline_name)} executed successfully!")
 
 
 def _run_regular(ctx: typer.Context, pipeline_name: str, params: dict[str, Any]) -> dict[str, Any]:
     """Execute pipeline in regular (non-streaming) mode."""
-    response = cast(
+    return cast(
         dict[str, Any],
         with_progress_spinner(
             f"Running pipeline '{pipeline_name}'...",
@@ -304,19 +302,18 @@ def _run_regular(ctx: typer.Context, pipeline_name: str, params: dict[str, Any])
         ),
     )
 
-    return response
-
 
 def _display_result(result: dict) -> None:
     """Display pipeline execution result."""
+    console = get_console()
     if "result" in result:
-        get_console().print("\n[bold cyan]Result:[/bold cyan]")
+        console.print("\n[accent.bold]Result:[/accent.bold]")
         if isinstance(result["result"], (dict, list)):
-            get_console().print_json(json.dumps(result["result"]))
+            console.print_json(json.dumps(result["result"]))
         else:
-            get_console().print(result["result"])
+            console.print(result["result"])
     else:
-        get_console().print_json(json.dumps(result))
+        console.print_json(json.dumps(result))
 
 
 def run_pipeline_with_files(
@@ -325,7 +322,7 @@ def run_pipeline_with_files(
     """Run a pipeline with files and parameters."""
     if files:
         if stream:
-            show_warning_panel("Streaming mode is not supported with file uploads. Running without streaming.")
+            show_warning("Streaming mode is not supported with file uploads. Running without streaming.")
         result = _run_with_files(ctx, pipeline_name, files, params)
     elif stream:
         _run_with_streaming(ctx, pipeline_name, params)
@@ -333,5 +330,5 @@ def run_pipeline_with_files(
     else:
         result = _run_regular(ctx, pipeline_name, params)
 
-    show_success_panel(f"Pipeline '[bold]{pipeline_name}[/bold]' executed successfully!")
+    show_success(f"Pipeline {_pname(pipeline_name)} executed successfully!")
     _display_result(result)

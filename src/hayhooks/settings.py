@@ -95,6 +95,11 @@ class AppSettings(BaseSettings):
     cors_expose_headers: list[str] = []
     cors_max_age: int = 600
 
+    # Stdlib loggers to intercept and route through loguru.
+    # Only these loggers are patched; everything else (httpx, haystack, etc.)
+    # keeps its default behaviour.
+    intercepted_loggers: list[str] = ["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]
+
     # Chainlit Settings
     # Enable embedded Chainlit UI frontend
     chainlit_enabled: bool = False

@@ -17,37 +17,60 @@ Hayhooks provides comprehensive logging capabilities for monitoring, debugging, 
 ### Setting Log Level
 
 ```bash
-export LOG=debug # or LOG=DEBUG
+export HAYHOOKS_LOG_LEVEL=DEBUG
 hayhooks run
 ```
 
 Or in your `.env` file:
 
 ```ini
-LOG=info # or LOG=INFO
+HAYHOOKS_LOG_LEVEL=DEBUG
 ```
 
 Or inline:
 
 ```bash
-LOG=debug hayhooks run
+HAYHOOKS_LOG_LEVEL=DEBUG hayhooks run
 ```
+
+!!! note "Legacy alias"
+    The `LOG` environment variable is still supported as a fallback. When both are set, `HAYHOOKS_LOG_LEVEL` takes precedence.
 
 ## Log Configuration
 
 ### Environment Variables
 
-#### LOG
+#### HAYHOOKS_LOG_LEVEL
 
-- **Default**: `info`
+- **Default**: `INFO`
+- **Alias**: `LOG` (legacy, lower priority)
 - **Description**: Minimum log level to display (consumed by Loguru)
-- **Options**: `debug`, `info`, `warning`, `error`
+- **Options**: `DEBUG`, `INFO`, `WARNING`, `ERROR`
 
-> Note: Hayhooks does not expose `HAYHOOKS_LOG_FORMAT` or `HAYHOOKS_LOG_FILE` env vars; formatting/handlers are configured internally in the code.
+#### HAYHOOKS_LOG_FORMAT
+
+- **Default**: `default`
+- **Description**: Controls the amount of metadata shown in log lines
+- **Options**:
+  - `default` — Timestamp, level, and message
+  - `verbose` — Also includes module name, function, and line number
+
+```bash
+# Default format
+2026-03-27 10:47:00 | INFO     | Pipelines dir set to: '/app/pipelines'
+
+# Verbose format
+2026-03-27 10:47:00 | INFO     | hayhooks.server.app:deploy_pipelines:188 | Pipelines dir set to: '/app/pipelines'
+```
+
+#### HAYHOOKS_INTERCEPTED_LOGGERS
+
+- **Default**: `["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]`
+- **Description**: Stdlib loggers routed through Loguru. Only the listed loggers are intercepted; all others keep their default behaviour.
 
 ### Custom Log Format
 
-> If you need custom formatting, handle it in your host app via Loguru sinks.
+> For fully custom formatting or additional sinks (files, external services), configure them in your host app via `log.add(...)`.
 
 ## File Logging
 

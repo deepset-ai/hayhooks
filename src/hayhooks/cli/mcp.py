@@ -4,7 +4,7 @@ from typing import Annotated
 import typer
 from haystack.lazy_imports import LazyImport
 
-mcp = typer.Typer()
+mcp = typer.Typer(rich_markup_mode="rich")
 
 with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
     from mcp.server import Server
@@ -33,7 +33,7 @@ def run(  # noqa: PLR0913
     # Lazy imports of settings, logger and uvicorn
     import uvicorn
 
-    from hayhooks.server.logger import log
+    from hayhooks.server.logger import intercept_stdlib_logging, log
     from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app, deploy_pipelines
     from hayhooks.settings import settings
 
@@ -64,4 +64,5 @@ def run(  # noqa: PLR0913
 
     # Run the MCP server
     # NOTE: reload and workers options are not supported in this context
-    uvicorn.run(app, host=host, port=port)
+    intercept_stdlib_logging(settings.intercepted_loggers)
+    uvicorn.run(app, host=host, port=port, log_config=None)
