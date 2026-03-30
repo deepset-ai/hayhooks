@@ -30,20 +30,20 @@ def apply_typer_theme() -> None:
     """Override typer.rich_utils style constants to match the hayhooks theme."""
     import typer.rich_utils as ru
 
-    ru.STYLE_OPTION = f"bold {BRAND_COLOR}"
-    ru.STYLE_SWITCH = f"bold {SUCCESS_COLOR}"
-    ru.STYLE_METAVAR = f"bold {BRAND_COLOR}"
-    ru.STYLE_USAGE = BRAND_COLOR
+    ru.STYLE_OPTION = f"bold {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
+    ru.STYLE_SWITCH = f"bold {SUCCESS_COLOR}"  # ty: ignore[invalid-assignment]
+    ru.STYLE_METAVAR = f"bold {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
+    ru.STYLE_USAGE = BRAND_COLOR  # ty: ignore[invalid-assignment]
     ru.STYLE_USAGE_COMMAND = "bold"
-    ru.STYLE_DEPRECATED = ERROR_COLOR
+    ru.STYLE_DEPRECATED = ERROR_COLOR  # ty: ignore[invalid-assignment]
     ru.STYLE_HELPTEXT_FIRST_LINE = ""
     ru.STYLE_HELPTEXT = "dim"
-    ru.STYLE_OPTION_ENVVAR = f"dim {BRAND_COLOR}"
-    ru.STYLE_REQUIRED_SHORT = ERROR_COLOR
-    ru.STYLE_REQUIRED_LONG = f"dim {ERROR_COLOR}"
-    ru.STYLE_OPTIONS_PANEL_BORDER = BRAND_COLOR
-    ru.STYLE_COMMANDS_PANEL_BORDER = BRAND_COLOR
-    ru.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"bold {BRAND_COLOR}"
-    ru.STYLE_ERRORS_PANEL_BORDER = ERROR_COLOR
-    ru.STYLE_ABORTED = ERROR_COLOR
+    ru.STYLE_OPTION_ENVVAR = f"dim {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
+    ru.STYLE_REQUIRED_SHORT = ERROR_COLOR  # ty: ignore[invalid-assignment]
+    ru.STYLE_REQUIRED_LONG = f"dim {ERROR_COLOR}"  # ty: ignore[invalid-assignment]
+    ru.STYLE_OPTIONS_PANEL_BORDER = BRAND_COLOR  # ty: ignore[invalid-assignment]
+    ru.STYLE_COMMANDS_PANEL_BORDER = BRAND_COLOR  # ty: ignore[invalid-assignment]
+    ru.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"bold {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
+    ru.STYLE_ERRORS_PANEL_BORDER = ERROR_COLOR  # ty: ignore[invalid-assignment]
+    ru.STYLE_ABORTED = ERROR_COLOR  # ty: ignore[invalid-assignment]
     ru.RICH_HELP = f"Try [{BRAND_COLOR}]'{{command_path}} {{help_option}}'[/] for help."

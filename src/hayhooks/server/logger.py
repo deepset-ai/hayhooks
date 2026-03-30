@@ -132,6 +132,7 @@ def intercept_stdlib_logging(loggers: list[str] | tuple[str, ...] | None = None)
     for name in loggers or _DEFAULT_INTERCEPTED_LOGGERS:
         stdlib_logger = logging.getLogger(name)
         stdlib_logger.handlers = [handler]
+        stdlib_logger.setLevel(logging.DEBUG)
         stdlib_logger.propagate = False
 
 
