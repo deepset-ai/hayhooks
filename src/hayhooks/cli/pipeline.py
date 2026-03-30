@@ -239,9 +239,7 @@ def run(  # noqa: PLR0912, C901, PLR0913
                         rel_path = file_path.relative_to(dir_path)
                         files_to_upload[str(rel_path)] = file_path
 
-        run_pipeline_with_files(
-            ctx=ctx, pipeline_name=name, files=files_to_upload, params=params_dict, stream=stream
-        )
+        run_pipeline_with_files(ctx=ctx, pipeline_name=name, files=files_to_upload, params=params_dict, stream=stream)
 
 
 def _run_with_files(ctx: typer.Context, pipeline_name: str, files: dict[str, Path], params: dict[str, Any]) -> dict:
@@ -256,9 +254,7 @@ def _run_with_files(ctx: typer.Context, pipeline_name: str, files: dict[str, Pat
         else:
             form_data[key] = str(value)
 
-    get_console().print(
-        f"[muted]Running pipeline[/muted] {_pname(pipeline_name)}[muted]...[/muted]"
-    )
+    get_console().print(f"[muted]Running pipeline[/muted] {_pname(pipeline_name)}[muted]...[/muted]")
     result, _ = upload_files_with_progress(
         url=endpoint, files=files, form_data=form_data, verify_ssl=not ctx.obj["disable_ssl"]
     )
@@ -268,10 +264,7 @@ def _run_with_files(ctx: typer.Context, pipeline_name: str, files: dict[str, Pat
 def _run_with_streaming(ctx: typer.Context, pipeline_name: str, params: dict[str, Any]) -> None:
     """Execute pipeline in streaming mode."""
     console = get_console()
-    console.print(
-        f"[muted]Running pipeline[/muted] {_pname(pipeline_name)}"
-        "[muted] in streaming mode...[/muted]"
-    )
+    console.print(f"[muted]Running pipeline[/muted] {_pname(pipeline_name)}[muted] in streaming mode...[/muted]")
     console.print("\n[accent.bold]Streaming output:[/accent.bold]")
 
     response = make_request(

@@ -121,10 +121,7 @@ def make_request(  # noqa: PLR0913
         if "application/json" in content_type:
             return response.json()
         elif "text/plain" in content_type:
-            show_warning(
-                "This endpoint returns a streaming response. "
-                "Use --stream flag to see tokens as they arrive."
-            )
+            show_warning("This endpoint returns a streaming response. Use --stream flag to see tokens as they arrive.")
             return {"result": response.text}
         else:
             try:

@@ -359,9 +359,7 @@ def create_run_endpoint_handler(
     async def _handle_request(run_req: BaseModel) -> Response | BaseModel:
         payload = run_req.model_dump()
 
-        log.bind(params=payload).opt(colors=True).info(
-            "Running pipeline '<bold>{}</bold>'", pipeline_name
-        )
+        log.bind(params=payload).opt(colors=True).info("Running pipeline '<bold>{}</bold>'", pipeline_name)
         t0 = time.monotonic()
         result = await _execute_pipeline_run(pipeline_wrapper, payload)
         elapsed_ms = (time.monotonic() - t0) * 1000
