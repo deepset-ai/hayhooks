@@ -85,12 +85,10 @@ def deploy_yaml(  # noqa: PLR0913
             "name": name,
             "source_code": pipeline_file.read_text(encoding="utf-8"),
             "overwrite": overwrite,
+            "description": description,
             "save_file": save_file,
             "skip_mcp": skip_mcp,
         }
-
-        if description is not None:
-            payload["description"] = description
 
         _deploy_with_progress(ctx=ctx, name=name, endpoint="deploy-yaml", payload=payload)
 
