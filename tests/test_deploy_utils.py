@@ -16,6 +16,7 @@ from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
+    _format_run_stream_chunk,
     _register_and_deploy_pipeline,
     _streaming_response_from_result,
     create_request_model_from_callable,
@@ -814,3 +815,52 @@ class PipelineWrapper(BasePipelineWrapper):
         elif filename == "config.txt":
             assert "测试" in content
             assert "🚀" in content
+
+
+class TestFormatRunStreamChunk:
+    def test_content_chunk(self):
+        from haystack.dataclasses import StreamingChunk
+
+        chunk = StreamingChunk(content="Hello world")
+        assert _format_run_stream_chunk(chunk) == "Hello world"
+
+    def test_reasoning_chunk(self):
+        from haystack.dataclasses import StreamingChunk
+        from haystack.dataclasses.chat_message import ReasoningContent
+
+        chunk = StreamingChunk(
+            content="",
+            index=0,
+            reasoning=ReasoningContent(reasoning_text="Let me think..."),
+        )
+        assert _format_run_stream_chunk(chunk) == "Let me think..."
+
+    def test_empty_content_without_reasoning(self):
+        from haystack.dataclasses import StreamingChunk
+
+        chunk = StreamingChunk(content="")
+        assert _format_run_stream_chunk(chunk) == ""
+
+    def test_reasoning_with_empty_text(self):
+        from haystack.dataclasses import StreamingChunk
+        from haystack.dataclasses.chat_message import ReasoningContent
+
+        chunk = StreamingChunk(
+            content="",
+            index=0,
+            reasoning=ReasoningContent(reasoning_text=""),
+        )
+        assert _format_run_stream_chunk(chunk) == ""
+
+    def test_string_passthrough(self):
+        assert _format_run_stream_chunk("plain text") == "plain text"
+
+    def test_bytes_passthrough(self):
+        assert _format_run_stream_chunk(b"raw bytes") == b"raw bytes"
+
+    def test_none_returns_empty_string(self):
+        assert _format_run_stream_chunk(None) == ""
+
+    def test_dict_returns_json(self):
+        result = _format_run_stream_chunk({"key": "value"})
+        assert result == '{"key": "value"}'

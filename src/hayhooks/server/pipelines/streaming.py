@@ -27,6 +27,7 @@ _QUEUE_POLL_TIMEOUT_SECONDS = 0.01
 ToolCallbackReturn = PipelineEvent | str | None | list[PipelineEvent | str]
 OnToolCallStart = Callable[[str, dict[str, Any], str | None], ToolCallbackReturn] | None
 OnToolCallEnd = Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn] | None
+OnReasoning = Callable[[str, dict[str, Any] | None], ToolCallbackReturn] | None
 OnPipelineEnd = Callable[[Any], str | None] | None
 StreamingCallback = Callable[[StreamingChunk], None] | Callable[[StreamingChunk], Awaitable[None]]
 
@@ -301,6 +302,31 @@ def _process_tool_call_end(
             log.opt(exception=True).error("Error in on_tool_call_end callback: {}", e)
 
 
+def _process_reasoning(
+    chunk: StreamingChunk, on_reasoning: OnReasoning
+) -> Generator[PipelineEvent | str, None, None]:
+    """
+    Process reasoning events from a streaming chunk.
+
+    Args:
+        chunk: The streaming chunk that may contain reasoning content
+        on_reasoning: Callback function for reasoning content
+
+    Yields:
+        PipelineEvent or str: Results from the callback
+    """
+    reasoning = getattr(chunk, "reasoning", None)
+    if on_reasoning and reasoning is not None:
+        try:
+            text = getattr(reasoning, "reasoning_text", None)
+            reasoning_text = text if isinstance(text, str) else str(reasoning)
+            extra = getattr(reasoning, "extra", None)
+            result = on_reasoning(reasoning_text, extra)
+            yield from _yield_callback_results(result)
+        except Exception as e:
+            log.opt(exception=True).error("Error in on_reasoning callback: {}", e)
+
+
 def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd) -> StreamingChunk | None:
     """
     Process pipeline end callback and return a StreamingChunk if there's content.
@@ -435,6 +461,7 @@ def streaming_generator(  # noqa: PLR0913
     pipeline_run_args: dict[str, Any] | None = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
+    on_reasoning: OnReasoning = None,
     on_pipeline_end: OnPipelineEnd = None,
     streaming_components: list[str] | Literal["all"] | None = None,
     include_outputs_from: set[str] | None = None,
@@ -451,6 +478,7 @@ def streaming_generator(  # noqa: PLR0913
         pipeline_run_args: Arguments for execution
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
+        on_reasoning: Callback for reasoning content chunks (receives reasoning_text and extra dict)
         on_pipeline_end: Callback for pipeline end
         streaming_components: Optional config for which components should stream.
                              Can be:
@@ -507,6 +535,7 @@ def streaming_generator(  # noqa: PLR0913
 
                 yield from _process_tool_call_start(chunk, on_tool_call_start)
                 yield from _process_tool_call_end(chunk, on_tool_call_end)
+                yield from _process_reasoning(chunk, on_reasoning)
                 yield chunk
         finally:
             _cleanup_pipeline_sync(thread)
@@ -793,6 +822,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
     pipeline_run_args: dict[str, Any] | None = None,
     on_tool_call_start: OnToolCallStart = None,
     on_tool_call_end: OnToolCallEnd = None,
+    on_reasoning: OnReasoning = None,
     on_pipeline_end: OnPipelineEnd = None,
     streaming_components: list[str] | Literal["all"] | None = None,
     include_outputs_from: set[str] | None = None,
@@ -810,6 +840,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
         pipeline_run_args: Arguments for execution
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
+        on_reasoning: Callback for reasoning content chunks (receives reasoning_text and extra dict)
         on_pipeline_end: Callback for pipeline end
         streaming_components: Optional config for which components should stream.
                              Can be:
@@ -880,6 +911,8 @@ def async_streaming_generator(  # noqa: PLR0913, C901
                 for result in _process_tool_call_start(chunk, on_tool_call_start):
                     yield result
                 for result in _process_tool_call_end(chunk, on_tool_call_end):
+                    yield result
+                for result in _process_reasoning(chunk, on_reasoning):
                     yield result
                 yield chunk
 

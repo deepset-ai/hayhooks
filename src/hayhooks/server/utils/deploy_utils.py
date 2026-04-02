@@ -223,7 +223,12 @@ def handle_pipeline_exceptions() -> Callable:
 
 def _format_run_stream_chunk(stream_item: Any) -> str | bytes | None:
     if isinstance(stream_item, StreamingChunk):
-        return stream_item.content or ""
+        if stream_item.content:
+            return stream_item.content
+        reasoning = getattr(stream_item, "reasoning", None)
+        if reasoning is not None:
+            return getattr(reasoning, "reasoning_text", "") or ""
+        return ""
     if isinstance(stream_item, PipelineEvent):
         log.warning("PipelineEvent emitted during /run streaming; skipping. Use OpenAI chat endpoints for UI events.")
         return None
