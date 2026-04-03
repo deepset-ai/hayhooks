@@ -302,9 +302,7 @@ def _process_tool_call_end(
             log.opt(exception=True).error("Error in on_tool_call_end callback: {}", e)
 
 
-def _process_reasoning(
-    chunk: StreamingChunk, on_reasoning: OnReasoning
-) -> Generator[PipelineEvent | str, None, None]:
+def _process_reasoning(chunk: StreamingChunk, on_reasoning: OnReasoning) -> Generator[PipelineEvent | str, None, None]:
     """
     Process reasoning events from a streaming chunk.
 
