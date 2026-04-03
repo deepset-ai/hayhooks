@@ -708,6 +708,42 @@ async def run_api_async(self, query: str) -> dict:
     - **Non-streaming**: Pass `include_outputs_from` directly to `pipeline.run()` or `pipeline.run_async()`
     - **YAML Pipelines**: Automatically handled - see [YAML Pipeline Deployment](yaml-pipeline-deployment.md#output-mapping)
 
+## Reasoning Content Callback
+
+When using reasoning models (e.g., OpenAI o3-mini, DeepSeek R1), the `on_reasoning` callback lets you intercept reasoning chunks as they stream through. This works similarly to `on_tool_call_start` / `on_tool_call_end`:
+
+```python
+from typing import Any
+
+from hayhooks import PipelineEvent, streaming_generator
+
+
+def on_reasoning(
+    text: str,
+    extra: dict[str, Any] | None,
+) -> PipelineEvent | str | None | list[PipelineEvent | str]:
+    """Called for each reasoning token chunk.
+
+    Args:
+        text: The reasoning text content
+        extra: Optional extra metadata from the model
+
+    Returns:
+        str to inject into the stream, None to skip, or a PipelineEvent/list thereof
+    """
+    return text
+
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"messages": messages},
+        on_reasoning=on_reasoning,
+    )
+```
+
+!!! note
+    Reasoning content is automatically streamed to clients on both Chat Completions and Responses API endpoints even without the `on_reasoning` callback. The callback is only needed if you want to transform or intercept reasoning chunks (e.g., to emit Open WebUI events or filter content).
+
 ## External Event Queue
 
 Both `streaming_generator` and `async_streaming_generator` support an optional `external_event_queue` parameter. This allows you to inject custom events (`dict`, `OpenWebUIEvent`, `str`, or `StreamingChunk`) into the streaming output alongside pipeline chunks. The external queue is checked before the internal queue in each iteration cycle, ensuring external events are delivered promptly.

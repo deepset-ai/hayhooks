@@ -8,6 +8,7 @@ Open WebUI integration allows you to:
 
 - Use Haystack pipelines as OpenAI-compatible chat backends
 - Support streaming responses in real-time
+- Display reasoning/"Thinking" blocks for reasoning-capable models
 - Send status events to enhance user experience
 - Intercept tool calls for better feedback
 
@@ -171,6 +172,35 @@ Here's an example of tool call interception in action:
 
 ![open-webui-hayhooks-agent-on-tool-calls](../assets/open-webui-hayhooks-agent-on-tool-calls.gif)
 
+## Reasoning Content
+
+When using reasoning models (e.g., OpenAI o3-mini, DeepSeek R1), Hayhooks automatically streams reasoning tokens to the client. Open WebUI displays these as collapsible "Thinking" blocks, giving users visibility into the model's chain-of-thought.
+
+No additional configuration is needed -- reasoning content is handled automatically by both the Chat Completions and Responses API endpoints. You can optionally intercept reasoning chunks using the `on_reasoning` callback:
+
+```python
+from typing import Any
+
+from hayhooks import PipelineEvent
+
+
+def on_reasoning(
+    text: str,
+    extra: dict[str, Any] | None,
+) -> PipelineEvent | str | None | list[PipelineEvent | str]:
+    """Called for each reasoning chunk."""
+    return text
+
+class PipelineWrapper(BasePipelineWrapper):
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+        return streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={"messages": messages},
+            on_reasoning=on_reasoning,
+        )
+```
+
+See the [OpenAI Compatibility - Reasoning Content](openai-compatibility.md#reasoning-content) section for more details.
 
 ## Streaming the Final Pipeline Output
 
