@@ -530,41 +530,32 @@ def _make_reasoning_chunk(reasoning_text: str = "Let me think...", extra: dict |
 
 
 class TestProcessReasoning:
-    def test_extracts_reasoning_text_and_extra(self):
+    @pytest.mark.parametrize(
+        ("reasoning_text", "extra", "expected"),
+        [
+            ("Step 1: analyze", {"key": "value"}, ("Step 1: analyze", {"key": "value"})),
+            ("Thinking...", None, ("Thinking...", {})),
+            ("", None, ("", {})),
+        ],
+        ids=[
+            "extracts_reasoning_text_and_extra",
+            "empty_extra_is_passed",
+            "empty_reasoning_text_is_preserved",
+        ],
+    )
+    def test_reasoning_text_and_extra_variants(
+        self, reasoning_text: str, extra: dict[str, Any] | None, expected: tuple[str, dict[str, Any]]
+    ):
         captured: list[tuple] = []
 
         def callback(text: str, extra: dict[str, Any] | None) -> None:
             captured.append((text, extra))
 
-        chunk = _make_reasoning_chunk("Step 1: analyze", extra={"key": "value"})
+        chunk = _make_reasoning_chunk(reasoning_text, extra=extra)
         list(_process_reasoning(chunk, callback))
 
         assert len(captured) == 1
-        assert captured[0] == ("Step 1: analyze", {"key": "value"})
-
-    def test_empty_extra_is_passed(self):
-        captured: list[tuple] = []
-
-        def callback(text: str, extra: dict[str, Any] | None) -> None:
-            captured.append((text, extra))
-
-        chunk = _make_reasoning_chunk("Thinking...")
-        list(_process_reasoning(chunk, callback))
-
-        assert len(captured) == 1
-        assert captured[0] == ("Thinking...", {})
-
-    def test_empty_reasoning_text_is_preserved(self):
-        captured: list[tuple] = []
-
-        def callback(text: str, extra: dict[str, Any] | None) -> None:
-            captured.append((text, extra))
-
-        chunk = _make_reasoning_chunk("")
-        list(_process_reasoning(chunk, callback))
-
-        assert len(captured) == 1
-        assert captured[0] == ("", {})
+        assert captured[0] == expected
 
     def test_callback_returning_events(self):
         def callback(text: str, extra: dict[str, Any] | None) -> list[PipelineEvent]:

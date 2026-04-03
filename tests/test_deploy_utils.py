@@ -4,6 +4,7 @@ import shutil
 import sys
 from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
+from typing import Any
 
 import docstring_parser
 import pytest
@@ -16,9 +17,7 @@ from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
-    _format_run_stream_chunk,
     _register_and_deploy_pipeline,
-    _streaming_response_from_result,
     create_request_model_from_callable,
     create_response_model_from_callable,
     deploy_pipeline_files,
@@ -31,6 +30,7 @@ from hayhooks.server.utils.module_loader import (
     load_pipeline_module,
     unload_pipeline_modules,
 )
+from hayhooks.server.utils.streaming_response_utils import _format_run_stream_chunk, _streaming_response_from_result
 
 
 @pytest.fixture(autouse=True)
@@ -852,15 +852,20 @@ class TestFormatRunStreamChunk:
         )
         assert _format_run_stream_chunk(chunk) == ""
 
-    def test_string_passthrough(self):
-        assert _format_run_stream_chunk("plain text") == "plain text"
-
-    def test_bytes_passthrough(self):
-        assert _format_run_stream_chunk(b"raw bytes") == b"raw bytes"
-
-    def test_none_returns_empty_string(self):
-        assert _format_run_stream_chunk(None) == ""
-
-    def test_dict_returns_json(self):
-        result = _format_run_stream_chunk({"key": "value"})
-        assert result == '{"key": "value"}'
+    @pytest.mark.parametrize(
+        ("stream_item", "expected"),
+        [
+            ("plain text", "plain text"),
+            (b"raw bytes", b"raw bytes"),
+            (None, ""),
+            ({"key": "value"}, '{"key": "value"}'),
+        ],
+        ids=[
+            "string_passthrough",
+            "bytes_passthrough",
+            "none_returns_empty_string",
+            "dict_returns_json",
+        ],
+    )
+    def test_passthrough_values(self, stream_item: Any, expected: str | bytes):
+        assert _format_run_stream_chunk(stream_item) == expected
