@@ -28,10 +28,12 @@ def _format_run_stream_chunk(stream_item: Any) -> str | bytes | None:
     if stream_item is None:
         return ""
 
+    formatted = str(stream_item)
     try:
-        return json.dumps(stream_item)
+        formatted = json.dumps(stream_item)
     except TypeError:
-        return str(stream_item)
+        formatted = str(stream_item)
+    return formatted
 
 
 def _format_sse_chunk(formatted: str | bytes) -> str:
@@ -116,4 +118,3 @@ def _streaming_response_from_result(result: Any) -> Response | None:
     if isinstance(result, GeneratorABC):
         return _streaming_response_from_gen(result)
     return None
-
