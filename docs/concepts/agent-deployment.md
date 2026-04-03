@@ -27,6 +27,9 @@ This example demonstrates:
 
 See the full file: [open_webui_agent_on_tool_calls/pipeline_wrapper.py](https://github.com/deepset-ai/hayhooks/blob/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls/pipeline_wrapper.py)
 
+For a reasoning-focused Open WebUI example with `gpt-5.4-mini`, see
+[`examples/pipeline_wrappers/reasoning_agent`](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/reasoning_agent).
+
 ```python
 import time
 from collections.abc import AsyncGenerator
