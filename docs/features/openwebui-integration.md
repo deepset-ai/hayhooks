@@ -174,7 +174,7 @@ Here's an example of tool call interception in action:
 
 ## Reasoning Content
 
-When using reasoning models (e.g., OpenAI o3-mini, DeepSeek R1), Hayhooks automatically streams reasoning tokens to the client. Open WebUI displays these as collapsible "Thinking" blocks, giving users visibility into the model's chain-of-thought.
+When using modern reasoning-capable models (e.g., GPT-5 family models such as `gpt-5.4-mini` and `gpt-5`, or Claude Opus 4.6 via compatible gateways), Hayhooks automatically streams reasoning output to the client. Open WebUI displays this as collapsible "Thinking" blocks.
 
 No additional configuration is needed -- reasoning content is handled automatically by both the Chat Completions and Responses API endpoints. You can optionally intercept reasoning chunks using the `on_reasoning` callback:
 

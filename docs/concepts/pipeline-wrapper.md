@@ -710,7 +710,7 @@ async def run_api_async(self, query: str) -> dict:
 
 ## Reasoning Content Callback
 
-When using reasoning models (e.g., OpenAI o3-mini, DeepSeek R1), the `on_reasoning` callback lets you intercept reasoning chunks as they stream through. This works similarly to `on_tool_call_start` / `on_tool_call_end`:
+When using modern reasoning-capable models (e.g., GPT-5 family models such as `gpt-5.4-mini` and `gpt-5`, or Claude Opus 4.6 via compatible gateways), the `on_reasoning` callback lets you intercept reasoning chunks as they stream through. This works similarly to `on_tool_call_start` / `on_tool_call_end`:
 
 ```python
 from typing import Any

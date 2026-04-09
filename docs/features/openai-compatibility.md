@@ -20,7 +20,7 @@ Both APIs are available simultaneously. A pipeline wrapper can implement one or 
 
 - **Automatic Endpoint Generation**: OpenAI-compatible endpoints are created automatically
 - **Streaming Support**: Real-time streaming responses for chat interfaces
-- **Reasoning Content**: Automatic streaming of reasoning tokens from reasoning models (e.g., OpenAI o3-mini, DeepSeek R1)
+- **Reasoning Content**: Automatic streaming of reasoning output from modern reasoning-capable models (e.g., GPT-5 family models such as `gpt-5.4-mini` and `gpt-5`, or Claude Opus 4.6 via compatible gateways)
 - **Async Support**: High-performance async chat completion and responses
 - **Responses API**: Full support for the OpenAI Responses API with streaming named SSE events
 - **Files API**: Upload files via `/v1/files` for use with the Responses API
@@ -209,7 +209,7 @@ async def run_chat_completion_async(self, model: str, messages: list[dict], body
 
 ## Reasoning Content
 
-When using reasoning models (e.g., OpenAI o3-mini, DeepSeek R1), Haystack's generators automatically emit `StreamingChunk` objects with a `reasoning` field containing the model's chain-of-thought. Hayhooks streams these to clients automatically -- no special configuration needed.
+When using modern reasoning-capable models (e.g., GPT-5 family models such as `gpt-5.4-mini` and `gpt-5`, or Claude Opus 4.6 via compatible gateways), Haystack generators can emit `StreamingChunk` objects with a `reasoning` field when reasoning output is provided. Hayhooks streams this to clients automatically -- no special configuration needed.
 
 **Chat Completions** (`/v1/chat/completions`): Reasoning tokens are emitted as `reasoning_content` on the message delta, following the [DeepSeek convention](https://api-docs.deepseek.com/guides/reasoning_model). This is supported by Open WebUI and other compatible clients.
 
