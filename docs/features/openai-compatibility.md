@@ -20,11 +20,12 @@ Both APIs are available simultaneously. A pipeline wrapper can implement one or 
 
 - **Automatic Endpoint Generation**: OpenAI-compatible endpoints are created automatically
 - **Streaming Support**: Real-time streaming responses for chat interfaces
+- **Reasoning Content**: Automatic streaming of reasoning output from modern reasoning-capable models (e.g., GPT-5 family models such as `gpt-5.4-mini` and `gpt-5`, or Claude Opus 4.6 via compatible gateways)
 - **Async Support**: High-performance async chat completion and responses
 - **Responses API**: Full support for the OpenAI Responses API with streaming named SSE events
 - **Files API**: Upload files via `/v1/files` for use with the Responses API
 - **Multiple Integration Options**: Works with various OpenAI-compatible clients
-- **Open WebUI Ready**: Full support for [Open WebUI](openwebui-integration.md) with events and tool call interception
+- **Open WebUI Ready**: Full support for [Open WebUI](openwebui-integration.md) with events, tool call interception, and reasoning display
 
 ## Implementation
 
@@ -206,7 +207,38 @@ async def run_chat_completion_async(self, model: str, messages: list[dict], body
     )
 ```
 
-## Responses API
+## Reasoning Content
+
+When using modern reasoning-capable models (e.g., GPT-5 family models such as `gpt-5.4-mini` and `gpt-5`, or Claude Opus 4.6 via compatible gateways), Haystack generators can emit `StreamingChunk` objects with a `reasoning` field when reasoning output is provided. Hayhooks streams this to clients automatically -- no special configuration needed.
+
+**Chat Completions** (`/v1/chat/completions`): Reasoning tokens are emitted as `reasoning_content` on the message delta, following the [DeepSeek convention](https://api-docs.deepseek.com/guides/reasoning_model). This is supported by Open WebUI and other compatible clients.
+
+**Responses API** (`/v1/responses`): Reasoning tokens are emitted using the OpenAI [reasoning summary events](https://platform.openai.com/docs/api-reference/responses-streaming) (`response.reasoning_summary_text.delta`, etc.) and produce `type: "reasoning"` output items with a `summary` array.
+
+You can also intercept reasoning chunks in your pipeline wrapper using the `on_reasoning` callback:
+
+```python
+from typing import Any
+
+from hayhooks import PipelineEvent, streaming_generator
+
+
+def on_reasoning(
+    text: str,
+    extra: dict[str, Any] | None,
+) -> PipelineEvent | str | None | list[PipelineEvent | str]:
+    """Called for each reasoning chunk with the reasoning text and extra metadata."""
+    return text
+
+def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"messages": messages},
+        on_reasoning=on_reasoning,
+    )
+```
+
+## Building with Responses API
 
 The [Responses API](https://platform.openai.com/docs/api-reference/responses) is an alternative to Chat Completions that uses named SSE events for streaming and supports a richer input format. Implement `run_response` or `run_response_async` in your pipeline wrapper to enable it.
 

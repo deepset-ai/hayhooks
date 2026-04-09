@@ -7,6 +7,7 @@ from haystack.dataclasses import ChatMessage, ToolCall
 
 from hayhooks.server.pipelines.streaming import (
     OnPipelineEnd,
+    OnReasoning,
     OnToolCallEnd,
     OnToolCallStart,
     ToolCallbackReturn,
@@ -19,6 +20,7 @@ from hayhooks.server.pipelines.streaming import (
 
 __all__ = [
     "OnPipelineEnd",
+    "OnReasoning",
     "OnToolCallEnd",
     "OnToolCallStart",
     "ToolCallbackReturn",

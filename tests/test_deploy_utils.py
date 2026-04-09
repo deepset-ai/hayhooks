@@ -4,6 +4,7 @@ import shutil
 import sys
 from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
+from typing import Any
 
 import docstring_parser
 import pytest
@@ -17,7 +18,6 @@ from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
     _register_and_deploy_pipeline,
-    _streaming_response_from_result,
     create_request_model_from_callable,
     create_response_model_from_callable,
     deploy_pipeline_files,
@@ -30,6 +30,7 @@ from hayhooks.server.utils.module_loader import (
     load_pipeline_module,
     unload_pipeline_modules,
 )
+from hayhooks.server.utils.streaming_response_utils import _format_run_stream_chunk, _streaming_response_from_result
 
 
 @pytest.fixture(autouse=True)
@@ -814,3 +815,57 @@ class PipelineWrapper(BasePipelineWrapper):
         elif filename == "config.txt":
             assert "测试" in content
             assert "🚀" in content
+
+
+class TestFormatRunStreamChunk:
+    def test_content_chunk(self):
+        from haystack.dataclasses import StreamingChunk
+
+        chunk = StreamingChunk(content="Hello world")
+        assert _format_run_stream_chunk(chunk) == "Hello world"
+
+    def test_reasoning_chunk(self):
+        from haystack.dataclasses import StreamingChunk
+        from haystack.dataclasses.chat_message import ReasoningContent
+
+        chunk = StreamingChunk(
+            content="",
+            index=0,
+            reasoning=ReasoningContent(reasoning_text="Let me think..."),
+        )
+        assert _format_run_stream_chunk(chunk) == "Let me think..."
+
+    def test_empty_content_without_reasoning(self):
+        from haystack.dataclasses import StreamingChunk
+
+        chunk = StreamingChunk(content="")
+        assert _format_run_stream_chunk(chunk) == ""
+
+    def test_reasoning_with_empty_text(self):
+        from haystack.dataclasses import StreamingChunk
+        from haystack.dataclasses.chat_message import ReasoningContent
+
+        chunk = StreamingChunk(
+            content="",
+            index=0,
+            reasoning=ReasoningContent(reasoning_text=""),
+        )
+        assert _format_run_stream_chunk(chunk) == ""
+
+    @pytest.mark.parametrize(
+        ("stream_item", "expected"),
+        [
+            ("plain text", "plain text"),
+            (b"raw bytes", b"raw bytes"),
+            (None, ""),
+            ({"key": "value"}, '{"key": "value"}'),
+        ],
+        ids=[
+            "string_passthrough",
+            "bytes_passthrough",
+            "none_returns_empty_string",
+            "dict_returns_json",
+        ],
+    )
+    def test_passthrough_values(self, stream_item: Any, expected: str | bytes):
+        assert _format_run_stream_chunk(stream_item) == expected
