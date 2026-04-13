@@ -2,6 +2,12 @@
 
 This example demonstrates using `allow_sync_streaming_callbacks=True` to enable hybrid streaming mode with AsyncPipeline and legacy sync-only components.
 
+> **Note**
+> If you want Open WebUI "Thinking" / reasoning blocks, use
+> [`examples/pipeline_wrappers/reasoning_agent`](../reasoning_agent/) instead.
+> This hybrid example uses legacy `OpenAIGenerator`, which does not expose
+> reasoning chunks.
+
 ## Overview
 
 This example shows how to use an **AsyncPipeline** with **OpenAIGenerator** (a legacy component that only supports synchronous streaming callbacks) by enabling hybrid mode with `allow_sync_streaming_callbacks=True`.

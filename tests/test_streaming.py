@@ -15,7 +15,12 @@ from haystack.dataclasses.streaming_chunk import ToolCallDelta
 from haystack.utils import Secret
 
 from hayhooks.events import PipelineEvent
-from hayhooks.server.pipelines.streaming import _process_tool_call_start, async_streaming_generator, streaming_generator
+from hayhooks.server.pipelines.streaming import (
+    _process_reasoning,
+    _process_tool_call_start,
+    async_streaming_generator,
+    streaming_generator,
+)
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
@@ -512,3 +517,137 @@ class TestProcessToolCallStart:
         chunk = _make_tool_call_chunk()
         results = list(_process_tool_call_start(chunk, None))
         assert results == []
+
+
+def _make_reasoning_chunk(reasoning_text: str = "Let me think...", extra: dict | None = None) -> StreamingChunk:
+    from haystack.dataclasses.chat_message import ReasoningContent
+
+    return StreamingChunk(
+        content="",
+        index=0,
+        reasoning=ReasoningContent(reasoning_text=reasoning_text, extra=extra or {}),
+    )
+
+
+class TestProcessReasoning:
+    @pytest.mark.parametrize(
+        ("reasoning_text", "extra", "expected"),
+        [
+            ("Step 1: analyze", {"key": "value"}, ("Step 1: analyze", {"key": "value"})),
+            ("Thinking...", None, ("Thinking...", {})),
+            ("", None, ("", {})),
+        ],
+        ids=[
+            "extracts_reasoning_text_and_extra",
+            "empty_extra_is_passed",
+            "empty_reasoning_text_is_preserved",
+        ],
+    )
+    def test_reasoning_text_and_extra_variants(
+        self, reasoning_text: str, extra: dict[str, Any] | None, expected: tuple[str, dict[str, Any]]
+    ):
+        captured: list[tuple] = []
+
+        def callback(text: str, extra: dict[str, Any] | None) -> None:
+            captured.append((text, extra))
+
+        chunk = _make_reasoning_chunk(reasoning_text, extra=extra)
+        list(_process_reasoning(chunk, callback))
+
+        assert len(captured) == 1
+        assert captured[0] == expected
+
+    def test_callback_returning_events(self):
+        def callback(text: str, extra: dict[str, Any] | None) -> list[PipelineEvent]:
+            return [PipelineEvent(type="status", data={"description": f"Reasoning: {text}"})]
+
+        chunk = _make_reasoning_chunk("analyzing")
+        results = list(_process_reasoning(chunk, callback))
+
+        assert len(results) == 1
+        assert results[0].type == "status"
+
+    def test_callback_error_is_swallowed(self):
+        def callback(text: str, extra: dict[str, Any] | None) -> None:
+            msg = "callback boom"
+            raise ValueError(msg)
+
+        chunk = _make_reasoning_chunk()
+        results = list(_process_reasoning(chunk, callback))
+        assert results == []
+
+    def test_no_callback_yields_nothing(self):
+        chunk = _make_reasoning_chunk()
+        results = list(_process_reasoning(chunk, None))
+        assert results == []
+
+    def test_non_reasoning_chunk_yields_nothing(self):
+        captured: list[tuple] = []
+
+        def callback(text: str, extra: dict[str, Any] | None) -> None:
+            captured.append((text, extra))
+
+        chunk = StreamingChunk(content="Hello", index=0)
+        list(_process_reasoning(chunk, callback))
+        assert captured == []
+
+
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_reasoning_chunks_pass_through(create_mock_agent, use_async):
+    from haystack.dataclasses.chat_message import ReasoningContent
+
+    reasoning_chunk = StreamingChunk(
+        content="",
+        index=0,
+        reasoning=ReasoningContent(reasoning_text="thinking hard"),
+    )
+    text_chunk = StreamingChunk(content="result", index=0)
+    mock_agent = create_mock_agent(chunks=[reasoning_chunk, text_chunk])
+
+    if use_async:
+        gen = async_streaming_generator(mock_agent, pipeline_run_args={"messages": []})
+        chunks = [chunk async for chunk in gen]
+    else:
+        gen = streaming_generator(mock_agent, pipeline_run_args={"messages": []})
+        chunks = list(gen)
+
+    streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
+    assert len(streaming_chunks) == 2
+    assert streaming_chunks[0].reasoning is not None
+    assert streaming_chunks[0].reasoning.reasoning_text == "thinking hard"
+    assert streaming_chunks[1].content == "result"
+
+
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_on_reasoning_callback_invoked(create_mock_agent, use_async):
+    from haystack.dataclasses.chat_message import ReasoningContent
+
+    reasoning_chunk = StreamingChunk(
+        content="",
+        index=0,
+        reasoning=ReasoningContent(reasoning_text="deep thought", extra={"model": "o3"}),
+    )
+    text_chunk = StreamingChunk(content="42", index=0)
+    mock_agent = create_mock_agent(chunks=[reasoning_chunk, text_chunk])
+
+    captured: list[tuple] = []
+
+    def on_reasoning(text: str, extra: dict[str, Any] | None) -> PipelineEvent:
+        captured.append((text, extra))
+        return PipelineEvent(type="status", data={"description": f"Reasoning: {text}"})
+
+    if use_async:
+        gen = async_streaming_generator(
+            mock_agent, pipeline_run_args={"messages": []}, on_reasoning=on_reasoning
+        )
+        chunks = [chunk async for chunk in gen]
+    else:
+        gen = streaming_generator(mock_agent, pipeline_run_args={"messages": []}, on_reasoning=on_reasoning)
+        chunks = list(gen)
+
+    assert len(captured) == 1
+    assert captured[0] == ("deep thought", {"model": "o3"})
+
+    events = [c for c in chunks if isinstance(c, PipelineEvent)]
+    assert len(events) == 1
+    assert events[0].type == "status"

@@ -263,13 +263,13 @@ def create_app() -> FastAPI:
 
     app = FastAPI(**app_params)
 
-    app.add_middleware(RequestIdMiddleware)  # ty: ignore[invalid-argument-type]
+    app.add_middleware(RequestIdMiddleware)
 
     # Check CORS settings before adding middleware
     check_cors_settings()
 
     app.add_middleware(
-        CORSMiddleware,  # ty: ignore[invalid-argument-type]
+        CORSMiddleware,
         allow_origins=settings.cors_allow_origins,
         allow_methods=settings.cors_allow_methods,
         allow_headers=settings.cors_allow_headers,
