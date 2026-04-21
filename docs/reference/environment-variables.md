@@ -322,6 +322,7 @@ export HAYHOOKS_ACCESS_LOG_EXCLUDED_PATH_PREFIXES='[]'
 Hayhooks tracing relies on Haystack tracing APIs and standard OpenTelemetry configuration.
 
 For setup walkthroughs and backend examples (SigNoz, Jaeger), see [Tracing](tracing.md).
+
 Install tracing extras first:
 
 ```bash
@@ -377,6 +378,7 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is 
 an automatic OpenTelemetry bootstrap at startup using the protocol from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`
 (falling back to `OTEL_EXPORTER_OTLP_PROTOCOL`)
 (`http/protobuf` default, or `grpc`).
+
 ## Usage Examples
 
 ### Docker
