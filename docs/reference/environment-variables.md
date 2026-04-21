@@ -232,7 +232,6 @@ export HAYHOOKS_INTERCEPTED_LOGGERS='["uvicorn", "uvicorn.error", "uvicorn.acces
 Hayhooks tracing relies on Haystack tracing APIs and standard OpenTelemetry configuration.
 
 For setup walkthroughs and backend examples (SigNoz, Jaeger), see [Tracing](tracing.md).
-
 Install tracing extras first:
 
 ```bash
