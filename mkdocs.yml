@@ -44,6 +44,7 @@ nav:
   - Reference:
     - API Reference: reference/api-reference.md
     - Environment Variables: reference/environment-variables.md
+    - Tracing: reference/tracing.md
     - Logging: reference/logging.md
   - About:
     - License: about/license.md
@@ -130,6 +131,7 @@ plugins:
         Reference:
           - reference/api-reference.md: REST API reference for Haystack Pipelines and Agents endpoints.
           - reference/environment-variables.md: Environment variables and their defaults.
+          - reference/tracing.md: OpenTelemetry tracing setup, local backends, and behavior.
           - reference/logging.md: Logging configuration and observability guidance.
         About:
           - about/license.md: Project licensing details.

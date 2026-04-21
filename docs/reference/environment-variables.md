@@ -231,6 +231,8 @@ export HAYHOOKS_INTERCEPTED_LOGGERS='["uvicorn", "uvicorn.error", "uvicorn.acces
 
 Hayhooks tracing relies on Haystack tracing APIs and standard OpenTelemetry configuration.
 
+For setup walkthroughs and backend examples (SigNoz, Jaeger), see [Tracing](tracing.md).
+
 Install tracing extras first:
 
 ```bash
@@ -286,51 +288,6 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is 
 an automatic OpenTelemetry bootstrap at startup using the protocol from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`
 (falling back to `OTEL_EXPORTER_OTLP_PROTOCOL`)
 (`http/protobuf` default, or `grpc`).
-
-### Recommended OSS stack (local and small deployments)
-
-#### Option A: SigNoz (recommended UI)
-
-SigNoz provides a richer trace-exploration UI while staying fully open source.
-
-Start SigNoz locally:
-
-```bash
-git clone -b main https://github.com/SigNoz/signoz.git
-cd signoz/deploy/docker
-docker compose up -d --remove-orphans
-```
-
-Then point Hayhooks/OpenTelemetry to the SigNoz collector:
-
-```bash
-export OTEL_SERVICE_NAME=hayhooks
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-export OTEL_TRACES_SAMPLER=parentbased_traceidratio
-export OTEL_TRACES_SAMPLER_ARG=1.0
-export HAYHOOKS_TRACING_EXCLUDED_SPANS='["send", "receive"]'
-```
-
-Open SigNoz at `http://localhost:8080`, then go to **Traces** and filter by service `hayhooks`.
-
-#### Option B: Jaeger (minimal setup)
-
-If you want a lighter single-container setup:
-
-```bash
-docker run --rm -d \
-  --name jaeger \
-  -e COLLECTOR_OTLP_ENABLED=true \
-  -p 16686:16686 \
-  -p 4318:4318 \
-  jaegertracing/all-in-one:latest
-```
-
-Use the same `OTEL_*` variables shown above and open Jaeger at `http://localhost:16686`.
-
-For advanced setups, you can still initialize your own OpenTelemetry SDK tracer provider before importing
-Hayhooks/Haystack and Hayhooks will use that configured provider.
 
 ## Usage Examples
 
@@ -397,4 +354,5 @@ HAYHOOKS_LOG_FORMAT=default
 ## Next Steps
 
 - [Configuration](../getting-started/configuration.md)
+- [Tracing](tracing.md)
 - [Logging](logging.md)
