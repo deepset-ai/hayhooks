@@ -5,6 +5,7 @@ import pytest
 from anyio import Path
 
 from hayhooks.server.pipelines import registry
+from hayhooks.server.tracing import SPAN_MCP_CALL_TOOL
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_files, deploy_pipeline_yaml
 from hayhooks.server.utils.mcp_utils import CoreTools, create_mcp_server
 
@@ -114,6 +115,18 @@ async def test_call_pipeline_as_tool(mcp_server_instance, deploy_chat_with_websi
 
         # In the deployed pipeline, the response is mocked
         assert result.content == [TextContent(type="text", text="This is a mock response from the pipeline")]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_emits_trace_span(mcp_server_instance, recording_tracer):
+    async with client_session(mcp_server_instance) as client:
+        result = await client.call_tool(CoreTools.GET_ALL_PIPELINE_STATUSES, {})
+        assert isinstance(result, CallToolResult)
+
+    spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_MCP_CALL_TOOL]
+    assert spans
+    assert spans[-1].tags["hayhooks.tool.name"] == CoreTools.GET_ALL_PIPELINE_STATUSES
+    assert spans[-1].tags["hayhooks.transport"] == "mcp"
 
 
 @pytest.mark.asyncio

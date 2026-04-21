@@ -5,7 +5,7 @@ import time
 import uuid
 from collections.abc import Callable
 from functools import wraps
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from loguru import logger as log
 
@@ -90,6 +90,26 @@ class _InterceptHandler(logging.Handler):
 
 def generate_request_id() -> str:
     return uuid.uuid4().hex[:8]
+
+
+# Fixed widths for lower-case hex rendering of OTel correlation IDs.
+_TRACE_ID_HEX_WIDTHS = {"trace_id": 32, "span_id": 16}
+
+
+def _format_trace_identifier(value: Any, width: int) -> str:
+    """Format integer trace/span IDs as fixed-width lower-case hex."""
+    return f"{value:0{width}x}" if isinstance(value, int) else str(value)
+
+
+def normalize_trace_correlation_data(correlation_data: dict[str, Any]) -> dict[str, str]:
+    """Normalize tracer correlation payload for Loguru context fields."""
+    normalized: dict[str, str] = {}
+    for key, value in correlation_data.items():
+        if value is None:
+            continue
+        width = _TRACE_ID_HEX_WIDTHS.get(key)
+        normalized[key] = _format_trace_identifier(value, width) if width else str(value)
+    return normalized
 
 
 class RequestIdMiddleware:

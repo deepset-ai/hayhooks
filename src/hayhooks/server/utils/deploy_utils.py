@@ -5,15 +5,15 @@ import tempfile
 import threading
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable, Generator
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import docstring_parser
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
@@ -24,6 +24,19 @@ from hayhooks.server.pipelines.models import (
     create_request_model_from_callable,
     create_response_model_from_callable,
     get_response_class_from_callable,
+)
+from hayhooks.server.pipelines.sse import SSEStream
+from hayhooks.server.tracing import (
+    SPAN_PIPELINE_DEPLOY,
+    SPAN_PIPELINE_DEPLOY_COMMIT,
+    SPAN_PIPELINE_DEPLOY_PREPARE,
+    SPAN_PIPELINE_RUN,
+    SPAN_PIPELINE_UNDEPLOY,
+    build_streaming_trace_tags,
+    build_trace_tags,
+    trace_async_stream,
+    trace_operation,
+    trace_sync_stream,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.models import PreparedPipeline
@@ -225,6 +238,67 @@ async def _execute_pipeline_run(
     return await run_in_threadpool(pipeline_wrapper.run_api, **payload)
 
 
+def _build_run_trace_tags(pipeline_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return build_trace_tags(
+        {
+            "hayhooks.transport": "rest",
+            "hayhooks.pipeline.name": pipeline_name,
+            "hayhooks.route": f"/{pipeline_name}/run",
+            "hayhooks.payload.keys": sorted(payload.keys()),
+            "hayhooks.payload.has_files": "files" in payload,
+        }
+    )
+
+
+async def _execute_pipeline_run_with_tracing(
+    pipeline_wrapper: BasePipelineWrapper,
+    payload: dict[str, Any],
+    *,
+    trace_tags: dict[str, Any],
+    is_streaming_response: bool,
+) -> Any:
+    if is_streaming_response:
+        try:
+            return await _execute_pipeline_run(pipeline_wrapper, payload)
+        except BaseException:
+            with trace_operation(SPAN_PIPELINE_RUN, tags=trace_tags):
+                raise
+
+    with trace_operation(SPAN_PIPELINE_RUN, tags=trace_tags):
+        return await _execute_pipeline_run(pipeline_wrapper, payload)
+
+
+def _trace_streaming_run_result(result: Any, trace_tags: dict[str, Any]) -> Any:
+    if isinstance(result, SSEStream):
+        if isinstance(result.stream, AsyncGenerator):
+            return SSEStream(
+                trace_async_stream(
+                    result.stream,
+                    SPAN_PIPELINE_RUN,
+                    tags=build_streaming_trace_tags(trace_tags, stream_type="sse"),
+                )
+            )
+        if isinstance(result.stream, Generator):
+            return SSEStream(
+                trace_sync_stream(
+                    result.stream,
+                    SPAN_PIPELINE_RUN,
+                    tags=build_streaming_trace_tags(trace_tags, stream_type="sse"),
+                )
+            )
+        return result
+
+    if isinstance(result, AsyncGenerator):
+        return trace_async_stream(
+            result, SPAN_PIPELINE_RUN, tags=build_streaming_trace_tags(trace_tags, stream_type="plain")
+        )
+    if isinstance(result, Generator):
+        return trace_sync_stream(
+            result, SPAN_PIPELINE_RUN, tags=build_streaming_trace_tags(trace_tags, stream_type="plain")
+        )
+    return result
+
+
 def create_run_endpoint_handler(
     pipeline_wrapper: BasePipelineWrapper,
     pipeline_name: str,
@@ -250,16 +324,28 @@ def create_run_endpoint_handler(
     Returns:
         A FastAPI endpoint function that executes the pipeline and returns the response model.
     """
+    run_method = (
+        pipeline_wrapper.run_api_async if pipeline_wrapper._is_run_api_async_implemented else pipeline_wrapper.run_api
+    )
+    is_streaming_response = get_response_class_from_callable(run_method) is StreamingResponse
 
     async def _handle_request(run_req: BaseModel) -> Response | BaseModel:
         payload = run_req.model_dump()
+        trace_tags = _build_run_trace_tags(pipeline_name, payload)
 
         log.bind(params=payload).opt(colors=True).info("Running pipeline '<bold>{}</bold>'", pipeline_name)
         t0 = time.monotonic()
-        result = await _execute_pipeline_run(pipeline_wrapper, payload)
+        result = await _execute_pipeline_run_with_tracing(
+            pipeline_wrapper,
+            payload,
+            trace_tags=trace_tags,
+            is_streaming_response=is_streaming_response,
+        )
         elapsed_ms = (time.monotonic() - t0) * 1000
 
-        streaming_response = _streaming_response_from_result(result)
+        traced_result = _trace_streaming_run_result(result, trace_tags)
+
+        streaming_response = _streaming_response_from_result(traced_result)
         if streaming_response is not None:
             log.opt(colors=True).info(
                 "Pipeline '<bold>{}</bold>' streaming response started (<bold>{:.0f}ms</bold>)",
@@ -278,9 +364,9 @@ def create_run_endpoint_handler(
         # _streaming_response_from_result() always handles the result above.
         # For normal JSON endpoints, wrap the result in the Pydantic response model.
         if response_model is None:
-            return result
+            return cast(Response | BaseModel, traced_result)
 
-        return response_model(result=result)
+        return cast(Response | BaseModel, response_model(result=traced_result))
 
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(
@@ -504,24 +590,36 @@ def prepare_pipeline_files(
     expensive work that is safe to run in a thread.  The returned
     ``PreparedPipeline`` can be committed later via ``_register_and_deploy_pipeline``.
     """
-    tmp_dir = None
+    with trace_operation(
+        SPAN_PIPELINE_DEPLOY_PREPARE,
+        tags=build_trace_tags(
+            {
+                "hayhooks.transport": "runtime",
+                "hayhooks.pipeline.name": pipeline_name,
+                "hayhooks.pipeline.source_type": "files",
+                "hayhooks.deploy.save_files": save_files,
+                "hayhooks.deploy.file_count": len(files),
+            }
+        ),
+    ):
+        tmp_dir = None
 
-    if save_files:
-        save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
-        pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
-    else:
-        tmp_dir = tempfile.mkdtemp()
-        save_pipeline_files(pipeline_name, files=files, pipelines_dir=tmp_dir)
-        pipeline_dir = Path(tmp_dir) / pipeline_name
+        if save_files:
+            save_pipeline_files(pipeline_name, files=files, pipelines_dir=settings.pipelines_dir)
+            pipeline_dir = Path(settings.pipelines_dir) / pipeline_name
+        else:
+            tmp_dir = tempfile.mkdtemp()
+            save_pipeline_files(pipeline_name, files=files, pipelines_dir=tmp_dir)
+            pipeline_dir = Path(tmp_dir) / pipeline_name
 
-    try:
-        module = load_pipeline_module(pipeline_name, dir_path=pipeline_dir)
-        pipeline_wrapper = create_pipeline_wrapper_instance(module)
-        pipeline_wrapper.setup()
-        return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper)
-    finally:
-        if tmp_dir is not None:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        try:
+            module = load_pipeline_module(pipeline_name, dir_path=pipeline_dir)
+            pipeline_wrapper = create_pipeline_wrapper_instance(module)
+            pipeline_wrapper.setup()
+            return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper)
+        finally:
+            if tmp_dir is not None:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @log_elapsed()
@@ -537,25 +635,36 @@ def prepare_pipeline_yaml(
     expensive work that is safe to run in a thread.
     """
     save_file: bool = True if options is None else bool(options.get("save_file", True))
-    if save_file:
-        save_pipeline_files(pipeline_name, {f"{pipeline_name}.yml": source_code}, settings.pipelines_dir)
-
     description = (options or {}).get("description")
-    pipeline_wrapper = YAMLPipelineWrapper.from_yaml(source_code, description=description)
+    skip_mcp = bool((options or {}).get("skip_mcp", False))
 
-    skip_mcp = (options or {}).get("skip_mcp", False)
-    pipeline_wrapper.skip_mcp = bool(skip_mcp)
+    with trace_operation(
+        SPAN_PIPELINE_DEPLOY_PREPARE,
+        tags=build_trace_tags(
+            {
+                "hayhooks.transport": "runtime",
+                "hayhooks.pipeline.name": pipeline_name,
+                "hayhooks.pipeline.source_type": "yaml",
+                "hayhooks.deploy.save_file": save_file,
+                "hayhooks.deploy.skip_mcp": skip_mcp,
+            }
+        ),
+    ):
+        if save_file:
+            save_pipeline_files(pipeline_name, {f"{pipeline_name}.yml": source_code}, settings.pipelines_dir)
 
-    pipeline_wrapper.setup()
+        pipeline_wrapper = YAMLPipelineWrapper.from_yaml(source_code, description=description)
+        pipeline_wrapper.skip_mcp = skip_mcp
+        pipeline_wrapper.setup()
 
-    extra_metadata = {
-        "description": description or pipeline_name,
-        "streaming_components": pipeline_wrapper.streaming_components,
-        "include_outputs_from": pipeline_wrapper.include_outputs_from,
-        "input_resolutions": pipeline_wrapper.input_resolutions,
-    }
+        extra_metadata = {
+            "description": description or pipeline_name,
+            "streaming_components": pipeline_wrapper.streaming_components,
+            "include_outputs_from": pipeline_wrapper.include_outputs_from,
+            "input_resolutions": pipeline_wrapper.input_resolutions,
+        }
 
-    return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper, extra_metadata=extra_metadata)
+        return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper, extra_metadata=extra_metadata)
 
 
 def commit_prepared_pipeline(
@@ -570,14 +679,26 @@ def commit_prepared_pipeline(
 
     This mutates shared state and must NOT be called concurrently.
     """
-    return _register_and_deploy_pipeline(
-        pipeline_name=prepared.name,
-        pipeline_wrapper=prepared.wrapper,
-        app=app,
-        overwrite=overwrite,
-        extra_metadata=prepared.extra_metadata,
-        _defer_openapi_rebuild=_defer_openapi_rebuild,
-    )
+    with trace_operation(
+        SPAN_PIPELINE_DEPLOY_COMMIT,
+        tags=build_trace_tags(
+            {
+                "hayhooks.transport": "runtime",
+                "hayhooks.pipeline.name": prepared.name,
+                "hayhooks.deploy.overwrite": overwrite,
+                "hayhooks.deploy.with_fastapi_route": app is not None,
+                "hayhooks.deploy.defer_openapi_rebuild": _defer_openapi_rebuild,
+            }
+        ),
+    ):
+        return _register_and_deploy_pipeline(
+            pipeline_name=prepared.name,
+            pipeline_wrapper=prepared.wrapper,
+            app=app,
+            overwrite=overwrite,
+            extra_metadata=prepared.extra_metadata,
+            _defer_openapi_rebuild=_defer_openapi_rebuild,
+        )
 
 
 def deploy_pipeline_files(
@@ -612,13 +733,26 @@ def deploy_pipeline_files(
         PipelineModuleLoadError: If loading the pipeline module fails.
         PipelineWrapperError: If wrapper creation or setup fails.
     """
-    prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=save_files)
-    return commit_prepared_pipeline(
-        prepared,
-        app=app,
-        overwrite=overwrite,
-        _defer_openapi_rebuild=_defer_openapi_rebuild,
-    )
+    with trace_operation(
+        SPAN_PIPELINE_DEPLOY,
+        tags=build_trace_tags(
+            {
+                "hayhooks.transport": "runtime",
+                "hayhooks.pipeline.name": pipeline_name,
+                "hayhooks.pipeline.source_type": "files",
+                "hayhooks.deploy.save_files": save_files,
+                "hayhooks.deploy.overwrite": overwrite,
+                "hayhooks.deploy.with_fastapi_route": app is not None,
+            }
+        ),
+    ):
+        prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=save_files)
+        return commit_prepared_pipeline(
+            prepared,
+            app=app,
+            overwrite=overwrite,
+            _defer_openapi_rebuild=_defer_openapi_rebuild,
+        )
 
 
 def deploy_pipeline_yaml(
@@ -655,10 +789,23 @@ def deploy_pipeline_yaml(
         ValueError: If the YAML cannot be parsed into an AsyncPipeline.
         InvalidYamlIOError: If the YAML is missing inputs/outputs declarations.
     """
-    prepared = prepare_pipeline_yaml(pipeline_name, source_code=source_code, options=options)
-    return commit_prepared_pipeline(
-        prepared, app=app, overwrite=overwrite, _defer_openapi_rebuild=_defer_openapi_rebuild
-    )
+    with trace_operation(
+        SPAN_PIPELINE_DEPLOY,
+        tags=build_trace_tags(
+            {
+                "hayhooks.transport": "runtime",
+                "hayhooks.pipeline.name": pipeline_name,
+                "hayhooks.pipeline.source_type": "yaml",
+                "hayhooks.deploy.overwrite": overwrite,
+                "hayhooks.deploy.with_fastapi_route": app is not None,
+                "hayhooks.deploy.skip_mcp": (options or {}).get("skip_mcp"),
+            }
+        ),
+    ):
+        prepared = prepare_pipeline_yaml(pipeline_name, source_code=source_code, options=options)
+        return commit_prepared_pipeline(
+            prepared, app=app, overwrite=overwrite, _defer_openapi_rebuild=_defer_openapi_rebuild
+        )
 
 
 def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
@@ -705,28 +852,38 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
     Raises:
         HTTPException: If the pipeline is not found in the registry (404).
     """
-    # Check if pipeline exists in registry
-    if pipeline_name not in registry.get_names():
-        raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
+    with trace_operation(
+        SPAN_PIPELINE_UNDEPLOY,
+        tags=build_trace_tags(
+            {
+                "hayhooks.transport": "runtime",
+                "hayhooks.pipeline.name": pipeline_name,
+                "hayhooks.deploy.with_fastapi_route": app is not None,
+            }
+        ),
+    ):
+        # Check if pipeline exists in registry
+        if pipeline_name not in registry.get_names():
+            raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
 
-    # Remove pipeline from registry
-    registry.remove(pipeline_name)
+        # Remove pipeline from registry
+        registry.remove(pipeline_name)
 
-    # Clean up sys.modules for wrapper-based pipelines
-    unload_pipeline_modules(pipeline_name)
+        # Clean up sys.modules for wrapper-based pipelines
+        unload_pipeline_modules(pipeline_name)
 
-    if app:
-        # Remove API routes for the pipeline
-        # All pipelines have a run endpoint at /<pipeline_name>/run
-        routes_to_remove = [
-            route for route in app.routes if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run"
-        ]
-        for route in routes_to_remove:
-            app.routes.remove(route)
+        if app:
+            # Remove API routes for the pipeline
+            # All pipelines have a run endpoint at /<pipeline_name>/run
+            routes_to_remove = [
+                route for route in app.routes if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run"
+            ]
+            for route in routes_to_remove:
+                app.routes.remove(route)
 
-        # Invalidate OpenAPI cache
-        app.openapi_schema = None
-        app.setup()
+            # Invalidate OpenAPI cache
+            app.openapi_schema = None
+            app.setup()
 
-    # Remove pipeline files if they exist
-    remove_pipeline_files(pipeline_name, settings.pipelines_dir)
+        # Remove pipeline files if they exist
+        remove_pipeline_files(pipeline_name, settings.pipelines_dir)

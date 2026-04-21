@@ -1,9 +1,10 @@
 import json
 import traceback
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from fastapi.concurrency import run_in_threadpool
 from haystack.lazy_imports import LazyImport
@@ -16,6 +17,15 @@ from hayhooks.server.app import init_pipeline_dir
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest
+from hayhooks.server.tracing import (
+    SPAN_MCP_CALL_TOOL,
+    SPAN_MCP_LIST_TOOLS,
+    SPAN_MCP_RUN_PIPELINE_TOOL,
+    build_trace_tags,
+    configure_tracing,
+    instrument_starlette_app,
+    trace_operation,
+)
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
     deploy_pipeline_files,
@@ -68,7 +78,6 @@ def deploy_pipelines() -> None:
             )
         except Exception as e:
             log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
-            continue
 
 
 async def list_core_tools() -> list["Tool"]:
@@ -137,106 +146,158 @@ async def list_pipelines_as_tools() -> list["Tool"]:
     return tools
 
 
-async def run_pipeline_as_tool(name: str, arguments: dict) -> list["TextContent"]:
+async def run_pipeline_as_tool(name: str, arguments: dict[str, Any]) -> list["TextContent"]:
     mcp_import.check()
 
-    log.debug("Calling pipeline as tool '{}' with arguments: {}", name, arguments)
-    pipeline_wrapper: BasePipelineWrapper | None = registry.get(name)
+    with trace_operation(
+        SPAN_MCP_RUN_PIPELINE_TOOL,
+        tags=build_trace_tags(
+            {
+                "hayhooks.transport": "mcp",
+                "hayhooks.pipeline.name": name,
+                "hayhooks.mcp.arguments.count": len(arguments),
+            }
+        ),
+    ):
+        log.debug("Calling pipeline as tool '{}' with arguments: {}", name, arguments)
+        pipeline_wrapper: BasePipelineWrapper | None = registry.get(name)
 
-    if not pipeline_wrapper:
-        msg = f"Pipeline '{name}' not found"
-        raise ValueError(msg)
+        if not pipeline_wrapper:
+            msg = f"Pipeline '{name}' not found"
+            raise ValueError(msg)
 
-    if pipeline_wrapper._is_run_api_async_implemented:
-        result = await pipeline_wrapper.run_api_async(**arguments)
-    else:
-        result = await run_in_threadpool(pipeline_wrapper.run_api, **arguments)
+        if pipeline_wrapper._is_run_api_async_implemented:
+            result = await pipeline_wrapper.run_api_async(**arguments)
+        else:
+            result = await run_in_threadpool(pipeline_wrapper.run_api, **arguments)
 
-    log.trace("Pipeline '{}' returned result: {}", name, result)
+        log.trace("Pipeline '{}' returned result: {}", name, result)
 
-    # Format result: if it's a dict (from YAML pipeline), convert to JSON string
-    if isinstance(result, dict):
-        return [TextContent(text=json.dumps(result), type="text")]
-    return [TextContent(text=str(result), type="text")]
+        # Format result: if it's a dict (from YAML pipeline), convert to JSON string
+        if isinstance(result, dict):
+            return [TextContent(text=json.dumps(result), type="text")]
+        return [TextContent(text=str(result), type="text")]
 
 
 async def notify_client(server: "Server") -> None:
     await server.request_context.session.send_tool_list_changed()
 
 
-def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":  # noqa: C901
+async def _handle_deploy_pipeline(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+    span.set_tag("hayhooks.pipeline.name", arguments.get("name"))
+    result = await deploy_pipeline_files_async(
+        pipeline_name=arguments["name"],
+        files=arguments["files"],
+        app=None,
+        save_files=arguments["save_files"],
+        overwrite=arguments["overwrite"],
+    )
+    return [TextContent(type="text", text=f"Pipeline '{result['name']}' deployed successfully")]
+
+
+async def _handle_get_all_pipeline_statuses(_arguments: dict[str, Any], _span: Any) -> list["TextContent"]:
+    pipelines_str = "\n".join(registry.get_names())
+    return [TextContent(type="text", text=f"Available pipelines:\n{pipelines_str}")]
+
+
+async def _handle_get_pipeline_status(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+    pipeline_name = arguments["pipeline_name"]
+    span.set_tag("hayhooks.pipeline.name", pipeline_name)
+    is_deployed = pipeline_name in registry.get_names()
+    return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' is deployed: {is_deployed}")]
+
+
+async def _handle_undeploy_pipeline(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+    pipeline_name = arguments["pipeline_name"]
+    span.set_tag("hayhooks.pipeline.name", pipeline_name)
+    # app=None: the MCP server doesn't own FastAPI routes
+    await undeploy_pipeline_async(pipeline_name=pipeline_name)
+    return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' undeployed")]
+
+
+# Core tools that trigger a ``tools/list_changed`` notification after execution.
+_MUTATING_CORE_TOOLS: frozenset[str] = frozenset({CoreTools.DEPLOY_PIPELINE.value, CoreTools.UNDEPLOY_PIPELINE.value})
+
+_CoreToolHandler = Callable[[dict[str, Any], Any], Awaitable[list["TextContent"]]]
+
+_CORE_TOOL_HANDLERS: dict[str, _CoreToolHandler] = {
+    CoreTools.DEPLOY_PIPELINE.value: _handle_deploy_pipeline,
+    CoreTools.GET_ALL_PIPELINE_STATUSES.value: _handle_get_all_pipeline_statuses,
+    CoreTools.GET_PIPELINE_STATUS.value: _handle_get_pipeline_status,
+    CoreTools.UNDEPLOY_PIPELINE.value: _handle_undeploy_pipeline,
+}
+
+
+async def _run_pipeline_tool(name: str, arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+    log.debug("Attempting to run pipeline '{}' as MCP Tool with arguments: {}", name, arguments)
+    span.set_tag("hayhooks.pipeline.name", name)
+
+    try:
+        return await run_pipeline_as_tool(name, arguments)
+    except Exception as exc:
+        msg = f"Error calling pipeline as MCP Tool '{name}': {exc}"
+        log.opt(exception=True).error(msg)
+        raise Exception(msg) from exc
+
+
+def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
     mcp_import.check()
 
     server: Server = Server(name)
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        try:
-            core_tools = await list_core_tools()
-            log.debug("Listing {} core tools", len(core_tools))
+        with trace_operation(
+            SPAN_MCP_LIST_TOOLS,
+            tags=build_trace_tags(
+                {
+                    "hayhooks.transport": "mcp",
+                    "hayhooks.action": "list_tools",
+                }
+            ),
+        ):
+            try:
+                core_tools = await list_core_tools()
+                log.debug("Listing {} core tools", len(core_tools))
 
-            pipelines_tools = await list_pipelines_as_tools()
-            log.debug("Listing {} pipelines as tools", len(pipelines_tools))
+                pipelines_tools = await list_pipelines_as_tools()
+                log.debug("Listing {} pipelines as tools", len(pipelines_tools))
 
-            return core_tools + pipelines_tools
-        except Exception as e:
-            log.error("Error listing tools: {}", e)
-            return []
+                return core_tools + pipelines_tools
+            except Exception as e:
+                log.error("Error listing tools: {}", e)
+                return []
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list["TextContent"]:
-        try:
-            if name == CoreTools.DEPLOY_PIPELINE:
-                result = await deploy_pipeline_files_async(
-                    pipeline_name=arguments["name"],
-                    files=arguments["files"],
-                    app=None,
-                    save_files=arguments["save_files"],
-                    overwrite=arguments["overwrite"],
-                )
-                return [TextContent(type="text", text=f"Pipeline '{result['name']}' deployed successfully")]
+    async def call_tool(name: str, arguments: dict[str, Any]) -> list["TextContent"]:
+        handler = _CORE_TOOL_HANDLERS.get(name)
+        is_core_tool = handler is not None
 
-            elif name == CoreTools.GET_ALL_PIPELINE_STATUSES:
-                pipelines = registry.get_names()
-                pipelines_str = "\n".join(pipelines)
-                return [TextContent(type="text", text=f"Available pipelines:\n{pipelines_str}")]
-
-            elif name == CoreTools.GET_PIPELINE_STATUS:
-                pipeline_name = arguments["pipeline_name"]
-                is_deployed = pipeline_name in registry.get_names()
-                return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' is deployed: {is_deployed}")]
-
-            elif name == CoreTools.UNDEPLOY_PIPELINE:
-                pipeline_name = arguments["pipeline_name"]
-                # app=None: the MCP server doesn't own FastAPI routes
-                await undeploy_pipeline_async(pipeline_name=pipeline_name)
-                return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' undeployed")]
-
-            else:
-                log.debug(
-                    "Attempting to run pipeline '{}' as MCP Tool with arguments: {}",
-                    name,
-                    arguments,
-                )
-
-                try:
-                    return await run_pipeline_as_tool(name, arguments)
-                except Exception as e_pipeline:
-                    msg = "Error calling pipeline as MCP Tool '{name}': {e_pipeline}"
-                    log.opt(exception=True).error(msg, name=name, e_pipeline=e_pipeline)
-                    raise Exception(msg.format(name=name, e_pipeline=e_pipeline)) from e_pipeline
-
-        except Exception as exc:
-            msg = "General unhandled error in call_tool for tool '{name}': {exc}"
-            if settings.show_tracebacks:
-                msg += f"\n{traceback.format_exc()}"
-            log.opt(exception=True).error(msg, name=name, exc=exc)
-            raise Exception(msg.format(name=name, exc=exc)) from exc
-
-        finally:
-            if name in [CoreTools.DEPLOY_PIPELINE, CoreTools.UNDEPLOY_PIPELINE]:
-                log.debug("Sending 'tools/list_changed' notification after deploy/undeploy")
-                await notify_client(server)
+        with trace_operation(
+            SPAN_MCP_CALL_TOOL,
+            tags=build_trace_tags(
+                {
+                    "hayhooks.transport": "mcp",
+                    "hayhooks.tool.name": name,
+                    "hayhooks.tool.is_core": is_core_tool,
+                    "hayhooks.action": name if is_core_tool else "run_pipeline_tool",
+                }
+            ),
+        ) as span:
+            try:
+                if handler is not None:
+                    return await handler(arguments, span)
+                return await _run_pipeline_tool(name, arguments, span)
+            except Exception as exc:
+                msg = f"General unhandled error in call_tool for tool '{name}': {exc}"
+                if settings.show_tracebacks:
+                    msg += f"\n{traceback.format_exc()}"
+                log.opt(exception=True).error(msg)
+                raise Exception(msg) from exc
+            finally:
+                if name in _MUTATING_CORE_TOOLS:
+                    log.debug("Sending 'tools/list_changed' notification after deploy/undeploy")
+                    await notify_client(server)
 
     return server
 
@@ -277,7 +338,7 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
     async def handle_status(request):  # noqa: ARG001
         return JSONResponse({"status": "ok"})
 
-    return Starlette(
+    app = Starlette(
         debug=debug,
         routes=[
             Route("/sse", endpoint=handle_sse),
@@ -287,3 +348,7 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
         ],
         lifespan=lifespan,
     )
+
+    configure_tracing()
+    instrument_starlette_app(app)
+    return app

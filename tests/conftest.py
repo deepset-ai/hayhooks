@@ -1,16 +1,91 @@
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Any
 
 import pytest
 from _pytest.logging import LogCaptureFixture
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from haystack.tracing import Span, Tracer, disable_tracing, enable_tracing
 
 from hayhooks.server.app import create_app
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
 from hayhooks.settings import settings
+
+
+class _RecordedSpan(Span):
+    def __init__(
+        self, operation_name: str, tags: dict[str, Any], trace_id: int, span_id: int, parent_span_id: int | None
+    ):
+        self.operation_name = operation_name
+        self.tags = tags
+        self.trace_id = trace_id
+        self.span_id = span_id
+        self.parent_span_id = parent_span_id
+
+    def set_tag(self, key: str, value: Any) -> None:
+        self.tags[key] = value
+
+    def get_correlation_data_for_logs(self) -> dict[str, Any]:
+        return {"trace_id": self.trace_id, "span_id": self.span_id}
+
+
+class _RecordingTracer(Tracer):
+    def __init__(self) -> None:
+        self.spans: list[_RecordedSpan] = []
+        self._active_spans: ContextVar[tuple[_RecordedSpan, ...]] = ContextVar("_recording_tracer_active_spans", default=())
+        self._next_id = 1
+
+    @contextmanager
+    def trace(
+        self,
+        operation_name: str,
+        tags: dict[str, Any] | None = None,
+        parent_span: Span | None = None,
+    ) -> Iterator[Span]:
+        active_spans = self._active_spans.get()
+        parent = parent_span if isinstance(parent_span, _RecordedSpan) else (active_spans[-1] if active_spans else None)
+        trace_id = parent.trace_id if isinstance(parent, _RecordedSpan) else self._allocate_id()
+        span_id = self._allocate_id()
+        span = _RecordedSpan(
+            operation_name=operation_name,
+            tags=dict(tags or {}),
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=parent.span_id if isinstance(parent, _RecordedSpan) else None,
+        )
+        self.spans.append(span)
+        token = self._active_spans.set((*active_spans, span))
+        try:
+            yield span
+        finally:
+            self._active_spans.reset(token)
+
+    def current_span(self) -> Span | None:
+        active_spans = self._active_spans.get()
+        if active_spans:
+            return active_spans[-1]
+        return None
+
+    def _allocate_id(self) -> int:
+        current = self._next_id
+        self._next_id += 1
+        return current
+
+
+@pytest.fixture
+def recording_tracer() -> Iterator[_RecordingTracer]:
+    tracer = _RecordingTracer()
+    enable_tracing(tracer)
+    try:
+        yield tracer
+    finally:
+        disable_tracing()
 
 
 @pytest.fixture

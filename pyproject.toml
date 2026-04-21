@@ -47,6 +47,13 @@ chainlit = [
   "chainlit>=2.0.0",
   "httpx>=0.27.0",
 ]
+tracing = [
+  "opentelemetry-sdk",
+  "opentelemetry-exporter-otlp-proto-http",
+  "opentelemetry-exporter-otlp-proto-grpc",
+  "opentelemetry-instrumentation-fastapi",
+  "opentelemetry-instrumentation-starlette",
+]
 
 [project.urls]
 Documentation = "https://github.com/deepset-ai/hayhooks#readme"

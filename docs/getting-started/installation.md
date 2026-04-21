@@ -30,6 +30,16 @@ This guide covers how to install Hayhooks and its dependencies.
     !!! warning "Python 3.10+ Required"
         You'll need to run at least Python 3.10+ to use the MCP Server.
 
+=== "With Tracing Support"
+
+    ```bash
+    pip install "hayhooks[tracing]"
+    ```
+
+    Includes OpenTelemetry SDK, OTLP exporter support, and FastAPI/Starlette instrumentors so Hayhooks can emit
+    request-level traces alongside Haystack span instrumentation. Hayhooks also auto-bootstraps OTLP tracing
+    when an OTLP endpoint is configured via `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
+
 === "From Source"
 
     ```bash
