@@ -154,6 +154,70 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 !!! note "Installation Required"
     The Chainlit UI requires the `chainlit` extra: `pip install "hayhooks[chainlit]"`
 
+## Dashboard UI
+
+### HAYHOOKS_DASHBOARD_ENABLED
+
+- Default: `false`
+- Description: Enable serving the built dashboard static frontend
+
+### HAYHOOKS_DASHBOARD_TRACE_BACKEND
+
+- Default: `jaeger`
+- Description: Trace backend type used by `/dashboard/api/traces`
+- Options:
+  - `"local"`: Use in-process Hayhooks trace interception buffer only (no external backend query)
+  - `"jaeger"`: Query Jaeger HTTP API (`/api/traces`)
+  - `"signoz"`: Query SigNoz Trace API (`/api/v5/query_range`)
+
+### HAYHOOKS_DASHBOARD_PATH
+
+- Default: `/dashboard`
+- Description: URL path where the dashboard static frontend is mounted
+
+### HAYHOOKS_DASHBOARD_DIST_DIR
+
+- Default: `./dashboard/dist`
+- Description: Directory containing the built dashboard assets (`index.html`, JS/CSS chunks)
+
+### HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL
+
+- Default: `http://localhost:16686`
+- Description: Base URL for the selected trace backend (`jaeger` or `signoz`)
+
+### HAYHOOKS_DASHBOARD_TRACE_SIGNOZ_API_KEY
+
+- Default: `""` (empty)
+- Description: API key used when `HAYHOOKS_DASHBOARD_TRACE_BACKEND=signoz`
+- Notes:
+  - Required for SigNoz Trace API access in secured deployments
+  - Add header `SIGNOZ-API-KEY` on backend requests
+
+### HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME
+
+- Default: `hayhooks`
+- Description: Service name filter sent to the Jaeger query API
+
+### HAYHOOKS_DASHBOARD_TRACE_REQUEST_TIMEOUT_SECONDS
+
+- Default: `3.0`
+- Description: Request timeout (seconds) for Jaeger trace queries
+
+### HAYHOOKS_DASHBOARD_TRACE_LOOKBACK_SECONDS
+
+- Default: `900`
+- Description: Lookback window used when `since_ms` is not provided
+
+### HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT
+
+- Default: `25`
+- Description: Default number of traces returned per dashboard query
+
+### HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT
+
+- Default: `100`
+- Description: Upper bound for `limit` in `/dashboard/api/traces`
+
 ## CORS
 
 These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.AppSettings`.
@@ -342,6 +406,22 @@ HAYHOOKS_STREAMING_COMPONENTS=all
 HAYHOOKS_DEPLOY_CONCURRENCY=serialized
 HAYHOOKS_STARTUP_DEPLOY_STRATEGY=parallel
 HAYHOOKS_STARTUP_DEPLOY_WORKERS=4
+HAYHOOKS_DASHBOARD_ENABLED=true
+HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
+# Jaeger backend
+HAYHOOKS_DASHBOARD_TRACE_BACKEND=jaeger
+HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:16686
+HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
+
+# Local interception only (no external trace backend query)
+# HAYHOOKS_DASHBOARD_TRACE_BACKEND=local
+# HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
+
+# SigNoz backend
+# HAYHOOKS_DASHBOARD_TRACE_BACKEND=signoz
+# HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:8080
+# HAYHOOKS_DASHBOARD_TRACE_SIGNOZ_API_KEY=<your-signoz-api-key>
+HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 HAYHOOKS_LOG_LEVEL=INFO
 HAYHOOKS_LOG_FORMAT=default

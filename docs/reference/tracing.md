@@ -60,6 +60,56 @@ docker run --rm -d \
 
 Open Jaeger at `http://localhost:16686` and use the same `OTEL_*` variables shown above.
 
+## Live Dashboard (Simple)
+
+Hayhooks now includes a minimal dashboard that polls trace data from Jaeger and shows:
+
+- deployed entry points
+- recently observed traces
+- connected child spans as an expandable tree
+
+If Jaeger is temporarily unavailable, the dashboard automatically falls back to an in-process live span buffer
+for Hayhooks operation spans (for example pipeline run/openai/deploy spans) so you can still inspect recent activity.
+
+If you want to force this behavior and avoid backend trace querying entirely, set:
+
+```bash
+export HAYHOOKS_DASHBOARD_TRACE_BACKEND=local
+```
+
+Build the dashboard frontend:
+
+```bash
+cd dashboard
+npm install
+npm run build
+```
+
+Enable and configure dashboard serving:
+
+```bash
+export HAYHOOKS_DASHBOARD_ENABLED=true
+export HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
+export HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
+```
+
+For Jaeger:
+
+```bash
+export HAYHOOKS_DASHBOARD_TRACE_BACKEND=jaeger
+export HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:16686
+```
+
+For SigNoz:
+
+```bash
+export HAYHOOKS_DASHBOARD_TRACE_BACKEND=signoz
+export HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:8080
+export HAYHOOKS_DASHBOARD_TRACE_SIGNOZ_API_KEY=<your-signoz-api-key>
+```
+
+Then run Hayhooks and open `http://localhost:1416/dashboard`.
+
 ## Notes
 
 - Hayhooks does not define a custom `HAYHOOKS_OTEL_*` exporter namespace. Use standard OpenTelemetry `OTEL_*` variables.

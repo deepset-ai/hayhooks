@@ -22,7 +22,9 @@ from hayhooks.server.tracing import (
     configure_tracing,
     instrument_fastapi_app,
     instrument_starlette_app,
+    trace_operation,
 )
+from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_yaml, undeploy_pipeline
 from hayhooks.settings import StartupDeployStrategy, settings
 
@@ -448,3 +450,33 @@ def test_parallel_startup_prepare_spans_keep_startup_parent(monkeypatch, recordi
     assert len(startup_spans) == 1
     assert len(prepare_spans) == 2
     assert all(span.parent_span_id == startup_spans[0].span_id for span in prepare_spans)
+
+
+def test_trace_operation_records_spans_for_dashboard_fallback(recording_tracer):
+    clear_live_traces()
+
+    with trace_operation("hayhooks.pipeline.run", tags={"hayhooks.pipeline.name": "demo"}):
+        with trace_operation("hayhooks.openai.run"):
+            pass
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+    assert len(traces) == 1
+    assert traces[0]["entrypoint"] == "demo"
+    assert traces[0]["root_span"]["name"] == "hayhooks.pipeline.run"
+    assert traces[0]["root_span"]["children"][0]["name"] == "hayhooks.openai.run"
+
+
+def test_trace_operation_records_spans_without_tracer_context(monkeypatch):
+    clear_live_traces()
+    monkeypatch.setattr("hayhooks.server.tracing.get_trace_log_context", lambda: {})
+
+    with trace_operation("hayhooks.pipeline.run", tags={"hayhooks.pipeline.name": "demo"}):
+        with trace_operation("hayhooks.openai.run"):
+            pass
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+    assert len(traces) == 1
+    assert traces[0]["trace_id"]
+    assert traces[0]["entrypoint"] == "demo"
+    assert traces[0]["root_span"]["name"] == "hayhooks.pipeline.run"
+    assert traces[0]["root_span"]["children"][0]["name"] == "hayhooks.openai.run"

@@ -15,15 +15,17 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncGenerator, Generator, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
-from contextvars import copy_context
-from time import monotonic
+from contextvars import ContextVar, Token, copy_context
+from time import monotonic, time
 from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException
 from haystack.lazy_imports import LazyImport
 from haystack.tracing import OpenTelemetryTracer, auto_enable_tracing, enable_tracing, is_tracing_enabled, tracer
 
 from hayhooks.server.logger import log, normalize_trace_correlation_data
+from hayhooks.server.utils.live_trace_buffer import record_live_span_finish, record_live_span_start
 from hayhooks.settings import settings
 
 _TRACING_EXTRA_INSTALL_CMD = 'pip install "hayhooks[tracing]"'
@@ -56,6 +58,7 @@ _OTLP_HTTP_PROTOBUF = "http/protobuf"
 _OTLP_GRPC = "grpc"
 _OTLP_ENDPOINT_ENV_KEYS = ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT")
 _OTLP_PROTOCOL_ENV_KEYS = ("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_EXPORTER_OTLP_PROTOCOL")
+_LOCAL_TRACE_STACK: ContextVar[tuple[tuple[str, str], ...]] = ContextVar("_hayhooks_local_trace_stack", default=())
 
 with LazyImport(_LAZY_IMPORT_HINT) as fastapi_tracing_import:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # ty: ignore[unresolved-import]
@@ -347,10 +350,16 @@ def _mark_http_exception(span: Any, exc: HTTPException) -> None:
 
 class _OperationTrace:
     def __init__(self, operation_name: str, *, tags: Mapping[str, Any] | None = None):
-        self._span_cm = tracer.trace(operation_name, tags=dict(tags or {}))
+        self._operation_name = operation_name
+        self._tags = dict(tags or {})
+        self._span_cm = tracer.trace(operation_name, tags=dict(self._tags))
         self._span: Any | None = None
         self._log_context_cm: Any | None = None
         self._started = 0.0
+        self._trace_id: str | None = None
+        self._span_id: str | None = None
+        self._using_local_trace_context = False
+        self._local_stack_token: Token | None = None
         self._finished = False
 
     @property
@@ -361,9 +370,33 @@ class _OperationTrace:
         if self._span is not None:
             return self._span
 
+        parent_context = get_trace_log_context()
         self._span = self._span_cm.__enter__()
         self._started = monotonic()
         trace_context = get_trace_log_context()
+
+        parent_span_id = parent_context.get("span_id")
+        if not trace_context.get("trace_id") or not trace_context.get("span_id"):
+            stack = _LOCAL_TRACE_STACK.get()
+            self._using_local_trace_context = True
+            self._trace_id = stack[-1][0] if stack else uuid4().hex
+            self._span_id = uuid4().hex[:16]
+            if stack:
+                parent_span_id = stack[-1][1]
+            trace_context = {"trace_id": self._trace_id, "span_id": self._span_id}
+            self._local_stack_token = _LOCAL_TRACE_STACK.set((*stack, (self._trace_id, self._span_id)))
+
+        self._trace_id = trace_context.get("trace_id")
+        self._span_id = trace_context.get("span_id")
+        if self._trace_id and self._span_id:
+            record_live_span_start(
+                trace_id=self._trace_id,
+                span_id=self._span_id,
+                parent_span_id=parent_span_id,
+                operation_name=self._operation_name,
+                start_time_ms=int(time() * 1000),
+                tags=self._tags,
+            )
         self._log_context_cm = log.contextualize(**trace_context) if trace_context else nullcontext()
         self._log_context_cm.__enter__()
         return self._span
@@ -376,17 +409,35 @@ class _OperationTrace:
         try:
             if exc is None:
                 _mark_success(span)
+                live_tags: dict[str, Any] = {_TAG_SUCCESS: True}
             elif isinstance(exc, HTTPException):
                 _mark_http_exception(span, exc)
+                live_tags = {
+                    _TAG_SUCCESS: False,
+                    _TAG_HTTP_STATUS: exc.status_code,
+                    _TAG_ERROR_TYPE: type(exc).__name__,
+                }
             else:
                 _mark_failure(span, exc)
+                live_tags = {_TAG_SUCCESS: False, _TAG_ERROR_TYPE: type(exc).__name__}
         finally:
-            span.set_tag(_TAG_ELAPSED_MS, (monotonic() - self._started) * 1000)
+            elapsed_ms = int((monotonic() - self._started) * 1000)
+            span.set_tag(_TAG_ELAPSED_MS, elapsed_ms)
+            if self._trace_id and self._span_id:
+                live_tags[_TAG_ELAPSED_MS] = elapsed_ms
+                record_live_span_finish(
+                    trace_id=self._trace_id,
+                    span_id=self._span_id,
+                    duration_ms=elapsed_ms,
+                    tags=live_tags,
+                )
             exc_type = type(exc) if exc is not None else None
             exc_tb = exc.__traceback__ if exc is not None else None
             if self._log_context_cm is not None:
                 self._log_context_cm.__exit__(exc_type, exc, exc_tb)
             self._span_cm.__exit__(exc_type, exc, exc_tb)
+            if self._using_local_trace_context and self._local_stack_token is not None:
+                _LOCAL_TRACE_STACK.reset(self._local_stack_token)
             self._finished = True
 
 
