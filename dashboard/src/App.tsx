@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react"
 import {
   Activity,
+  ArrowDownWideNarrow,
   ChevronRight,
   Clock,
   GitBranch,
   Layers,
+  Moon,
   RefreshCw,
+  Sun,
   Tag,
   Timer,
   Trash2,
@@ -19,6 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import haystackIcon from "@/assets/haystack-icon.png"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,6 +53,7 @@ type TraceSummary = {
 
 type TracesResponse = { traces: TraceSummary[] }
 type ClearTracesResponse = { ok: boolean; message: string }
+type SortMode = "newest" | "slowest"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -168,6 +173,54 @@ function spanTagValue(span: TraceSpanNode, key: string): string | undefined {
   return safeTags(span.tags).find((t) => t.key === key)?.value
 }
 
+function isFailed(trace: TraceSummary): boolean {
+  const tags = safeTags(trace.tags)
+  return tags.some(
+    (t) =>
+      t.key === "hayhooks.error.type" ||
+      (t.key === "hayhooks.success" && t.value === "false"),
+  )
+}
+
+type TraceKind = "deploy" | "run" | "openai" | "mcp" | "other"
+
+function traceKind(trace: TraceSummary): TraceKind {
+  const name = trace.root_span?.name ?? ""
+  if (name.includes(".deploy") || name.includes(".undeploy")) return "deploy"
+  if (name.includes(".openai.")) return "openai"
+  if (name.includes(".mcp.")) return "mcp"
+  if (name.includes(".run")) return "run"
+  return "other"
+}
+
+const KIND_STYLE: Record<TraceKind, { label: string; badge: string; border: string }> = {
+  deploy: {
+    label: "deploy",
+    badge: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/25",
+    border: "border-l-amber-500",
+  },
+  run: {
+    label: "run",
+    badge: "bg-primary/10 text-primary border-primary/20",
+    border: "border-l-primary",
+  },
+  openai: {
+    label: "openai",
+    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-500/25",
+    border: "border-l-violet-500",
+  },
+  mcp: {
+    label: "mcp",
+    badge: "bg-teal-500/15 text-teal-700 dark:text-teal-400 border-teal-500/25",
+    border: "border-l-teal-500",
+  },
+  other: {
+    label: "trace",
+    badge: "bg-muted text-muted-foreground border-border",
+    border: "",
+  },
+}
+
 // ---------------------------------------------------------------------------
 // Span waterfall row
 // ---------------------------------------------------------------------------
@@ -262,13 +315,17 @@ function TraceCard({
   ])
   const summaryTags = tags.filter((t) => summaryKeys.has(t.key))
   const allSpans = collectAllSpans(trace.root_span)
+  const failed = isFailed(trace)
+  const kind = traceKind(trace)
+  const kindStyle = KIND_STYLE[kind]
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
         className={cn(
-          "rounded-lg border bg-card text-card-foreground transition-shadow",
-          isFresh && "trace-card-fresh",
+          "rounded-lg border border-l-2 bg-card text-card-foreground transition-shadow",
+          failed ? "border-l-destructive" : kindStyle.border || "border-l-transparent",
+          isFresh && `trace-card-fresh trace-card-fresh-${kind}`,
           open && "shadow-sm",
         )}
       >
@@ -285,6 +342,12 @@ function TraceCard({
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="font-medium text-sm">
                   {trace.entrypoint ?? "unknown"}
+                </span>
+                <span className={cn(
+                  "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                  kindStyle.badge,
+                )}>
+                  {kindStyle.label}
                 </span>
                 <span className="flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
                   <Timer className="size-3" />
@@ -404,6 +467,8 @@ function App() {
   const [entrypoints, setEntrypoints] = useState<string[]>([])
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [filter, setFilter] = useState<string | null>(null)
+  const [sortMode, setSortMode] = useState<SortMode>("newest")
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"))
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -412,6 +477,12 @@ function App() {
   const sinceRef = useRef<number | null>(null)
   const seenRef = useRef(new Set<string>())
   const base = useRef(apiBase())
+
+  const toggleDark = () => {
+    const next = !dark
+    setDark(next)
+    document.documentElement.classList.toggle("dark", next)
+  }
 
   const refresh = async () => {
     setRefreshing(true)
@@ -480,12 +551,17 @@ function App() {
   }, [])
 
   const now = Date.now()
-  const filteredTraces = filter ? traces.filter((t) => t.entrypoint === filter) : traces
+  const byFilter = filter ? traces.filter((t) => t.entrypoint === filter) : traces
+  const filteredTraces =
+    sortMode === "slowest"
+      ? [...byFilter].sort((a, b) => b.duration_ms - a.duration_ms)
+      : byFilter
   const traceCounts = new Map<string, number>()
   for (const t of traces) {
     const ep = t.entrypoint ?? ""
     traceCounts.set(ep, (traceCounts.get(ep) ?? 0) + 1)
   }
+  const statsTraces = filteredTraces
 
   return (
     <TooltipProvider delay={200}>
@@ -494,9 +570,7 @@ function App() {
         <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
           <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-6">
             <div className="flex items-center gap-3">
-              <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <Activity className="size-4" />
-              </div>
+              <img src={haystackIcon} alt="Haystack" className="size-8 rounded-lg" />
               <div>
                 <h1 className="text-sm font-semibold leading-none">Hayhooks</h1>
                 <p className="mt-0.5 text-xs text-muted-foreground">Trace Dashboard</p>
@@ -533,6 +607,15 @@ function App() {
                 <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
                 Refresh
               </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={toggleDark}
+                aria-label="Toggle dark mode"
+              >
+                {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+              </Button>
             </div>
           </div>
         </header>
@@ -542,19 +625,19 @@ function App() {
           {/* Stat strip */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard label="Entrypoints" value={entrypoints.length} icon={<GitBranch className="size-4" />} />
-            <StatCard label="Traces" value={traces.length} icon={<Layers className="size-4" />} />
+            <StatCard label="Traces" value={statsTraces.length} icon={<Layers className="size-4" />} />
             <StatCard
               label="Avg duration"
               value={
-                traces.length > 0
-                  ? fmtDur(traces.reduce((s, t) => s + t.duration_ms, 0) / traces.length)
+                statsTraces.length > 0
+                  ? fmtDur(statsTraces.reduce((s, t) => s + t.duration_ms, 0) / statsTraces.length)
                   : "—"
               }
               icon={<Timer className="size-4" />}
             />
             <StatCard
               label="Last trace"
-              value={traces.length > 0 ? fmtTime(traces[0].start_time_ms) : "—"}
+              value={statsTraces.length > 0 ? fmtTime(statsTraces[0].start_time_ms) : "—"}
               icon={<Clock className="size-4" />}
             />
           </div>
@@ -636,32 +719,52 @@ function App() {
                     </Badge>
                   )}
                 </div>
-                {filteredTraces.length > 0 && (
-                  <span className="text-xs tabular-nums text-muted-foreground">
-                    {filter
-                      ? `${filteredTraces.length} of ${traces.length} trace${traces.length !== 1 ? "s" : ""}`
-                      : `Showing ${traces.length} trace${traces.length !== 1 ? "s" : ""}`}
-                  </span>
-                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setSortMode((m) => (m === "newest" ? "slowest" : "newest"))}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <ArrowDownWideNarrow className="size-3" />
+                    {sortMode === "newest" ? "Newest" : "Slowest"}
+                  </button>
+                  {filteredTraces.length > 0 && (
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {filter
+                        ? `${filteredTraces.length} of ${traces.length}`
+                        : `${traces.length} trace${traces.length !== 1 ? "s" : ""}`}
+                    </span>
+                  )}
+                </div>
               </div>
               <ScrollArea className="h-[calc(100vh-240px)] min-h-[400px]">
                 {filteredTraces.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-2 py-20 text-center text-muted-foreground">
-                    <Activity className="size-8 opacity-40" />
+                  <div className="flex flex-col items-center justify-center gap-3 py-20 text-center text-muted-foreground">
                     {filter ? (
                       <>
-                        <p className="text-sm">No traces for "{filter}"</p>
+                        <GitBranch className="size-8 opacity-30" />
+                        <div>
+                          <p className="text-sm font-medium">No traces for <span className="font-mono text-foreground/70">{filter}</span></p>
+                          <p className="mt-1 text-xs">New traces will appear automatically when this pipeline handles requests.</p>
+                        </div>
                         <button
                           onClick={() => setFilter(null)}
-                          className="text-xs text-primary hover:underline"
+                          className="mt-1 text-xs text-primary hover:underline"
                         >
-                          Show all traces
+                          Show all pipelines
                         </button>
+                      </>
+                    ) : traces.length === 0 && updatedAt !== null ? (
+                      <>
+                        <Activity className="size-8 opacity-30" />
+                        <div>
+                          <p className="text-sm font-medium">No traces yet</p>
+                          <p className="mt-1 text-xs">Send a request to any deployed pipeline and traces will appear here in real time.</p>
+                        </div>
                       </>
                     ) : (
                       <>
-                        <p className="text-sm">Waiting for traces…</p>
-                        <p className="text-xs">Traces will appear here as Hayhooks processes requests.</p>
+                        <div className="size-8 animate-pulse rounded-full bg-muted" />
+                        <p className="text-sm">Connecting…</p>
                       </>
                     )}
                   </div>

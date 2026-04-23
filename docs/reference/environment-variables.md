@@ -164,7 +164,7 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 ### HAYHOOKS_DASHBOARD_TRACE_BACKEND
 
 - Default: `jaeger`
-- Description: Trace backend type used by `/dashboard/api/traces`
+- Description: Trace backend type used by `/dashboard/api/traces`. When the external backend is unreachable the dashboard automatically falls back to the local in-memory buffer.
 - Options:
   - `"local"`: Use in-process Hayhooks trace interception buffer only (no external backend query)
   - `"jaeger"`: Query Jaeger HTTP API (`/api/traces`)

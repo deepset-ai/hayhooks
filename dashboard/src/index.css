@@ -160,9 +160,47 @@
   }
 }
 
+@keyframes trace-glow {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px var(--glow-color), 0 0 10px -2px var(--glow-color-soft);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1px var(--glow-color), 0 0 20px -2px var(--glow-color-soft);
+  }
+}
+
 .trace-card-fresh {
-  animation: trace-enter 400ms ease-out;
-  box-shadow: inset 0 0 0 1px var(--haystack-blue), 0 0 12px -4px rgb(46 108 223 / 20%);
+  animation:
+    trace-enter 400ms ease-out,
+    trace-glow 2s ease-in-out infinite;
+  --glow-color: var(--haystack-blue);
+  --glow-color-soft: rgb(46 108 223 / 20%);
+}
+
+.trace-card-fresh-deploy {
+  --glow-color: #f59e0b;
+  --glow-color-soft: rgb(245 158 11 / 20%);
+}
+
+.trace-card-fresh-run {
+  --glow-color: var(--haystack-blue);
+  --glow-color-soft: rgb(46 108 223 / 20%);
+}
+
+.trace-card-fresh-openai {
+  --glow-color: #8b5cf6;
+  --glow-color-soft: rgb(139 92 246 / 20%);
+}
+
+.trace-card-fresh-mcp {
+  --glow-color: #14b8a6;
+  --glow-color-soft: rgb(20 184 166 / 20%);
+}
+
+.trace-card-fresh-other {
+  --glow-color: var(--haystack-blue);
+  --glow-color-soft: rgb(46 108 223 / 20%);
 }
 
 /* Live pulse indicator */

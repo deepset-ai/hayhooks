@@ -60,22 +60,23 @@ docker run --rm -d \
 
 Open Jaeger at `http://localhost:16686` and use the same `OTEL_*` variables shown above.
 
-## Live Dashboard (Simple)
+## Live Dashboard
 
-Hayhooks now includes a minimal dashboard that polls trace data from Jaeger and shows:
+Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-time visibility into pipeline operations.
 
-- deployed entry points
-- recently observed traces
-- connected child spans as an expandable tree
+### Features
 
-If Jaeger is temporarily unavailable, the dashboard automatically falls back to an in-process live span buffer
-for Hayhooks operation spans (for example pipeline run/openai/deploy spans) so you can still inspect recent activity.
+- **Live trace feed** — auto-refreshes every 2.5 seconds with new-trace animations.
+- **Entrypoint filter** — click a pipeline in the sidebar to filter traces; counts update per entrypoint.
+- **Span waterfall** — expand any trace to see nested spans with duration bars and per-span pipeline badges.
+- **Tags** — collapsed cards show transport and success/error status; expanded view shows all tags with tooltips.
+- **Error highlighting** — failed traces get a red left border so they stand out immediately.
+- **Sort** — toggle between newest-first and slowest-first ordering.
+- **Stats** — entrypoint count, trace count, average duration, and last-trace time, all reflecting the active filter.
+- **Dark mode** — toggle between light and dark themes via the header button.
+- **Clear traces** — wipe the local trace buffer from the header.
 
-If you want to force this behavior and avoid backend trace querying entirely, set:
-
-```bash
-export HAYHOOKS_DASHBOARD_TRACE_BACKEND=local
-```
+### Setup
 
 Build the dashboard frontend:
 
@@ -85,30 +86,53 @@ npm install
 npm run build
 ```
 
-Enable and configure dashboard serving:
+Enable and configure the dashboard:
 
 ```bash
 export HAYHOOKS_DASHBOARD_ENABLED=true
 export HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
-export HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
 ```
 
-For Jaeger:
+### Backend Modes
+
+The dashboard can pull traces from three sources:
+
+#### Local (in-memory buffer)
+
+No external backend required. Hayhooks captures its own operation spans in an in-memory ring buffer.
+
+```bash
+export HAYHOOKS_DASHBOARD_TRACE_BACKEND=local
+```
+
+This is the default fallback when an external backend is configured but unreachable.
+
+#### Jaeger
 
 ```bash
 export HAYHOOKS_DASHBOARD_TRACE_BACKEND=jaeger
 export HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:16686
+export HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
 ```
 
-For SigNoz:
+#### SigNoz
 
 ```bash
 export HAYHOOKS_DASHBOARD_TRACE_BACKEND=signoz
 export HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:8080
 export HAYHOOKS_DASHBOARD_TRACE_SIGNOZ_API_KEY=<your-signoz-api-key>
+export HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
 ```
 
 Then run Hayhooks and open `http://localhost:1416/dashboard`.
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/dashboard/api/entrypoints` | GET | List deployed pipeline names |
+| `/dashboard/api/traces` | GET | Fetch recent traces (supports `limit` and `since_ms` query params) |
+| `/dashboard/api/traces/clear` | POST | Clear the local trace buffer |
 
 ## Notes
 
