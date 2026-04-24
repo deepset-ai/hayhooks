@@ -45,7 +45,7 @@ HAYHOOKS_LOG_LEVEL=DEBUG hayhooks run
 - **Default**: `INFO`
 - **Alias**: `LOG` (legacy, lower priority)
 - **Description**: Minimum log level to display (consumed by Loguru)
-- **Options**: `DEBUG`, `INFO`, `WARNING`, `ERROR`
+- **Options**: `TRACE`, `DEBUG`, `INFO`, `SUCCESS`, `WARNING`, `ERROR`, `CRITICAL`
 
 #### HAYHOOKS_LOG_FORMAT
 
@@ -67,6 +67,14 @@ HAYHOOKS_LOG_LEVEL=DEBUG hayhooks run
 
 - **Default**: `["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]`
 - **Description**: Stdlib loggers routed through Loguru. Only the listed loggers are intercepted; all others keep their default behaviour.
+
+## Trace Correlation
+
+When tracing is enabled, Hayhooks binds `trace_id` and `span_id` to log context for instrumented operations
+(deploy, undeploy, run, OpenAI-compatible execution, MCP tool calls).
+
+- `request_id` is still emitted as before.
+- `trace_id`/`span_id` are normalized to hexadecimal identifiers for easier cross-linking in tracing backends.
 
 ### Custom Log Format
 
@@ -120,7 +128,7 @@ class PipelineWrapper(BasePipelineWrapper):
         result = self.pipeline.run({"prompt": {"query": query}})
 
         execution_time = time.time() - start_time
-        log.info("Pipeline executed in {} seconds", execution_time.round(2))
+        log.info("Pipeline executed in {} seconds", round(execution_time, 2))
 
         return result["llm"]["replies"][0]
 ```

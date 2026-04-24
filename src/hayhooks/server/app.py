@@ -2,6 +2,7 @@ import os
 import sys
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import Context, copy_context
 from functools import lru_cache
 from os import PathLike
 from pathlib import Path
@@ -19,6 +20,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
 from hayhooks.server.routers import deploy_router, draw_router, openai_router, status_router, undeploy_router
+from hayhooks.server.tracing import (
+    SPAN_PIPELINE_STARTUP_DEPLOY,
+    build_trace_tags,
+    configure_tracing,
+    instrument_fastapi_app,
+    trace_operation,
+)
 from hayhooks.server.utils.deploy_utils import (
     commit_prepared_pipeline,
     deploy_pipeline_files,
@@ -142,6 +150,10 @@ def _safe_prepare(path: Path) -> PreparedPipeline | None:
         return None
 
 
+def _prepare_with_context(source: Path, context: Context) -> PreparedPipeline | None:
+    return context.run(_safe_prepare, source)
+
+
 def _deploy_pipelines_parallel(app: FastAPI, yaml_files: list[Path], pipeline_dirs: list[Path]) -> int:
     """
     Deploy pipelines with parallel prepare + serial commit.
@@ -155,7 +167,8 @@ def _deploy_pipelines_parallel(app: FastAPI, yaml_files: list[Path], pipeline_di
     sources: list[Path] = [*yaml_files, *pipeline_dirs]
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        prepared = [pipeline for pipeline in pool.map(_safe_prepare, sources) if pipeline is not None]
+        contexts = [copy_context() for _ in sources]
+        prepared = [pipeline for pipeline in pool.map(_prepare_with_context, sources, contexts) if pipeline is not None]
 
     deployed = 0
     for p in prepared:
@@ -200,7 +213,19 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
     deploy_fn = _deploy_pipelines_parallel if is_parallel else _deploy_pipelines_sequential
 
     log.info("Deploying {} pipeline(s) using '{}' strategy", total, strategy.value)
-    deployed = deploy_fn(app, yaml_files, pipeline_dirs)
+    with trace_operation(
+        SPAN_PIPELINE_STARTUP_DEPLOY,
+        tags=build_trace_tags(
+            {
+                "hayhooks.transport": "startup",
+                "hayhooks.deploy.strategy": strategy.value,
+                "hayhooks.deploy.total": total,
+                "hayhooks.deploy.workers": settings.startup_deploy_workers if is_parallel else None,
+            }
+        ),
+    ):
+        deployed = deploy_fn(app, yaml_files, pipeline_dirs)
+
     log.info("Startup deploy complete: {}/{} pipelines deployed", deployed, total)
 
 
@@ -263,6 +288,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(**app_params)
 
+    configure_tracing()
     app.add_middleware(RequestIdMiddleware)
 
     # Check CORS settings before adding middleware
@@ -289,6 +315,8 @@ def create_app() -> FastAPI:
     # Mount Chainlit UI if enabled
     if settings.chainlit_enabled:
         _mount_chainlit_ui(app)
+
+    instrument_fastapi_app(app)
 
     return app
 

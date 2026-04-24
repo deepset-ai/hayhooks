@@ -5,6 +5,7 @@ from anyio import Path
 
 from hayhooks.server.pipelines import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest
+from hayhooks.server.tracing import SPAN_MCP_RUN_PIPELINE_TOOL
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_files
 from hayhooks.server.utils.mcp_utils import (
     PIPELINE_NAME_SCHEMA,
@@ -108,6 +109,16 @@ async def test_run_pipeline_as_tool_returns_text_content(deploy_chat_with_websit
     assert len(result) == 1
     assert isinstance(result[0], TextContent)
     assert result[0].text == "This is a mock response from the pipeline"
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_as_tool_emits_trace_span(deploy_chat_with_website_mcp, recording_tracer):
+    await run_pipeline_as_tool("chat_with_website", {"urls": ["https://www.google.com"], "question": "Trace this"})
+
+    spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_MCP_RUN_PIPELINE_TOOL]
+    assert spans
+    assert spans[-1].tags["hayhooks.pipeline.name"] == "chat_with_website"
+    assert spans[-1].tags["hayhooks.transport"] == "mcp"
 
 
 @pytest.mark.asyncio

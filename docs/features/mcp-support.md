@@ -237,6 +237,21 @@ Configure Claude Desktop to connect to Hayhooks MCP Server:
 3. Configure your IDE to connect to the MCP server
 4. Deploy and manage pipelines through your IDE using natural language
 
+## Tracing MCP Operations
+
+To emit OpenTelemetry traces for MCP requests and tool calls, install tracing extras:
+
+```bash
+pip install "hayhooks[tracing]"
+```
+
+With tracing enabled, Hayhooks emits:
+
+- Request-level spans for MCP transport endpoints (`/mcp`, `/sse`) via Starlette instrumentation
+- Domain spans for MCP actions such as `list_tools`, `call_tool`, pipeline deploy/undeploy, and pipeline-as-tool execution
+
+This allows dashboards to distinguish REST-triggered vs MCP-triggered pipeline operations.
+
 ## Tool Development
 
 ### Custom Tool Descriptions

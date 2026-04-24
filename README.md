@@ -9,6 +9,7 @@ With Hayhooks, you can:
 - 💬 **Integrate your Haystack pipelines and agents with [Open WebUI](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
 - 🖥️ **Embed a [Chainlit](https://chainlit.io/) chat UI** directly in Hayhooks with `pip install "hayhooks[chainlit]"` and `hayhooks run --with-chainlit` -- zero-configuration frontend with streaming, pipeline selection, and custom UI widgets.
 - 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
+- 📈 **Trace Hayhooks lifecycle actions with OpenTelemetry** (`pip install "hayhooks[tracing]"`) for deploy/run/undeploy visibility across REST and MCP.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hayhooks.svg)](https://pypi.org/project/hayhooks)
@@ -143,6 +144,7 @@ Or chat with it in the [embedded Chainlit UI](docs/features/chainlit-integration
 - CLI for easy pipeline management
 - Flexible configuration options
 - Comprehensive logging and debugging support
+- OpenTelemetry-ready tracing hooks built on Haystack tracing APIs
 - Custom route and middleware support
 
 ### 📁 File Upload Support

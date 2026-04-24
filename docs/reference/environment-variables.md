@@ -1,6 +1,6 @@
 # Environment Variables
 
-Hayhooks can be configured via environment variables (loaded with prefix `HAYHOOKS_` or `LOG`). This page lists the canonical variables supported by the codebase.
+Hayhooks can be configured via environment variables. Most app settings use the `HAYHOOKS_` prefix (plus the legacy `LOG` alias for log level), while tracing uses standard OpenTelemetry `OTEL_*` variables. This page lists the canonical variables supported by the codebase.
 
 ## Server
 
@@ -227,6 +227,68 @@ export HAYHOOKS_LOG_FORMAT=verbose
 export HAYHOOKS_INTERCEPTED_LOGGERS='["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "haystack"]'
 ```
 
+## OpenTelemetry (Tracing)
+
+Hayhooks tracing relies on Haystack tracing APIs and standard OpenTelemetry configuration.
+
+For setup walkthroughs and backend examples (SigNoz, Jaeger), see [Tracing](tracing.md).
+
+Install tracing extras first:
+
+```bash
+pip install "hayhooks[tracing]"
+```
+
+Then configure your exporter/provider using OpenTelemetry env vars (examples):
+
+### OTEL_SERVICE_NAME
+
+- Example: `hayhooks`
+- Description: Service name shown in your tracing backend
+
+### OTEL_EXPORTER_OTLP_ENDPOINT
+
+- Example: `http://localhost:4318`
+- Description: OTLP collector endpoint
+
+!!! tip "Using OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+    If you set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` directly for HTTP transport, use the full traces path
+    (for example `http://localhost:4318/v1/traces`).
+
+### OTEL_EXPORTER_OTLP_TRACES_PROTOCOL / OTEL_EXPORTER_OTLP_PROTOCOL
+
+- Example: `http/protobuf`
+- Description: OTLP transport protocol (`http/protobuf` or `grpc`). If both are set, `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` takes precedence for trace export.
+
+### OTEL_TRACES_SAMPLER
+
+- Example: `parentbased_traceidratio`
+- Description: Sampling strategy
+
+### OTEL_TRACES_SAMPLER_ARG
+
+- Example: `1.0`
+- Description: Sampler argument (e.g. ratio)
+
+### HAYHOOKS_TRACING_EXCLUDED_SPANS
+
+- Default: `["send", "receive"]`
+- Description: Low-level ASGI child spans to suppress from FastAPI/Starlette instrumentation. This helps keep traces readable for streaming responses by default.
+- Options:
+  - `["send", "receive"]` (default): suppress both per-chunk response send spans and request receive spans
+  - `["send"]`: keep receive spans, suppress response send spans
+  - `[]`: disable this filtering and keep all framework spans
+
+!!! note "No Hayhooks-specific OTel env vars"
+    Hayhooks does not introduce a custom `HAYHOOKS_OTEL_*` exporter/provider namespace. Use standard OpenTelemetry
+    variables for backend configuration. `HAYHOOKS_TRACING_EXCLUDED_SPANS` is a Hayhooks-specific instrumentation tuning
+    setting for framework span noise, not an OpenTelemetry exporter setting.
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, Hayhooks will also attempt
+an automatic OpenTelemetry bootstrap at startup using the protocol from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`
+(falling back to `OTEL_EXPORTER_OTLP_PROTOCOL`)
+(`http/protobuf` default, or `grpc`).
+
 ## Usage Examples
 
 ### Docker
@@ -292,4 +354,5 @@ HAYHOOKS_LOG_FORMAT=default
 ## Next Steps
 
 - [Configuration](../getting-started/configuration.md)
+- [Tracing](tracing.md)
 - [Logging](logging.md)

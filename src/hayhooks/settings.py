@@ -1,5 +1,6 @@
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from dotenv import find_dotenv, load_dotenv
 from pydantic import Field
@@ -99,6 +100,10 @@ class AppSettings(BaseSettings):
     # Only these loggers are patched; everything else (httpx, haystack, etc.)
     # keeps its default behaviour.
     intercepted_loggers: list[str] = ["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]
+
+    # Exclude low-level ASGI send/receive spans from framework instrumentation
+    # to keep streaming traces readable by default.
+    tracing_excluded_spans: list[Literal["send", "receive"]] = ["send", "receive"]
 
     # Chainlit Settings
     # Enable embedded Chainlit UI frontend
