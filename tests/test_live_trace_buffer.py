@@ -59,3 +59,28 @@ def test_live_trace_buffer_respects_since_filter():
 
     assert len(traces) == 1
     assert traces[0]["trace_id"] == "new"
+
+
+def test_live_trace_buffer_preserves_long_tag_values():
+    long_value = "x" * 400
+    record_live_span_start(
+        trace_id="trace-long-tag",
+        span_id="root",
+        parent_span_id=None,
+        operation_name="hayhooks.pipeline.run",
+        start_time_ms=2_000,
+        tags={
+            "hayhooks.pipeline.name": "demo",
+            "hayhooks.component.input_types": long_value,
+        },
+    )
+    record_live_span_finish(trace_id="trace-long-tag", span_id="root", duration_ms=5)
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+
+    assert len(traces) == 1
+    trace = traces[0]
+    trace_tag = next(tag for tag in trace["tags"] if tag["key"] == "hayhooks.component.input_types")
+    span_tag = next(tag for tag in trace["root_span"]["tags"] if tag["key"] == "hayhooks.component.input_types")
+    assert trace_tag["value"] == long_value
+    assert span_tag["value"] == long_value

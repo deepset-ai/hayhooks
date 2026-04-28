@@ -113,6 +113,19 @@ The dashboard always reads traces from Hayhooks' in-process live trace buffer.
 - You can still export traces to external backends via standard `OTEL_*` variables for observability tooling,
   while the dashboard remains a local live view.
 
+#### Optional: Include Haystack component spans
+
+By default, the dashboard includes Hayhooks operation spans (deploy/run/openai/mcp lifecycle).
+If you also want Haystack component spans in the same trace trees, enable:
+
+```bash
+export HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=true
+```
+
+This feature flag only affects what gets mirrored into the dashboard buffer; it does not change
+dashboard UI filtering/sorting behavior.
+It also works without configuring an external tracing backend (local capture mode).
+
 Run Hayhooks and open `http://localhost:1416/dashboard`.
 
 ### API Endpoints

@@ -23,7 +23,6 @@ _TRACE_TAG_PRIORITY = (
 _IGNORED_TRACE_TAG_KEYS = {"hayhooks.elapsed_ms"}
 _MAX_TRACE_TAGS = 32
 _MAX_SPAN_TAGS = 8
-_MAX_TAG_VALUE_CHARS = 220
 
 
 def _stringify_tag_value(value: Any) -> str | None:
@@ -39,8 +38,6 @@ def _stringify_tag_value(value: Any) -> str | None:
     else:
         text = str(value)
     text = text.strip()
-    if len(text) > _MAX_TAG_VALUE_CHARS:
-        text = f"{text[: _MAX_TAG_VALUE_CHARS - 3]}..."
     return text if text else None
 
 

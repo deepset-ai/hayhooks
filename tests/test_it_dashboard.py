@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from hayhooks.server.pipelines import registry
-from hayhooks.server.utils.live_trace_buffer import clear_live_traces
+from hayhooks.server.utils.live_trace_buffer import (
+    clear_live_traces,
+    record_live_span_finish,
+    record_live_span_start,
+)
 from hayhooks.settings import settings
 
 
@@ -92,6 +96,41 @@ def test_dashboard_traces_returns_local_buffer_traces(client, monkeypatch):
     assert response.json() == {"traces": [trace]}
 
 
+def test_dashboard_traces_reads_live_buffer_without_mocking(client):
+    clear_live_traces()
+    trace_id = "integration-trace-1"
+    start_time_ms = 1_700_000_000_000
+
+    record_live_span_start(
+        trace_id=trace_id,
+        span_id="root",
+        parent_span_id=None,
+        operation_name="hayhooks.pipeline.run",
+        start_time_ms=start_time_ms,
+        tags={"hayhooks.pipeline.name": "demo-pipeline"},
+    )
+    record_live_span_start(
+        trace_id=trace_id,
+        span_id="child",
+        parent_span_id="root",
+        operation_name="hayhooks.openai.run",
+        start_time_ms=start_time_ms + 4,
+    )
+    record_live_span_finish(trace_id=trace_id, span_id="child", duration_ms=3)
+    record_live_span_finish(trace_id=trace_id, span_id="root", duration_ms=12)
+
+    response = client.get("/dashboard/api/traces?limit=5")
+
+    assert response.status_code == 200
+    traces = response.json()["traces"]
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace["trace_id"] == trace_id
+    assert trace["entrypoint"] == "demo-pipeline"
+    assert trace["root_span"]["name"] == "hayhooks.pipeline.run"
+    assert trace["root_span"]["children"][0]["name"] == "hayhooks.openai.run"
+
+
 def test_dashboard_traces_sorts_by_start_time_desc(client, monkeypatch):
     clear_live_traces()
     older_trace = _sample_trace("trace-older", 1_700_000_000_000)
@@ -158,3 +197,29 @@ def test_dashboard_clear_traces_clears_local_buffer(client, monkeypatch):
         "message": "Cleared dashboard traces from local in-process buffer.",
     }
     assert clear_calls == [True]
+
+
+def test_dashboard_clear_traces_clears_live_buffer_without_mocking(client):
+    clear_live_traces()
+    trace_id = "integration-trace-2"
+    start_time_ms = 1_700_000_000_100
+    record_live_span_start(
+        trace_id=trace_id,
+        span_id="root",
+        parent_span_id=None,
+        operation_name="hayhooks.pipeline.run",
+        start_time_ms=start_time_ms,
+        tags={"hayhooks.pipeline.name": "demo-pipeline"},
+    )
+    record_live_span_finish(trace_id=trace_id, span_id="root", duration_ms=8)
+
+    before_clear = client.get("/dashboard/api/traces")
+    assert before_clear.status_code == 200
+    assert len(before_clear.json()["traces"]) == 1
+
+    clear_response = client.post("/dashboard/api/traces/clear")
+    assert clear_response.status_code == 200
+
+    after_clear = client.get("/dashboard/api/traces")
+    assert after_clear.status_code == 200
+    assert after_clear.json()["traces"] == []

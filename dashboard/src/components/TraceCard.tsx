@@ -20,12 +20,20 @@ type TraceCardProps = {
 
 export const TraceCard = memo(function TraceCard({ trace, isFresh }: TraceCardProps) {
   const [open, setOpen] = useState(false)
-  const tags = useMemo(() => sortTags(trace.tags ?? []), [trace.tags])
-  const summaryTags = useMemo(() => tags.filter((t) => SUMMARY_TAG_KEYS.has(t.key)), [tags])
+  const [selectedSpanId, setSelectedSpanId] = useState(trace.root_span.span_id)
+  const summaryTags = useMemo(
+    () => sortTags((trace.tags ?? []).filter((tag) => SUMMARY_TAG_KEYS.has(tag.key))),
+    [trace.tags],
+  )
   const allSpans = useMemo(() => collectAllSpans(trace.root_span), [trace.root_span])
-  const failed = useMemo(() => isFailed(trace), [trace])
-  const ongoing = useMemo(() => isOngoing(trace), [trace])
-  const kind = useMemo(() => traceKind(trace), [trace])
+  const selectedSpan = useMemo(
+    () => allSpans.find((span) => span.span_id === selectedSpanId) ?? trace.root_span,
+    [allSpans, selectedSpanId, trace.root_span],
+  )
+  const selectedSpanTags = useMemo(() => sortTags(selectedSpan.tags ?? []), [selectedSpan.tags])
+  const failed = isFailed(trace)
+  const ongoing = isOngoing(trace)
+  const kind = traceKind(trace)
   const kindStyle = KIND_STYLE[kind]
 
   return (
@@ -119,32 +127,38 @@ export const TraceCard = memo(function TraceCard({ trace, isFresh }: TraceCardPr
                 {trace.trace_id}
               </code>
             </div>
-
-            {tags.length > 0 && (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <Tag className="size-3" />
-                  Tags
-                  <span className="text-[10px] tabular-nums">({tags.length})</span>
-                </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Tag className="size-3" />
+                Span tags
+                <span className="text-[10px] text-muted-foreground/80">
+                  ({selectedSpan.name})
+                </span>
+                <span className="text-[10px] tabular-nums">({selectedSpanTags.length})</span>
+              </div>
+              {selectedSpanTags.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {tags.map((tag) => (
+                  {selectedSpanTags.map((tag) => (
                     <Tooltip key={tag.key}>
                       <TooltipTrigger className="cursor-default">
-                        <span className="inline-flex items-center gap-1 rounded-md bg-muted/70 px-2 py-1 text-[11px] leading-tight">
-                          <span className="font-medium text-muted-foreground">{tagLabel(tag.key)}</span>
-                          <span className="text-foreground/85 font-mono">{truncate(tag.value, 40)}</span>
+                        <span className="inline-flex max-w-full items-start gap-1 rounded-md bg-muted/70 px-2 py-1 text-[11px] leading-tight">
+                          <span className="shrink-0 font-medium text-muted-foreground">{tagLabel(tag.key)}</span>
+                          <span className="break-all text-foreground/85 font-mono">{truncate(tag.value, 40)}</span>
                         </span>
                       </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-sm break-all font-mono text-xs">
-                        <p className="font-medium">{tag.key}</p>
-                        <p className="mt-0.5 text-muted-foreground">{tag.value}</p>
+                      <TooltipContent side="top" className="!block max-w-xl p-3 font-mono text-xs leading-relaxed sm:max-w-2xl">
+                        <div className="space-y-2">
+                          <p className="break-all text-background/95">{tag.key}</p>
+                          <p className="break-all text-background/75">{tag.value}</p>
+                        </div>
                       </TooltipContent>
                     </Tooltip>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <p className="text-xs text-muted-foreground">No tags for this span.</p>
+              )}
+            </div>
 
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -153,14 +167,15 @@ export const TraceCard = memo(function TraceCard({ trace, isFresh }: TraceCardPr
                 <span className="text-[10px] tabular-nums">({allSpans.length})</span>
               </div>
               <div className="overflow-auto">
-                <div className="grid grid-cols-[minmax(240px,3fr)_minmax(120px,2fr)] text-xs">
+                <div className="space-y-1.5 pr-1">
                   <SpanRow
                     span={trace.root_span}
                     depth={0}
                     traceStart={trace.start_time_ms}
                     traceDuration={trace.duration_ms}
                     traceEntrypoint={trace.entrypoint}
-                    isLast
+                    selectedSpanId={selectedSpanId}
+                    onSelectSpan={setSelectedSpanId}
                   />
                 </div>
               </div>

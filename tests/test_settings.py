@@ -178,3 +178,14 @@ def test_access_log_excluded_path_prefixes_env_var(monkeypatch):
     monkeypatch.setenv("HAYHOOKS_ACCESS_LOG_EXCLUDED_PATH_PREFIXES", '["/status", "/metrics"]')
     settings = AppSettings()
     assert settings.access_log_excluded_path_prefixes == ["/status", "/metrics"]
+
+
+def test_dashboard_trace_include_haystack_spans_default():
+    settings = AppSettings()
+    assert settings.dashboard_trace_include_haystack_spans is False
+
+
+def test_dashboard_trace_include_haystack_spans_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS", "true")
+    settings = AppSettings()
+    assert settings.dashboard_trace_include_haystack_spans is True

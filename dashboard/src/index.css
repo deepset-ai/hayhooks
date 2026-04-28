@@ -141,11 +141,26 @@
 }
 
 /* Waterfall bar for span durations */
+.waterfall-track {
+  @apply relative h-2.5 flex-1 overflow-hidden rounded bg-muted/60;
+  min-width: 140px;
+}
+
+.waterfall-track-selected {
+  @apply bg-primary/20;
+}
+
 .waterfall-bar {
-  @apply rounded-sm;
-  height: 6px;
+  @apply absolute top-0 rounded-sm;
+  height: 100%;
   min-width: 2px;
   background: linear-gradient(90deg, var(--haystack-blue), var(--haystack-green));
+}
+
+.waterfall-bar-selected {
+  box-shadow:
+    0 0 0 1px rgb(46 108 223 / 68%),
+    0 0 0 3px rgb(46 108 223 / 16%);
 }
 
 /* Animate new trace cards */

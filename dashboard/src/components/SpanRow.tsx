@@ -10,51 +10,62 @@ type SpanRowProps = {
   traceStart: number
   traceDuration: number
   traceEntrypoint: string | null
-  isLast?: boolean
+  selectedSpanId: string
+  onSelectSpan: (spanId: string) => void
 }
 
-export function SpanRow({ span, depth, traceStart, traceDuration, traceEntrypoint, isLast = false }: SpanRowProps) {
+export function SpanRow({
+  span,
+  depth,
+  traceStart,
+  traceDuration,
+  traceEntrypoint,
+  selectedSpanId,
+  onSelectSpan,
+}: SpanRowProps) {
   const offsetPct = traceDuration > 0 ? ((span.start_time_ms - traceStart) / traceDuration) * 100 : 0
   const widthPct = traceDuration > 0 ? Math.max((span.duration_ms / traceDuration) * 100, 1) : 100
   const pipelineName = spanTagValue(span, "hayhooks.pipeline.name")
-  const showPipeline = pipelineName && pipelineName !== traceEntrypoint
+  const showPipeline = pipelineName !== undefined && pipelineName !== traceEntrypoint
+  const isSelected = span.span_id === selectedSpanId
 
   return (
-    <>
-      <div
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => onSelectSpan(span.span_id)}
+        aria-pressed={isSelected}
         className={cn(
-          "flex items-start gap-1.5 px-3 py-1.5 text-xs",
-          !isLast && "border-b border-border/40",
+          "flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
+          isSelected
+            ? "border-primary/40 bg-primary/10 shadow-sm"
+            : "border-border/40 hover:bg-muted/40",
         )}
-        style={{ paddingLeft: `${depth * 16 + 12}px` }}
       >
-        <Layers className="mt-0.5 size-3 shrink-0 text-muted-foreground/60" />
-        <span className="min-w-0 break-words font-mono text-foreground/85">
-          {span.name}
-          {showPipeline && (
-            <span className="ml-1.5 inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 font-sans text-[10px] font-medium text-primary">
-              {pipelineName}
+        <div className="min-w-0 grow" style={{ paddingLeft: depth * 16 }}>
+          <div className="flex items-center gap-1.5">
+            <Layers className="size-3 shrink-0 text-muted-foreground/60" />
+            <span className="min-w-0 break-words font-mono text-foreground/85">
+              {span.name}
             </span>
-          )}
-        </span>
-        <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums text-muted-foreground">
+            {showPipeline && (
+              <span className="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 font-sans text-[10px] font-medium text-primary">
+                {pipelineName}
+              </span>
+            )}
+          </div>
+        </div>
+        <span className="w-14 shrink-0 text-right whitespace-nowrap tabular-nums text-muted-foreground">
           {fmtDur(span.duration_ms)}
         </span>
-      </div>
-      <div
-        className={cn(
-          "relative flex items-center px-3 py-1.5",
-          !isLast && "border-b border-border/40",
-        )}
-      >
-        <div className="h-full w-full">
+        <div className={cn("waterfall-track", isSelected && "waterfall-track-selected")}>
           <div
-            className="waterfall-bar"
+            className={cn("waterfall-bar", isSelected && "waterfall-bar-selected")}
             style={{ marginLeft: `${offsetPct}%`, width: `${widthPct}%` }}
           />
         </div>
-      </div>
-      {span.children.map((c, i) => (
+      </button>
+      {span.children.map((c) => (
         <SpanRow
           key={c.span_id}
           span={c}
@@ -62,9 +73,10 @@ export function SpanRow({ span, depth, traceStart, traceDuration, traceEntrypoin
           traceStart={traceStart}
           traceDuration={traceDuration}
           traceEntrypoint={traceEntrypoint}
-          isLast={isLast && i === span.children.length - 1}
+          selectedSpanId={selectedSpanId}
+          onSelectSpan={onSelectSpan}
         />
       ))}
-    </>
+    </div>
   )
 }

@@ -205,6 +205,15 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Default: `100`
 - Description: Upper bound for `limit` in `/dashboard/api/traces` (local buffer reads)
 
+### HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS
+
+- Default: `false`
+- Description: Include Haystack tracer spans in the dashboard live buffer in addition to Hayhooks operation spans.
+- Notes:
+  - Works in local capture mode even when no external tracing backend is configured.
+  - If OpenTelemetry/Datadog tracing is configured, the same Haystack spans are also exported to that backend.
+  - Keeps dashboard polling/filter behavior unchanged; it only broadens which spans appear in traces.
+
 ## CORS
 
 These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.AppSettings`.
@@ -408,6 +417,8 @@ HAYHOOKS_DASHBOARD_ENABLED=true
 HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
 HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT=25
 HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT=100
+# Optional: include Haystack component spans in dashboard traces
+# HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=true
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 HAYHOOKS_LOG_LEVEL=INFO
 HAYHOOKS_LOG_FORMAT=default

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from haystack.tracing import disable_tracing, is_tracing_enabled, tracer as haystack_tracer
 from starlette.applications import Starlette
 
 from hayhooks.server.app import create_app
@@ -480,3 +481,78 @@ def test_trace_operation_records_spans_without_tracer_context(monkeypatch):
     assert traces[0]["entrypoint"] == "demo"
     assert traces[0]["root_span"]["name"] == "hayhooks.pipeline.run"
     assert traces[0]["root_span"]["children"][0]["name"] == "hayhooks.openai.run"
+
+
+def test_haystack_component_spans_are_not_mirrored_by_default(recording_tracer, monkeypatch):
+    clear_live_traces()
+    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", False)
+
+    with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
+        pass
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+    assert traces == []
+
+
+def test_haystack_component_spans_are_mirrored_when_flag_enabled(recording_tracer, monkeypatch):
+    clear_live_traces()
+    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", True)
+    assert configure_tracing() is True
+
+    with trace_operation("hayhooks.pipeline.run", tags={"hayhooks.pipeline.name": "demo"}):
+        with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
+            pass
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+    assert len(traces) == 1
+    assert traces[0]["span_count"] == 2
+    assert traces[0]["root_span"]["name"] == "hayhooks.pipeline.run"
+    child_span = traces[0]["root_span"]["children"][0]
+    assert child_span["name"] == "haystack.component.run"
+    assert {"key": "haystack.component.name", "value": "prompt_builder"} in child_span["tags"]
+
+
+def test_haystack_component_spans_are_mirrored_without_external_tracing(monkeypatch):
+    clear_live_traces()
+    disable_tracing()
+    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", True)
+
+    try:
+        assert is_tracing_enabled() is False
+        assert configure_tracing() is False
+        assert is_tracing_enabled() is False
+
+        with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
+            pass
+
+        traces = get_recent_traces(since_ms=None, limit=10)
+        assert len(traces) == 1
+        assert traces[0]["root_span"]["name"] == "haystack.component.run"
+        assert {"key": "haystack.component.name", "value": "prompt_builder"} in traces[0]["root_span"]["tags"]
+    finally:
+        disable_tracing()
+
+
+def test_haystack_component_spans_are_nested_under_hayhooks_span_without_external_tracing(monkeypatch):
+    clear_live_traces()
+    disable_tracing()
+    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", True)
+
+    try:
+        assert is_tracing_enabled() is False
+        assert configure_tracing() is False
+        assert is_tracing_enabled() is False
+
+        with trace_operation("hayhooks.pipeline.run", tags={"hayhooks.pipeline.name": "demo"}):
+            with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
+                pass
+
+        traces = get_recent_traces(since_ms=None, limit=10)
+        assert len(traces) == 1
+        assert traces[0]["root_span"]["name"] == "hayhooks.pipeline.run"
+        children = traces[0]["root_span"]["children"]
+        assert len(children) == 1
+        assert children[0]["name"] == "haystack.component.run"
+        assert {"key": "haystack.component.name", "value": "prompt_builder"} in children[0]["tags"]
+    finally:
+        disable_tracing()
