@@ -205,6 +205,14 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Default: `100`
 - Description: Upper bound for `limit` in `/dashboard/api/traces` (local buffer reads)
 
+### HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY
+
+- Default: `200`
+- Description: Maximum number of traces retained in the in-process live trace buffer.
+- Notes:
+  - Behaves like a capped collection: when full, older traces are evicted automatically.
+  - Increase this (for example to `2000`) if you want a larger local history window.
+
 ### HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS
 
 - Default: `false`

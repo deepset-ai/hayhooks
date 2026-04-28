@@ -189,3 +189,14 @@ def test_dashboard_trace_include_haystack_spans_env_var(monkeypatch):
     monkeypatch.setenv("HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS", "true")
     settings = AppSettings()
     assert settings.dashboard_trace_include_haystack_spans is True
+
+
+def test_dashboard_trace_buffer_capacity_default():
+    settings = AppSettings()
+    assert settings.dashboard_trace_buffer_capacity == 200
+
+
+def test_dashboard_trace_buffer_capacity_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY", "2000")
+    settings = AppSettings()
+    assert settings.dashboard_trace_buffer_capacity == 2000

@@ -112,6 +112,11 @@ The dashboard always reads traces from Hayhooks' in-process live trace buffer.
 - No extra dashboard backend mode configuration is required.
 - You can still export traces to external backends via standard `OTEL_*` variables for observability tooling,
   while the dashboard remains a local live view.
+- The in-memory buffer is capped (default: `200` traces). Configure retention size with:
+
+```bash
+export HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY=2000
+```
 
 #### Optional: Include Haystack component spans
 

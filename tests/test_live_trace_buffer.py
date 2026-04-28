@@ -1,4 +1,5 @@
 from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces, record_live_span_finish, record_live_span_start
+from hayhooks.settings import settings
 
 
 def setup_function():
@@ -84,3 +85,23 @@ def test_live_trace_buffer_preserves_long_tag_values():
     span_tag = next(tag for tag in trace["root_span"]["tags"] if tag["key"] == "hayhooks.component.input_types")
     assert trace_tag["value"] == long_value
     assert span_tag["value"] == long_value
+
+
+def test_live_trace_buffer_respects_configured_capacity(monkeypatch):
+    monkeypatch.setattr(settings, "dashboard_trace_buffer_capacity", 2)
+
+    for index in range(3):
+        trace_id = f"trace-{index}"
+        span_id = f"{trace_id}-root"
+        start_time_ms = 1_000 + index
+        record_live_span_start(
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=None,
+            operation_name="hayhooks.pipeline.run",
+            start_time_ms=start_time_ms,
+        )
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+
+    assert [trace["trace_id"] for trace in traces] == ["trace-2", "trace-1"]

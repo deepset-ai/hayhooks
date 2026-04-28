@@ -6,7 +6,8 @@ from threading import RLock
 from time import time
 from typing import Any
 
-_MAX_BUFFERED_TRACES = 200
+from hayhooks.settings import settings
+
 _TRACE_TAG_PRIORITY = (
     "hayhooks.pipeline.name",
     "hayhooks.transport",
@@ -23,6 +24,10 @@ _TRACE_TAG_PRIORITY = (
 _IGNORED_TRACE_TAG_KEYS = {"hayhooks.elapsed_ms"}
 _MAX_TRACE_TAGS = 32
 _MAX_SPAN_TAGS = 8
+
+
+def _max_buffered_traces() -> int:
+    return settings.dashboard_trace_buffer_capacity
 
 
 def _stringify_tag_value(value: Any) -> str | None:
@@ -230,11 +235,12 @@ class _LiveTraceBuffer:
         }
 
     def _evict_old_traces(self) -> None:
-        if len(self._traces) <= _MAX_BUFFERED_TRACES:
+        max_buffered_traces = _max_buffered_traces()
+        if len(self._traces) <= max_buffered_traces:
             return
 
         sorted_ids = sorted(self._traces, key=lambda trace_id: self._traces[trace_id]["updated_at_ms"], reverse=True)
-        keep_ids = set(sorted_ids[:_MAX_BUFFERED_TRACES])
+        keep_ids = set(sorted_ids[:max_buffered_traces])
         for trace_id in list(self._traces):
             if trace_id not in keep_ids:
                 del self._traces[trace_id]
