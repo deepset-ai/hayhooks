@@ -261,7 +261,12 @@ def test_run_endpoint_emits_pipeline_run_span(client, deploy_yaml_pipeline, reco
 
     run_spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_PIPELINE_RUN]
     assert run_spans
-    assert any(span.tags.get("hayhooks.pipeline.name") == pipeline_name for span in run_spans)
+    assert any(
+        span.tags.get("hayhooks.pipeline.name") == pipeline_name
+        and span.tags.get("hayhooks.payload.keys") is None
+        and span.tags.get("hayhooks.payload.values") == ["value=3"]
+        for span in run_spans
+    )
 
     client.post(f"/undeploy/{pipeline_name}")
 

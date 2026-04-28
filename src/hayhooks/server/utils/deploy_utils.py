@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import json
 import shutil
 import tempfile
 import threading
@@ -238,13 +239,34 @@ async def _execute_pipeline_run(
     return await run_in_threadpool(pipeline_wrapper.run_api, **payload)
 
 
+def _payload_value_to_trace_text(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str | int | float):
+        return str(value)
+    if isinstance(value, set):
+        value = sorted(value, key=str)
+    elif isinstance(value, tuple):
+        value = list(value)
+    try:
+        return json.dumps(value, sort_keys=True, default=str)
+    except TypeError:
+        return str(value)
+
+
+def _build_payload_value_tags(payload: dict[str, Any]) -> list[str]:
+    return [f"{key}={_payload_value_to_trace_text(value)}" for key, value in sorted(payload.items())]
+
+
 def _build_run_trace_tags(pipeline_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     return build_trace_tags(
         {
             "hayhooks.transport": "rest",
             "hayhooks.pipeline.name": pipeline_name,
             "hayhooks.route": f"/{pipeline_name}/run",
-            "hayhooks.payload.keys": sorted(payload.keys()),
+            "hayhooks.payload.values": _build_payload_value_tags(payload),
             "hayhooks.payload.has_files": "files" in payload,
         }
     )

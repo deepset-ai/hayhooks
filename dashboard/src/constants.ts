@@ -38,7 +38,7 @@ export const TAG_LABELS: Record<string, string> = {
   "hayhooks.deploy.file_count": "files",
   "hayhooks.deploy.overwrite": "overwrite",
   "hayhooks.route": "route",
-  "hayhooks.payload.keys": "payload keys",
+  "hayhooks.payload.values": "payload values",
   "hayhooks.payload.has_files": "has files",
   "service.name": "service",
   serviceName: "service",
