@@ -160,15 +160,8 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 
 - Default: `false`
 - Description: Enable serving the built dashboard static frontend
-
-### HAYHOOKS_DASHBOARD_TRACE_BACKEND
-
-- Default: `jaeger`
-- Description: Trace backend type used by `/dashboard/api/traces`. When the external backend is unreachable the dashboard automatically falls back to the local in-memory buffer.
-- Options:
-  - `"local"`: Use in-process Hayhooks trace interception buffer only (no external backend query)
-  - `"jaeger"`: Query Jaeger HTTP API (`/api/traces`)
-  - `"signoz"`: Query SigNoz Trace API (`/api/v5/query_range`)
+- Notes:
+  - `/dashboard/api/traces` always reads from Hayhooks' in-process live trace buffer.
 
 ### HAYHOOKS_DASHBOARD_PATH
 
@@ -178,45 +171,39 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 ### HAYHOOKS_DASHBOARD_DIST_DIR
 
 - Default: `./dashboard/dist`
-- Description: Directory containing the built dashboard assets (`index.html`, JS/CSS chunks)
+- Description: Directory containing dashboard static assets (`index.html`, JS/CSS chunks). Override this when
+  serving a custom or locally rebuilt dashboard frontend.
 
-### HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL
+### HAYHOOKS_DASHBOARD_UI_POLL_MS
 
-- Default: `http://localhost:16686`
-- Description: Base URL for the selected trace backend (`jaeger` or `signoz`)
+- Default: `2500`
+- Description: Dashboard UI polling interval in milliseconds.
 
-### HAYHOOKS_DASHBOARD_TRACE_SIGNOZ_API_KEY
+### HAYHOOKS_DASHBOARD_UI_LIST_CAP
 
-- Default: `""` (empty)
-- Description: API key used when `HAYHOOKS_DASHBOARD_TRACE_BACKEND=signoz`
-- Notes:
-  - Required for SigNoz Trace API access in secured deployments
-  - Add header `SIGNOZ-API-KEY` on backend requests
+- Default: `100`
+- Description: Maximum number of traces the dashboard keeps in the browser list.
 
-### HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME
+### HAYHOOKS_DASHBOARD_UI_FETCH_LIMIT
 
-- Default: `hayhooks`
-- Description: Service name filter sent to the Jaeger query API
+- Default: `50`
+- Description: Number of traces the dashboard requests per poll. This is capped by
+  `HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT` and `HAYHOOKS_DASHBOARD_UI_LIST_CAP`.
 
-### HAYHOOKS_DASHBOARD_TRACE_REQUEST_TIMEOUT_SECONDS
+### HAYHOOKS_DASHBOARD_UI_FRESH_MS
 
-- Default: `3.0`
-- Description: Request timeout (seconds) for Jaeger trace queries
-
-### HAYHOOKS_DASHBOARD_TRACE_LOOKBACK_SECONDS
-
-- Default: `900`
-- Description: Lookback window used when `since_ms` is not provided
+- Default: `6000`
+- Description: Duration (milliseconds) that newly seen traces keep the "NEW" highlight state.
 
 ### HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT
 
 - Default: `25`
-- Description: Default number of traces returned per dashboard query
+- Description: Default number of traces returned from the in-process live trace buffer per dashboard query
 
 ### HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT
 
 - Default: `100`
-- Description: Upper bound for `limit` in `/dashboard/api/traces`
+- Description: Upper bound for `limit` in `/dashboard/api/traces` (local buffer reads)
 
 ## CORS
 
@@ -278,6 +265,14 @@ These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.A
 - Default: `["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]`
 - Description: List of stdlib loggers to intercept and route through Loguru. Only the listed loggers are patched; all others (httpx, haystack, etc.) keep their default behaviour.
 
+### HAYHOOKS_ACCESS_LOG_EXCLUDED_PATH_PREFIXES
+
+- Default: `["/dashboard/api/config", "/dashboard/api/entrypoints", "/dashboard/api/traces"]`
+- Description: Path prefixes for `uvicorn.access` request logs that should be suppressed.
+- Notes:
+  - Useful to reduce noise from dashboard polling requests.
+  - Set to `[]` to keep all access logs.
+
 **Examples:**
 
 ```bash
@@ -289,6 +284,9 @@ export HAYHOOKS_LOG_FORMAT=verbose
 
 # Also intercept haystack logs
 export HAYHOOKS_INTERCEPTED_LOGGERS='["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "haystack"]'
+
+# Keep dashboard polling request logs
+export HAYHOOKS_ACCESS_LOG_EXCLUDED_PATH_PREFIXES='[]'
 ```
 
 ## OpenTelemetry (Tracing)
@@ -408,20 +406,8 @@ HAYHOOKS_STARTUP_DEPLOY_STRATEGY=parallel
 HAYHOOKS_STARTUP_DEPLOY_WORKERS=4
 HAYHOOKS_DASHBOARD_ENABLED=true
 HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
-# Jaeger backend
-HAYHOOKS_DASHBOARD_TRACE_BACKEND=jaeger
-HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:16686
-HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
-
-# Local interception only (no external trace backend query)
-# HAYHOOKS_DASHBOARD_TRACE_BACKEND=local
-# HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
-
-# SigNoz backend
-# HAYHOOKS_DASHBOARD_TRACE_BACKEND=signoz
-# HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:8080
-# HAYHOOKS_DASHBOARD_TRACE_SIGNOZ_API_KEY=<your-signoz-api-key>
-HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
+HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT=25
+HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT=100
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 HAYHOOKS_LOG_LEVEL=INFO
 HAYHOOKS_LOG_FORMAT=default

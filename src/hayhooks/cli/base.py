@@ -1,5 +1,8 @@
 import os
+import shutil
+import subprocess
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -23,6 +26,51 @@ def _set_env(key: str, value: str | None) -> None:
         os.environ[key] = value
 
 
+def _resolve_dashboard_source_dir(dashboard_dist_dir: str) -> Path | None:
+    """Find dashboard source directory containing package.json."""
+    configured_dist = Path(dashboard_dist_dir).expanduser()
+    candidates = [configured_dist.parent, *[parent / "dashboard" for parent in Path(__file__).resolve().parents]]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if (resolved / "package.json").exists():
+            return resolved
+    return None
+
+
+def _build_dashboard_assets(source_dir: Path) -> Path:
+    """Build dashboard frontend assets from source directory."""
+    npm = shutil.which("npm")
+    if npm is None:
+        msg = "npm was not found in PATH. Install Node.js/npm or provide prebuilt dashboard assets."
+        raise RuntimeError(msg)
+
+    if not (source_dir / "node_modules").exists():
+        install_cmd = [npm, "ci"] if (source_dir / "package-lock.json").exists() else [npm, "install"]
+        subprocess.run(install_cmd, cwd=source_dir, check=True)  # noqa: S603
+
+    subprocess.run([npm, "run", "build"], cwd=source_dir, check=True)  # noqa: S603
+    return source_dir / "dist"
+
+
+def _dashboard_assets_available(dashboard_dist_dir: str) -> bool:
+    """Return True when configured dashboard assets are available."""
+    configured_index = Path(dashboard_dist_dir).expanduser() / "index.html"
+    return configured_index.exists()
+
+
+def _prepare_tracing_dashboard_assets(dashboard_dist_dir: str) -> str | None:
+    """Build tracing dashboard assets when source is available."""
+    source_dir = _resolve_dashboard_source_dir(dashboard_dist_dir)
+    if source_dir is None:
+        return None
+    built_dist = _build_dashboard_assets(source_dir)
+    return str(built_dist)
+
+
 def get_app() -> FastAPI:
     """
     Factory function to create the FastAPI app.
@@ -34,7 +82,7 @@ def get_app() -> FastAPI:
 
 
 @hayhooks_cli.command()
-def run(  # noqa: PLR0913
+def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
     host: Annotated[str | None, typer.Option("--host", "-h", help="Host to run the server on")] = None,
     port: Annotated[int | None, typer.Option("--port", "-p", help="Port to run the server on")] = None,
     pipelines_dir: Annotated[
@@ -51,6 +99,15 @@ def run(  # noqa: PLR0913
     with_chainlit: Annotated[
         bool, typer.Option("--with-chainlit", help="Enable embedded Chainlit UI (requires hayhooks[chainlit])")
     ] = False,
+    with_tracing_dashboard: Annotated[
+        bool,
+        typer.Option(
+            "--with-tracing-dashboard",
+            "--with-dashboard",
+            "--tracing-dashboard",
+            help="Enable tracing dashboard UI and build dashboard assets when source is available",
+        ),
+    ] = False,
     chainlit_path: Annotated[
         str | None, typer.Option("--chainlit-path", help="URL path for the Chainlit UI (default: /chat)")
     ] = None,
@@ -60,6 +117,9 @@ def run(  # noqa: PLR0913
             "--chainlit-custom-elements-dir",
             help="Directory with custom .jsx element files for the Chainlit UI",
         ),
+    ] = None,
+    dashboard_path: Annotated[
+        str | None, typer.Option("--dashboard-path", help="URL path for the tracing dashboard (default: /dashboard)")
     ] = None,
 ) -> None:
     """
@@ -103,6 +163,11 @@ def run(  # noqa: PLR0913
             "Custom elements will not be loaded."
         )
 
+    if dashboard_path and not with_tracing_dashboard:
+        log.warning(
+            "--dashboard-path was provided but --with-tracing-dashboard is not set. The UI will not be mounted."
+        )
+
     if with_chainlit:
         if workers > 1:
             log.warning(
@@ -122,6 +187,33 @@ def run(  # noqa: PLR0913
         if chainlit_custom_elements_dir:
             _set_env("HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR", chainlit_custom_elements_dir)
             settings.chainlit_custom_elements_dir = chainlit_custom_elements_dir
+
+    if with_tracing_dashboard:
+        _set_env("HAYHOOKS_DASHBOARD_ENABLED", "true")
+        settings.dashboard_enabled = True
+
+        if dashboard_path:
+            _set_env("HAYHOOKS_DASHBOARD_PATH", dashboard_path)
+            settings.dashboard_path = dashboard_path
+
+        try:
+            built_dashboard_dist = _prepare_tracing_dashboard_assets(settings.dashboard_dist_dir)
+            if built_dashboard_dist is not None:
+                _set_env("HAYHOOKS_DASHBOARD_DIST_DIR", built_dashboard_dist)
+                settings.dashboard_dist_dir = built_dashboard_dist
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            if _dashboard_assets_available(settings.dashboard_dist_dir):
+                log.warning(
+                    "Failed to build tracing dashboard assets: {}. "
+                    "Falling back to available prebuilt dashboard assets.",
+                    exc,
+                )
+            else:
+                log.error(
+                    "Failed to build tracing dashboard assets and no prebuilt assets were found: {}",
+                    exc,
+                )
+                raise typer.Exit(code=1) from exc
 
     if workers > 1 or reload:
         # Multi-worker and auto-reload require a string import path so each

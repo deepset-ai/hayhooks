@@ -452,7 +452,7 @@ def test_parallel_startup_prepare_spans_keep_startup_parent(monkeypatch, recordi
     assert all(span.parent_span_id == startup_spans[0].span_id for span in prepare_spans)
 
 
-def test_trace_operation_records_spans_for_dashboard_fallback(recording_tracer):
+def test_trace_operation_records_spans_for_dashboard_live_buffer(recording_tracer):
     clear_live_traces()
 
     with trace_operation("hayhooks.pipeline.run", tags={"hayhooks.pipeline.name": "demo"}):

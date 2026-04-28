@@ -5,7 +5,7 @@ import time
 import uuid
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from loguru import logger as log
 
@@ -70,7 +70,30 @@ log.add(sys.stderr, level=_log_level.upper(), format=formatter)
 class _InterceptHandler(logging.Handler):
     """Route standard-library logging records to loguru."""
 
+    def __init__(self, access_log_excluded_path_prefixes: list[str] | tuple[str, ...] | None = None):
+        super().__init__()
+        prefixes = access_log_excluded_path_prefixes or ()
+        self._excluded_access_log_path_prefixes = tuple(prefix for prefix in prefixes if prefix)
+
+    def _is_excluded_access_log(self, record: logging.LogRecord) -> bool:
+        if record.name != "uvicorn.access" or not self._excluded_access_log_path_prefixes:
+            return False
+
+        if not (
+            isinstance(record.args, tuple)
+            and len(record.args) >= _UVICORN_ACCESS_MIN_ARGS
+            and isinstance(record.args[_UVICORN_ACCESS_PATH_ARG_INDEX], str)
+        ):
+            return False
+
+        access_path = cast(str, record.args[_UVICORN_ACCESS_PATH_ARG_INDEX])
+
+        return any(access_path.startswith(prefix) for prefix in self._excluded_access_log_path_prefixes)
+
     def emit(self, record: logging.LogRecord) -> None:
+        if self._is_excluded_access_log(record):
+            return
+
         try:
             level = log.level(record.levelname).name
         except ValueError:
@@ -138,17 +161,24 @@ class RequestIdMiddleware:
 
 
 _DEFAULT_INTERCEPTED_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi")
+_UVICORN_ACCESS_PATH_ARG_INDEX = 2
+_UVICORN_ACCESS_MIN_ARGS = 3
 
 
-def intercept_stdlib_logging(loggers: list[str] | tuple[str, ...] | None = None) -> None:
+def intercept_stdlib_logging(
+    loggers: list[str] | tuple[str, ...] | None = None,
+    access_log_excluded_path_prefixes: list[str] | tuple[str, ...] | None = None,
+) -> None:
     """
     Replace handlers on the given loggers so they flow through loguru.
 
     Args:
         loggers: Logger names to intercept. Falls back to
             ``_DEFAULT_INTERCEPTED_LOGGERS`` when *None*.
+        access_log_excluded_path_prefixes:
+            Optional path prefixes for uvicorn access logs that should not be emitted.
     """
-    handler = _InterceptHandler()
+    handler = _InterceptHandler(access_log_excluded_path_prefixes=access_log_excluded_path_prefixes)
     for name in loggers or _DEFAULT_INTERCEPTED_LOGGERS:
         stdlib_logger = logging.getLogger(name)
         stdlib_logger.handlers = [handler]

@@ -11,6 +11,7 @@ pip install "hayhooks[tracing]"
 ```
 
 This installs the OpenTelemetry SDK, OTLP exporters, and FastAPI/Starlette instrumentors used by Hayhooks.
+Dashboard frontend source files are bundled in Hayhooks wheels for local runtime builds.
 
 ## Quick Start (OTLP)
 
@@ -78,58 +79,47 @@ Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-
 
 ### Setup
 
-Build the dashboard frontend:
+Enable and run the dashboard from CLI:
 
 ```bash
-cd dashboard
-npm install
-npm run build
+hayhooks run --with-tracing-dashboard
 ```
 
-Enable and configure the dashboard:
+The `--with-tracing-dashboard` flag enables dashboard mounting and builds the frontend at runtime from the
+packaged dashboard source files.
+
+To build the frontend at runtime, Node.js/npm must be available on the machine.
+
+If you prefer configuring via environment variables instead of CLI flags:
 
 ```bash
 export HAYHOOKS_DASHBOARD_ENABLED=true
+cd dashboard
+npm install
+npm run build
 export HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
+hayhooks run
 ```
 
-### Backend Modes
+For frontend-specific workflows (local Vite dev server, lint/test/build commands), see the
+[dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
 
-The dashboard can pull traces from three sources:
+### Trace Source
 
-#### Local (in-memory buffer)
+The dashboard always reads traces from Hayhooks' in-process live trace buffer.
 
-No external backend required. Hayhooks captures its own operation spans in an in-memory ring buffer.
+- No dashboard-side Jaeger/SigNoz fetching is used.
+- No extra dashboard backend mode configuration is required.
+- You can still export traces to external backends via standard `OTEL_*` variables for observability tooling,
+  while the dashboard remains a local live view.
 
-```bash
-export HAYHOOKS_DASHBOARD_TRACE_BACKEND=local
-```
-
-This is the default fallback when an external backend is configured but unreachable.
-
-#### Jaeger
-
-```bash
-export HAYHOOKS_DASHBOARD_TRACE_BACKEND=jaeger
-export HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:16686
-export HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
-```
-
-#### SigNoz
-
-```bash
-export HAYHOOKS_DASHBOARD_TRACE_BACKEND=signoz
-export HAYHOOKS_DASHBOARD_TRACE_BACKEND_URL=http://localhost:8080
-export HAYHOOKS_DASHBOARD_TRACE_SIGNOZ_API_KEY=<your-signoz-api-key>
-export HAYHOOKS_DASHBOARD_TRACE_SERVICE_NAME=hayhooks
-```
-
-Then run Hayhooks and open `http://localhost:1416/dashboard`.
+Run Hayhooks and open `http://localhost:1416/dashboard`.
 
 ### API Endpoints
 
 | Endpoint | Method | Description |
-|---|---|---|
+| --- | --- | --- |
+| `/dashboard/api/config` | GET | Fetch dashboard UI polling/list settings |
 | `/dashboard/api/entrypoints` | GET | List deployed pipeline names |
 | `/dashboard/api/traces` | GET | Fetch recent traces (supports `limit` and `since_ms` query params) |
 | `/dashboard/api/traces/clear` | POST | Clear the local trace buffer |

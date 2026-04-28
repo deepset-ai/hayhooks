@@ -64,5 +64,8 @@ def run(  # noqa: PLR0913
 
     # Run the MCP server
     # NOTE: reload and workers options are not supported in this context
-    intercept_stdlib_logging(settings.intercepted_loggers)
+    intercept_stdlib_logging(
+        settings.intercepted_loggers,
+        access_log_excluded_path_prefixes=settings.access_log_excluded_path_prefixes,
+    )
     uvicorn.run(app, host=host, port=port, log_config=None)

@@ -1,73 +1,97 @@
-# React + TypeScript + Vite
+# Hayhooks Tracing Dashboard Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This directory contains the React + TypeScript frontend for the Hayhooks tracing dashboard.
 
-Currently, two official plugins are available:
+When you run:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+hayhooks run --with-tracing-dashboard
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Hayhooks serves this app at `/dashboard` and uses it to visualize live trace activity.
+The dashboard API reads traces from Hayhooks' in-process live trace buffer.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## What This Dashboard Shows
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- Live trace feed with freshness highlights
+- Ongoing vs completed traces
+- Failure highlighting
+- Entrypoint filtering
+- Span waterfall details and trace tags
+- Basic trace stats (count, average duration, last trace)
+
+## Prerequisites
+
+- Node.js + npm (required for local frontend development/build)
+- A running Hayhooks backend (default: `http://localhost:1416`)
+
+## Local Development
+
+1. Start Hayhooks in another terminal:
+
+   ```bash
+   hayhooks run --with-tracing-dashboard
+   ```
+
+2. Install frontend dependencies:
+
+   ```bash
+   cd dashboard
+   npm install
+   ```
+
+3. Start Vite dev server:
+
+   ```bash
+   npm run dev
+   ```
+
+4. Open the local frontend (usually `http://localhost:5173`).
+
+By default, local dev assumes the backend API at `http://localhost:1416/dashboard/api`.
+If your backend runs elsewhere, set `VITE_HAYHOOKS_DASHBOARD_API_BASE`:
+
+```bash
+VITE_HAYHOOKS_DASHBOARD_API_BASE="http://localhost:1416/dashboard/api" npm run dev
 ```
+
+## Useful Commands
+
+Run these from `dashboard/`:
+
+```bash
+# Start dev server (HMR)
+npm run dev
+
+# Run tests once
+npm run test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Lint
+npm run lint
+
+# Build production assets to dist/
+npm run build
+
+# Preview production build
+npm run preview
+```
+
+Common pre-PR check:
+
+```bash
+npm run lint && npm run test && npm run build
+```
+
+## Production/Runtime Notes
+
+- `hayhooks run --with-tracing-dashboard` builds and serves static assets from `dashboard/dist`.
+- You can override where Hayhooks reads built assets with `HAYHOOKS_DASHBOARD_DIST_DIR`.
+- The dashboard trace API (`/dashboard/api/traces`) is local-buffer only (no direct Jaeger/SigNoz fetch mode).
+
+## Related Documentation
+
+- [`docs/reference/tracing.md`](../docs/reference/tracing.md)
+- [`docs/reference/environment-variables.md`](../docs/reference/environment-variables.md)

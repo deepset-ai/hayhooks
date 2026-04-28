@@ -186,6 +186,27 @@ class TestCLIUIWarning:
 
         assert "--chainlit-custom-elements-dir was provided but --with-chainlit is not set" not in caplog.text
 
+    def test_warns_when_dashboard_path_without_dashboard_flag(self, monkeypatch, caplog):
+        from hayhooks.cli.base import run
+
+        monkeypatch.setattr(uvicorn, "run", MagicMock())
+
+        with caplog.at_level(logging.WARNING):
+            run(with_tracing_dashboard=False, dashboard_path="/dashboard")
+
+        assert "--dashboard-path was provided but --with-tracing-dashboard is not set" in caplog.text
+
+    def test_no_dashboard_path_warning_when_dashboard_flag_set(self, monkeypatch, caplog):
+        from hayhooks.cli.base import run
+
+        monkeypatch.setattr(uvicorn, "run", MagicMock())
+        monkeypatch.setattr("hayhooks.cli.base._prepare_tracing_dashboard_assets", lambda *_args: None)
+
+        with caplog.at_level(logging.WARNING):
+            run(with_tracing_dashboard=True, dashboard_path="/dashboard")
+
+        assert "--dashboard-path was provided but --with-tracing-dashboard is not set" not in caplog.text
+
 
 class TestSeedPublicAssets:
     def test_seeds_builtin_assets_into_empty_target(self, tmp_path):

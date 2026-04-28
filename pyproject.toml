@@ -72,6 +72,16 @@ packages = ["src/hayhooks"]
 [tool.hatch.build.targets.wheel.force-include]
 # .chainlit is a hidden dir excluded by default, so force-include is needed
 "src/hayhooks/server/chainlit_app/.chainlit" = "hayhooks/server/chainlit_app/.chainlit"
+# Bundle dashboard source files so --with-tracing-dashboard can build locally at runtime.
+"dashboard/index.html" = "hayhooks/dashboard/index.html"
+"dashboard/package-lock.json" = "hayhooks/dashboard/package-lock.json"
+"dashboard/package.json" = "hayhooks/dashboard/package.json"
+"dashboard/public" = "hayhooks/dashboard/public"
+"dashboard/src" = "hayhooks/dashboard/src"
+"dashboard/tsconfig.app.json" = "hayhooks/dashboard/tsconfig.app.json"
+"dashboard/tsconfig.json" = "hayhooks/dashboard/tsconfig.json"
+"dashboard/tsconfig.node.json" = "hayhooks/dashboard/tsconfig.node.json"
+"dashboard/vite.config.ts" = "hayhooks/dashboard/vite.config.ts"
 
 [tool.hatch.envs.default]
 installer = "uv"

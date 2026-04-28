@@ -163,3 +163,18 @@ def test_additional_python_path_in_sys_path_via_env(monkeypatch, test_settings):
     finally:
         # Restore original sys.path
         sys.path = original_sys_path
+
+
+def test_access_log_excluded_path_prefixes_default():
+    settings = AppSettings()
+    assert settings.access_log_excluded_path_prefixes == [
+        "/dashboard/api/config",
+        "/dashboard/api/entrypoints",
+        "/dashboard/api/traces",
+    ]
+
+
+def test_access_log_excluded_path_prefixes_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_ACCESS_LOG_EXCLUDED_PATH_PREFIXES", '["/status", "/metrics"]')
+    settings = AppSettings()
+    assert settings.access_log_excluded_path_prefixes == ["/status", "/metrics"]

@@ -29,14 +29,6 @@ class StartupDeployStrategy(str, Enum):
     PARALLEL = "parallel"
 
 
-class DashboardTraceBackend(str, Enum):
-    """Controls which trace backend the dashboard queries."""
-
-    LOCAL = "local"
-    JAEGER = "jaeger"
-    SIGNOZ = "signoz"
-
-
 class AppSettings(BaseSettings):
     # Root path for the FastAPI app
     root_path: str = ""
@@ -108,20 +100,25 @@ class AppSettings(BaseSettings):
     # Only these loggers are patched; everything else (httpx, haystack, etc.)
     # keeps its default behaviour.
     intercepted_loggers: list[str] = ["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]
+    # Access-log path prefixes to suppress from uvicorn.access output.
+    # Defaults hide noisy dashboard polling endpoints.
+    access_log_excluded_path_prefixes: list[str] = [
+        "/dashboard/api/config",
+        "/dashboard/api/entrypoints",
+        "/dashboard/api/traces",
+    ]
 
     # Exclude low-level ASGI send/receive spans from framework instrumentation
     # to keep streaming traces readable by default.
     tracing_excluded_spans: list[Literal["send", "receive"]] = ["send", "receive"]
 
-    # Dashboard tracing backend settings
-    dashboard_trace_backend: DashboardTraceBackend = DashboardTraceBackend.JAEGER
-    dashboard_trace_backend_url: str = "http://localhost:16686"
-    dashboard_trace_service_name: str = "hayhooks"
-    dashboard_trace_request_timeout_seconds: float = Field(default=3.0, gt=0, le=60)
-    dashboard_trace_lookback_seconds: int = Field(default=900, gt=0, le=86_400)
+    # Dashboard trace API settings (in-process live buffer)
     dashboard_trace_default_limit: int = Field(default=25, gt=0, le=200)
     dashboard_trace_max_limit: int = Field(default=100, gt=0, le=500)
-    dashboard_trace_signoz_api_key: str = ""
+    dashboard_ui_poll_ms: int = Field(default=2500, ge=250, le=60_000)
+    dashboard_ui_list_cap: int = Field(default=100, gt=0, le=500)
+    dashboard_ui_fetch_limit: int = Field(default=50, gt=0, le=500)
+    dashboard_ui_fresh_ms: int = Field(default=6000, ge=0, le=60_000)
     dashboard_enabled: bool = False
     dashboard_path: str = "/dashboard"
     dashboard_dist_dir: str = str(Path.cwd() / "dashboard" / "dist")
