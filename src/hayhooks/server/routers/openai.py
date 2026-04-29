@@ -16,7 +16,7 @@ from fastapi_openai_compat import (
 from haystack.dataclasses import StreamingChunk
 
 from hayhooks.server.logger import log
-from hayhooks.server.pipelines import registry
+from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.tracing import (
     SPAN_OPENAI_FILE_UPLOAD,
     SPAN_OPENAI_RUN,

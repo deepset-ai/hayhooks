@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 
-from hayhooks.server.pipelines import registry
+from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 router = APIRouter()

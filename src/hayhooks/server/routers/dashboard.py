@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from hayhooks.server.pipelines import registry
+from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces
 from hayhooks.settings import settings
 
@@ -106,7 +106,8 @@ async def traces(
     resolved_limit = min(requested_limit, settings.dashboard_trace_max_limit)
     traces_data = get_recent_traces(since_ms=since_ms, limit=resolved_limit)
     traces_data.sort(key=lambda trace: trace["start_time_ms"], reverse=True)
-    return TracesResponse(traces=traces_data)
+    traces_payload = [TraceSummary.model_validate(trace) for trace in traces_data]
+    return TracesResponse(traces=traces_payload)
 
 
 @router.post(

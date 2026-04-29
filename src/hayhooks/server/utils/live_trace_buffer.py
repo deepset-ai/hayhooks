@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from threading import RLock
 from time import time
-from typing import Any
+from typing import Any, TypedDict
 
 from hayhooks.settings import settings
 
@@ -24,6 +24,75 @@ _TRACE_TAG_PRIORITY = (
 _IGNORED_TRACE_TAG_KEYS = {"hayhooks.elapsed_ms"}
 _MAX_TRACE_TAGS = 32
 _MAX_SPAN_TAGS = 8
+
+
+class TraceTagDict(TypedDict):
+    key: str
+    value: str
+
+
+class TraceSpanNodeDict(TypedDict):
+    span_id: str
+    name: str
+    start_time_ms: int
+    duration_ms: int
+    tags: list[TraceTagDict]
+    children: list[TraceSpanNodeDict]
+
+
+class TraceSummaryDict(TypedDict):
+    trace_id: str
+    start_time_ms: int
+    duration_ms: int
+    entrypoint: str | None
+    tags: list[TraceTagDict]
+    span_count: int
+    root_span: TraceSpanNodeDict
+
+
+class _SpanState(TypedDict):
+    span_id: str
+    parent_span_id: str | None
+    name: str
+    start_time_ms: int
+    duration_ms: int
+    tags: dict[str, Any]
+
+
+class _TraceState(TypedDict):
+    trace_id: str
+    entrypoint: str | None
+    spans: dict[str, _SpanState]
+    start_time_ms: int
+    updated_at_ms: int
+
+
+def _new_trace_state(*, trace_id: str, start_time_ms: int) -> _TraceState:
+    return {
+        "trace_id": trace_id,
+        "entrypoint": None,
+        "spans": {},
+        "start_time_ms": start_time_ms,
+        "updated_at_ms": start_time_ms,
+    }
+
+
+def _new_span_state(
+    *,
+    span_id: str,
+    parent_span_id: str | None,
+    operation_name: str,
+    start_time_ms: int,
+    tags: dict[str, Any],
+) -> _SpanState:
+    return {
+        "span_id": span_id,
+        "parent_span_id": parent_span_id,
+        "name": operation_name,
+        "start_time_ms": start_time_ms,
+        "duration_ms": 0,
+        "tags": tags,
+    }
 
 
 def _max_buffered_traces() -> int:
@@ -46,9 +115,9 @@ def _stringify_tag_value(value: Any) -> str | None:
     return text if text else None
 
 
-def _collect_span_tags(span_tags: dict[str, Any]) -> list[dict[str, str]]:
+def _collect_span_tags(span_tags: dict[str, Any]) -> list[TraceTagDict]:
     """Collect a small curated set of tags for a single span."""
-    tags: list[dict[str, str]] = []
+    tags: list[TraceTagDict] = []
     seen: set[str] = set()
     for key in _TRACE_TAG_PRIORITY:
         if key in span_tags:
@@ -69,8 +138,8 @@ def _collect_span_tags(span_tags: dict[str, Any]) -> list[dict[str, str]]:
     return tags
 
 
-def _collect_trace_tags(span_tag_maps: list[dict[str, Any]]) -> list[dict[str, str]]:  # noqa: C901
-    tags: list[dict[str, str]] = []
+def _collect_trace_tags(span_tag_maps: list[dict[str, Any]]) -> list[TraceTagDict]:  # noqa: C901
+    tags: list[TraceTagDict] = []
     seen_keys: set[str] = set()
 
     def add_tag(key: str, value: Any) -> None:
@@ -103,7 +172,7 @@ def _collect_trace_tags(span_tag_maps: list[dict[str, Any]]) -> list[dict[str, s
 class _LiveTraceBuffer:
     def __init__(self) -> None:
         self._lock = RLock()
-        self._traces: dict[str, dict[str, Any]] = {}
+        self._traces: dict[str, _TraceState] = {}
 
     def clear(self) -> None:
         with self._lock:
@@ -120,31 +189,27 @@ class _LiveTraceBuffer:
         tags: Mapping[str, Any] | None = None,
     ) -> None:
         with self._lock:
-            trace = self._traces.get(trace_id)
-            if trace is None:
-                trace = {
-                    "trace_id": trace_id,
-                    "entrypoint": None,
-                    "spans": {},
-                    "start_time_ms": start_time_ms,
-                    "updated_at_ms": start_time_ms,
-                }
-                self._traces[trace_id] = trace
+            trace_state = self._traces.get(trace_id)
+            if trace_state is None:
+                trace_state = _new_trace_state(trace_id=trace_id, start_time_ms=start_time_ms)
+                self._traces[trace_id] = trace_state
 
-            trace["updated_at_ms"] = start_time_ms
-            trace["start_time_ms"] = min(trace["start_time_ms"], start_time_ms)
-            span_tags = dict(tags or {})
-            if trace["entrypoint"] is None and (entrypoint := span_tags.get("hayhooks.pipeline.name")) is not None:
-                trace["entrypoint"] = str(entrypoint)
+            trace_state["updated_at_ms"] = start_time_ms
+            trace_state["start_time_ms"] = min(trace_state["start_time_ms"], start_time_ms)
+            span_tags: dict[str, Any] = dict(tags or {})
+            if (
+                trace_state["entrypoint"] is None
+                and (entrypoint := span_tags.get("hayhooks.pipeline.name")) is not None
+            ):
+                trace_state["entrypoint"] = str(entrypoint)
 
-            trace["spans"][span_id] = {
-                "span_id": span_id,
-                "parent_span_id": parent_span_id,
-                "name": operation_name,
-                "start_time_ms": start_time_ms,
-                "duration_ms": 0,
-                "tags": span_tags,
-            }
+            trace_state["spans"][span_id] = _new_span_state(
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+                operation_name=operation_name,
+                start_time_ms=start_time_ms,
+                tags=span_tags,
+            )
 
             self._evict_old_traces()
 
@@ -158,11 +223,11 @@ class _LiveTraceBuffer:
         tags: Mapping[str, Any] | None = None,
     ) -> None:
         with self._lock:
-            trace = self._traces.get(trace_id)
-            if trace is None:
+            trace_state = self._traces.get(trace_id)
+            if trace_state is None:
                 return
 
-            span = trace["spans"].get(span_id)
+            span = trace_state["spans"].get(span_id)
             if span is None:
                 return
 
@@ -170,19 +235,19 @@ class _LiveTraceBuffer:
             if tags:
                 span["tags"].update(tags)
                 if (
-                    trace["entrypoint"] is None
+                    trace_state["entrypoint"] is None
                     and (entrypoint := span["tags"].get("hayhooks.pipeline.name")) is not None
                 ):
-                    trace["entrypoint"] = str(entrypoint)
-            trace["updated_at_ms"] = completed_at_ms
+                    trace_state["entrypoint"] = str(entrypoint)
+            trace_state["updated_at_ms"] = completed_at_ms
 
-    def get_recent_traces(self, *, since_ms: int | None, limit: int) -> list[dict[str, Any]]:
+    def get_recent_traces(self, *, since_ms: int | None, limit: int) -> list[TraceSummaryDict]:
         with self._lock:
             traces = sorted(self._traces.values(), key=lambda trace: trace["updated_at_ms"], reverse=True)
             if since_ms is not None:
                 traces = [trace for trace in traces if trace["start_time_ms"] >= since_ms]
 
-            result: list[dict[str, Any]] = []
+            result: list[TraceSummaryDict] = []
             for trace in traces:
                 normalized = self._normalize_trace(trace)
                 if normalized is not None:
@@ -191,8 +256,8 @@ class _LiveTraceBuffer:
                     break
             return result
 
-    def _normalize_trace(self, trace: Mapping[str, Any]) -> dict[str, Any] | None:
-        spans_by_id: dict[str, dict[str, Any]] = trace["spans"]
+    def _normalize_trace(self, trace: _TraceState) -> TraceSummaryDict | None:
+        spans_by_id = trace["spans"]
         if not spans_by_id:
             return None
 
@@ -205,7 +270,7 @@ class _LiveTraceBuffer:
             root_candidates = list(spans_by_id.values())
         root_span = min(root_candidates, key=lambda span: span["start_time_ms"])
 
-        def build_span_tree(span_id: str) -> dict[str, Any]:
+        def build_span_tree(span_id: str) -> TraceSpanNodeDict:
             span = spans_by_id[span_id]
             child_ids = sorted(
                 [child["span_id"] for child in spans_by_id.values() if child["parent_span_id"] == span_id],
@@ -287,7 +352,7 @@ def record_live_span_finish(
     )
 
 
-def get_recent_traces(*, since_ms: int | None, limit: int) -> list[dict[str, Any]]:
+def get_recent_traces(*, since_ms: int | None, limit: int) -> list[TraceSummaryDict]:
     return _TRACE_BUFFER.get_recent_traces(since_ms=since_ms, limit=limit)
 
 
