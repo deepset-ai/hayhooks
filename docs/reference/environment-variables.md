@@ -162,6 +162,9 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Description: Enable serving the built dashboard static frontend
 - Notes:
   - `/dashboard/api/traces` always reads from Hayhooks' in-process live trace buffer.
+  - The dashboard trace buffer is process-local. With `hayhooks run --workers >1`, each worker has its own
+    buffer, so the UI can show partial traces and clear operations are worker-local.
+  - For a consistent dashboard view, run Hayhooks with a single worker (`--workers 1`).
 
 ### HAYHOOKS_DASHBOARD_PATH
 

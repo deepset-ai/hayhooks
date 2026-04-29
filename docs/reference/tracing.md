@@ -119,6 +119,13 @@ The dashboard always reads traces from Hayhooks' in-process live trace buffer.
 export HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY=2000
 ```
 
+!!! warning "Dashboard with multiple workers"
+    Dashboard traces are stored in each worker process memory. If you run Hayhooks with multiple workers
+    (for example `hayhooks run --workers 2`), each worker keeps a separate trace buffer.
+    The dashboard may show only a subset of traces, and `POST /dashboard/api/traces/clear` only clears the
+    worker that served that request.
+    For a consistent dashboard view, run with a single worker (`--workers 1`).
+
 You can tune when the slowest-component highlight appears:
 
 ```bash
