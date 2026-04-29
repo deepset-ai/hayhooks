@@ -1,4 +1,10 @@
-from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces, record_live_span_finish, record_live_span_start
+from hayhooks.server.utils.live_trace_buffer import (
+    clear_live_traces,
+    get_recent_traces,
+    get_trace_cursor_head,
+    record_live_span_finish,
+    record_live_span_start,
+)
 from hayhooks.settings import settings
 
 
@@ -105,3 +111,56 @@ def test_live_trace_buffer_respects_configured_capacity(monkeypatch):
     traces = get_recent_traces(since_ms=None, limit=10)
 
     assert [trace["trace_id"] for trace in traces] == ["trace-2", "trace-1"]
+
+
+def test_live_trace_buffer_supports_incremental_after_seq_cursor():
+    same_start_time = 12_345
+    for index in range(3):
+        trace_id = f"trace-{index}"
+        record_live_span_start(
+            trace_id=trace_id,
+            span_id=f"{trace_id}-root",
+            parent_span_id=None,
+            operation_name="hayhooks.pipeline.run",
+            start_time_ms=same_start_time,
+        )
+
+    first_batch = get_recent_traces(since_ms=None, limit=2)
+    assert len(first_batch) == 2
+    first_cursor = max(trace["_cursor_seq"] for trace in first_batch)
+
+    second_batch = get_recent_traces(since_ms=None, limit=10, after_seq=first_cursor)
+    assert [trace["trace_id"] for trace in second_batch] == ["trace-2"]
+
+
+def test_live_trace_buffer_after_seq_returns_trace_updates():
+    record_live_span_start(
+        trace_id="trace-update",
+        span_id="root",
+        parent_span_id=None,
+        operation_name="hayhooks.pipeline.run",
+        start_time_ms=10_000,
+    )
+    initial_batch = get_recent_traces(since_ms=None, limit=10)
+    initial_cursor = max(trace["_cursor_seq"] for trace in initial_batch)
+
+    record_live_span_finish(trace_id="trace-update", span_id="root", duration_ms=5)
+
+    updated_batch = get_recent_traces(since_ms=None, limit=10, after_seq=initial_cursor)
+    assert len(updated_batch) == 1
+    assert updated_batch[0]["trace_id"] == "trace-update"
+    assert updated_batch[0]["duration_ms"] == 5
+
+
+def test_live_trace_buffer_cursor_head_resets_on_clear():
+    record_live_span_start(
+        trace_id="trace-reset",
+        span_id="root",
+        parent_span_id=None,
+        operation_name="hayhooks.pipeline.run",
+        start_time_ms=10_000,
+    )
+    assert get_trace_cursor_head() > 0
+
+    clear_live_traces()
+    assert get_trace_cursor_head() == 0

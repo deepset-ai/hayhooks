@@ -126,6 +126,23 @@ describe("fetchTraces", () => {
     vi.restoreAllMocks()
   })
 
+  it("returns traces with the next cursor from response headers", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ traces: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Hayhooks-Trace-Cursor": "42",
+        },
+      }),
+    )
+
+    const result = await fetchTraces("http://localhost", 10, undefined, 7)
+
+    expect(result).toEqual({ traces: [], nextAfterSeq: 42 })
+    expect(globalThis.fetch).toHaveBeenCalledWith("http://localhost/traces?limit=10&after_seq=7")
+  })
+
   it("throws when traces payload items are malformed", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ traces: [{ trace_id: 123 }] }), {

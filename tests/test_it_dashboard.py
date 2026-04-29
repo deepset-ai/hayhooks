@@ -158,8 +158,9 @@ def test_dashboard_traces_respects_default_and_max_limit(client, monkeypatch):
 
     observed_limits: list[int] = []
 
-    def _fake_get_recent_traces(*, since_ms, limit):
+    def _fake_get_recent_traces(*, since_ms, limit, after_seq=None):
         assert since_ms is None
+        assert after_seq is None
         observed_limits.append(limit)
         return []
 
@@ -175,6 +176,65 @@ def test_dashboard_traces_respects_default_and_max_limit(client, monkeypatch):
     assert first_response.status_code == 200
     assert second_response.status_code == 200
     assert observed_limits == [11, 20]
+
+
+def test_dashboard_traces_after_seq_sets_cursor_header(client, monkeypatch):
+    clear_live_traces()
+
+    traces = [
+        {**_sample_trace("trace-a", 1_700_000_000_000), "_cursor_seq": 3},
+        {**_sample_trace("trace-b", 1_700_000_000_100), "_cursor_seq": 5},
+    ]
+
+    def _fake_get_recent_traces(*, since_ms, limit, after_seq=None):
+        assert since_ms is None
+        assert limit == 5
+        assert after_seq == 2
+        return traces
+
+    monkeypatch.setattr(
+        "hayhooks.server.routers.dashboard.get_recent_traces",
+        _fake_get_recent_traces,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "hayhooks.server.routers.dashboard.get_trace_cursor_head",
+        lambda: 5,
+        raising=False,
+    )
+
+    response = client.get("/dashboard/api/traces?limit=5&after_seq=2")
+
+    assert response.status_code == 200
+    assert response.headers["X-Hayhooks-Trace-Cursor"] == "5"
+    body = response.json()
+    assert body == {
+        "traces": [
+            _sample_trace("trace-b", 1_700_000_000_100),
+            _sample_trace("trace-a", 1_700_000_000_000),
+        ]
+    }
+
+
+def test_dashboard_traces_sets_zero_cursor_header_when_empty(client, monkeypatch):
+    clear_live_traces()
+
+    monkeypatch.setattr(
+        "hayhooks.server.routers.dashboard.get_recent_traces",
+        lambda **_kwargs: [],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "hayhooks.server.routers.dashboard.get_trace_cursor_head",
+        lambda: 0,
+        raising=False,
+    )
+
+    response = client.get("/dashboard/api/traces?limit=5")
+
+    assert response.status_code == 200
+    assert response.headers["X-Hayhooks-Trace-Cursor"] == "0"
+    assert response.json() == {"traces": []}
 
 
 def test_dashboard_clear_traces_clears_local_buffer(client, monkeypatch):

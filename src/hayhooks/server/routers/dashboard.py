@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel, Field
 
 from hayhooks.server.pipelines.registry import registry
-from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces
+from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces, get_trace_cursor_head
 from hayhooks.settings import settings
 
 router = APIRouter()
@@ -99,12 +99,15 @@ async def config() -> DashboardUiConfigResponse:
     description="Returns normalized traces captured by the in-process live trace buffer.",
 )
 async def traces(
+    response: Response,
     limit: int | None = Query(default=None, gt=0),
     since_ms: int | None = Query(default=None, ge=0),
+    after_seq: int | None = Query(default=None, ge=0),
 ) -> TracesResponse:
     requested_limit = settings.dashboard_trace_default_limit if limit is None else limit
     resolved_limit = min(requested_limit, settings.dashboard_trace_max_limit)
-    traces_data = get_recent_traces(since_ms=since_ms, limit=resolved_limit)
+    response.headers["X-Hayhooks-Trace-Cursor"] = str(get_trace_cursor_head())
+    traces_data = get_recent_traces(since_ms=since_ms, limit=resolved_limit, after_seq=after_seq)
     traces_data.sort(key=lambda trace: trace["start_time_ms"], reverse=True)
     traces_payload = [TraceSummary.model_validate(trace) for trace in traces_data]
     return TracesResponse(traces=traces_payload)

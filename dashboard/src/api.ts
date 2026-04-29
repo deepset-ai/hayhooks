@@ -6,6 +6,11 @@ import type {
   TraceSummary,
 } from "./types"
 
+export type FetchTracesResult = {
+  traces: TraceSummary[]
+  nextAfterSeq: number | null
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
@@ -133,9 +138,21 @@ export async function fetchEntrypoints(base: string): Promise<string[]> {
   return payload.entrypoints
 }
 
-export async function fetchTraces(base: string, limit: number, sinceMs?: number): Promise<TraceSummary[]> {
+function parseTraceCursor(headerValue: string | null): number | null {
+  if (headerValue === null) return null
+  const parsed = Number.parseInt(headerValue, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+export async function fetchTraces(
+  base: string,
+  limit: number,
+  sinceMs?: number,
+  afterSeq?: number,
+): Promise<FetchTracesResult> {
   const params = new URLSearchParams({ limit: String(limit) })
   if (sinceMs != null) params.set("since_ms", String(sinceMs))
+  if (afterSeq != null) params.set("after_seq", String(afterSeq))
 
   const response = await fetch(`${base}/traces?${params}`)
   if (!response.ok) throw new Error(`Traces ${response.status}`)
@@ -145,7 +162,10 @@ export async function fetchTraces(base: string, limit: number, sinceMs?: number)
     throw new Error("Traces payload invalid")
   }
 
-  return payload.traces
+  return {
+    traces: payload.traces,
+    nextAfterSeq: parseTraceCursor(response.headers.get("X-Hayhooks-Trace-Cursor")),
+  }
 }
 
 export async function clearTraces(base: string): Promise<void> {

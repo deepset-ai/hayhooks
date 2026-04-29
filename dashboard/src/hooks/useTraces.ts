@@ -32,10 +32,11 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
   const [refreshing, setRefreshing] = useState(false)
   const [clearing, setClearing] = useState(false)
 
-  const sinceRef = useRef<number | null>(null)
+  const afterSeqRef = useRef<number | null>(null)
   const seenRef = useRef(new Set<string>())
   const baseRef = useRef(resolveApiBase())
   const refreshInFlightRef = useRef(false)
+  const refreshEpochRef = useRef(0)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -49,24 +50,36 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
     const silent = options?.silent ?? false
     if (refreshInFlightRef.current) return
     refreshInFlightRef.current = true
+    const refreshEpoch = refreshEpochRef.current
     if (!silent) setRefreshing(true)
     try {
       const base = baseRef.current
 
       // Step 1: Fetch latest entrypoints
       const nextEntrypoints = await fetchEntrypoints(base)
-      if (!mountedRef.current) return
+      if (!mountedRef.current || refreshEpoch !== refreshEpochRef.current) return
       setEntrypoints((prev) => (sameStrings(prev, nextEntrypoints) ? prev : nextEntrypoints))
 
-      // Step 2: Fetch traces (incremental via since cursor)
-      const rawTraces = await fetchTraces(base, config.fetchLimit, sinceRef.current ?? undefined)
-      if (!mountedRef.current) return
+      // Step 2: Fetch traces incrementally via stable backend cursor
+      const previousAfterSeq = afterSeqRef.current
+      const tracesResult = await fetchTraces(base, config.fetchLimit, undefined, previousAfterSeq ?? undefined)
+      if (!mountedRef.current || refreshEpoch !== refreshEpochRef.current) return
+      let incoming = tracesResult.traces
+      let nextAfterSeq = tracesResult.nextAfterSeq
+      if (nextAfterSeq !== null && previousAfterSeq !== null && nextAfterSeq < previousAfterSeq) {
+        // Cursor regression means backend state reset (e.g. process restart); do one full re-sync now.
+        afterSeqRef.current = null
+        seenRef.current = new Set()
+        const fullSyncResult = await fetchTraces(base, config.fetchLimit)
+        if (!mountedRef.current || refreshEpoch !== refreshEpochRef.current) return
+        incoming = fullSyncResult.traces
+        nextAfterSeq = fullSyncResult.nextAfterSeq
+      }
+      if (nextAfterSeq !== null) {
+        afterSeqRef.current = nextAfterSeq
+      }
 
-      // Step 3: Filter to truly new traces when doing incremental fetch
-      const cutoff = sinceRef.current
-      const incoming = cutoff === null ? rawTraces : rawTraces.filter((t) => t.start_time_ms >= cutoff)
-
-      // Step 4: Track which traces are "fresh" (newly seen)
+      // Step 3: Track which traces are "fresh" (newly seen)
       const now = Date.now()
       const incomingIds = incoming.map((t) => t.trace_id)
       const freshIds = incomingIds.filter((id) => !seenRef.current.has(id))
@@ -91,7 +104,7 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
         return changed ? next : prev
       })
 
-      // Step 5: Merge incoming into existing, capped to listCap
+      // Step 4: Merge incoming into existing, capped to listCap
       setTraces((prev) => {
         const base = prev.length > config.listCap ? prev.slice(0, config.listCap) : prev
         if (incoming.length === 0) {
@@ -108,15 +121,11 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
         return next
       })
 
-      // Step 6: Advance the "since" cursor
-      const newest = incoming.reduce((m, t) => Math.max(m, t.start_time_ms), sinceRef.current ?? 0)
-      if (newest > 0) sinceRef.current = newest
-
-      if (!mountedRef.current) return
+      if (!mountedRef.current || refreshEpoch !== refreshEpochRef.current) return
       setUpdatedAt(Date.now())
       setError(null)
     } catch (e) {
-      if (mountedRef.current) {
+      if (mountedRef.current && refreshEpoch === refreshEpochRef.current) {
         setError(e instanceof Error ? e.message : "Unknown error")
       }
     } finally {
@@ -128,6 +137,7 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
   const clear = useCallback(async () => {
     setClearing(true)
     setError(null)
+    refreshEpochRef.current += 1
 
     try {
       await apiClearTraces(baseRef.current)
@@ -136,7 +146,7 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
       setTraces([])
       setFreshUntil({})
       seenRef.current = new Set()
-      sinceRef.current = now
+      afterSeqRef.current = null
       setUpdatedAt(now)
     } catch (e) {
       if (mountedRef.current) {

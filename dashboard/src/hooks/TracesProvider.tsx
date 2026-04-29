@@ -6,6 +6,7 @@ import { useTraces } from "./useTraces"
 import {
   TraceActionsContext,
   TraceDataContext,
+  TraceFreshnessContext,
   TraceStatusContext,
 } from "./useTracesContext"
 
@@ -17,10 +18,16 @@ export function TracesProvider({ children }: { children: ReactNode }) {
     () => ({
       entrypoints: traces.entrypoints,
       traces: traces.traces,
-      freshUntil: traces.freshUntil,
       slowComponentMinDurationMs: config.slowComponentMinDurationMs,
     }),
-    [traces.entrypoints, traces.traces, traces.freshUntil, config.slowComponentMinDurationMs],
+    [traces.entrypoints, traces.traces, config.slowComponentMinDurationMs],
+  )
+
+  const freshnessValue = useMemo(
+    () => ({
+      freshUntil: traces.freshUntil,
+    }),
+    [traces.freshUntil],
   )
 
   const statusValue = useMemo(
@@ -45,7 +52,9 @@ export function TracesProvider({ children }: { children: ReactNode }) {
     <TraceActionsContext.Provider value={actionsValue}>
       <TraceStatusContext.Provider value={statusValue}>
         <TraceDataContext.Provider value={dataValue}>
-          {children}
+          <TraceFreshnessContext.Provider value={freshnessValue}>
+            {children}
+          </TraceFreshnessContext.Provider>
         </TraceDataContext.Provider>
       </TraceStatusContext.Provider>
     </TraceActionsContext.Provider>

@@ -5,11 +5,14 @@ import { TraceList } from "./TraceList"
 
 vi.mock("../hooks/useTracesContext", () => ({
   useTraceStatus: vi.fn(),
+  useTraceFreshness: vi.fn(),
 }))
 
 const mockedUseTraceStatus = vi.mocked(tracesContext.useTraceStatus)
+const mockedUseTraceFreshness = vi.mocked(tracesContext.useTraceFreshness)
 
 beforeEach(() => {
+  mockedUseTraceFreshness.mockReturnValue({ freshUntil: {} })
   mockedUseTraceStatus.mockReturnValue({
     updatedAt: null,
     error: null,
@@ -32,7 +35,6 @@ describe("TraceList", () => {
         traces={[]}
         totalTraces={0}
         filter={null}
-        freshUntil={{}}
         onClearFilter={() => {}}
       />,
     )
@@ -47,7 +49,6 @@ describe("TraceList", () => {
         traces={[]}
         totalTraces={0}
         filter={null}
-        freshUntil={{}}
         onClearFilter={() => {}}
       />,
     )
@@ -68,7 +69,6 @@ describe("TraceList", () => {
         traces={[]}
         totalTraces={0}
         filter={null}
-        freshUntil={{}}
         onClearFilter={() => {}}
       />,
     )

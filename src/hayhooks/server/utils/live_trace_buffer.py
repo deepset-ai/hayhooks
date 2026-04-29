@@ -6,6 +6,8 @@ from threading import RLock
 from time import time
 from typing import Any, TypedDict
 
+from typing_extensions import NotRequired
+
 from hayhooks.settings import settings
 
 _TRACE_TAG_PRIORITY = (
@@ -48,6 +50,7 @@ class TraceSummaryDict(TypedDict):
     tags: list[TraceTagDict]
     span_count: int
     root_span: TraceSpanNodeDict
+    _cursor_seq: NotRequired[int]
 
 
 class _SpanState(TypedDict):
@@ -65,15 +68,17 @@ class _TraceState(TypedDict):
     spans: dict[str, _SpanState]
     start_time_ms: int
     updated_at_ms: int
+    cursor_seq: int
 
 
-def _new_trace_state(*, trace_id: str, start_time_ms: int) -> _TraceState:
+def _new_trace_state(*, trace_id: str, start_time_ms: int, cursor_seq: int) -> _TraceState:
     return {
         "trace_id": trace_id,
         "entrypoint": None,
         "spans": {},
         "start_time_ms": start_time_ms,
         "updated_at_ms": start_time_ms,
+        "cursor_seq": cursor_seq,
     }
 
 
@@ -173,10 +178,17 @@ class _LiveTraceBuffer:
     def __init__(self) -> None:
         self._lock = RLock()
         self._traces: dict[str, _TraceState] = {}
+        self._next_cursor_seq = 1
+
+    def _issue_cursor_seq(self) -> int:
+        current = self._next_cursor_seq
+        self._next_cursor_seq += 1
+        return current
 
     def clear(self) -> None:
         with self._lock:
             self._traces.clear()
+            self._next_cursor_seq = 1
 
     def record_span_start(  # noqa: PLR0913
         self,
@@ -191,10 +203,11 @@ class _LiveTraceBuffer:
         with self._lock:
             trace_state = self._traces.get(trace_id)
             if trace_state is None:
-                trace_state = _new_trace_state(trace_id=trace_id, start_time_ms=start_time_ms)
+                trace_state = _new_trace_state(trace_id=trace_id, start_time_ms=start_time_ms, cursor_seq=0)
                 self._traces[trace_id] = trace_state
 
             trace_state["updated_at_ms"] = start_time_ms
+            trace_state["cursor_seq"] = self._issue_cursor_seq()
             trace_state["start_time_ms"] = min(trace_state["start_time_ms"], start_time_ms)
             span_tags: dict[str, Any] = dict(tags or {})
             if (
@@ -240,10 +253,21 @@ class _LiveTraceBuffer:
                 ):
                     trace_state["entrypoint"] = str(entrypoint)
             trace_state["updated_at_ms"] = completed_at_ms
+            trace_state["cursor_seq"] = self._issue_cursor_seq()
 
-    def get_recent_traces(self, *, since_ms: int | None, limit: int) -> list[TraceSummaryDict]:
+    def get_recent_traces(
+        self,
+        *,
+        since_ms: int | None,
+        limit: int,
+        after_seq: int | None = None,
+    ) -> list[TraceSummaryDict]:
         with self._lock:
-            traces = sorted(self._traces.values(), key=lambda trace: trace["updated_at_ms"], reverse=True)
+            if after_seq is not None:
+                traces = [trace for trace in self._traces.values() if trace["cursor_seq"] > after_seq]
+                traces.sort(key=lambda trace: trace["cursor_seq"])
+            else:
+                traces = sorted(self._traces.values(), key=lambda trace: trace["updated_at_ms"], reverse=True)
             if since_ms is not None:
                 traces = [trace for trace in traces if trace["start_time_ms"] >= since_ms]
 
@@ -255,6 +279,10 @@ class _LiveTraceBuffer:
                 if len(result) >= limit:
                     break
             return result
+
+    def get_cursor_head(self) -> int:
+        with self._lock:
+            return self._next_cursor_seq - 1
 
     def _normalize_trace(self, trace: _TraceState) -> TraceSummaryDict | None:
         spans_by_id = trace["spans"]
@@ -300,6 +328,7 @@ class _LiveTraceBuffer:
             "tags": trace_tags,
             "span_count": len(spans_by_id),
             "root_span": build_span_tree(root_span["span_id"]),
+            "_cursor_seq": trace["cursor_seq"],
         }
 
     def _evict_old_traces(self) -> None:
@@ -352,8 +381,17 @@ def record_live_span_finish(
     )
 
 
-def get_recent_traces(*, since_ms: int | None, limit: int) -> list[TraceSummaryDict]:
-    return _TRACE_BUFFER.get_recent_traces(since_ms=since_ms, limit=limit)
+def get_recent_traces(
+    *,
+    since_ms: int | None,
+    limit: int,
+    after_seq: int | None = None,
+) -> list[TraceSummaryDict]:
+    return _TRACE_BUFFER.get_recent_traces(since_ms=since_ms, limit=limit, after_seq=after_seq)
+
+
+def get_trace_cursor_head() -> int:
+    return _TRACE_BUFFER.get_cursor_head()
 
 
 def clear_live_traces() -> None:

@@ -20,12 +20,12 @@ from pydantic import BaseModel
 
 from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
 from hayhooks.server.logger import log, log_elapsed
-from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.pipelines.models import (
     create_request_model_from_callable,
     create_response_model_from_callable,
     get_response_class_from_callable,
 )
+from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.tracing import (
     SPAN_PIPELINE_DEPLOY,

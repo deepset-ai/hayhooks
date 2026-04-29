@@ -1,11 +1,10 @@
-import { memo, useMemo, useState } from "react"
+import { memo, useEffect, useMemo, useState } from "react"
 import { Activity, ArrowDownWideNarrow, GitBranch } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { useClock } from "../hooks/useClock"
-import { useTraceStatus } from "../hooks/useTracesContext"
+import { useTraceFreshness, useTraceStatus } from "../hooks/useTracesContext"
 import type { SortMode, TraceSummary } from "../types"
 import { TraceCard } from "./TraceCard"
 
@@ -13,19 +12,34 @@ type TraceListProps = {
   traces: TraceSummary[]
   totalTraces: number
   filter: string | null
-  freshUntil: Record<string, number>
   slowComponentMinDurationMs?: number
   onClearFilter: () => void
 }
 
 type TraceCardsProps = {
   traces: TraceSummary[]
-  freshUntil: Record<string, number>
   slowComponentMinDurationMs: number
 }
 
-const TraceCards = memo(function TraceCards({ traces, freshUntil, slowComponentMinDurationMs }: TraceCardsProps) {
-  const nowMs = useClock()
+const TraceCards = memo(function TraceCards({ traces, slowComponentMinDurationMs }: TraceCardsProps) {
+  const { freshUntil } = useTraceFreshness()
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  const nextFreshExpiryMs = useMemo(() => {
+    let next: number | null = null
+    for (const trace of traces) {
+      const expiresAt = freshUntil[trace.trace_id]
+      if (expiresAt === undefined || expiresAt <= nowMs) continue
+      if (next === null || expiresAt < next) next = expiresAt
+    }
+    return next
+  }, [traces, freshUntil, nowMs])
+
+  useEffect(() => {
+    if (nextFreshExpiryMs === null) return
+    const delay = Math.max(nextFreshExpiryMs - Date.now(), 0) + 1
+    const timeoutId = window.setTimeout(() => setNowMs(Date.now()), delay)
+    return () => window.clearTimeout(timeoutId)
+  }, [nextFreshExpiryMs])
 
   return (
     <TooltipProvider delay={200}>
@@ -47,7 +61,6 @@ export const TraceList = memo(function TraceList({
   traces,
   totalTraces,
   filter,
-  freshUntil,
   slowComponentMinDurationMs = 1000,
   onClearFilter,
 }: TraceListProps) {
@@ -99,7 +112,6 @@ export const TraceList = memo(function TraceList({
         ) : (
           <TraceCards
             traces={visibleTraces}
-            freshUntil={freshUntil}
             slowComponentMinDurationMs={slowComponentMinDurationMs}
           />
         )}

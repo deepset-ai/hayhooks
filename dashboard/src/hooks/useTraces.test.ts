@@ -47,7 +47,7 @@ vi.mock("../api", async (importOriginal) => {
     ...actual,
     resolveApiBase: () => "http://test",
     fetchEntrypoints: vi.fn().mockResolvedValue([]),
-    fetchTraces: vi.fn().mockResolvedValue([]),
+    fetchTraces: vi.fn().mockResolvedValue({ traces: [], nextAfterSeq: null }),
     clearTraces: vi.fn().mockResolvedValue(undefined),
   }
 })
@@ -55,8 +55,11 @@ vi.mock("../api", async (importOriginal) => {
 const mockedApi = vi.mocked(api)
 
 beforeEach(() => {
+  mockedApi.fetchEntrypoints.mockReset()
+  mockedApi.fetchTraces.mockReset()
+  mockedApi.clearTraces.mockReset()
   mockedApi.fetchEntrypoints.mockResolvedValue([])
-  mockedApi.fetchTraces.mockResolvedValue([])
+  mockedApi.fetchTraces.mockResolvedValue({ traces: [], nextAfterSeq: null })
   mockedApi.clearTraces.mockResolvedValue(undefined)
 })
 
@@ -67,7 +70,7 @@ afterEach(() => {
 describe("useTraces", () => {
   it("fetches entrypoints and traces on mount", async () => {
     mockedApi.fetchEntrypoints.mockResolvedValue(["pipe_a", "pipe_b"])
-    mockedApi.fetchTraces.mockResolvedValue([makeTrace()])
+    mockedApi.fetchTraces.mockResolvedValue({ traces: [makeTrace()], nextAfterSeq: 1 })
 
     const { result } = renderHook(() => useTraces(TEST_CONFIG))
 
@@ -91,7 +94,7 @@ describe("useTraces", () => {
 
   it("clears traces and resets state", async () => {
     mockedApi.fetchEntrypoints.mockResolvedValue(["pipe_a"])
-    mockedApi.fetchTraces.mockResolvedValue([makeTrace()])
+    mockedApi.fetchTraces.mockResolvedValue({ traces: [makeTrace()], nextAfterSeq: 1 })
 
     const { result } = renderHook(() => useTraces(TEST_CONFIG))
 
@@ -106,7 +109,7 @@ describe("useTraces", () => {
 
   it("sets error when clear fails", async () => {
     mockedApi.fetchEntrypoints.mockResolvedValue(["pipe_a"])
-    mockedApi.fetchTraces.mockResolvedValue([makeTrace()])
+    mockedApi.fetchTraces.mockResolvedValue({ traces: [makeTrace()], nextAfterSeq: 1 })
     mockedApi.clearTraces.mockRejectedValue(new Error("Clear failed"))
 
     const { result } = renderHook(() => useTraces(TEST_CONFIG))
@@ -122,7 +125,7 @@ describe("useTraces", () => {
   it("marks new traces as fresh", async () => {
     const trace = makeTrace({ trace_id: "new-trace", start_time_ms: Date.now() })
     mockedApi.fetchEntrypoints.mockResolvedValue([])
-    mockedApi.fetchTraces.mockResolvedValue([trace])
+    mockedApi.fetchTraces.mockResolvedValue({ traces: [trace], nextAfterSeq: 1 })
 
     const { result } = renderHook(() => useTraces(TEST_CONFIG))
 
@@ -144,11 +147,11 @@ describe("useTraces", () => {
   })
 
   it("ignores stale refresh results that complete after clear", async () => {
-    const staleRefresh = deferred<TraceSummary[]>()
+    const staleRefresh = deferred<{ traces: TraceSummary[]; nextAfterSeq: number | null }>()
     mockedApi.fetchEntrypoints.mockResolvedValue(["pipe_a"])
     mockedApi.fetchTraces
       .mockReturnValueOnce(staleRefresh.promise)
-      .mockResolvedValue([])
+      .mockResolvedValue({ traces: [], nextAfterSeq: null })
     mockedApi.fetchTraces.mockClear()
 
     const { result } = renderHook(() => useTraces(TEST_CONFIG))
@@ -157,7 +160,7 @@ describe("useTraces", () => {
     await act(async () => { await result.current.clear() })
 
     await act(async () => {
-      staleRefresh.resolve([makeTrace({ trace_id: "stale" })])
+      staleRefresh.resolve({ traces: [makeTrace({ trace_id: "stale" })], nextAfterSeq: 1 })
       await Promise.resolve()
     })
 
@@ -168,11 +171,14 @@ describe("useTraces", () => {
   it("applies new listCap even when incremental refresh is empty", async () => {
     mockedApi.fetchEntrypoints.mockResolvedValue(["pipe_a"])
     mockedApi.fetchTraces
-      .mockResolvedValueOnce([
-        makeTrace({ trace_id: "newer", start_time_ms: 2000 }),
-        makeTrace({ trace_id: "older", start_time_ms: 1000 }),
-      ])
-      .mockResolvedValue([])
+      .mockResolvedValueOnce({
+        traces: [
+          makeTrace({ trace_id: "newer", start_time_ms: 2000 }),
+          makeTrace({ trace_id: "older", start_time_ms: 1000 }),
+        ],
+        nextAfterSeq: 2,
+      })
+      .mockResolvedValue({ traces: [], nextAfterSeq: null })
 
     const initialConfig: DashboardConfig = { ...TEST_CONFIG, listCap: 2 }
     const reducedConfig: DashboardConfig = { ...initialConfig, listCap: 1 }
@@ -189,5 +195,43 @@ describe("useTraces", () => {
 
     expect(result.current.traces).toHaveLength(1)
     expect(result.current.traces[0].trace_id).toBe("newer")
+  })
+
+  it("does not skip traces that share the same start time across incremental polls", async () => {
+    const traceA = makeTrace({ trace_id: "trace-a", start_time_ms: 1000 })
+    const traceB = makeTrace({ trace_id: "trace-b", start_time_ms: 1000 })
+    mockedApi.fetchEntrypoints.mockResolvedValue([])
+    mockedApi.fetchTraces
+      .mockResolvedValueOnce({ traces: [traceA], nextAfterSeq: 11 })
+      .mockResolvedValueOnce({ traces: [traceB], nextAfterSeq: 12 })
+
+    const { result } = renderHook(() => useTraces(TEST_CONFIG))
+
+    await waitFor(() => expect(result.current.traces.map((t) => t.trace_id)).toEqual(["trace-a"]))
+    await act(async () => { await result.current.refresh() })
+
+    expect(new Set(result.current.traces.map((t) => t.trace_id))).toEqual(new Set(["trace-a", "trace-b"]))
+    expect(mockedApi.fetchTraces).toHaveBeenNthCalledWith(1, "http://test", 50, undefined, undefined)
+    expect(mockedApi.fetchTraces).toHaveBeenNthCalledWith(2, "http://test", 50, undefined, 11)
+  })
+
+  it("recovers automatically when backend cursor regresses", async () => {
+    const traceA = makeTrace({ trace_id: "trace-a", start_time_ms: 1000 })
+    const traceB = makeTrace({ trace_id: "trace-b", start_time_ms: 1200 })
+    mockedApi.fetchEntrypoints.mockResolvedValue([])
+    mockedApi.fetchTraces
+      .mockResolvedValueOnce({ traces: [traceA], nextAfterSeq: 10 })
+      .mockResolvedValueOnce({ traces: [], nextAfterSeq: 2 })
+      .mockResolvedValueOnce({ traces: [traceB], nextAfterSeq: 3 })
+
+    const { result } = renderHook(() => useTraces(TEST_CONFIG))
+
+    await waitFor(() => expect(result.current.traces.map((t) => t.trace_id)).toEqual(["trace-a"]))
+    await act(async () => { await result.current.refresh() })
+
+    expect(new Set(result.current.traces.map((t) => t.trace_id))).toEqual(new Set(["trace-a", "trace-b"]))
+    expect(mockedApi.fetchTraces).toHaveBeenNthCalledWith(1, "http://test", 50, undefined, undefined)
+    expect(mockedApi.fetchTraces).toHaveBeenNthCalledWith(2, "http://test", 50, undefined, 10)
+    expect(mockedApi.fetchTraces).toHaveBeenNthCalledWith(3, "http://test", 50)
   })
 })
