@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
+from collections.abc import Mapping
 from threading import RLock
 from time import time
 from typing import Any
@@ -69,7 +69,7 @@ def _collect_span_tags(span_tags: dict[str, Any]) -> list[dict[str, str]]:
     return tags
 
 
-def _collect_trace_tags(span_tag_maps: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _collect_trace_tags(span_tag_maps: list[dict[str, Any]]) -> list[dict[str, str]]:  # noqa: C901
     tags: list[dict[str, str]] = []
     seen_keys: set[str] = set()
 
@@ -109,7 +109,7 @@ class _LiveTraceBuffer:
         with self._lock:
             self._traces.clear()
 
-    def record_span_start(
+    def record_span_start(  # noqa: PLR0913
         self,
         *,
         trace_id: str,
@@ -169,7 +169,10 @@ class _LiveTraceBuffer:
             span["duration_ms"] = max(0, duration_ms)
             if tags:
                 span["tags"].update(tags)
-                if trace["entrypoint"] is None and (entrypoint := span["tags"].get("hayhooks.pipeline.name")) is not None:
+                if (
+                    trace["entrypoint"] is None
+                    and (entrypoint := span["tags"].get("hayhooks.pipeline.name")) is not None
+                ):
                     trace["entrypoint"] = str(entrypoint)
             trace["updated_at_ms"] = completed_at_ms
 
@@ -249,7 +252,7 @@ class _LiveTraceBuffer:
 _TRACE_BUFFER = _LiveTraceBuffer()
 
 
-def record_live_span_start(
+def record_live_span_start(  # noqa: PLR0913
     *,
     trace_id: str,
     span_id: str,
