@@ -10,15 +10,20 @@ import { KIND_STYLE, SUMMARY_TAG_KEYS } from "../constants"
 import type { TraceSummary } from "../types"
 import { fmtDur, fmtTime, truncate } from "../utils/formatting"
 import { isDestructiveTag, sortTags, tagLabel } from "../utils/tags"
-import { collectAllSpans, isFailed, isOngoing, traceKind } from "../utils/traces"
+import { collectAllSpans, isFailed, isOngoing, slowestComponentRun, traceKind } from "../utils/traces"
 import { SpanRow } from "./SpanRow"
 
 type TraceCardProps = {
   trace: TraceSummary
   isFresh: boolean
+  slowComponentMinDurationMs?: number
 }
 
-export const TraceCard = memo(function TraceCard({ trace, isFresh }: TraceCardProps) {
+export const TraceCard = memo(function TraceCard({
+  trace,
+  isFresh,
+  slowComponentMinDurationMs = 1000,
+}: TraceCardProps) {
   const [open, setOpen] = useState(false)
   const [selectedSpanId, setSelectedSpanId] = useState(trace.root_span.span_id)
   const summaryTags = useMemo(
@@ -31,10 +36,16 @@ export const TraceCard = memo(function TraceCard({ trace, isFresh }: TraceCardPr
     [allSpans, selectedSpanId, trace.root_span],
   )
   const selectedSpanTags = useMemo(() => sortTags(selectedSpan.tags ?? []), [selectedSpan.tags])
+  const slowestRun = useMemo(() => slowestComponentRun(allSpans), [allSpans])
+  const highlightedSlowestComponent = useMemo(
+    () => (slowestRun !== null && slowestRun.durationMs > slowComponentMinDurationMs ? slowestRun : null),
+    [slowestRun, slowComponentMinDurationMs],
+  )
   const failed = isFailed(trace)
   const ongoing = isOngoing(trace)
   const kind = traceKind(trace)
   const kindStyle = KIND_STYLE[kind]
+  const freshHighlightTone = failed ? "failed" : kind
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -43,7 +54,7 @@ export const TraceCard = memo(function TraceCard({ trace, isFresh }: TraceCardPr
           "rounded-lg border border-l-2 bg-card text-card-foreground transition-shadow",
           failed ? "border-l-destructive" : kindStyle.border || "border-l-transparent",
           ongoing && "trace-card-ongoing",
-          isFresh && !ongoing && `trace-card-fresh trace-card-fresh-${kind}`,
+          isFresh && !ongoing && `trace-card-fresh trace-card-fresh-${freshHighlightTone}`,
           open && "shadow-sm",
         )}
       >
@@ -161,10 +172,22 @@ export const TraceCard = memo(function TraceCard({ trace, isFresh }: TraceCardPr
             </div>
 
             <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <Activity className="size-3" />
-                Spans
+                <span>Spans</span>
                 <span className="text-[10px] tabular-nums">({allSpans.length})</span>
+                {highlightedSlowestComponent !== null && (
+                  <span className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-[11px]">
+                    <Timer className="size-3 text-amber-700/90 dark:text-amber-200/90" />
+                    <span className="text-muted-foreground">Slowest component</span>
+                    <span className="font-medium text-amber-800 dark:text-amber-300">
+                      {truncate(highlightedSlowestComponent.componentName, 24)}
+                    </span>
+                    <span className="tabular-nums text-amber-700/90 dark:text-amber-200/90">
+                      {fmtDur(highlightedSlowestComponent.durationMs)}
+                    </span>
+                  </span>
+                )}
               </div>
               <div className="overflow-auto">
                 <div className="space-y-1.5 pr-1">
@@ -174,6 +197,7 @@ export const TraceCard = memo(function TraceCard({ trace, isFresh }: TraceCardPr
                     traceStart={trace.start_time_ms}
                     traceDuration={trace.duration_ms}
                     traceEntrypoint={trace.entrypoint}
+                    slowSpanId={highlightedSlowestComponent?.spanId ?? null}
                     selectedSpanId={selectedSpanId}
                     onSelectSpan={setSelectedSpanId}
                   />

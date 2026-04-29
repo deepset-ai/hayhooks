@@ -13,12 +13,19 @@ describe("normalizeDashboardConfig", () => {
   })
 
   it("parses valid config", () => {
-    const raw = { poll_ms: 5000, list_cap: 200, fetch_limit: 100, fresh_ms: 3000 }
+    const raw = {
+      poll_ms: 5000,
+      list_cap: 200,
+      fetch_limit: 100,
+      fresh_ms: 3000,
+      slow_component_min_duration_ms: 1750,
+    }
     expect(normalizeDashboardConfig(raw)).toEqual({
       pollMs: 5000,
       listCap: 200,
       fetchLimit: 100,
       freshMs: 3000,
+      slowComponentMinDurationMs: 1750,
     })
   })
 
@@ -47,18 +54,31 @@ describe("normalizeDashboardConfig", () => {
   })
 
   it("rounds fractional values", () => {
-    const raw = { poll_ms: 1000.7, list_cap: 50.3, fetch_limit: 25.9, fresh_ms: 4000.1 }
+    const raw = {
+      poll_ms: 1000.7,
+      list_cap: 50.3,
+      fetch_limit: 25.9,
+      fresh_ms: 4000.1,
+      slow_component_min_duration_ms: 1234.9,
+    }
     const result = normalizeDashboardConfig(raw)
     expect(result.pollMs).toBe(1001)
     expect(result.listCap).toBe(50)
     expect(result.fetchLimit).toBe(26)
     expect(result.freshMs).toBe(4000)
+    expect(result.slowComponentMinDurationMs).toBe(1235)
   })
 
   it("accepts fresh_ms of 0", () => {
     const raw = { fresh_ms: 0 }
     const result = normalizeDashboardConfig(raw)
     expect(result.freshMs).toBe(0)
+  })
+
+  it("uses default for non-positive slow_component_min_duration_ms", () => {
+    const raw = { slow_component_min_duration_ms: 0 }
+    const result = normalizeDashboardConfig(raw)
+    expect(result.slowComponentMinDurationMs).toBe(DEFAULT_DASHBOARD_CONFIG.slowComponentMinDurationMs)
   })
 })
 

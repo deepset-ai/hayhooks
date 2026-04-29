@@ -200,3 +200,14 @@ def test_dashboard_trace_buffer_capacity_env_var(monkeypatch):
     monkeypatch.setenv("HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY", "2000")
     settings = AppSettings()
     assert settings.dashboard_trace_buffer_capacity == 2000
+
+
+def test_dashboard_ui_slow_component_min_duration_ms_default():
+    settings = AppSettings()
+    assert settings.dashboard_ui_slow_component_min_duration_ms == 1000
+
+
+def test_dashboard_ui_slow_component_min_duration_ms_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS", "2500")
+    settings = AppSettings()
+    assert settings.dashboard_ui_slow_component_min_duration_ms == 2500

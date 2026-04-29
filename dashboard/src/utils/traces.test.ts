@@ -4,6 +4,7 @@ import {
   isFailed,
   isOngoing,
   mergeTraces,
+  slowestComponentRun,
   spanTagValue,
   traceKind,
 } from "./traces"
@@ -166,5 +167,65 @@ describe("filterTracesByEntrypoint", () => {
       makeTrace({ trace_id: "c", entrypoint: "alpha" }),
     ]
     expect(filterTracesByEntrypoint(traces, "alpha").map((t) => t.trace_id)).toEqual(["a", "c"])
+  })
+})
+
+describe("slowestComponentRun", () => {
+  it("returns the slowest haystack.component.run span", () => {
+    const root = makeSpan({ span_id: "root", duration_ms: 10 })
+    const retrieverFast = makeSpan({
+      span_id: "retriever-fast",
+      name: "haystack.component.run",
+      duration_ms: 90,
+      tags: [{ key: "haystack.component.name", value: "retriever" }],
+    })
+    const retrieverSlow = makeSpan({
+      span_id: "retriever-slow",
+      name: "haystack.component.run",
+      duration_ms: 120,
+      tags: [{ key: "haystack.component.name", value: "retriever" }],
+    })
+    const llm = makeSpan({
+      span_id: "llm",
+      name: "haystack.component.run",
+      duration_ms: 100,
+      tags: [{ key: "haystack.component.name", value: "llm" }],
+    })
+    const ranker = makeSpan({
+      span_id: "ranker",
+      name: "haystack.component.run",
+      duration_ms: 80,
+      tags: [{ key: "haystack.component.name", value: "ranker" }],
+    })
+    const slowerNonComponentRun = makeSpan({
+      span_id: "embedder-step",
+      name: "haystack.retriever.embed",
+      duration_ms: 5000,
+      tags: [{ key: "haystack.component.name", value: "embedder" }],
+    })
+    root.children = [retrieverFast, retrieverSlow, llm, ranker, slowerNonComponentRun]
+
+    const result = slowestComponentRun(collectAllSpans(root))
+
+    expect(result).toEqual({
+      spanId: "retriever-slow",
+      componentName: "retriever",
+      durationMs: 120,
+    })
+  })
+
+  it("returns null when no haystack.component.run span is present", () => {
+    const root = makeSpan({
+      span_id: "root",
+      name: "hayhooks.pipeline.run",
+      duration_ms: 5,
+      children: [
+        makeSpan({ span_id: "not-component-run", name: "custom.component.step", duration_ms: 55, tags: [] }),
+      ],
+    })
+
+    const result = slowestComponentRun(collectAllSpans(root))
+
+    expect(result).toBeNull()
   })
 })

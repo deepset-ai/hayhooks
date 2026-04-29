@@ -95,12 +95,19 @@ export function normalizeDashboardConfig(raw: unknown): DashboardConfig {
     typeof config.fresh_ms === "number" && Number.isFinite(config.fresh_ms) && config.fresh_ms >= 0
       ? Math.round(config.fresh_ms)
       : DEFAULT_DASHBOARD_CONFIG.freshMs
+  const slowComponentMinDurationMs =
+    typeof config.slow_component_min_duration_ms === "number"
+      && Number.isFinite(config.slow_component_min_duration_ms)
+      && config.slow_component_min_duration_ms > 0
+      ? Math.round(config.slow_component_min_duration_ms)
+      : DEFAULT_DASHBOARD_CONFIG.slowComponentMinDurationMs
 
   return {
     pollMs,
     listCap,
     fetchLimit: Math.min(fetchLimitCandidate, listCap),
     freshMs,
+    slowComponentMinDurationMs,
   }
 }
 

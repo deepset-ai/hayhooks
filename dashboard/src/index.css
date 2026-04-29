@@ -213,6 +213,16 @@
   --glow-color-soft: rgb(20 184 166 / 20%);
 }
 
+.trace-card-fresh-failed {
+  --glow-color: #dc2626;
+  --glow-color-soft: rgb(220 38 38 / 22%);
+}
+
+.dark .trace-card-fresh-failed {
+  --glow-color: #f87171;
+  --glow-color-soft: rgb(248 113 113 / 24%);
+}
+
 /* Animate ongoing traces */
 @keyframes trace-ongoing {
   0%,

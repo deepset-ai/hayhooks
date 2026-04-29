@@ -195,6 +195,14 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Default: `6000`
 - Description: Duration (milliseconds) that newly seen traces keep the "NEW" highlight state.
 
+### HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS
+
+- Default: `1000`
+- Description: Minimum duration (milliseconds) required for the dashboard to mark a trace component as "slow".
+- Notes:
+  - The UI highlights only the single slowest component per trace.
+  - Highlighting is applied only when that component duration is strictly greater than this threshold.
+
 ### HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT
 
 - Default: `25`
@@ -425,6 +433,8 @@ HAYHOOKS_DASHBOARD_ENABLED=true
 HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
 HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT=25
 HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT=100
+# Optional: only highlight slowest components above 1s
+# HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS=1000
 # Optional: include Haystack component spans in dashboard traces
 # HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=true
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]

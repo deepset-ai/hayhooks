@@ -17,7 +17,7 @@ const LAST_TRACE_ICON = <Clock className="size-4" />
 
 const App = memo(function App() {
   const { dark, toggle: toggleDark } = useDarkMode()
-  const { entrypoints, traces, freshUntil } = useTraceData()
+  const { entrypoints, traces, freshUntil, slowComponentMinDurationMs } = useTraceData()
 
   const [filter, setFilter] = useState<string | null>(null)
   const filteredTraces = useMemo(
@@ -65,6 +65,7 @@ const App = memo(function App() {
             totalTraces={traces.length}
             filter={filter}
             freshUntil={freshUntil}
+            slowComponentMinDurationMs={slowComponentMinDurationMs}
             onClearFilter={handleClearFilter}
           />
         </div>

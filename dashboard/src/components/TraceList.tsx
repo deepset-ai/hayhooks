@@ -14,22 +14,29 @@ type TraceListProps = {
   totalTraces: number
   filter: string | null
   freshUntil: Record<string, number>
+  slowComponentMinDurationMs?: number
   onClearFilter: () => void
 }
 
 type TraceCardsProps = {
   traces: TraceSummary[]
   freshUntil: Record<string, number>
+  slowComponentMinDurationMs: number
 }
 
-const TraceCards = memo(function TraceCards({ traces, freshUntil }: TraceCardsProps) {
+const TraceCards = memo(function TraceCards({ traces, freshUntil, slowComponentMinDurationMs }: TraceCardsProps) {
   const nowMs = useClock()
 
   return (
     <TooltipProvider delay={200}>
       <div className="space-y-2 pr-3">
         {traces.map((trace) => (
-          <TraceCard key={trace.trace_id} trace={trace} isFresh={(freshUntil[trace.trace_id] ?? 0) > nowMs} />
+          <TraceCard
+            key={trace.trace_id}
+            trace={trace}
+            isFresh={(freshUntil[trace.trace_id] ?? 0) > nowMs}
+            slowComponentMinDurationMs={slowComponentMinDurationMs}
+          />
         ))}
       </div>
     </TooltipProvider>
@@ -41,6 +48,7 @@ export const TraceList = memo(function TraceList({
   totalTraces,
   filter,
   freshUntil,
+  slowComponentMinDurationMs = 1000,
   onClearFilter,
 }: TraceListProps) {
   const [sortMode, setSortMode] = useState<SortMode>("newest")
@@ -89,7 +97,11 @@ export const TraceList = memo(function TraceList({
             onClearFilter={onClearFilter}
           />
         ) : (
-          <TraceCards traces={visibleTraces} freshUntil={freshUntil} />
+          <TraceCards
+            traces={visibleTraces}
+            freshUntil={freshUntil}
+            slowComponentMinDurationMs={slowComponentMinDurationMs}
+          />
         )}
       </ScrollArea>
     </div>

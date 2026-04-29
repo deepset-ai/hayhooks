@@ -19,7 +19,13 @@ export type TraceSummary = {
   root_span: TraceSpanNode
 }
 
-export type DashboardConfigResponse = { poll_ms: number; list_cap: number; fetch_limit: number; fresh_ms: number }
+export type DashboardConfigResponse = {
+  poll_ms: number
+  list_cap: number
+  fetch_limit: number
+  fresh_ms: number
+  slow_component_min_duration_ms: number
+}
 
 export type SortMode = "newest" | "slowest"
 export type TraceKind = "deploy" | "undeploy" | "run" | "openai" | "mcp" | "other"
@@ -29,4 +35,5 @@ export type DashboardConfig = {
   listCap: number
   fetchLimit: number
   freshMs: number
+  slowComponentMinDurationMs: number
 }

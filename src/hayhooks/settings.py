@@ -121,6 +121,7 @@ class AppSettings(BaseSettings):
     dashboard_ui_list_cap: int = Field(default=100, gt=0, le=500)
     dashboard_ui_fetch_limit: int = Field(default=50, gt=0, le=500)
     dashboard_ui_fresh_ms: int = Field(default=6000, ge=0, le=60_000)
+    dashboard_ui_slow_component_min_duration_ms: int = Field(default=1000, gt=0)
     dashboard_enabled: bool = False
     dashboard_path: str = "/dashboard"
     dashboard_dist_dir: str = str(Path.cwd() / "dashboard" / "dist")

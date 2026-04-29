@@ -70,6 +70,7 @@ Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-
 - **Live trace feed** — auto-refreshes every 2.5 seconds with new-trace animations.
 - **Entrypoint filter** — click a pipeline in the sidebar to filter traces; counts update per entrypoint.
 - **Span waterfall** — expand any trace to see nested spans with duration bars and per-span pipeline badges.
+- **Slowest component signal** — highlights only the single slowest component span per trace when its duration is above the configured threshold.
 - **Tags** — collapsed cards show transport and success/error status; expanded view shows all tags with tooltips.
 - **Error highlighting** — failed traces get a red left border so they stand out immediately.
 - **Sort** — toggle between newest-first and slowest-first ordering.
@@ -116,6 +117,12 @@ The dashboard always reads traces from Hayhooks' in-process live trace buffer.
 
 ```bash
 export HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY=2000
+```
+
+You can tune when the slowest-component highlight appears:
+
+```bash
+export HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS=1000
 ```
 
 #### Optional: Include Haystack component spans

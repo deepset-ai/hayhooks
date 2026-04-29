@@ -3,7 +3,9 @@ import type { Context } from "react"
 
 import type { UseTracesResult } from "./useTraces"
 
-type TraceData = Pick<UseTracesResult, "entrypoints" | "traces" | "freshUntil">
+type TraceData = Pick<UseTracesResult, "entrypoints" | "traces" | "freshUntil"> & {
+  slowComponentMinDurationMs: number
+}
 type TraceStatus = Pick<UseTracesResult, "updatedAt" | "error" | "refreshing" | "clearing">
 type TraceActions = Pick<UseTracesResult, "refresh" | "clear">
 

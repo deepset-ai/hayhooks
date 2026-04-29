@@ -68,6 +68,7 @@ def test_dashboard_config_returns_ui_settings(client, monkeypatch):
     monkeypatch.setattr(settings, "dashboard_ui_list_cap", 40)
     monkeypatch.setattr(settings, "dashboard_ui_fetch_limit", 80)
     monkeypatch.setattr(settings, "dashboard_ui_fresh_ms", 7000)
+    monkeypatch.setattr(settings, "dashboard_ui_slow_component_min_duration_ms", 1800)
     monkeypatch.setattr(settings, "dashboard_trace_max_limit", 60)
 
     response = client.get("/dashboard/api/config")
@@ -78,6 +79,7 @@ def test_dashboard_config_returns_ui_settings(client, monkeypatch):
         "list_cap": 40,
         "fetch_limit": 40,
         "fresh_ms": 7000,
+        "slow_component_min_duration_ms": 1800,
     }
 
 

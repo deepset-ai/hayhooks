@@ -18,8 +18,9 @@ export function TracesProvider({ children }: { children: ReactNode }) {
       entrypoints: traces.entrypoints,
       traces: traces.traces,
       freshUntil: traces.freshUntil,
+      slowComponentMinDurationMs: config.slowComponentMinDurationMs,
     }),
-    [traces.entrypoints, traces.traces, traces.freshUntil],
+    [traces.entrypoints, traces.traces, traces.freshUntil, config.slowComponentMinDurationMs],
   )
 
   const statusValue = useMemo(

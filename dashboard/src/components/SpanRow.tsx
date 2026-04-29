@@ -10,6 +10,7 @@ type SpanRowProps = {
   traceStart: number
   traceDuration: number
   traceEntrypoint: string | null
+  slowSpanId: string | null
   selectedSpanId: string
   onSelectSpan: (spanId: string) => void
 }
@@ -20,6 +21,7 @@ export function SpanRow({
   traceStart,
   traceDuration,
   traceEntrypoint,
+  slowSpanId,
   selectedSpanId,
   onSelectSpan,
 }: SpanRowProps) {
@@ -27,6 +29,7 @@ export function SpanRow({
   const widthPct = traceDuration > 0 ? Math.max((span.duration_ms / traceDuration) * 100, 1) : 100
   const pipelineName = spanTagValue(span, "hayhooks.pipeline.name")
   const showPipeline = pipelineName !== undefined && pipelineName !== traceEntrypoint
+  const isSlowComponent = slowSpanId === span.span_id
   const isSelected = span.span_id === selectedSpanId
 
   return (
@@ -35,11 +38,14 @@ export function SpanRow({
         type="button"
         onClick={() => onSelectSpan(span.span_id)}
         aria-pressed={isSelected}
+        data-slow-component={isSlowComponent}
         className={cn(
           "flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
           isSelected
             ? "border-primary/40 bg-primary/10 shadow-sm"
-            : "border-border/40 hover:bg-muted/40",
+            : isSlowComponent
+              ? "border-amber-400/50 bg-amber-500/5 hover:bg-amber-500/10"
+              : "border-border/40 hover:bg-muted/40",
         )}
       >
         <div className="min-w-0 grow" style={{ paddingLeft: depth * 16 }}>
@@ -73,6 +79,7 @@ export function SpanRow({
           traceStart={traceStart}
           traceDuration={traceDuration}
           traceEntrypoint={traceEntrypoint}
+          slowSpanId={slowSpanId}
           selectedSpanId={selectedSpanId}
           onSelectSpan={onSelectSpan}
         />

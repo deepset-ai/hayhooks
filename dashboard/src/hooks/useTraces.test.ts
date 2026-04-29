@@ -38,6 +38,7 @@ const TEST_CONFIG: DashboardConfig = {
   listCap: 100,
   fetchLimit: 50,
   freshMs: 5000,
+  slowComponentMinDurationMs: 1000,
 }
 
 vi.mock("../api", async (importOriginal) => {

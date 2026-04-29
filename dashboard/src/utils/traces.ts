@@ -2,6 +2,8 @@ import type { TraceKind, TraceSpanNode, TraceSummary } from "../types"
 import { isDestructiveTag, safeTags } from "./tags"
 
 const SUCCESS_TAG_KEY = "hayhooks.success"
+const HAYSTACK_COMPONENT_NAME_TAG_KEY = "haystack.component.name"
+const HAYSTACK_COMPONENT_RUN_SPAN_NAME = "haystack.component.run"
 const TRACE_KIND_RULES: Array<{ includes: string; kind: TraceKind }> = [
   { includes: ".undeploy", kind: "undeploy" },
   { includes: ".deploy", kind: "deploy" },
@@ -9,6 +11,12 @@ const TRACE_KIND_RULES: Array<{ includes: string; kind: TraceKind }> = [
   { includes: ".mcp.", kind: "mcp" },
   { includes: ".run", kind: "run" },
 ]
+
+export type SlowComponentRun = {
+  spanId: string
+  componentName: string
+  durationMs: number
+}
 
 function normalizeTrace(trace: TraceSummary): TraceSummary {
   return { ...trace, tags: safeTags(trace.tags) }
@@ -56,4 +64,29 @@ export function traceKind(trace: TraceSummary): TraceKind {
 
 export function spanTagValue(span: TraceSpanNode, key: string): string | undefined {
   return (span.tags ?? []).find((t) => t.key === key)?.value
+}
+
+export function slowestComponentRun(spans: TraceSpanNode[]): SlowComponentRun | null {
+  let currentSlowest: SlowComponentRun | null = null
+  for (const span of spans) {
+    if (span.name !== HAYSTACK_COMPONENT_RUN_SPAN_NAME) {
+      continue
+    }
+    const componentTag = spanTagValue(span, HAYSTACK_COMPONENT_NAME_TAG_KEY)
+    const componentName = componentTag ?? span.span_id
+    const candidate: SlowComponentRun = {
+      spanId: span.span_id,
+      componentName,
+      durationMs: span.duration_ms,
+    }
+    if (
+      currentSlowest === null
+      || candidate.durationMs > currentSlowest.durationMs
+      || (candidate.durationMs === currentSlowest.durationMs
+        && candidate.componentName.localeCompare(currentSlowest.componentName) < 0)
+    ) {
+      currentSlowest = candidate
+    }
+  }
+  return currentSlowest
 }

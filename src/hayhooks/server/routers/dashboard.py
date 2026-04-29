@@ -52,6 +52,7 @@ class DashboardUiConfigResponse(BaseModel):
     list_cap: int
     fetch_limit: int
     fresh_ms: int
+    slow_component_min_duration_ms: int
 
 
 @router.get(
@@ -85,6 +86,7 @@ async def config() -> DashboardUiConfigResponse:
         list_cap=settings.dashboard_ui_list_cap,
         fetch_limit=resolved_fetch_limit,
         fresh_ms=settings.dashboard_ui_fresh_ms,
+        slow_component_min_duration_ms=settings.dashboard_ui_slow_component_min_duration_ms,
     )
 
 
