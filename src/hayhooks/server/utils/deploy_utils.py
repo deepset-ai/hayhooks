@@ -506,30 +506,23 @@ def rebuild_openapi(app: FastAPI) -> None:
     app.setup()
 
 
-def _register_and_deploy_pipeline(
+def _register_prepared_pipeline(
     pipeline_name: str,
     pipeline_wrapper: BasePipelineWrapper,
     app: FastAPI | None = None,
-    overwrite: bool = False,
     extra_metadata: dict[str, Any] | None = None,
     *,
     _defer_openapi_rebuild: bool = False,
 ) -> dict[str, str]:
     """
-    Common logic for registering and deploying any pipeline wrapper.
+    Register a prepared pipeline wrapper and optionally add its API route.
 
-    This is the shared core that handles:
-    - Checking if pipeline exists and handling overwrite
-    - Calling setup() on the wrapper
-    - Generating request/response models
-    - Building metadata and adding to registry
-    - Adding API route if app is provided
+    Commit-level overwrite handling must happen before this function is called.
 
     Args:
         pipeline_name: Name of the pipeline.
-        pipeline_wrapper: Already-created wrapper instance (setup() will be called here).
+        pipeline_wrapper: Already-prepared wrapper instance.
         app: Optional FastAPI app for route creation.
-        overwrite: Whether to overwrite existing pipeline.
         extra_metadata: Additional metadata fields (e.g., streaming_components for YAML).
         _defer_openapi_rebuild: Forward to ``add_pipeline_api_route`` to skip per-pipeline
             OpenAPI rebuild during batch operations.
@@ -538,24 +531,14 @@ def _register_and_deploy_pipeline(
         A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
 
     Raises:
-        PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
+        PipelineAlreadyExistsError: If the pipeline already exists at commit time.
     """
     clog = log.bind(pipeline_name=pipeline_name)
 
-    # Check if pipeline already exists
+    # Commit resolves overwrite semantics before registration.
     if registry.get(pipeline_name):
-        if overwrite:
-            clog.debug("Clearing existing pipeline '{}'", pipeline_name)
-            registry.remove(pipeline_name)
-            remove_pipeline_files(pipeline_name, settings.pipelines_dir)
-        else:
-            msg = f"Pipeline '{pipeline_name}' already exists"
-            raise PipelineAlreadyExistsError(msg)
-
-    # Call setup to initialize the pipeline (if not already done)
-    if getattr(pipeline_wrapper, "pipeline", None) is None:
-        clog.debug("Running setup() on pipeline wrapper")
-        pipeline_wrapper.setup()
+        msg = f"Pipeline '{pipeline_name}' already exists"
+        raise PipelineAlreadyExistsError(msg)
 
     # Determine which run method to use for model generation (prefer async)
     if pipeline_wrapper._is_run_api_async_implemented:
@@ -610,7 +593,7 @@ def prepare_pipeline_files(
 
     Does file I/O, module loading, wrapper creation, and ``setup()`` — all the
     expensive work that is safe to run in a thread.  The returned
-    ``PreparedPipeline`` can be committed later via ``_register_and_deploy_pipeline``.
+    ``PreparedPipeline`` can be committed later via ``_register_prepared_pipeline``.
     """
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_PREPARE,
@@ -637,7 +620,6 @@ def prepare_pipeline_files(
         try:
             module = load_pipeline_module(pipeline_name, dir_path=pipeline_dir)
             pipeline_wrapper = create_pipeline_wrapper_instance(module)
-            pipeline_wrapper.setup()
             return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper)
         finally:
             if tmp_dir is not None:
@@ -695,11 +677,20 @@ def commit_prepared_pipeline(
     overwrite: bool = False,
     *,
     _defer_openapi_rebuild: bool = False,
+    cleanup_files_on_overwrite: bool = True,
 ) -> dict[str, str]:
     """
     Commit a prepared pipeline to the registry and (optionally) add its route.
 
     This mutates shared state and must NOT be called concurrently.
+    The prepared wrapper has already run setup(), so commit must not run it again.
+
+    Args:
+        prepared: Pipeline prepared by ``prepare_pipeline_files`` or ``prepare_pipeline_yaml``.
+        app: Optional FastAPI app for route creation.
+        overwrite: Whether to replace an existing deployed pipeline with the same name.
+        _defer_openapi_rebuild: Forwarded to route registration.
+        cleanup_files_on_overwrite: If ``True``, remove persisted files when replacing an existing pipeline.
     """
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_COMMIT,
@@ -713,11 +704,20 @@ def commit_prepared_pipeline(
             }
         ),
     ):
-        return _register_and_deploy_pipeline(
+        if registry.get(prepared.name) is not None:
+            if not overwrite:
+                msg = f"Pipeline '{prepared.name}' already exists"
+                raise PipelineAlreadyExistsError(msg)
+
+            log.bind(pipeline_name=prepared.name).debug("Clearing existing pipeline '{}'", prepared.name)
+            registry.remove(prepared.name)
+            if cleanup_files_on_overwrite:
+                remove_pipeline_files(prepared.name, settings.pipelines_dir)
+
+        return _register_prepared_pipeline(
             pipeline_name=prepared.name,
             pipeline_wrapper=prepared.wrapper,
             app=app,
-            overwrite=overwrite,
             extra_metadata=prepared.extra_metadata,
             _defer_openapi_rebuild=_defer_openapi_rebuild,
         )
@@ -768,12 +768,17 @@ def deploy_pipeline_files(
             }
         ),
     ):
+        cleanup_files_on_overwrite = overwrite and not save_files
+        if overwrite and save_files:
+            remove_pipeline_files(pipeline_name, settings.pipelines_dir)
+
         prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=save_files)
         return commit_prepared_pipeline(
             prepared,
             app=app,
             overwrite=overwrite,
             _defer_openapi_rebuild=_defer_openapi_rebuild,
+            cleanup_files_on_overwrite=cleanup_files_on_overwrite,
         )
 
 
@@ -824,9 +829,18 @@ def deploy_pipeline_yaml(
             }
         ),
     ):
+        save_file = True if options is None else bool(options.get("save_file", True))
+        cleanup_files_on_overwrite = overwrite and not save_file
+        if overwrite and save_file:
+            remove_pipeline_files(pipeline_name, settings.pipelines_dir)
+
         prepared = prepare_pipeline_yaml(pipeline_name, source_code=source_code, options=options)
         return commit_prepared_pipeline(
-            prepared, app=app, overwrite=overwrite, _defer_openapi_rebuild=_defer_openapi_rebuild
+            prepared,
+            app=app,
+            overwrite=overwrite,
+            _defer_openapi_rebuild=_defer_openapi_rebuild,
+            cleanup_files_on_overwrite=cleanup_files_on_overwrite,
         )
 
 
