@@ -17,7 +17,7 @@ from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
-    _register_and_deploy_pipeline,
+    _register_prepared_pipeline,
     create_request_model_from_callable,
     create_response_model_from_callable,
     deploy_pipeline_files,
@@ -592,8 +592,8 @@ def test_create_pipeline_wrapper_instance_missing_methods():
         create_pipeline_wrapper_instance(module)
 
 
-def test_register_and_deploy_pipeline_setup_is_idempotent():
-    """Test that setup() is not called again if pipeline is already initialized."""
+def test_register_prepared_pipeline_does_not_call_setup():
+    """Registering a prepared wrapper must not call setup()."""
     setup_call_count = 0
 
     class TrackingWrapper(BasePipelineWrapper):
@@ -614,12 +614,11 @@ def test_register_and_deploy_pipeline_setup_is_idempotent():
     # Store reference to the pipeline instance
     first_pipeline = wrapper.pipeline
 
-    # Deploy the wrapper - setup should NOT be called again
-    _register_and_deploy_pipeline(
+    # Register the prepared wrapper.
+    _register_prepared_pipeline(
         pipeline_name="tracking_test",
         pipeline_wrapper=wrapper,
         app=None,
-        overwrite=False,
     )
 
     # Verify setup was not called again
@@ -688,6 +687,49 @@ def test_deploy_pipeline_files_skip_mcp(mocker):
     assert result == {"name": "chat_with_website_mcp_skip"}
 
     assert registry.get_metadata("chat_with_website_mcp_skip").get("skip_mcp") is True
+
+
+def test_deploy_pipeline_files_overwrite_preserves_new_sibling_files(test_settings):
+    pipeline_name = "wrapper_with_sibling_file"
+    wrapper_source = """
+from pathlib import Path
+
+from hayhooks import BasePipelineWrapper
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.prompt_template = (Path(__file__).parent / "prompt.txt").read_text()
+
+    def run_api(self) -> dict:
+        return {"result": self.prompt_template}
+"""
+    deploy_pipeline_files(
+        pipeline_name=pipeline_name,
+        files={
+            "pipeline_wrapper.py": wrapper_source,
+            "prompt.txt": "first",
+            "stale.txt": "remove me",
+        },
+        overwrite=True,
+    )
+
+    deploy_pipeline_files(
+        pipeline_name=pipeline_name,
+        files={
+            "pipeline_wrapper.py": wrapper_source,
+            "prompt.txt": "second",
+        },
+        overwrite=True,
+    )
+
+    pipeline_wrapper = registry.get(pipeline_name)
+    assert pipeline_wrapper is not None
+    assert pipeline_wrapper.run_api() == {"result": "second"}
+
+    pipeline_dir = Path(test_settings.pipelines_dir) / pipeline_name
+    assert (pipeline_dir / "prompt.txt").read_text() == "second"
+    assert not (pipeline_dir / "stale.txt").exists()
 
 
 def test_undeploy_pipeline_without_app(test_settings):
