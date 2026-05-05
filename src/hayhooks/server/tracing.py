@@ -123,9 +123,7 @@ def _record_live_span_outcome(
         if isinstance(exc, HTTPException):
             tags[_TAG_HTTP_STATUS] = exc.status_code
         if settings.show_tracebacks:
-            tags[_TAG_ERROR_STACK] = "".join(
-                traceback.format_exception(type(exc), exc, exc.__traceback__)
-            )
+            tags[_TAG_ERROR_STACK] = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
     record_live_span_finish(
         trace_id=trace_id,
