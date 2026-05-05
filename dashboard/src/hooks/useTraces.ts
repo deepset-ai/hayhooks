@@ -15,6 +15,26 @@ export type UseTracesResult = {
   clear: () => Promise<void>
 }
 
+interface State {
+  entrypoints: string[]
+  traces: TraceSummary[]
+  freshUntil: Record<string, number>
+  updatedAt: number | null
+  error: string | null
+  refreshing: boolean
+  clearing: boolean
+}
+
+const INITIAL_STATE: State = {
+  entrypoints: [],
+  traces: [],
+  freshUntil: {},
+  updatedAt: null,
+  error: null,
+  refreshing: false,
+  clearing: false,
+}
+
 function sameStrings(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i += 1) {
@@ -23,21 +43,55 @@ function sameStrings(a: string[], b: string[]): boolean {
   return true
 }
 
-export function useTraces(config: DashboardConfig): UseTracesResult {
-  const [entrypoints, setEntrypoints] = useState<string[]>([])
-  const [traces, setTraces] = useState<TraceSummary[]>([])
-  const [freshUntil, setFreshUntil] = useState<Record<string, number>>({})
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [refreshing, setRefreshing] = useState(false)
-  const [clearing, setClearing] = useState(false)
+/**
+ * Compute the next `freshUntil` map after receiving an incoming batch of traces.
+ *
+ * - Expired entries (expiresAt <= now) are evicted.
+ * - Every trace in `incomingIds` that is new (not already in `seen`) gets a
+ *   fresh expiry timestamp of `now + freshMs`.
+ */
+function computeFreshUntil(
+  prev: Record<string, number>,
+  incomingIds: string[],
+  seen: Set<string>,
+  now: number,
+  freshMs: number,
+): Record<string, number> {
+  const freshUntil: Record<string, number> = {}
 
+  for (const [id, expiresAt] of Object.entries(prev)) {
+    if (expiresAt > now) freshUntil[id] = expiresAt
+  }
+
+  const newIds = incomingIds.filter((id) => !seen.has(id))
+  if (newIds.length > 0) {
+    const expiresAt = now + freshMs
+    for (const id of newIds) freshUntil[id] = expiresAt
+  }
+
+  return freshUntil
+}
+
+export function useTraces(config: DashboardConfig): UseTracesResult {
+  const [state, setState] = useState<State>(INITIAL_STATE)
+
+  /**
+   * Refs carry imperative state between refresh cycles without triggering
+   * re-renders. `epochRef` cancels stale in-flight results (e.g. after
+   * `clear()`). `tracesRef` and `freshUntilRef` shadow the React state so
+   * the `refresh` callback stays stable across renders.
+   */
   const afterSeqRef = useRef<number | null>(null)
-  const seenRef = useRef(new Set<string>())
-  const baseRef = useRef(resolveApiBase())
-  const refreshInFlightRef = useRef(false)
-  const refreshEpochRef = useRef(0)
+  const seenRef = useRef<Set<string>>(new Set())
+  const epochRef = useRef(0)
+  const inFlightRef = useRef(false)
   const mountedRef = useRef(true)
+  const baseRef = useRef(resolveApiBase())
+  const tracesRef = useRef<TraceSummary[]>([])
+  const freshUntilRef = useRef<Record<string, number>>({})
+
+  tracesRef.current = state.traces
+  freshUntilRef.current = state.freshUntil
 
   useEffect(() => {
     mountedRef.current = true
@@ -46,120 +100,136 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
     }
   }, [])
 
-  const refresh = useCallback(async (options?: { silent?: boolean }) => {
-    const silent = options?.silent ?? false
-    if (refreshInFlightRef.current) return
-    refreshInFlightRef.current = true
-    const refreshEpoch = refreshEpochRef.current
-    if (!silent) setRefreshing(true)
-    try {
-      const base = baseRef.current
+  const refresh = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (inFlightRef.current) return
+      inFlightRef.current = true
 
-      // Step 1: Fetch latest entrypoints
-      const nextEntrypoints = await fetchEntrypoints(base)
-      if (!mountedRef.current || refreshEpoch !== refreshEpochRef.current) return
-      setEntrypoints((prev) => (sameStrings(prev, nextEntrypoints) ? prev : nextEntrypoints))
+      const silent = options?.silent ?? false
+      epochRef.current += 1
+      const epoch = epochRef.current
 
-      // Step 2: Fetch traces incrementally via stable backend cursor
-      const previousAfterSeq = afterSeqRef.current
-      const tracesResult = await fetchTraces(base, config.fetchLimit, undefined, previousAfterSeq ?? undefined)
-      if (!mountedRef.current || refreshEpoch !== refreshEpochRef.current) return
-      let incoming = tracesResult.traces
-      let nextAfterSeq = tracesResult.nextAfterSeq
-      if (nextAfterSeq !== null && previousAfterSeq !== null && nextAfterSeq < previousAfterSeq) {
-        // Cursor regression means backend state reset (e.g. process restart); do one full re-sync now.
-        afterSeqRef.current = null
-        seenRef.current = new Set()
-        const fullSyncResult = await fetchTraces(base, config.fetchLimit)
-        if (!mountedRef.current || refreshEpoch !== refreshEpochRef.current) return
-        incoming = fullSyncResult.traces
-        nextAfterSeq = fullSyncResult.nextAfterSeq
+      if (!silent) setState((prev) => ({ ...prev, refreshing: true, error: null }))
+
+      try {
+        const base = baseRef.current
+
+        // 1. Fetch entrypoints
+        const nextEntrypoints = await fetchEntrypoints(base)
+        if (!isCurrent()) return
+        setState((prev) =>
+          sameStrings(prev.entrypoints, nextEntrypoints) ? prev : { ...prev, entrypoints: nextEntrypoints },
+        )
+
+        /**
+         * 2. Fetch traces via cursor-based incremental polling.
+         *
+         * The backend emits a monotonic cursor (`X-Hayhooks-Trace-Cursor`).
+         * We pass `afterSeq` so the server only returns traces created since
+         * our last known cursor. If the cursor ever *regresses* (process
+         * restart), we fall back to a full re-sync.
+         */
+        const previousAfterSeq = afterSeqRef.current
+        let result = await fetchTraces(base, config.fetchLimit, undefined, previousAfterSeq ?? undefined)
+        if (!isCurrent()) return
+
+        let { traces: incoming, nextAfterSeq } = result
+
+        if (nextAfterSeq !== null && previousAfterSeq !== null && nextAfterSeq < previousAfterSeq) {
+          afterSeqRef.current = null
+          seenRef.current = new Set()
+          result = await fetchTraces(base, config.fetchLimit)
+          if (!isCurrent()) return
+          incoming = result.traces
+          nextAfterSeq = result.nextAfterSeq
+        }
+
+        if (nextAfterSeq !== null) afterSeqRef.current = nextAfterSeq
+
+        // 3. Track freshness
+        const now = Date.now()
+        const incomingIds = incoming.map((t) => t.trace_id)
+        const freshUntil = computeFreshUntil(freshUntilRef.current, incomingIds, seenRef.current, now, config.freshMs)
+        for (const id of incomingIds) seenRef.current.add(id)
+
+        // 4. Merge incoming traces into the visible list
+        const currentTraces = tracesRef.current
+        const capped = currentTraces.length > config.listCap
+          ? currentTraces.slice(0, config.listCap)
+          : currentTraces
+
+        const nextTraces = incoming.length === 0
+          ? capped
+          : mergeTraces(capped, incoming, config.listCap)
+
+        if (incoming.length === 0 && capped !== currentTraces) {
+          seenRef.current = new Set(capped.map((t) => t.trace_id))
+        }
+        if (nextTraces !== capped) {
+          seenRef.current = new Set(nextTraces.map((t) => t.trace_id))
+        }
+
+        setState((prev) => ({
+          ...prev,
+          traces: nextTraces,
+          freshUntil,
+          updatedAt: now,
+          error: null,
+        }))
+
+        if (!isCurrent()) return
+      } catch (e) {
+        if (isCurrent()) {
+          setState((prev) => ({
+            ...prev,
+            error: e instanceof Error ? e.message : "Unknown error",
+          }))
+        }
+      } finally {
+        inFlightRef.current = false
+        if (!silent) setState((prev) => ({ ...prev, refreshing: false }))
       }
-      if (nextAfterSeq !== null) {
-        afterSeqRef.current = nextAfterSeq
+
+      function isCurrent(): boolean {
+        return mountedRef.current && epoch === epochRef.current
       }
-
-      // Step 3: Track which traces are "fresh" (newly seen)
-      const now = Date.now()
-      const incomingIds = incoming.map((t) => t.trace_id)
-      const freshIds = incomingIds.filter((id) => !seenRef.current.has(id))
-      for (const id of incomingIds) seenRef.current.add(id)
-
-      setFreshUntil((prev) => {
-        let changed = false
-        const next: Record<string, number> = {}
-        for (const [k, v] of Object.entries(prev)) {
-          if (v > now) {
-            next[k] = v
-          } else {
-            changed = true
-          }
-        }
-        if (freshIds.length === 0) return changed ? next : prev
-        const freshUntilMs = now + config.freshMs
-        for (const id of freshIds) {
-          if (next[id] !== freshUntilMs) changed = true
-          next[id] = freshUntilMs
-        }
-        return changed ? next : prev
-      })
-
-      // Step 4: Merge incoming into existing, capped to listCap
-      setTraces((prev) => {
-        const base = prev.length > config.listCap ? prev.slice(0, config.listCap) : prev
-        if (incoming.length === 0) {
-          if (base !== prev) {
-            seenRef.current = new Set(base.map((trace) => trace.trace_id))
-          }
-          return base
-        }
-        const next = mergeTraces(base, incoming, config.listCap)
-        if (next.length === base.length && next.every((trace, index) => trace === base[index])) {
-          return base
-        }
-        seenRef.current = new Set(next.map((t) => t.trace_id))
-        return next
-      })
-
-      if (!mountedRef.current || refreshEpoch !== refreshEpochRef.current) return
-      setUpdatedAt(Date.now())
-      setError(null)
-    } catch (e) {
-      if (mountedRef.current && refreshEpoch === refreshEpochRef.current) {
-        setError(e instanceof Error ? e.message : "Unknown error")
-      }
-    } finally {
-      refreshInFlightRef.current = false
-      if (!silent && mountedRef.current) setRefreshing(false)
-    }
-  }, [config.fetchLimit, config.freshMs, config.listCap])
+    },
+    [config.fetchLimit, config.freshMs, config.listCap],
+  )
 
   const clear = useCallback(async () => {
-    setClearing(true)
-    setError(null)
-    refreshEpochRef.current += 1
+    setState((prev) => ({ ...prev, clearing: true }))
+    epochRef.current += 1
 
     try {
       await apiClearTraces(baseRef.current)
       if (!mountedRef.current) return
-      const now = Date.now()
-      setTraces([])
-      setFreshUntil({})
       seenRef.current = new Set()
       afterSeqRef.current = null
-      setUpdatedAt(now)
+      setState((prev) => ({
+        ...prev,
+        traces: [],
+        freshUntil: {},
+        updatedAt: Date.now(),
+        error: null,
+        clearing: false,
+      }))
     } catch (e) {
       if (mountedRef.current) {
-        setError(e instanceof Error ? e.message : "Clear failed")
-      }
-    } finally {
-      if (mountedRef.current) {
-        setClearing(false)
+        setState((prev) => ({
+          ...prev,
+          error: e instanceof Error ? e.message : "Clear failed",
+          clearing: false,
+        }))
       }
     }
   }, [])
 
-  // Initial fetch + polling
+  /**
+   * Initial fetch fires immediately (via setTimeout 0), then repeats on the
+   * configured interval. Both use "silent" mode so the UI doesn't flash the
+   * loading indicator on background polls.
+   */
   useEffect(() => {
     const timeout = window.setTimeout(() => void refresh({ silent: true }), 0)
     const interval = window.setInterval(() => void refresh({ silent: true }), config.pollMs)
@@ -169,5 +239,15 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
     }
   }, [config.pollMs, refresh])
 
-  return { entrypoints, traces, freshUntil, updatedAt, error, refreshing, clearing, refresh, clear }
+  return {
+    entrypoints: state.entrypoints,
+    traces: state.traces,
+    freshUntil: state.freshUntil,
+    updatedAt: state.updatedAt,
+    error: state.error,
+    refreshing: state.refreshing,
+    clearing: state.clearing,
+    refresh,
+    clear,
+  }
 }

@@ -1,10 +1,8 @@
-import { DEFAULT_DASHBOARD_CONFIG } from "./constants"
-import type {
-  DashboardConfig,
-  DashboardConfigResponse,
-  TraceTag,
-  TraceSummary,
-} from "./types"
+import type { TraceTag, TraceSummary } from "./types"
+import type { DashboardConfig } from "./types"
+import { normalizeDashboardConfig } from "./utils/config"
+
+export { normalizeDashboardConfig }
 
 export type FetchTracesResult = {
   traces: TraceSummary[]
@@ -78,42 +76,6 @@ export function resolveApiBase(): string {
 
   const p = window.location.pathname.replace(/\/index\.html$/, "").replace(/\/$/, "")
   return `${p}/api`
-}
-
-export function normalizeDashboardConfig(raw: unknown): DashboardConfig {
-  if (!raw || typeof raw !== "object") return DEFAULT_DASHBOARD_CONFIG
-
-  const config = raw as Partial<DashboardConfigResponse>
-  const listCap =
-    typeof config.list_cap === "number" && Number.isFinite(config.list_cap) && config.list_cap > 0
-      ? Math.round(config.list_cap)
-      : DEFAULT_DASHBOARD_CONFIG.listCap
-  const fetchLimitCandidate =
-    typeof config.fetch_limit === "number" && Number.isFinite(config.fetch_limit) && config.fetch_limit > 0
-      ? Math.round(config.fetch_limit)
-      : DEFAULT_DASHBOARD_CONFIG.fetchLimit
-  const pollMs =
-    typeof config.poll_ms === "number" && Number.isFinite(config.poll_ms) && config.poll_ms >= 250
-      ? Math.round(config.poll_ms)
-      : DEFAULT_DASHBOARD_CONFIG.pollMs
-  const freshMs =
-    typeof config.fresh_ms === "number" && Number.isFinite(config.fresh_ms) && config.fresh_ms >= 0
-      ? Math.round(config.fresh_ms)
-      : DEFAULT_DASHBOARD_CONFIG.freshMs
-  const slowComponentMinDurationMs =
-    typeof config.slow_component_min_duration_ms === "number"
-      && Number.isFinite(config.slow_component_min_duration_ms)
-      && config.slow_component_min_duration_ms > 0
-      ? Math.round(config.slow_component_min_duration_ms)
-      : DEFAULT_DASHBOARD_CONFIG.slowComponentMinDurationMs
-
-  return {
-    pollMs,
-    listCap,
-    fetchLimit: Math.min(fetchLimitCandidate, listCap),
-    freshMs,
-    slowComponentMinDurationMs,
-  }
 }
 
 export async function fetchDashboardConfig(base: string): Promise<DashboardConfig> {

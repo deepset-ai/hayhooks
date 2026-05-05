@@ -13,6 +13,7 @@ This module centralizes:
 from __future__ import annotations
 
 import os
+import traceback
 from collections.abc import AsyncGenerator, Generator, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token, copy_context
@@ -55,6 +56,8 @@ SPAN_MCP_RUN_PIPELINE_TOOL = "hayhooks.mcp.run_pipeline_tool"
 
 _TAG_SUCCESS = "hayhooks.success"
 _TAG_ERROR_TYPE = "hayhooks.error.type"
+_TAG_ERROR_MESSAGE = "hayhooks.error.message"
+_TAG_ERROR_STACK = "hayhooks.error.stack"
 _TAG_ELAPSED_MS = "hayhooks.elapsed_ms"
 _TAG_HTTP_STATUS = "hayhooks.http.status_code"
 _TAG_RESPONSE_STREAMING = "hayhooks.response.streaming"
@@ -514,6 +517,9 @@ def _mark_success(span: Any) -> None:
 def _mark_failure(span: Any, exc: BaseException) -> None:
     span.set_tag(_TAG_SUCCESS, value=False)
     span.set_tag(_TAG_ERROR_TYPE, type(exc).__name__)
+    span.set_tag(_TAG_ERROR_MESSAGE, str(exc))
+    if settings.show_tracebacks:
+        span.set_tag(_TAG_ERROR_STACK, "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
 
 
 def _mark_http_exception(span: Any, exc: HTTPException) -> None:
@@ -610,10 +616,23 @@ class _OperationTrace:
                     _TAG_SUCCESS: False,
                     _TAG_HTTP_STATUS: exc.status_code,
                     _TAG_ERROR_TYPE: type(exc).__name__,
+                    _TAG_ERROR_MESSAGE: str(exc),
                 }
+                if settings.show_tracebacks:
+                    live_tags[_TAG_ERROR_STACK] = "".join(
+                        traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    )
             else:
                 _mark_failure(span, exc)
-                live_tags = {_TAG_SUCCESS: False, _TAG_ERROR_TYPE: type(exc).__name__}
+                live_tags = {
+                    _TAG_SUCCESS: False,
+                    _TAG_ERROR_TYPE: type(exc).__name__,
+                    _TAG_ERROR_MESSAGE: str(exc),
+                }
+                if settings.show_tracebacks:
+                    live_tags[_TAG_ERROR_STACK] = "".join(
+                        traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    )
         finally:
             elapsed_ms = int((monotonic() - self._started) * 1000)
             span.set_tag(_TAG_ELAPSED_MS, elapsed_ms)
@@ -710,6 +729,8 @@ def trace_operation(
     On exit the span is tagged with:
       - ``hayhooks.success`` (``bool``)
       - ``hayhooks.error.type`` (only on failure)
+      - ``hayhooks.error.message`` (only on failure)
+      - ``hayhooks.error.stack`` (only on failure, when ``show_tracebacks`` is enabled)
       - ``hayhooks.http.status_code`` (only for :class:`HTTPException`)
       - ``hayhooks.elapsed_ms`` (wall-clock duration)
 

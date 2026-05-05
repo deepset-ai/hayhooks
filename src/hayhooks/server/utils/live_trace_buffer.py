@@ -21,6 +21,8 @@ _TRACE_TAG_PRIORITY = (
     "hayhooks.response.streaming",
     "hayhooks.success",
     "hayhooks.error.type",
+    "hayhooks.error.message",
+    "hayhooks.error.stack",
     "hayhooks.http.status_code",
 )
 _IGNORED_TRACE_TAG_KEYS = {"hayhooks.elapsed_ms"}
