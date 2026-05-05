@@ -226,7 +226,7 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 
 ### HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS
 
-- Default: `false`
+- Default: `true`
 - Description: Include Haystack tracer spans in the dashboard live buffer in addition to Hayhooks operation spans.
 - Notes:
   - Works in local capture mode even when no external tracing backend is configured.

@@ -116,7 +116,7 @@ class AppSettings(BaseSettings):
     dashboard_trace_default_limit: int = Field(default=25, gt=0, le=200)
     dashboard_trace_max_limit: int = Field(default=100, gt=0, le=500)
     dashboard_trace_buffer_capacity: int = Field(default=200, gt=0, le=10_000)
-    dashboard_trace_include_haystack_spans: bool = False
+    dashboard_trace_include_haystack_spans: bool = True
     dashboard_ui_poll_ms: int = Field(default=2500, ge=250, le=60_000)
     dashboard_ui_list_cap: int = Field(default=100, gt=0, le=500)
     dashboard_ui_fetch_limit: int = Field(default=50, gt=0, le=500)
