@@ -619,9 +619,7 @@ class _OperationTrace:
                     _TAG_ERROR_MESSAGE: str(exc),
                 }
                 if settings.show_tracebacks:
-                    live_tags[_TAG_ERROR_STACK] = "".join(
-                        traceback.format_exception(type(exc), exc, exc.__traceback__)
-                    )
+                    live_tags[_TAG_ERROR_STACK] = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             else:
                 _mark_failure(span, exc)
                 live_tags = {
@@ -630,9 +628,7 @@ class _OperationTrace:
                     _TAG_ERROR_MESSAGE: str(exc),
                 }
                 if settings.show_tracebacks:
-                    live_tags[_TAG_ERROR_STACK] = "".join(
-                        traceback.format_exception(type(exc), exc, exc.__traceback__)
-                    )
+                    live_tags[_TAG_ERROR_STACK] = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         finally:
             elapsed_ms = int((monotonic() - self._started) * 1000)
             span.set_tag(_TAG_ELAPSED_MS, elapsed_ms)
