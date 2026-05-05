@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 from collections.abc import AsyncGenerator, Generator
 from queue import Queue
@@ -91,17 +92,16 @@ def test_sync_pipeline_sync_streaming_callback_streaming_generator(sync_pipeline
     reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
 )
 @pytest.mark.integration
-async def test_sync_pipeline_async_streaming_generator_rejects_async_callback(
+async def test_sync_pipeline_async_streaming_generator_streams(
     sync_pipeline_with_sync_streaming_callback_support,
 ):
     """
-    Test that sync Pipeline with OpenAIChatGenerator rejects async streaming callbacks.
+    Test that sync Pipeline with OpenAIChatGenerator works with async_streaming_generator.
 
-    When using async_streaming_generator with a sync Pipeline, the component's run() method
-    validates that the callback is not a coroutine. This test verifies that validation works.
+    When using async_streaming_generator with a sync Pipeline, the generator should
+    automatically detect the sync pipeline and use sync callbacks bridged to the async queue,
+    so the streaming chunks are emitted correctly without "coroutine callback" errors.
     """
-    from haystack.core.errors import PipelineRuntimeError
-
     pipeline = sync_pipeline_with_sync_streaming_callback_support
 
     async_generator = async_streaming_generator(
@@ -111,8 +111,13 @@ async def test_sync_pipeline_async_streaming_generator_rejects_async_callback(
         },
     )
 
-    with pytest.raises(PipelineRuntimeError, match="The runtime callback cannot be a coroutine"):
-        _ = [chunk async for chunk in async_generator]
+    chunks = [chunk async for chunk in async_generator]
+    assert len(chunks) > 0
+
+    streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
+    assert len(streaming_chunks) > 0
+    assert isinstance(streaming_chunks[0], StreamingChunk)
+    assert any("Yes" in chunk.content for chunk in streaming_chunks)
 
 
 @pytest.mark.skipif(
@@ -1652,3 +1657,55 @@ async def test_async_streaming_generator_external_queue_interleaved(mocker, mock
     assert chunks[0] == mock_chunks[0]
     assert chunks[1] == {"type": "interleaved", "data": "added during run"}
     assert chunks[2] == mock_chunks[1]
+
+
+@pytest.mark.asyncio
+async def test_sync_pipeline_with_agent_like_streaming(mocker):
+    """
+    Regression test: sync Pipeline with a component that rejects coroutine callbacks.
+
+    When async_streaming_generator is used with a sync Pipeline containing a component
+    that validates the streaming_callback is not a coroutine (like Haystack Agent),
+    the generator should automatically use sync callbacks bridged to the async queue,
+    so streaming chunks are emitted without "The runtime callback cannot be a coroutine" errors.
+    """
+
+    class AgentLikeComponent:
+        """Mock component that rejects coroutine streaming callbacks (like Agent)."""
+
+        def __init__(self, has_async_run=True):
+            if has_async_run:
+                self.run_async = lambda: None
+
+        def run(self, messages=None, streaming_callback=None, **kwargs):
+            if streaming_callback is not None and inspect.iscoroutinefunction(streaming_callback):
+                raise ValueError("The runtime callback cannot be a coroutine.")
+            if streaming_callback:
+                streaming_callback(StreamingChunk(content="agent ", index=0))
+                streaming_callback(StreamingChunk(content="response", index=1))
+            return {"response": "ok"}
+
+    component = AgentLikeComponent(has_async_run=True)
+
+    pipeline = mocker.Mock(spec=Pipeline)
+    pipeline._spec_class = Pipeline
+    pipeline.walk.return_value = [("agent", component)]
+
+    def mock_run(data, **kwargs):
+        callback = data.get("agent", {}).get("streaming_callback")
+        assert callback is not None, "streaming_callback should be set"
+        assert not inspect.iscoroutinefunction(callback), "callback must be sync, not a coroutine"
+        if callback:
+            callback(StreamingChunk(content="agent ", index=0))
+            callback(StreamingChunk(content="response", index=1))
+        return {"agent": {"response": "ok"}}
+
+    pipeline.run.side_effect = mock_run
+
+    generator = async_streaming_generator(pipeline, pipeline_run_args={})
+    chunks = [chunk async for chunk in generator]
+
+    streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
+    assert len(streaming_chunks) == 2
+    assert streaming_chunks[0].content == "agent "
+    assert streaming_chunks[1].content == "response"
