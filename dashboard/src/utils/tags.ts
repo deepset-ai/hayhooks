@@ -2,11 +2,13 @@ import { TAG_LABELS, TAG_PRIORITY } from "../constants"
 import type { TraceTag } from "../types"
 
 const UNKNOWN_TAG_PRIORITY = Number.MAX_SAFE_INTEGER
-const ERROR_TAG_KEY = "hayhooks.error.type"
-const SUCCESS_TAG_KEY = "hayhooks.success"
+export const SUCCESS_TAG_KEY = "hayhooks.success"
+export const ERROR_TYPE_TAG_KEY = "hayhooks.error.type"
+export const ERROR_MESSAGE_TAG_KEY = "hayhooks.error.message"
+export const ERROR_STACK_TAG_KEY = "hayhooks.error.stack"
 const TAG_PRIORITY_INDEX = new Map(TAG_PRIORITY.map((key, index) => [key, index]))
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
@@ -51,6 +53,6 @@ export function tagLabel(key: string): string {
 }
 
 export function isDestructiveTag(tag: TraceTag): boolean {
-  if (tag.key === ERROR_TAG_KEY) return true
+  if (tag.key === ERROR_TYPE_TAG_KEY) return true
   return tag.key === SUCCESS_TAG_KEY && tag.value === "false"
 }

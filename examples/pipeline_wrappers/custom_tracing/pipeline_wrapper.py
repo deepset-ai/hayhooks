@@ -11,9 +11,9 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-import httpx
 from fastapi import HTTPException, UploadFile
 from haystack.core.component import component
+from openai import OpenAI
 
 from hayhooks import BasePipelineWrapper
 from hayhooks.server.tracing import build_trace_tags, trace_operation
@@ -96,30 +96,20 @@ class PipelineBoundClassifier:
 
     @staticmethod
     def _call_openai(*, prompt: str, model: str, api_key: str) -> str:
-        payload = {
-            "model": model,
-            "temperature": 0.0,
-            "messages": [{"role": "user", "content": prompt}],
-        }
         try:
-            with httpx.Client(timeout=90) as client:
-                response = client.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    json=payload,
-                    headers={
-                        "authorization": f"Bearer {api_key}",
-                        "content-type": "application/json",
-                    },
-                )
-                response.raise_for_status()
-                parsed_body = response.json()
-        except httpx.HTTPError as exc:
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model=model,
+                temperature=0.0,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as exc:
             raise HTTPException(status_code=502, detail=f"OpenAI API request failed: {exc}") from exc
 
-        choices = parsed_body.get("choices", [])
+        choices = response.choices
         if not choices:
             return ""
-        return str(choices[0].get("message", {}).get("content", "")).strip()
+        return (choices[0].message.content or "").strip()
 
 
 class PipelineWrapper(BasePipelineWrapper):

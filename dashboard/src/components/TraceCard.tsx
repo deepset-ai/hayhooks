@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Copy, Layers, Tag, Timer } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -6,16 +6,12 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { KIND_STYLE, SUMMARY_TAG_KEYS } from "../constants"
+import { KIND_STYLE, SUMMARY_TAG_KEYS, DEFAULT_DASHBOARD_CONFIG } from "../constants"
 import type { TraceSummary } from "../types"
 import { fmtDur, fmtTime, truncate } from "../utils/formatting"
-import { isDestructiveTag, sortTags, tagLabel } from "../utils/tags"
+import { isDestructiveTag, sortTags, tagLabel, ERROR_TYPE_TAG_KEY, ERROR_MESSAGE_TAG_KEY, ERROR_STACK_TAG_KEY } from "../utils/tags"
 import { collectAllSpans, isFailed, isOngoing, slowestComponentRun, spanTagValue, traceKind } from "../utils/traces"
 import { SpanRow } from "./SpanRow"
-
-const ERROR_TYPE_KEY = "hayhooks.error.type"
-const ERROR_MESSAGE_KEY = "hayhooks.error.message"
-const ERROR_STACK_KEY = "hayhooks.error.stack"
 
 type TraceCardProps = {
   trace: TraceSummary
@@ -26,12 +22,19 @@ type TraceCardProps = {
 export const TraceCard = memo(function TraceCard({
   trace,
   isFresh,
-  slowComponentMinDurationMs = 1000,
+  slowComponentMinDurationMs = DEFAULT_DASHBOARD_CONFIG.slowComponentMinDurationMs,
 }: TraceCardProps) {
   const [open, setOpen] = useState(false)
   const [selectedSpanId, setSelectedSpanId] = useState(trace.root_span.span_id)
   const [stackExpanded, setStackExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
   const summaryTags = useMemo(
     () => sortTags((trace.tags ?? []).filter((tag) => SUMMARY_TAG_KEYS.has(tag.key))),
     [trace.tags],
@@ -54,19 +57,19 @@ export const TraceCard = memo(function TraceCard({
   const freshHighlightTone = failed ? "failed" : kind
 
   const errorType = useMemo(
-    () => (failed ? spanTagValue(trace.root_span, ERROR_TYPE_KEY) : undefined),
+    () => (failed ? spanTagValue(trace.root_span, ERROR_TYPE_TAG_KEY) : undefined),
     [failed, trace.root_span],
   )
   const errorMessage = useMemo(() => {
     if (!failed) return undefined
-    const tag = (trace.tags ?? []).find((t) => t.key === ERROR_MESSAGE_KEY)
-      ?? (trace.root_span.tags ?? []).find((t) => t.key === ERROR_MESSAGE_KEY)
+    const tag = (trace.tags ?? []).find((t) => t.key === ERROR_MESSAGE_TAG_KEY)
+      ?? (trace.root_span.tags ?? []).find((t) => t.key === ERROR_MESSAGE_TAG_KEY)
     return tag?.value
   }, [failed, trace.tags, trace.root_span])
   const errorStack = useMemo(() => {
     if (!failed) return undefined
-    const tag = (trace.tags ?? []).find((t) => t.key === ERROR_STACK_KEY)
-      ?? (trace.root_span.tags ?? []).find((t) => t.key === ERROR_STACK_KEY)
+    const tag = (trace.tags ?? []).find((t) => t.key === ERROR_STACK_TAG_KEY)
+      ?? (trace.root_span.tags ?? []).find((t) => t.key === ERROR_STACK_TAG_KEY)
     return tag?.value
   }, [failed, trace.tags, trace.root_span])
 
@@ -172,10 +175,15 @@ export const TraceCard = memo(function TraceCard({
                   <button
                     type="button"
                     className="shrink-0 rounded p-1 text-destructive/40 hover:text-destructive/80 hover:bg-destructive/10 transition-colors"
-                    onClick={() => {
-                      navigator.clipboard.writeText(errorStack)
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 1500)
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(errorStack)
+                        setCopied(true)
+                        if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+                        copyTimerRef.current = setTimeout(() => setCopied(false), 1500)
+                      } catch {
+                        // clipboard write denied — ignore silently
+                      }
                     }}
                     aria-label="Copy stack trace"
                   >

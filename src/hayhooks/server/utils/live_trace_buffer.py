@@ -256,6 +256,7 @@ class _LiveTraceBuffer:
                     trace_state["entrypoint"] = str(entrypoint)
             trace_state["updated_at_ms"] = completed_at_ms
             trace_state["cursor_seq"] = self._issue_cursor_seq()
+            self._evict_old_traces()
 
     def get_recent_traces(
         self,

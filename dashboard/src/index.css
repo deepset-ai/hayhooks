@@ -213,6 +213,16 @@
   --glow-color-soft: rgb(20 184 166 / 20%);
 }
 
+.trace-card-fresh-run {
+  --glow-color: var(--haystack-blue);
+  --glow-color-soft: rgb(46 108 223 / 20%);
+}
+
+.trace-card-fresh-other {
+  --glow-color: #94a3b8;
+  --glow-color-soft: rgb(148 163 184 / 18%);
+}
+
 .trace-card-fresh-failed {
   --glow-color: #dc2626;
   --glow-color-soft: rgb(220 38 38 / 22%);

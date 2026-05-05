@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { Layers } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { TraceSpanNode } from "../types"
@@ -15,7 +16,7 @@ type SpanRowProps = {
   onSelectSpan: (spanId: string) => void
 }
 
-export function SpanRow({
+export const SpanRow = memo(function SpanRow({
   span,
   depth,
   traceStart,
@@ -86,4 +87,4 @@ export function SpanRow({
       ))}
     </div>
   )
-}
+})

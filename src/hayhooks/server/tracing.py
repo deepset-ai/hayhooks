@@ -119,8 +119,13 @@ def _record_live_span_outcome(
     else:
         tags[_TAG_SUCCESS] = False
         tags[_TAG_ERROR_TYPE] = type(exc).__name__
+        tags[_TAG_ERROR_MESSAGE] = str(exc)
         if isinstance(exc, HTTPException):
             tags[_TAG_HTTP_STATUS] = exc.status_code
+        if settings.show_tracebacks:
+            tags[_TAG_ERROR_STACK] = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
 
     record_live_span_finish(
         trace_id=trace_id,
@@ -529,7 +534,7 @@ def _mark_http_exception(span: Any, exc: HTTPException) -> None:
     Domain-operation spans treat every HTTPException as a failure while still
     recording the HTTP status code for debugging and transport correlation.
     """
-    span.set_tag(_TAG_HTTP_STATUS, exc.status_code)
+    span.set_tag(_TAG_HTTP_STATUS, value=exc.status_code)
     _mark_failure(span, exc)
 
 

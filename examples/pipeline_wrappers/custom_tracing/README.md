@@ -5,7 +5,7 @@ direct OpenAI API call, and traces each stage in the dashboard.
 
 ## What this demonstrates
 
-- A custom Haystack component (`PipelineBoundClassifier`) that performs direct LLM classification.
+- A custom Haystack component (`PipelineBoundClassifier`) that performs direct LLM classification via the OpenAI SDK.
 - Prompt template loaded from a separate file (`classification_prompt_template.txt`).
 - Custom tracing spans around:
   - input resolution (inline YAML vs uploaded files)
@@ -22,19 +22,18 @@ README.md
 
 ## Setup
 
-Install tracing extras and set OpenAI credentials:
+Install dependencies and set OpenAI credentials:
 
 ```bash
-pip install "hayhooks[tracing]"
+pip install "hayhooks[tracing]" openai
 export OPENAI_API_KEY=your_key_here
 # optional override
 export OPENAI_MODEL=gpt-5.4-mini
 ```
 
-Enable dashboard and Haystack span mirroring:
+Enable the dashboard (Haystack span mirroring is on by default):
 
 ```bash
-export HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=true
 hayhooks run --with-tracing-dashboard
 ```
 

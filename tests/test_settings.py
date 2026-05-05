@@ -182,7 +182,7 @@ def test_access_log_excluded_path_prefixes_env_var(monkeypatch):
 
 def test_dashboard_trace_include_haystack_spans_default():
     settings = AppSettings()
-    assert settings.dashboard_trace_include_haystack_spans is False
+    assert settings.dashboard_trace_include_haystack_spans is True
 
 
 def test_dashboard_trace_include_haystack_spans_env_var(monkeypatch):

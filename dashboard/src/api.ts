@@ -1,16 +1,13 @@
 import type { TraceTag, TraceSummary } from "./types"
 import type { DashboardConfig } from "./types"
 import { normalizeDashboardConfig } from "./utils/config"
+import { isRecord } from "./utils/tags"
 
 export { normalizeDashboardConfig }
 
 export type FetchTracesResult = {
   traces: TraceSummary[]
   nextAfterSeq: number | null
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
 }
 
 function isFiniteNumber(value: unknown): value is number {

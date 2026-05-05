@@ -1,7 +1,6 @@
 import type { TraceKind, TraceSpanNode, TraceSummary } from "../types"
-import { isDestructiveTag, safeTags } from "./tags"
+import { isDestructiveTag, safeTags, SUCCESS_TAG_KEY } from "./tags"
 
-const SUCCESS_TAG_KEY = "hayhooks.success"
 const HAYSTACK_COMPONENT_NAME_TAG_KEY = "haystack.component.name"
 const HAYSTACK_COMPONENT_RUN_SPAN_NAME = "haystack.component.run"
 const TRACE_KIND_RULES: Array<{ includes: string; kind: TraceKind }> = [
