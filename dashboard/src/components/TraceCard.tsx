@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Copy, Layers, MousePointerClick, Tag, Timer, Zap } from "lucide-react"
+import { memo, useMemo, useState } from "react"
+import { Activity, AlertTriangle, Check, ChevronRight, Clock, Copy, Layers, MousePointerClick, Tag, Timer, Zap } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -8,9 +8,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils"
 import { KIND_STYLE, SUMMARY_TAG_KEYS, DEFAULT_DASHBOARD_CONFIG } from "../constants"
 import type { TraceSummary } from "../types"
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard"
 import { fmtDur, fmtTime, truncate } from "../utils/formatting"
 import { isDestructiveTag, sortTags, tagLabel, ERROR_TYPE_TAG_KEY, ERROR_MESSAGE_TAG_KEY, ERROR_STACK_TAG_KEY } from "../utils/tags"
 import { collectAllSpans, isFailed, isOngoing, isStreaming, slowestComponentRun, spanTagValue, traceKind } from "../utils/traces"
+import { ErrorBlock } from "./ErrorBlock"
 import { SpanRow } from "./SpanRow"
 
 type TraceCardProps = {
@@ -26,29 +28,7 @@ export const TraceCard = memo(function TraceCard({
 }: TraceCardProps) {
   const [open, setOpen] = useState(false)
   const [selectedSpanId, setSelectedSpanId] = useState(trace.root_span.span_id)
-  const [stackExpanded, setStackExpanded] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [traceIdCopied, setTraceIdCopied] = useState(false)
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
-  const traceIdCopyTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
-      if (traceIdCopyTimerRef.current !== null) clearTimeout(traceIdCopyTimerRef.current)
-    }
-  }, [])
-
-  const handleCopyTraceId = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(trace.trace_id)
-      setTraceIdCopied(true)
-      if (traceIdCopyTimerRef.current !== null) clearTimeout(traceIdCopyTimerRef.current)
-      traceIdCopyTimerRef.current = setTimeout(() => setTraceIdCopied(false), 1500)
-    } catch {
-      // clipboard write denied — ignore silently
-    }
-  }, [trace.trace_id])
+  const traceIdCopy = useCopyToClipboard()
   const summaryTags = useMemo(
     () => sortTags((trace.tags ?? []).filter((tag) => SUMMARY_TAG_KEYS.has(tag.key))),
     [trace.tags],
@@ -187,60 +167,7 @@ export const TraceCard = memo(function TraceCard({
           <Separator />
 
           {failed && (errorType || errorMessage) && (
-            <div className="mx-4 mt-3 space-y-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-                <div className="min-w-0 flex-1 text-xs">
-                  {errorType && (
-                    <span className="font-semibold text-destructive">{errorType}</span>
-                  )}
-                  {errorType && errorMessage && <span className="text-destructive/70">: </span>}
-                  {errorMessage && (
-                    <span className="text-destructive/80">{errorMessage}</span>
-                  )}
-                </div>
-                {errorStack && (
-                  <button
-                    type="button"
-                    className="shrink-0 rounded p-1 text-destructive/40 hover:text-destructive/80 hover:bg-destructive/10 transition-colors"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(errorStack)
-                        setCopied(true)
-                        if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
-                        copyTimerRef.current = setTimeout(() => setCopied(false), 1500)
-                      } catch {
-                        // clipboard write denied — ignore silently
-                      }
-                    }}
-                    aria-label="Copy stack trace"
-                  >
-                    {copied
-                      ? <Check className="size-3" />
-                      : <Copy className="size-3" />}
-                  </button>
-                )}
-              </div>
-              {errorStack && (
-                <button
-                  type="button"
-                  onClick={() => setStackExpanded((prev) => !prev)}
-                  className="flex items-center gap-1 text-[11px] text-destructive/60 hover:text-destructive/90 transition-colors"
-                >
-                  {stackExpanded ? (
-                    <ChevronDown className="size-3" />
-                  ) : (
-                    <ChevronRight className="size-3" />
-                  )}
-                  {stackExpanded ? "Hide stack trace" : "Show stack trace"}
-                </button>
-              )}
-              {errorStack && stackExpanded && (
-                <pre className="overflow-auto rounded bg-destructive/10 px-2.5 py-2 font-mono text-[10px] leading-relaxed text-destructive/80 whitespace-pre-wrap max-h-64">
-                  {errorStack}
-                </pre>
-              )}
-            </div>
+            <ErrorBlock errorType={errorType} errorMessage={errorMessage} errorStack={errorStack} />
           )}
 
           <div className="space-y-3 px-4 py-3">
@@ -248,13 +175,13 @@ export const TraceCard = memo(function TraceCard({
               <span className="font-medium">Trace</span>
               <button
                 type="button"
-                onClick={handleCopyTraceId}
-                title={traceIdCopied ? "Copied" : "Click to copy trace ID"}
-                aria-label={traceIdCopied ? "Trace ID copied" : "Copy trace ID"}
+                onClick={() => traceIdCopy.copy(trace.trace_id)}
+                title={traceIdCopy.copied ? "Copied" : "Click to copy trace ID"}
+                aria-label={traceIdCopy.copied ? "Trace ID copied" : "Copy trace ID"}
                 className="group/trace-id inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
               >
                 <span>{trace.trace_id}</span>
-                {traceIdCopied
+                {traceIdCopy.copied
                   ? <Check className="size-3 text-haystack-green" />
                   : <Copy className="size-3 opacity-40 group-hover/trace-id:opacity-80 transition-opacity" />}
               </button>
