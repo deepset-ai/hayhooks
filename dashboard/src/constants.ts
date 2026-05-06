@@ -6,6 +6,7 @@ export const DEFAULT_DASHBOARD_CONFIG: DashboardConfig = {
   fetchLimit: 50,
   freshMs: 6000,
   slowComponentMinDurationMs: 1000,
+  apiBase: "",
 }
 
 export const TAG_PRIORITY = [

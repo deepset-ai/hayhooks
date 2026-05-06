@@ -123,6 +123,7 @@ def test_run_command_with_tracing_dashboard_flag(monkeypatch, tmp_path):
 
     monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
     monkeypatch.setattr(base_module, "_prepare_tracing_dashboard_assets", fake_prepare_tracing_dashboard_assets)
+    monkeypatch.setattr(base_module, "_dashboard_assets_available", lambda _dir: False)
 
     result = runner.invoke(
         hayhooks_cli,

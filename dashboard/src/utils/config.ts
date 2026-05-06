@@ -28,6 +28,7 @@ export function normalizeDashboardConfig(raw: unknown): DashboardConfig {
   const pollMs =          parseConfigInt(config, "poll_ms",          DEFAULT_DASHBOARD_CONFIG.pollMs, 250)
   const freshMs =         parseConfigInt(config, "fresh_ms",         DEFAULT_DASHBOARD_CONFIG.freshMs, 0)
   const slowComponentMs = parseConfigInt(config, "slow_component_min_duration_ms", DEFAULT_DASHBOARD_CONFIG.slowComponentMinDurationMs, 1)
+  const apiBase =         typeof config.api_base === "string" ? config.api_base : DEFAULT_DASHBOARD_CONFIG.apiBase
 
   return {
     pollMs,
@@ -35,5 +36,6 @@ export function normalizeDashboardConfig(raw: unknown): DashboardConfig {
     fetchLimit: Math.min(fetchLimit, listCap),
     freshMs,
     slowComponentMinDurationMs: slowComponentMs,
+    apiBase,
   }
 }

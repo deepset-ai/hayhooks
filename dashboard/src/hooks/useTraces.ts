@@ -86,7 +86,7 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
   const epochRef = useRef(0)
   const inFlightRef = useRef(false)
   const mountedRef = useRef(true)
-  const baseRef = useRef(resolveApiBase())
+  const baseRef = useRef(config.apiBase || resolveApiBase())
   const tracesRef = useRef<TraceSummary[]>([])
   const freshUntilRef = useRef<Record<string, number>>({})
 
@@ -133,7 +133,7 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
         let result = await fetchTraces(base, config.fetchLimit, undefined, previousAfterSeq ?? undefined)
         if (!isCurrent()) return
 
-        let { traces: incoming, nextAfterSeq } = result
+        let { traces: incoming, nextAfterSeq, hasMore } = result
 
         if (nextAfterSeq !== null && previousAfterSeq !== null && nextAfterSeq < previousAfterSeq) {
           afterSeqRef.current = null
@@ -142,9 +142,19 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
           if (!isCurrent()) return
           incoming = result.traces
           nextAfterSeq = result.nextAfterSeq
+          hasMore = result.hasMore
         }
 
         if (nextAfterSeq !== null) afterSeqRef.current = nextAfterSeq
+
+        while (hasMore && nextAfterSeq !== null) {
+          result = await fetchTraces(base, config.fetchLimit, undefined, nextAfterSeq + 1)
+          if (!isCurrent()) return
+          incoming = incoming.concat(result.traces)
+          nextAfterSeq = result.nextAfterSeq
+          hasMore = result.hasMore
+          if (nextAfterSeq !== null) afterSeqRef.current = nextAfterSeq
+        }
 
         // 3. Track freshness
         const now = Date.now()

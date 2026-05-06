@@ -25,6 +25,7 @@ export type DashboardConfigResponse = {
   fetch_limit: number
   fresh_ms: number
   slow_component_min_duration_ms: number
+  api_base: string
 }
 
 export type SortMode = "newest" | "slowest"
@@ -36,4 +37,5 @@ export type DashboardConfig = {
   fetchLimit: number
   freshMs: number
   slowComponentMinDurationMs: number
+  apiBase: string
 }

@@ -8,7 +8,7 @@ export function useDashboardConfig() {
 
   useEffect(() => {
     let cancelled = false
-    const base = resolveApiBase()
+    const base = import.meta.env.VITE_HAYHOOKS_DASHBOARD_API_BASE?.trim().replace(/\/$/, "") || resolveApiBase()
 
     const loadConfig = async () => {
       try {

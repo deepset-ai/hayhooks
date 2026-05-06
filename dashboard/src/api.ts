@@ -6,6 +6,7 @@ import { isRecord } from "./utils/tags"
 export type FetchTracesResult = {
   traces: TraceSummary[]
   nextAfterSeq: number | null
+  hasMore: boolean
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -119,9 +120,16 @@ export async function fetchTraces(
     throw new Error("Traces payload invalid")
   }
 
+  const nextAfterSeqFromBody = typeof payload.next_after_seq === "number" && Number.isFinite(payload.next_after_seq)
+    ? payload.next_after_seq as number
+    : null
+  const hasMore = typeof payload.has_more === "boolean" ? payload.has_more : false
+  const nextAfterSeq = nextAfterSeqFromBody ?? parseTraceCursor(response.headers.get("X-Hayhooks-Trace-Cursor"))
+
   return {
     traces: payload.traces,
-    nextAfterSeq: parseTraceCursor(response.headers.get("X-Hayhooks-Trace-Cursor")),
+    nextAfterSeq,
+    hasMore,
   }
 }
 

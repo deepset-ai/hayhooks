@@ -239,6 +239,50 @@ async def _execute_pipeline_run(
     return await run_in_threadpool(pipeline_wrapper.run_api, **payload)
 
 
+_SENSITIVE_KEY_PATTERNS = {
+    "api_key",
+    "token",
+    "authorization",
+    "password",
+    "secret",
+    "key",
+    "credential",
+    "passwd",
+    "access_key",
+    "secret_key",
+    "api_token",
+    "auth_token",
+}
+
+
+def _payload_key_is_sensitive(key: str) -> bool:
+    lower = key.lower()
+    return any(pattern in lower for pattern in _SENSITIVE_KEY_PATTERNS)
+
+
+def _payload_value_to_safe_text(value: Any) -> str:  # noqa: PLR0911
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, str):
+        return f"str({len(value)})"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, list | tuple | set):
+        return f"list({len(value)})"
+    if isinstance(value, dict):
+        return f"dict({len(value)})"
+    type_name = type(value).__name__
+    try:
+        size = len(value)
+        return f"{type_name}({size})"
+    except TypeError:
+        return type_name
+
+
 def _payload_value_to_trace_text(value: Any) -> str:
     if value is None:
         return "null"
@@ -257,7 +301,17 @@ def _payload_value_to_trace_text(value: Any) -> str:
 
 
 def _build_payload_value_tags(payload: dict[str, Any]) -> list[str]:
-    return [f"{key}={_payload_value_to_trace_text(value)}" for key, value in sorted(payload.items())]
+    include_values = settings.dashboard_trace_include_payload_values
+    tags: list[str] = []
+    for key, value in sorted(payload.items()):
+        if include_values:
+            if _payload_key_is_sensitive(key):
+                tags.append(f"{key}=[redacted]")
+            else:
+                tags.append(f"{key}={_payload_value_to_trace_text(value)}")
+        else:
+            tags.append(f"{key}={_payload_value_to_safe_text(value)}")
+    return tags
 
 
 def _build_run_trace_tags(pipeline_name: str, payload: dict[str, Any]) -> dict[str, Any]:

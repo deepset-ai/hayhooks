@@ -93,7 +93,7 @@ class AppSettings(BaseSettings):
     cors_allow_headers: list[str] = ["*"]
     cors_allow_credentials: bool = False
     cors_allow_origin_regex: str | None = None
-    cors_expose_headers: list[str] = []
+    cors_expose_headers: list[str] = ["X-Hayhooks-Trace-Cursor"]
     cors_max_age: int = 600
 
     # Stdlib loggers to intercept and route through loguru.
@@ -125,6 +125,7 @@ class AppSettings(BaseSettings):
     dashboard_enabled: bool = False
     dashboard_path: str = "/dashboard"
     dashboard_dist_dir: str = str(Path.cwd() / "dashboard" / "dist")
+    dashboard_trace_include_payload_values: bool = False
 
     # Chainlit Settings
     # Enable embedded Chainlit UI frontend

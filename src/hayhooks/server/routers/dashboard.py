@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel, Field
 
 from hayhooks.server.pipelines.registry import registry
-from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces, get_trace_cursor_head
+from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces
 from hayhooks.settings import settings
 
 router = APIRouter()
@@ -40,6 +40,8 @@ class TraceSummary(BaseModel):
 
 class TracesResponse(BaseModel):
     traces: list[TraceSummary]
+    next_after_seq: int = Field(description="Cursor value to pass as after_seq in the next request")
+    has_more: bool = Field(description="Whether more traces are available beyond this page")
 
 
 class ClearTracesResponse(BaseModel):
@@ -53,10 +55,11 @@ class DashboardUiConfigResponse(BaseModel):
     fetch_limit: int
     fresh_ms: int
     slow_component_min_duration_ms: int
+    api_base: str = Field(description="Base URL for dashboard API endpoints")
 
 
 @router.get(
-    "/dashboard/api/entrypoints",
+    "/api/entrypoints",
     tags=["dashboard"],
     response_model=EntrypointsResponse,
     operation_id="dashboard_entrypoints",
@@ -68,7 +71,7 @@ async def entrypoints() -> EntrypointsResponse:
 
 
 @router.get(
-    "/dashboard/api/config",
+    "/api/config",
     tags=["dashboard"],
     response_model=DashboardUiConfigResponse,
     operation_id="dashboard_config",
@@ -81,17 +84,19 @@ async def config() -> DashboardUiConfigResponse:
         settings.dashboard_trace_max_limit,
         settings.dashboard_ui_list_cap,
     )
+    api_base = f"{settings.dashboard_path.rstrip('/')}/api"
     return DashboardUiConfigResponse(
         poll_ms=settings.dashboard_ui_poll_ms,
         list_cap=settings.dashboard_ui_list_cap,
         fetch_limit=resolved_fetch_limit,
         fresh_ms=settings.dashboard_ui_fresh_ms,
         slow_component_min_duration_ms=settings.dashboard_ui_slow_component_min_duration_ms,
+        api_base=api_base,
     )
 
 
 @router.get(
-    "/dashboard/api/traces",
+    "/api/traces",
     tags=["dashboard"],
     response_model=TracesResponse,
     operation_id="dashboard_traces",
@@ -106,15 +111,19 @@ async def traces(
 ) -> TracesResponse:
     requested_limit = settings.dashboard_trace_default_limit if limit is None else limit
     resolved_limit = min(requested_limit, settings.dashboard_trace_max_limit)
-    response.headers["X-Hayhooks-Trace-Cursor"] = str(get_trace_cursor_head())
-    traces_data = get_recent_traces(since_ms=since_ms, limit=resolved_limit, after_seq=after_seq)
+    traces_data = get_recent_traces(since_ms=since_ms, limit=resolved_limit + 1, after_seq=after_seq)
+    has_more = len(traces_data) > resolved_limit
+    if has_more:
+        traces_data = traces_data[:resolved_limit]
     traces_data.sort(key=lambda trace: trace["start_time_ms"], reverse=True)
     traces_payload = [TraceSummary.model_validate(trace) for trace in traces_data]
-    return TracesResponse(traces=traces_payload)
+    next_after_seq = max((trace.get("_cursor_seq", 0) for trace in traces_data), default=after_seq or 0)
+    response.headers["X-Hayhooks-Trace-Cursor"] = str(next_after_seq)
+    return TracesResponse(traces=traces_payload, next_after_seq=next_after_seq, has_more=has_more)
 
 
 @router.post(
-    "/dashboard/api/traces/clear",
+    "/api/traces/clear",
     tags=["dashboard"],
     response_model=ClearTracesResponse,
     operation_id="dashboard_clear_traces",

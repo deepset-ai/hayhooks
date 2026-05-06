@@ -57,7 +57,7 @@ def test_cors():
     assert default_settings.cors_allow_headers == ["*"]
     assert default_settings.cors_allow_credentials is False
     assert default_settings.cors_allow_origin_regex is None
-    assert default_settings.cors_expose_headers == []
+    assert default_settings.cors_expose_headers == ["X-Hayhooks-Trace-Cursor"]
     assert default_settings.cors_max_age == 600
 
     custom_settings = AppSettings(

@@ -49,7 +49,7 @@ def _build_dashboard_assets(source_dir: Path) -> Path:
         raise RuntimeError(msg)
 
     if not (source_dir / "node_modules").exists():
-        install_cmd = [npm, "ci"] if (source_dir / "package-lock.json").exists() else [npm, "install"]
+        install_cmd = [npm, "ci", "--include=dev"] if (source_dir / "package-lock.json").exists() else [npm, "install"]
         subprocess.run(install_cmd, cwd=source_dir, check=True)  # noqa: S603
 
     subprocess.run([npm, "run", "build"], cwd=source_dir, check=True)  # noqa: S603
@@ -196,19 +196,15 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
             _set_env("HAYHOOKS_DASHBOARD_PATH", dashboard_path)
             settings.dashboard_path = dashboard_path
 
-        try:
-            built_dashboard_dist = _prepare_tracing_dashboard_assets(settings.dashboard_dist_dir)
-            if built_dashboard_dist is not None:
-                _set_env("HAYHOOKS_DASHBOARD_DIST_DIR", built_dashboard_dist)
-                settings.dashboard_dist_dir = built_dashboard_dist
-        except (RuntimeError, subprocess.CalledProcessError) as exc:
-            if _dashboard_assets_available(settings.dashboard_dist_dir):
-                log.warning(
-                    "Failed to build tracing dashboard assets: {}. "
-                    "Falling back to available prebuilt dashboard assets.",
-                    exc,
-                )
-            else:
+        if _dashboard_assets_available(settings.dashboard_dist_dir):
+            log.info("Using prebuilt dashboard assets from: {}", settings.dashboard_dist_dir)
+        else:
+            try:
+                built_dashboard_dist = _prepare_tracing_dashboard_assets(settings.dashboard_dist_dir)
+                if built_dashboard_dist is not None:
+                    _set_env("HAYHOOKS_DASHBOARD_DIST_DIR", built_dashboard_dist)
+                    settings.dashboard_dist_dir = built_dashboard_dist
+            except (RuntimeError, subprocess.CalledProcessError) as exc:
                 log.error(
                     "Failed to build tracing dashboard assets and no prebuilt assets were found: {}",
                     exc,

@@ -164,3 +164,52 @@ def test_live_trace_buffer_cursor_head_resets_on_clear():
 
     clear_live_traces()
     assert get_trace_cursor_head() == 0
+
+
+def test_live_trace_buffer_spans_capped_per_trace(monkeypatch):
+    monkeypatch.setattr(
+        "hayhooks.server.utils.live_trace_buffer._MAX_SPANS_PER_TRACE",
+        3,
+        raising=False,
+    )
+
+    trace_id = "trace-span-cap"
+    for i in range(5):
+        record_live_span_start(
+            trace_id=trace_id,
+            span_id=f"span-{i}",
+            parent_span_id=None if i == 0 else "span-0",
+            operation_name="hayhooks.pipeline.run",
+            start_time_ms=1_000 + i,
+        )
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+    assert len(traces) == 1
+    assert traces[0]["span_count"] <= 3
+
+
+def test_live_trace_buffer_tag_values_truncated(monkeypatch):
+    monkeypatch.setattr(
+        "hayhooks.server.utils.live_trace_buffer._MAX_TAG_VALUE_LENGTH",
+        10,
+        raising=False,
+    )
+
+    long_value = "a" * 200
+    record_live_span_start(
+        trace_id="trace-trunc",
+        span_id="root",
+        parent_span_id=None,
+        operation_name="hayhooks.pipeline.run",
+        start_time_ms=2_000,
+        tags={"hayhooks.pipeline.name": "demo", "long_key": long_value},
+    )
+    record_live_span_finish(trace_id="trace-trunc", span_id="root", duration_ms=5)
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+    assert len(traces) == 1
+    trace = traces[0]
+
+    tag_values = [tag["value"] for tag in trace["tags"]]
+    for value in tag_values:
+        assert len(value) <= 10

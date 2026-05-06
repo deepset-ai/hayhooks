@@ -322,7 +322,7 @@ def create_app() -> FastAPI:
     app.include_router(deploy_router)
     app.include_router(undeploy_router)
     app.include_router(openai_router)
-    app.include_router(dashboard_router)
+    app.include_router(dashboard_router, prefix=settings.dashboard_path)
 
     _mount_dashboard_ui(app)
 

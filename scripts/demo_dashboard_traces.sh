@@ -57,7 +57,7 @@ deploy_files() {
 
 check() {
   local expected="$1" actual="$2" ok_msg="$3" fail_msg="$4"
-  if [ "$actual" = "$expected" ]; then green "  ✓ $ok_msg"; else red "  ✗ $fail_msg ($actual)"; fi
+  if [ "$actual" = "$expected" ]; then green "  ✓ $ok_msg"; else red "  ✗ $fail_msg ($actual)"; return 1; fi
 }
 
 blue "╔══════════════════════════════════════════╗"

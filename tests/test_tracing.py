@@ -263,8 +263,7 @@ def test_run_endpoint_emits_pipeline_run_span(client, deploy_yaml_pipeline, reco
     assert run_spans
     assert any(
         span.tags.get("hayhooks.pipeline.name") == pipeline_name
-        and span.tags.get("hayhooks.payload.keys") is None
-        and span.tags.get("hayhooks.payload.values") == ["value=3"]
+        and span.tags.get("hayhooks.payload.values") == ["value=int"]
         for span in run_spans
     )
 

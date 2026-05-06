@@ -111,7 +111,7 @@ export HAYHOOKS_DASHBOARD_ENABLED=true
 cd dashboard
 npm install
 npm run build
-export HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
+export HAYHOOKS_DASHBOARD_DIST_DIR="$(pwd)/dist"
 hayhooks run
 ```
 
