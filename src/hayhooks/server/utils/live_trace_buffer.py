@@ -297,10 +297,12 @@ class _LiveTraceBuffer:
                         **span,
                         "tags": dict(span["tags"]),
                     }
-                trace_copies.append({
-                    **trace,
-                    "spans": spans_copy,
-                })
+                trace_copies.append(
+                    {
+                        **trace,
+                        "spans": spans_copy,
+                    }
+                )
                 if len(trace_copies) >= limit:
                     break
 
