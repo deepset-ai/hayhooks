@@ -438,8 +438,8 @@ HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT=25
 HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT=100
 # Optional: only highlight slowest components above 1s
 # HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS=1000
-# Optional: include Haystack component spans in dashboard traces
-# HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=true
+# Optional: exclude Haystack component spans (included by default)
+# HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=false
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 HAYHOOKS_LOG_LEVEL=INFO
 HAYHOOKS_LOG_FORMAT=default

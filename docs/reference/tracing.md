@@ -65,9 +65,11 @@ Open Jaeger at `http://localhost:16686` and use the same `OTEL_*` variables show
 
 Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-time visibility into pipeline operations.
 
+![Tracing dashboard](../assets/tracing-dashboard-overview.png)
+
 ### Features
 
-- **Live trace feed** — auto-refreshes every 2.5 seconds with new-trace animations.
+- **Live trace feed** — auto-refreshes (default every 2.5s, configurable via `HAYHOOKS_DASHBOARD_UI_POLL_MS`) with new-trace animations.
 - **Pipeline filter** — click a pipeline in the sidebar to filter traces; counts update per pipeline.
 - **Span waterfall** — expand any trace to see nested spans with duration bars and per-span pipeline badges.
 - **Slowest component signal** — highlights only the single slowest component span per trace when its duration is above the configured threshold.
@@ -79,6 +81,15 @@ Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-
 - **Stats** — pipeline trace count, failure count, average duration with sparkline, and last-trace time, all reflecting the active filter.
 - **Dark mode** — toggle between light and dark themes via the header button.
 - **Clear traces** — wipe the local trace buffer from the header.
+
+### Error Traces
+
+When a pipeline request fails, the dashboard highlights the affected trace with a red left border and a **failed** badge in place of the kind badge. Expand the trace to see:
+
+- **Error type and message** — shown at the top of the detail area in the error block.
+- **Stack trace** — expandable section with a copy button for sharing or debugging.
+
+![Failed trace detail](../assets/tracing-dashboard-failed.png)
 
 ### Setup
 
@@ -128,19 +139,29 @@ export HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY=2000
     worker that served that request.
     For a consistent dashboard view, run with a single worker (`--workers 1`).
 
-You can tune when the slowest-component highlight appears:
+### Dashboard Tuning
+
+The dashboard UI behaviour is configurable via environment variables (`HAYHOOKS_DASHBOARD_UI_*`).
+All values are fetched by the frontend at page load from the `/dashboard/api/config` endpoint.
+
+| Variable | Default | Description |
+| --- | ---: | --- |
+| `HAYHOOKS_DASHBOARD_UI_POLL_MS` | `2500` | Polling interval (ms) between trace list refreshes |
+| `HAYHOOKS_DASHBOARD_UI_LIST_CAP` | `100` | Max traces kept in the browser list |
+| `HAYHOOKS_DASHBOARD_UI_FETCH_LIMIT` | `50` | Traces requested per poll |
+| `HAYHOOKS_DASHBOARD_UI_FRESH_MS` | `6000` | Duration (ms) a new trace keeps the "NEW" highlight |
+| `HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS` | `1000` | Threshold (ms) to flag the slowest component |
+
+For the full list of dashboard and tracing settings, see the
+[environment variables reference](environment-variables.md).
+
+#### Haystack component spans
+
+By default, the dashboard includes both Hayhooks operation spans (deploy/run/openai/mcp lifecycle) **and**
+Haystack component spans in the same trace trees. To show only Hayhooks operation spans, disable:
 
 ```bash
-export HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS=1000
-```
-
-#### Optional: Include Haystack component spans
-
-By default, the dashboard includes Hayhooks operation spans (deploy/run/openai/mcp lifecycle).
-If you also want Haystack component spans in the same trace trees, enable:
-
-```bash
-export HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=true
+export HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=false
 ```
 
 This feature flag only affects what gets mirrored into the dashboard buffer; it does not change
