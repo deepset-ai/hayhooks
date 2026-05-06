@@ -27,6 +27,7 @@ describe("normalizeDashboardConfig", () => {
       fetchLimit: 100,
       freshMs: 3000,
       slowComponentMinDurationMs: 1750,
+      apiBase: "",
     })
   })
 
@@ -140,8 +141,24 @@ describe("fetchTraces", () => {
 
     const result = await fetchTraces("http://localhost", 10, undefined, 7)
 
-    expect(result).toEqual({ traces: [], nextAfterSeq: 42 })
+    expect(result).toEqual({ traces: [], nextAfterSeq: 42, hasMore: false })
     expect(globalThis.fetch).toHaveBeenCalledWith("http://localhost/traces?limit=10&after_seq=7")
+  })
+
+  it("prefers pagination state from the traces response body", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ traces: [], next_after_seq: 7, has_more: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Hayhooks-Trace-Cursor": "42",
+        },
+      }),
+    )
+
+    const result = await fetchTraces("http://localhost", 10)
+
+    expect(result).toEqual({ traces: [], nextAfterSeq: 7, hasMore: true })
   })
 
   it("throws when traces payload items are malformed", async () => {

@@ -108,11 +108,20 @@ def _max_buffered_traces() -> int:
     return settings.dashboard_trace_buffer_capacity
 
 
+def _truncate_tag_text(value: str) -> str:
+    return value[:_MAX_TAG_VALUE_LENGTH] if len(value) > _MAX_TAG_VALUE_LENGTH else value
+
+
 def _truncate_tag_values(tags: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in tags.items():
-        if isinstance(value, str) and len(value) > _MAX_TAG_VALUE_LENGTH:
-            result[key] = value[:_MAX_TAG_VALUE_LENGTH]
+        if isinstance(value, str):
+            result[key] = _truncate_tag_text(value)
+        elif isinstance(value, Mapping | list | tuple | set):
+            try:
+                result[key] = _truncate_tag_text(json.dumps(value, sort_keys=True, default=str))
+            except TypeError:
+                result[key] = _truncate_tag_text(str(value))
         else:
             result[key] = value
     return result
@@ -131,7 +140,7 @@ def _stringify_tag_value(value: Any) -> str | None:
     else:
         text = str(value)
     text = text.strip()
-    return text if text else None
+    return _truncate_tag_text(text) if text else None
 
 
 def _collect_span_tags(span_tags: dict[str, Any]) -> list[TraceTagDict]:

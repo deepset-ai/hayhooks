@@ -213,3 +213,33 @@ def test_live_trace_buffer_tag_values_truncated(monkeypatch):
     tag_values = [tag["value"] for tag in trace["tags"]]
     for value in tag_values:
         assert len(value) <= 10
+
+
+def test_live_trace_buffer_structured_tag_values_truncated(monkeypatch):
+    monkeypatch.setattr(
+        "hayhooks.server.utils.live_trace_buffer._MAX_TAG_VALUE_LENGTH",
+        20,
+        raising=False,
+    )
+
+    record_live_span_start(
+        trace_id="trace-structured-trunc",
+        span_id="root",
+        parent_span_id=None,
+        operation_name="hayhooks.pipeline.run",
+        start_time_ms=2_000,
+        tags={
+            "hayhooks.pipeline.name": "demo",
+            "structured": {"payload": "x" * 200},
+        },
+    )
+    record_live_span_finish(trace_id="trace-structured-trunc", span_id="root", duration_ms=5)
+
+    traces = get_recent_traces(since_ms=None, limit=10)
+    assert len(traces) == 1
+    trace = traces[0]
+
+    structured_trace_tag = next(tag for tag in trace["tags"] if tag["key"] == "structured")
+    structured_span_tag = next(tag for tag in trace["root_span"]["tags"] if tag["key"] == "structured")
+    assert len(structured_trace_tag["value"]) <= 20
+    assert len(structured_span_tag["value"]) <= 20

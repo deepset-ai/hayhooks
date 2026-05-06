@@ -264,7 +264,7 @@ These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.A
 
 ### HAYHOOKS_CORS_EXPOSE_HEADERS
 
-- Default: `[]`
+- Default: `["X-Hayhooks-Trace-Cursor"]`
 - Description: Headers to expose in response
 
 ### HAYHOOKS_CORS_MAX_AGE

@@ -74,6 +74,8 @@ packages = ["src/hayhooks"]
 "src/hayhooks/server/chainlit_app/.chainlit" = "hayhooks/server/chainlit_app/.chainlit"
 # Bundle dashboard source files so --with-tracing-dashboard can build locally at runtime.
 "dashboard/index.html" = "hayhooks/dashboard/index.html"
+"dashboard/components.json" = "hayhooks/dashboard/components.json"
+"dashboard/eslint.config.js" = "hayhooks/dashboard/eslint.config.js"
 "dashboard/package-lock.json" = "hayhooks/dashboard/package-lock.json"
 "dashboard/package.json" = "hayhooks/dashboard/package.json"
 "dashboard/public" = "hayhooks/dashboard/public"

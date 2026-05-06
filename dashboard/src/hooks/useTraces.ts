@@ -148,7 +148,7 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
         if (nextAfterSeq !== null) afterSeqRef.current = nextAfterSeq
 
         while (hasMore && nextAfterSeq !== null) {
-          result = await fetchTraces(base, config.fetchLimit, undefined, nextAfterSeq + 1)
+          result = await fetchTraces(base, config.fetchLimit, undefined, nextAfterSeq)
           if (!isCurrent()) return
           incoming = incoming.concat(result.traces)
           nextAfterSeq = result.nextAfterSeq
