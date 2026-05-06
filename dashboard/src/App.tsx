@@ -1,22 +1,18 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
-import { Clock, GitBranch, Layers, Timer } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { useDarkMode } from "./hooks/useDarkMode"
 import { useTraceData } from "./hooks/useTracesContext"
 import { fmtDur, fmtRelativeTime, fmtTime } from "./utils/formatting"
-import { filterTracesByEntrypoint } from "./utils/traces"
+import { filterTracesByEntrypoint, isFailed } from "./utils/traces"
 import { EntrypointsSidebar } from "./components/EntrypointsSidebar"
 import { Header } from "./components/Header"
-import { StatCard } from "./components/StatCard"
+import { Stat, StatStrip } from "./components/Stats"
 import { TraceList } from "./components/TraceList"
 import { TraceLiveAnnouncer } from "./components/TraceLiveAnnouncer"
 
-const ENTRYPOINTS_ICON = <GitBranch className="size-4" />
-const TRACES_ICON = <Layers className="size-4" />
-const AVG_DURATION_ICON = <Timer className="size-4" />
-const LAST_TRACE_ICON = <Clock className="size-4" />
+const SPARKLINE_LIMIT = 30
 
-const App = memo(function App() {
+export default function App() {
   const { dark, toggle: toggleDark } = useDarkMode()
   const { entrypoints, traces, slowComponentMinDurationMs } = useTraceData()
 
@@ -31,12 +27,35 @@ const App = memo(function App() {
     () => filterTracesByEntrypoint(traces, filter),
     [traces, filter],
   )
+  const isFiltered = filter !== null
 
-  const avgDuration = useMemo(() => {
+  const avgDurationLabel = useMemo(() => {
     if (filteredTraces.length === 0) return "—"
-    const totalDuration = filteredTraces.reduce((sum, trace) => sum + trace.duration_ms, 0)
-    return fmtDur(totalDuration / filteredTraces.length)
+    const total = filteredTraces.reduce((sum, t) => sum + t.duration_ms, 0)
+    return fmtDur(total / filteredTraces.length)
   }, [filteredTraces])
+
+  /**
+   * Sparkline expects oldest → newest. The trace list is newest-first, so we
+   * take the most recent SPARKLINE_LIMIT and reverse.
+   */
+  const durationHistory = useMemo(
+    () =>
+      filteredTraces
+        .slice(0, SPARKLINE_LIMIT)
+        .map((t) => t.duration_ms)
+        .reverse(),
+    [filteredTraces],
+  )
+
+  const failureCount = useMemo(
+    () => filteredTraces.reduce((n, t) => (isFailed(t) ? n + 1 : n), 0),
+    [filteredTraces],
+  )
+
+  const lastTrace = filteredTraces[0]
+  const lastTraceFailed = lastTrace !== undefined && isFailed(lastTrace)
+
   const handleClearFilter = useCallback(() => {
     setFilter(null)
   }, [])
@@ -50,17 +69,30 @@ const App = memo(function App() {
       />
 
       <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-6 py-6">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard label="Entrypoints" value={entrypoints.length} icon={ENTRYPOINTS_ICON} />
-          <StatCard label="Traces" value={filteredTraces.length} icon={TRACES_ICON} />
-          <StatCard label="Avg duration" value={avgDuration} icon={AVG_DURATION_ICON} />
-          <StatCard
-            label="Last trace"
-            value={filteredTraces.length > 0 ? fmtRelativeTime(filteredTraces[0].start_time_ms, nowMs) : "—"}
-            title={filteredTraces.length > 0 ? fmtTime(filteredTraces[0].start_time_ms) : undefined}
-            icon={LAST_TRACE_ICON}
+        <StatStrip>
+          <Stat
+            label="Traces"
+            value={filteredTraces.length}
+            hint={isFiltered ? `of ${traces.length}` : undefined}
           />
-        </div>
+          <Stat
+            label="Failures"
+            value={failureCount}
+            tone={failureCount > 0 ? "destructive" : "default"}
+          />
+          <Stat
+            label="Avg duration"
+            value={avgDurationLabel}
+            sparkline={durationHistory}
+          />
+          <Stat
+            label="Last trace"
+            value={lastTrace !== undefined ? fmtRelativeTime(lastTrace.start_time_ms, nowMs) : "—"}
+            title={lastTrace !== undefined ? fmtTime(lastTrace.start_time_ms) : undefined}
+            tone={lastTraceFailed ? "destructive" : "default"}
+            hint={lastTrace !== undefined ? (lastTraceFailed ? "failed" : undefined) : undefined}
+          />
+        </StatStrip>
 
         <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
           <EntrypointsSidebar
@@ -80,6 +112,5 @@ const App = memo(function App() {
       </main>
     </div>
   )
-})
+}
 
-export default App

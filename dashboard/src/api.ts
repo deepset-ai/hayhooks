@@ -3,8 +3,6 @@ import type { DashboardConfig } from "./types"
 import { normalizeDashboardConfig } from "./utils/config"
 import { isRecord } from "./utils/tags"
 
-export { normalizeDashboardConfig }
-
 export type FetchTracesResult = {
   traces: TraceSummary[]
   nextAfterSeq: number | null

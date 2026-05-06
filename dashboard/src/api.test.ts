@@ -1,4 +1,5 @@
-import { clearTraces, fetchEntrypoints, fetchTraces, normalizeDashboardConfig } from "./api"
+import { clearTraces, fetchEntrypoints, fetchTraces } from "./api"
+import { normalizeDashboardConfig } from "./utils/config"
 import { DEFAULT_DASHBOARD_CONFIG } from "./constants"
 
 describe("normalizeDashboardConfig", () => {
