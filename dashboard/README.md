@@ -13,12 +13,16 @@ The dashboard API reads traces from Hayhooks' in-process live trace buffer.
 
 ## What This Dashboard Shows
 
-- Live trace feed with freshness highlights
+- Live trace feed with freshness highlights and new-trace animations
 - Ongoing vs completed traces
-- Failure highlighting
-- Entrypoint filtering
-- Span waterfall details and trace tags
-- Basic trace stats (count, average duration, last trace)
+- Kind badges (run, openai, deploy, undeploy, mcp) for at-a-glance classification
+- Streaming indicator for SSE/streaming requests
+- Failure highlighting with expandable error details and copyable stack traces
+- Pipeline filtering via sidebar
+- Span waterfall with duration bars, per-span tags, and slowest-component highlighting
+- Basic trace stats (count, failures, avg duration with sparkline, last trace time)
+- Dark mode toggle
+- Trace buffer clear with confirmation dialog
 
 ## Prerequisites
 
@@ -96,5 +100,5 @@ npm run lint && npm run test && npm run build
 
 ## Related Documentation
 
-- [`docs/reference/tracing.md`](../docs/reference/tracing.md)
+- [`docs/reference/tracing.md`](../docs/reference/tracing.md) — includes demo script (`scripts/demo_dashboard_traces.sh`) for generating representative traces
 - [`docs/reference/environment-variables.md`](../docs/reference/environment-variables.md)

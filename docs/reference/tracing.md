@@ -68,13 +68,15 @@ Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-
 ### Features
 
 - **Live trace feed** — auto-refreshes every 2.5 seconds with new-trace animations.
-- **Entrypoint filter** — click a pipeline in the sidebar to filter traces; counts update per entrypoint.
+- **Pipeline filter** — click a pipeline in the sidebar to filter traces; counts update per pipeline.
 - **Span waterfall** — expand any trace to see nested spans with duration bars and per-span pipeline badges.
 - **Slowest component signal** — highlights only the single slowest component span per trace when its duration is above the configured threshold.
-- **Tags** — collapsed cards show transport and success/error status; expanded view shows all tags with tooltips.
-- **Error highlighting** — failed traces get a red left border so they stand out immediately.
+- **Kind badges** — each trace shows a kind badge (run, openai, deploy, undeploy, mcp) for at-a-glance classification.
+- **Streaming indicator** — streaming requests get a visible STREAM badge beside the kind badge.
+- **Summary tags** — collapsed cards show transport and success/error status; expanded view shows all tags with tooltips and a copyable trace ID.
+- **Error detail** — failed traces display error type, message, and an expandable/copyable stack trace.
 - **Sort** — toggle between newest-first and slowest-first ordering.
-- **Stats** — entrypoint count, trace count, average duration, and last-trace time, all reflecting the active filter.
+- **Stats** — pipeline trace count, failure count, average duration with sparkline, and last-trace time, all reflecting the active filter.
 - **Dark mode** — toggle between light and dark themes via the header button.
 - **Clear traces** — wipe the local trace buffer from the header.
 
@@ -146,6 +148,16 @@ dashboard UI filtering/sorting behavior.
 It also works without configuring an external tracing backend (local capture mode).
 
 Run Hayhooks and open `http://localhost:1416/dashboard`.
+
+A demo script is available to generate representative traces across multiple pipelines:
+
+```bash
+bash scripts/demo_dashboard_traces.sh
+```
+
+The script deploys example pipelines, fires REST and OpenAI-compatible streaming/non-streaming requests, then
+undeploys — producing a mix of trace kinds, success/failure states, and streaming indicators for exploring
+the dashboard UI.
 
 ### API Endpoints
 
