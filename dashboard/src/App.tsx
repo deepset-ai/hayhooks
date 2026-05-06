@@ -1,14 +1,15 @@
-import { memo, useCallback, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { Clock, GitBranch, Layers, Timer } from "lucide-react"
 
 import { useDarkMode } from "./hooks/useDarkMode"
 import { useTraceData } from "./hooks/useTracesContext"
-import { fmtDur, fmtTime } from "./utils/formatting"
+import { fmtDur, fmtRelativeTime, fmtTime } from "./utils/formatting"
 import { filterTracesByEntrypoint } from "./utils/traces"
 import { EntrypointsSidebar } from "./components/EntrypointsSidebar"
 import { Header } from "./components/Header"
 import { StatCard } from "./components/StatCard"
 import { TraceList } from "./components/TraceList"
+import { TraceLiveAnnouncer } from "./components/TraceLiveAnnouncer"
 
 const ENTRYPOINTS_ICON = <GitBranch className="size-4" />
 const TRACES_ICON = <Layers className="size-4" />
@@ -18,6 +19,12 @@ const LAST_TRACE_ICON = <Clock className="size-4" />
 const App = memo(function App() {
   const { dark, toggle: toggleDark } = useDarkMode()
   const { entrypoints, traces, slowComponentMinDurationMs } = useTraceData()
+
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 10_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const [filter, setFilter] = useState<string | null>(null)
   const filteredTraces = useMemo(
@@ -36,6 +43,7 @@ const App = memo(function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
+      <TraceLiveAnnouncer />
       <Header
         dark={dark}
         onToggleDark={toggleDark}
@@ -48,7 +56,8 @@ const App = memo(function App() {
           <StatCard label="Avg duration" value={avgDuration} icon={AVG_DURATION_ICON} />
           <StatCard
             label="Last trace"
-            value={filteredTraces.length > 0 ? fmtTime(filteredTraces[0].start_time_ms) : "—"}
+            value={filteredTraces.length > 0 ? fmtRelativeTime(filteredTraces[0].start_time_ms, nowMs) : "—"}
+            title={filteredTraces.length > 0 ? fmtTime(filteredTraces[0].start_time_ms) : undefined}
             icon={LAST_TRACE_ICON}
           />
         </div>

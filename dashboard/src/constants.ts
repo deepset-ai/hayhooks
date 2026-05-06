@@ -54,8 +54,8 @@ export const SUMMARY_TAG_KEYS = new Set([
 export const KIND_STYLE: Record<TraceKind, { label: string; badge: string; border: string }> = {
   deploy: {
     label: "deploy",
-    badge: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/25",
-    border: "border-l-amber-500",
+    badge: "bg-kind-deploy-soft text-kind-deploy border-kind-deploy-border",
+    border: "border-l-kind-deploy",
   },
   undeploy: {
     label: "undeploy",
@@ -69,13 +69,13 @@ export const KIND_STYLE: Record<TraceKind, { label: string; badge: string; borde
   },
   openai: {
     label: "openai",
-    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-500/25",
-    border: "border-l-violet-500",
+    badge: "bg-kind-openai-soft text-kind-openai border-kind-openai-border",
+    border: "border-l-kind-openai",
   },
   mcp: {
     label: "mcp",
-    badge: "bg-teal-500/15 text-teal-700 dark:text-teal-400 border-teal-500/25",
-    border: "border-l-teal-500",
+    badge: "bg-kind-mcp-soft text-kind-mcp border-kind-mcp-border",
+    border: "border-l-kind-mcp",
   },
   other: {
     label: "trace",

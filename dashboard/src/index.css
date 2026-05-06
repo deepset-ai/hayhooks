@@ -8,6 +8,18 @@
 :root {
   --haystack-green: #31b67a;
   --haystack-blue: #2e6cdf;
+  --warning: #b45309;
+  --warning-soft: rgb(245 158 11 / 15%);
+  --warning-border: rgb(245 158 11 / 40%);
+  --kind-deploy: #b45309;
+  --kind-deploy-soft: rgb(245 158 11 / 15%);
+  --kind-deploy-border: rgb(245 158 11 / 25%);
+  --kind-openai: #6d28d9;
+  --kind-openai-soft: rgb(139 92 246 / 15%);
+  --kind-openai-border: rgb(139 92 246 / 25%);
+  --kind-mcp: #0f766e;
+  --kind-mcp-soft: rgb(20 184 166 / 15%);
+  --kind-mcp-border: rgb(20 184 166 / 25%);
   --background: #fafbfc;
   --foreground: #1a1d21;
   --card: #ffffff;
@@ -46,6 +58,18 @@
 .dark {
   --haystack-green: #4ade80;
   --haystack-blue: #60a5fa;
+  --warning: #fbbf24;
+  --warning-soft: rgb(245 158 11 / 12%);
+  --warning-border: rgb(245 158 11 / 35%);
+  --kind-deploy: #fbbf24;
+  --kind-deploy-soft: rgb(245 158 11 / 15%);
+  --kind-deploy-border: rgb(245 158 11 / 30%);
+  --kind-openai: #c4b5fd;
+  --kind-openai-soft: rgb(139 92 246 / 15%);
+  --kind-openai-border: rgb(139 92 246 / 30%);
+  --kind-mcp: #5eead4;
+  --kind-mcp-soft: rgb(20 184 166 / 15%);
+  --kind-mcp-border: rgb(20 184 166 / 30%);
   --background: #0f1117;
   --foreground: #e2e8f0;
   --card: #181b23;
@@ -118,6 +142,18 @@
   --color-chart-1: var(--chart-1);
   --color-haystack-green: var(--haystack-green);
   --color-haystack-blue: var(--haystack-blue);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-border: var(--warning-border);
+  --color-kind-deploy: var(--kind-deploy);
+  --color-kind-deploy-soft: var(--kind-deploy-soft);
+  --color-kind-deploy-border: var(--kind-deploy-border);
+  --color-kind-openai: var(--kind-openai);
+  --color-kind-openai-soft: var(--kind-openai-soft);
+  --color-kind-openai-border: var(--kind-openai-border);
+  --color-kind-mcp: var(--kind-mcp);
+  --color-kind-mcp-soft: var(--kind-mcp-soft);
+  --color-kind-mcp-border: var(--kind-mcp-border);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -178,19 +214,29 @@
 @keyframes trace-glow {
   0%,
   100% {
-    box-shadow: inset 0 0 0 1px var(--glow-color), 0 0 10px -2px var(--glow-color-soft);
+    box-shadow: 0 0 10px -2px var(--glow-color-soft);
   }
   50% {
-    box-shadow: inset 0 0 0 1px var(--glow-color), 0 0 20px -2px var(--glow-color-soft);
+    box-shadow: 0 0 20px -2px var(--glow-color-soft);
   }
 }
 
+/*
+ * Fresh state recolours the card's actual border (top/right/bottom) so the
+ * eye sees a single perimeter line, not an inner ring stacked next to the
+ * default border. The left accent stripe stays as the kind/failed colour
+ * (Tailwind border-l-* sets border-left-color, which we don't override).
+ * The outer soft glow comes from box-shadow only.
+ */
 .trace-card-fresh {
   animation:
     trace-enter 400ms ease-out,
     trace-glow 2s ease-in-out infinite;
   --glow-color: var(--haystack-blue);
   --glow-color-soft: rgb(46 108 223 / 20%);
+  border-top-color: var(--glow-color);
+  border-right-color: var(--glow-color);
+  border-bottom-color: var(--glow-color);
 }
 
 .trace-card-fresh-deploy {
@@ -233,20 +279,24 @@
   --glow-color-soft: rgb(248 113 113 / 24%);
 }
 
-/* Animate ongoing traces */
+/* Animate ongoing traces — only the outer glow pulses; the border stays a
+   constant blue so we never see two adjacent rings. */
 @keyframes trace-ongoing {
   0%,
   100% {
-    box-shadow: inset 0 0 0 1px var(--ongoing-soft), 0 0 0 0 var(--ongoing-soft);
+    box-shadow: 0 0 0 0 transparent;
   }
   50% {
-    box-shadow: inset 0 0 0 1px var(--ongoing-strong), 0 0 24px -8px var(--ongoing-strong);
+    box-shadow: 0 0 24px -8px var(--ongoing-strong);
   }
 }
 
 .trace-card-ongoing {
   --ongoing-strong: rgb(46 108 223 / 52%);
   --ongoing-soft: rgb(46 108 223 / 16%);
+  border-top-color: var(--ongoing-strong);
+  border-right-color: var(--ongoing-strong);
+  border-bottom-color: var(--ongoing-strong);
   animation: trace-ongoing 1.6s ease-in-out infinite;
 }
 
@@ -270,4 +320,27 @@
 .live-dot-ongoing {
   background: var(--haystack-blue);
   animation-duration: 1.1s;
+}
+
+/* Respect users who prefer reduced motion: keep colour state, drop the animation */
+@media (prefers-reduced-motion: reduce) {
+  .trace-card-fresh,
+  .trace-card-ongoing,
+  .live-dot,
+  .live-dot-ongoing {
+    animation: none !important;
+  }
+}
+
+/* Visually hide content while keeping it readable to assistive tech */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

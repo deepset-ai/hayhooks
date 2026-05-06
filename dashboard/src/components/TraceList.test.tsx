@@ -6,10 +6,12 @@ import { TraceList } from "./TraceList"
 vi.mock("../hooks/useTracesContext", () => ({
   useTraceStatus: vi.fn(),
   useTraceFreshness: vi.fn(),
+  useTraceData: vi.fn(),
 }))
 
 const mockedUseTraceStatus = vi.mocked(tracesContext.useTraceStatus)
 const mockedUseTraceFreshness = vi.mocked(tracesContext.useTraceFreshness)
+const mockedUseTraceData = vi.mocked(tracesContext.useTraceData)
 
 beforeEach(() => {
   mockedUseTraceFreshness.mockReturnValue({ freshUntil: {} })
@@ -18,6 +20,12 @@ beforeEach(() => {
     error: null,
     refreshing: false,
     clearing: false,
+  })
+  mockedUseTraceData.mockReturnValue({
+    entrypoints: [],
+    traces: [],
+    slowComponentMinDurationMs: 1000,
+    listCap: 100,
   })
 })
 
@@ -53,7 +61,7 @@ describe("TraceList", () => {
       />,
     )
 
-    expect(screen.getByText("Connecting…")).toBeInTheDocument()
+    expect(screen.getByText(/Connecting to trace buffer/)).toBeInTheDocument()
   })
 
   it("shows error state even when a previous update timestamp exists", () => {

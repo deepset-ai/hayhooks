@@ -1,4 +1,4 @@
-import { fmtDur, fmtTime, truncate } from "./formatting"
+import { fmtDur, fmtRelativeTime, fmtTime, truncate } from "./formatting"
 
 describe("fmtDur", () => {
   it("returns fallback for invalid values", () => {
@@ -32,6 +32,33 @@ describe("fmtTime", () => {
 
   it("formats a timestamp as HH:MM:SS", () => {
     const result = fmtTime(0)
+    expect(result).toMatch(/\d{2}:\d{2}:\d{2}/)
+  })
+})
+
+describe("fmtRelativeTime", () => {
+  it("returns fallback for invalid timestamps", () => {
+    expect(fmtRelativeTime(Number.NaN, 0)).toBe("—")
+    expect(fmtRelativeTime(Number.POSITIVE_INFINITY, 0)).toBe("—")
+  })
+
+  it("returns 'just now' for < 5 seconds", () => {
+    const now = 1_000_000
+    expect(fmtRelativeTime(now, now)).toBe("just now")
+    expect(fmtRelativeTime(now - 4_000, now)).toBe("just now")
+  })
+
+  it("formats seconds, minutes, hours, days", () => {
+    const now = 10_000_000_000
+    expect(fmtRelativeTime(now - 12_000, now)).toBe("12s ago")
+    expect(fmtRelativeTime(now - 90_000, now)).toBe("2m ago")
+    expect(fmtRelativeTime(now - 7_200_000, now)).toBe("2h ago")
+    expect(fmtRelativeTime(now - 2 * 86_400_000, now)).toBe("2d ago")
+  })
+
+  it("falls back to absolute time after a week", () => {
+    const now = 10_000_000_000
+    const result = fmtRelativeTime(now - 14 * 86_400_000, now)
     expect(result).toMatch(/\d{2}:\d{2}:\d{2}/)
   })
 })

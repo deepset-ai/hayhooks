@@ -19,8 +19,9 @@ export function TracesProvider({ children }: { children: ReactNode }) {
       entrypoints: traces.entrypoints,
       traces: traces.traces,
       slowComponentMinDurationMs: config.slowComponentMinDurationMs,
+      listCap: config.listCap,
     }),
-    [traces.entrypoints, traces.traces, config.slowComponentMinDurationMs],
+    [traces.entrypoints, traces.traces, config.slowComponentMinDurationMs, config.listCap],
   )
 
   const freshnessValue = useMemo(

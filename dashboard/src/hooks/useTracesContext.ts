@@ -5,6 +5,7 @@ import type { UseTracesResult } from "./useTraces"
 
 type TraceData = Pick<UseTracesResult, "entrypoints" | "traces"> & {
   slowComponentMinDurationMs: number
+  listCap: number
 }
 type TraceFreshness = Pick<UseTracesResult, "freshUntil">
 type TraceStatus = Pick<UseTracesResult, "updatedAt" | "error" | "refreshing" | "clearing">

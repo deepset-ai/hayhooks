@@ -1,5 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react"
-import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Copy, Layers, Tag, Timer } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Copy, Layers, MousePointerClick, Tag, Timer } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -28,13 +28,27 @@ export const TraceCard = memo(function TraceCard({
   const [selectedSpanId, setSelectedSpanId] = useState(trace.root_span.span_id)
   const [stackExpanded, setStackExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [traceIdCopied, setTraceIdCopied] = useState(false)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
+  const traceIdCopyTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
   useEffect(() => {
     return () => {
       if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+      if (traceIdCopyTimerRef.current !== null) clearTimeout(traceIdCopyTimerRef.current)
     }
   }, [])
+
+  const handleCopyTraceId = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(trace.trace_id)
+      setTraceIdCopied(true)
+      if (traceIdCopyTimerRef.current !== null) clearTimeout(traceIdCopyTimerRef.current)
+      traceIdCopyTimerRef.current = setTimeout(() => setTraceIdCopied(false), 1500)
+    } catch {
+      // clipboard write denied — ignore silently
+    }
+  }, [trace.trace_id])
   const summaryTags = useMemo(
     () => sortTags((trace.tags ?? []).filter((tag) => SUMMARY_TAG_KEYS.has(tag.key))),
     [trace.tags],
@@ -98,12 +112,19 @@ export const TraceCard = memo(function TraceCard({
               <span className="font-medium text-sm">
                 {trace.entrypoint ?? "unknown"}
               </span>
-              <span className={cn(
-                "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                kindStyle.badge,
-              )}>
-                {kindStyle.label}
-              </span>
+              {failed ? (
+                <span className="inline-flex items-center gap-1 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                  <AlertTriangle className="size-2.5" />
+                  failed
+                </span>
+              ) : (
+                <span className={cn(
+                  "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                  kindStyle.badge,
+                )}>
+                  {kindStyle.label}
+                </span>
+              )}
               <span className="flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
                 <Timer className="size-3" />
                 {fmtDur(trace.duration_ms)}
@@ -218,9 +239,18 @@ export const TraceCard = memo(function TraceCard({
           <div className="space-y-3 px-4 py-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="font-medium">Trace</span>
-              <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-                {trace.trace_id}
-              </code>
+              <button
+                type="button"
+                onClick={handleCopyTraceId}
+                title={traceIdCopied ? "Copied" : "Click to copy trace ID"}
+                aria-label={traceIdCopied ? "Trace ID copied" : "Copy trace ID"}
+                className="group/trace-id inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
+              >
+                <span>{trace.trace_id}</span>
+                {traceIdCopied
+                  ? <Check className="size-3 text-haystack-green" />
+                  : <Copy className="size-3 opacity-40 group-hover/trace-id:opacity-80 transition-opacity" />}
+              </button>
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -260,14 +290,20 @@ export const TraceCard = memo(function TraceCard({
                 <Activity className="size-3" />
                 <span>Spans</span>
                 <span className="text-[10px] tabular-nums">({allSpans.length})</span>
+                {allSpans.length > 1 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-normal text-muted-foreground/80">
+                    <MousePointerClick className="size-3" />
+                    Click any span to inspect its tags
+                  </span>
+                )}
                 {highlightedSlowestComponent !== null && (
-                  <span className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-[11px]">
-                    <Timer className="size-3 text-amber-700/90 dark:text-amber-200/90" />
+                  <span className="inline-flex items-center gap-1 rounded border border-warning-border bg-warning-soft px-2 py-0.5 text-[11px]">
+                    <Timer className="size-3 text-warning" />
                     <span className="text-muted-foreground">Slowest component</span>
-                    <span className="font-medium text-amber-800 dark:text-amber-300">
+                    <span className="font-medium text-warning">
                       {truncate(highlightedSlowestComponent.componentName, 24)}
                     </span>
-                    <span className="tabular-nums text-amber-700/90 dark:text-amber-200/90">
+                    <span className="tabular-nums text-warning">
                       {fmtDur(highlightedSlowestComponent.durationMs)}
                     </span>
                   </span>

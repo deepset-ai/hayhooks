@@ -1,10 +1,11 @@
 import { memo, useEffect, useMemo, useState } from "react"
-import { Activity, ArrowDownWideNarrow, GitBranch } from "lucide-react"
+import { Activity, ArrowDownWideNarrow, GitBranch, Loader2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { useTraceFreshness, useTraceStatus } from "../hooks/useTracesContext"
+import { useTraceData, useTraceFreshness, useTraceStatus } from "../hooks/useTracesContext"
 import type { SortMode, TraceSummary } from "../types"
 import { TraceCard } from "./TraceCard"
 
@@ -65,11 +66,14 @@ export const TraceList = memo(function TraceList({
   onClearFilter,
 }: TraceListProps) {
   const [sortMode, setSortMode] = useState<SortMode>("newest")
+  const { listCap } = useTraceData()
 
   const visibleTraces = useMemo(
     () => (sortMode === "slowest" ? [...traces].sort((a, b) => b.duration_ms - a.duration_ms) : traces),
     [traces, sortMode],
   )
+
+  const isCapped = totalTraces >= listCap
 
   return (
     <div className="space-y-2">
@@ -86,13 +90,16 @@ export const TraceList = memo(function TraceList({
           )}
         </div>
         <div className="flex items-center gap-3">
-          <button
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => setSortMode((m) => (m === "newest" ? "slowest" : "newest"))}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            aria-label={`Sort: ${sortMode === "newest" ? "newest first" : "slowest first"}. Click to toggle.`}
+            title="Toggle sort order"
           >
             <ArrowDownWideNarrow className="size-3" />
             {sortMode === "newest" ? "Newest" : "Slowest"}
-          </button>
+          </Button>
           {visibleTraces.length > 0 && (
             <span className="text-xs tabular-nums text-muted-foreground">
               {filter
@@ -116,6 +123,29 @@ export const TraceList = memo(function TraceList({
           />
         )}
       </ScrollArea>
+      {isCapped && visibleTraces.length > 0 && (
+        <p className="text-[11px] text-muted-foreground/80 text-center pt-1">
+          Showing latest {listCap} traces. Older traces are dropped from the live buffer.
+        </p>
+      )}
+    </div>
+  )
+})
+
+const SkeletonTraceCard = memo(function SkeletonTraceCard() {
+  return (
+    <div className="rounded-lg border border-l-2 border-l-transparent bg-card px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className="size-4 shrink-0 rounded bg-muted" />
+        <div className="flex-1 space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="h-3.5 w-32 rounded bg-muted" />
+            <div className="h-3 w-12 rounded bg-muted/70" />
+            <div className="h-3 w-10 rounded bg-muted/70" />
+          </div>
+          <div className="h-2.5 w-1/2 rounded bg-muted/50" />
+        </div>
+      </div>
     </div>
   )
 })
@@ -171,9 +201,14 @@ const TraceListEmptyState = memo(function TraceListEmptyState({
   }
 
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-20 text-center text-muted-foreground">
-      <div className="size-8 animate-pulse rounded-full bg-muted" />
-      <p className="text-sm">Connecting…</p>
+    <div className="space-y-3 pr-3" aria-busy="true" aria-live="polite">
+      <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" />
+        <span>Connecting to trace buffer…</span>
+      </div>
+      <SkeletonTraceCard />
+      <SkeletonTraceCard />
+      <SkeletonTraceCard />
     </div>
   )
 })
