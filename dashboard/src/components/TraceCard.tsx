@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Copy, Layers, MousePointerClick, Tag, Timer } from "lucide-react"
+import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Copy, Layers, MousePointerClick, Tag, Timer, Zap } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -10,7 +10,7 @@ import { KIND_STYLE, SUMMARY_TAG_KEYS, DEFAULT_DASHBOARD_CONFIG } from "../const
 import type { TraceSummary } from "../types"
 import { fmtDur, fmtTime, truncate } from "../utils/formatting"
 import { isDestructiveTag, sortTags, tagLabel, ERROR_TYPE_TAG_KEY, ERROR_MESSAGE_TAG_KEY, ERROR_STACK_TAG_KEY } from "../utils/tags"
-import { collectAllSpans, isFailed, isOngoing, slowestComponentRun, spanTagValue, traceKind } from "../utils/traces"
+import { collectAllSpans, isFailed, isOngoing, isStreaming, slowestComponentRun, spanTagValue, traceKind } from "../utils/traces"
 import { SpanRow } from "./SpanRow"
 
 type TraceCardProps = {
@@ -66,6 +66,7 @@ export const TraceCard = memo(function TraceCard({
   )
   const failed = isFailed(trace)
   const ongoing = isOngoing(trace)
+  const streaming = isStreaming(trace)
   const kind = traceKind(trace)
   const kindStyle = KIND_STYLE[kind]
   const freshHighlightTone = failed ? "failed" : kind
@@ -125,8 +126,14 @@ export const TraceCard = memo(function TraceCard({
                   {kindStyle.label}
                 </span>
               )}
-              <span className="flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
-                <Timer className="size-3" />
+              {streaming && (
+                <Badge variant="secondary" className="h-5 gap-1 rounded px-1.5 text-[10px] font-semibold text-stream">
+                  <Zap className="size-2.5" />
+                  STREAM
+                </Badge>
+              )}
+              <span className="flex items-center gap-1 text-xs tabular-nums">
+                <Timer className="size-3 text-muted-foreground" />
                 {fmtDur(trace.duration_ms)}
               </span>
               <span className="flex items-center gap-1 text-xs tabular-nums text-muted-foreground">

@@ -43,7 +43,7 @@ export const EntrypointsSidebar = memo(function EntrypointsSidebar({
         {/* Desktop / large: always visible header */}
         <CardTitle className="hidden lg:flex items-center gap-2 text-sm font-medium">
           <GitBranch className="size-4 text-muted-foreground" />
-          Entrypoints
+          Pipelines
         </CardTitle>
 
         {/* Mobile / narrow: collapsed summary that toggles */}
@@ -57,7 +57,7 @@ export const EntrypointsSidebar = memo(function EntrypointsSidebar({
           <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
             <GitBranch className="size-4 shrink-0 text-muted-foreground" />
             <span className="truncate">
-              Entrypoints<span className="text-muted-foreground"> · </span>
+              Pipelines<span className="text-muted-foreground"> · </span>
               <span className="font-mono text-xs">{activeLabel}</span>
             </span>
           </span>

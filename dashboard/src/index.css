@@ -20,6 +20,7 @@
   --kind-mcp: #0f766e;
   --kind-mcp-soft: rgb(20 184 166 / 15%);
   --kind-mcp-border: rgb(20 184 166 / 25%);
+  --stream: #0891b2;
   --background: #fafbfc;
   --foreground: #1a1d21;
   --card: #ffffff;
@@ -70,6 +71,7 @@
   --kind-mcp: #5eead4;
   --kind-mcp-soft: rgb(20 184 166 / 15%);
   --kind-mcp-border: rgb(20 184 166 / 30%);
+  --stream: #22d3ee;
   --background: #0f1117;
   --foreground: #e2e8f0;
   --card: #181b23;
@@ -154,6 +156,7 @@
   --color-kind-mcp: var(--kind-mcp);
   --color-kind-mcp-soft: var(--kind-mcp-soft);
   --color-kind-mcp-border: var(--kind-mcp-border);
+  --color-stream: var(--stream);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);

@@ -130,7 +130,7 @@ fi
 pause
 
 # ===================================================================
-step "7) Run 'question_answer' via OpenAI chat completions"
+step "7) Run 'question_answer' via OpenAI chat completions (non-streaming)"
 # ===================================================================
 if [ "$QA_OK" = true ]; then
   BODY=$(curl -s --max-time 30 -X POST "$BASE/v1/chat/completions" \
@@ -143,7 +143,28 @@ fi
 pause
 
 # ===================================================================
-step "8) Deploy 'hybrid_streaming' (async_hybrid_streaming)"
+step "8) Run 'question_answer' via OpenAI chat completions (streaming)"
+# ===================================================================
+if [ "$QA_OK" = true ]; then
+  dim "  streaming response:"
+  curl -s -N --max-time 30 -X POST "$BASE/v1/chat/completions" \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"question_answer","messages":[{"role":"user","content":"Summarise Haystack in three bullet points."}],"stream":true}' \
+    | while IFS= read -r line; do
+        line="${line#data: }"
+        [ -z "$line" ] || [ "$line" = "[DONE]" ] && continue
+        chunk=$(echo "$line" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+        [ -n "$chunk" ] && printf '%s' "$chunk"
+      done
+  echo
+  green "  ✓ streaming complete"
+else
+  dim "  skipped"
+fi
+pause
+
+# ===================================================================
+step "9) Deploy 'hybrid_streaming' (async_hybrid_streaming)"
 # ===================================================================
 HS_OK=false
 if [ "$HAS_KEY" = true ]; then
@@ -158,7 +179,7 @@ fi
 pause
 
 # ===================================================================
-step "9) Run 'hybrid_streaming' via REST"
+step "10) Run 'hybrid_streaming' via REST"
 # ===================================================================
 if [ "$HS_OK" = true ]; then
   BODY=$(curl -s --max-time 30 -X POST "$BASE/hybrid_streaming/run" \
@@ -171,7 +192,7 @@ fi
 pause
 
 # ===================================================================
-step "10) Run 'hybrid_streaming' via OpenAI chat (SSE streaming)"
+step "11) Run 'hybrid_streaming' via OpenAI chat (SSE streaming)"
 # ===================================================================
 if [ "$HS_OK" = true ]; then
   dim "  streaming response:"
@@ -192,7 +213,7 @@ fi
 pause
 
 # ===================================================================
-step "11) Deploy 'reasoning_agent' (reasoning_agent)"
+step "12) Deploy 'reasoning_agent' (reasoning_agent)"
 # ===================================================================
 RA_OK=false
 if [ "$HAS_KEY" = true ]; then
@@ -206,7 +227,7 @@ fi
 pause
 
 # ===================================================================
-step "12) Run 'reasoning_agent' via OpenAI chat completions"
+step "13) Run 'reasoning_agent' via OpenAI chat completions (non-streaming)"
 # ===================================================================
 if [ "$RA_OK" = true ]; then
   BODY=$(curl -s --max-time 60 -X POST "$BASE/v1/chat/completions" \
@@ -219,7 +240,28 @@ fi
 pause
 
 # ===================================================================
-step "13) Undeploy 'calculator'"
+step "14) Run 'reasoning_agent' via OpenAI chat completions (streaming)"
+# ===================================================================
+if [ "$RA_OK" = true ]; then
+  dim "  streaming response:"
+  curl -s -N --max-time 60 -X POST "$BASE/v1/chat/completions" \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"reasoning_agent","messages":[{"role":"user","content":"Summarise the history of quantum mechanics in three sentences."}],"stream":true}' \
+    | while IFS= read -r line; do
+        line="${line#data: }"
+        [ -z "$line" ] || [ "$line" = "[DONE]" ] && continue
+        chunk=$(echo "$line" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+        [ -n "$chunk" ] && printf '%s' "$chunk"
+      done
+  echo
+  green "  ✓ streaming complete"
+else
+  dim "  skipped"
+fi
+pause
+
+# ===================================================================
+step "15) Undeploy 'calculator'"
 # ===================================================================
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/undeploy/calculator")
 check 200 "$CODE" "undeployed calculator" "undeploy failed"

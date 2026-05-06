@@ -53,6 +53,14 @@ export function isOngoing(trace: TraceSummary): boolean {
   return trace.root_span.duration_ms === 0
 }
 
+export function isStreaming(trace: TraceSummary): boolean {
+  return (trace.tags ?? []).some(
+    (t) =>
+      (t.key === "hayhooks.openai.stream_requested" && t.value === "true") ||
+      (t.key === "hayhooks.response.streaming" && t.value === "true"),
+  )
+}
+
 export function traceKind(trace: TraceSummary): TraceKind {
   const name = trace.root_span?.name ?? ""
   for (const rule of TRACE_KIND_RULES) {
