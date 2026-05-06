@@ -302,14 +302,23 @@ class _LiveTraceBuffer:
             for trace in traces:
                 spans_copy: dict[str, _SpanState] = {}
                 for span_id, span in trace["spans"].items():
+                    tags_copy: dict[str, Any] = dict(span["tags"])
                     spans_copy[span_id] = {
-                        **span,
-                        "tags": dict(span["tags"]),
+                        "span_id": span["span_id"],
+                        "parent_span_id": span["parent_span_id"],
+                        "name": span["name"],
+                        "start_time_ms": span["start_time_ms"],
+                        "duration_ms": span["duration_ms"],
+                        "tags": tags_copy,
                     }
                 trace_copies.append(
                     {
-                        **trace,
+                        "trace_id": trace["trace_id"],
+                        "entrypoint": trace["entrypoint"],
                         "spans": spans_copy,
+                        "start_time_ms": trace["start_time_ms"],
+                        "updated_at_ms": trace["updated_at_ms"],
+                        "cursor_seq": trace["cursor_seq"],
                     }
                 )
                 if len(trace_copies) >= limit:
