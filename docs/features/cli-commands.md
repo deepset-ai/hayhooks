@@ -70,6 +70,10 @@ hayhooks run --reload
 
 # Enable tracing dashboard UI (auto-builds dashboard frontend locally at runtime)
 hayhooks run --with-tracing-dashboard
+
+# Equivalent aliases
+hayhooks run --with-dashboard
+hayhooks run --tracing-dashboard
 ```
 
 !!! warning "Tracing dashboard with multiple workers"
@@ -94,6 +98,8 @@ For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm ru
 | `--reload` | | Reload on code changes (development) | `false` |
 | `--with-tracing-dashboard` | | Enable tracing dashboard UI and auto-build dashboard assets locally at runtime | `false` |
 | `--dashboard-path` | | URL path for tracing dashboard (requires `--with-tracing-dashboard`) | `/dashboard` |
+
+`--with-dashboard` and `--tracing-dashboard` are aliases for `--with-tracing-dashboard`.
 
 ### mcp run
 
