@@ -233,6 +233,18 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
   - If OpenTelemetry/Datadog tracing is configured, the same Haystack spans are also exported to that backend.
   - Keeps dashboard polling/filter behavior unchanged; it only broadens which spans appear in traces.
 
+### HAYHOOKS_DASHBOARD_TRACE_INCLUDE_PAYLOAD_VALUES
+
+- Default: `false`
+- Description: Include raw pipeline request payload values in dashboard trace tags.
+- Notes:
+  - When disabled, dashboard traces include payload shape metadata such as `question=str(24)`, `top_k=int`, or
+    `filters=dict(3)`, rather than the raw values.
+  - When enabled, raw scalar values and JSON-serializable payload values are included in `hayhooks.payload.values`.
+  - Common sensitive keys are still redacted in raw-value mode, including keys containing `api_key`, `token`,
+    `authorization`, `password`, `secret`, `credential`, or related variants.
+  - Enable this only for trusted local debugging sessions, because payloads can contain prompts, documents, or PII.
+
 ## CORS
 
 These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.AppSettings`.
@@ -440,6 +452,8 @@ HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT=100
 # HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS=1000
 # Optional: exclude Haystack component spans (included by default)
 # HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=false
+# Optional: include raw request payload values in dashboard trace tags (safe metadata only by default)
+# HAYHOOKS_DASHBOARD_TRACE_INCLUDE_PAYLOAD_VALUES=true
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 HAYHOOKS_LOG_LEVEL=INFO
 HAYHOOKS_LOG_FORMAT=default

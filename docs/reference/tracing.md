@@ -71,7 +71,8 @@ Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-
 
 - **Live trace feed** — auto-refreshes (default every 2.5s, configurable via `HAYHOOKS_DASHBOARD_UI_POLL_MS`) with new-trace animations.
 - **Pipeline filter** — click a pipeline in the sidebar to filter traces; counts update per pipeline.
-- **Span waterfall** — expand any trace to see nested spans with duration bars and per-span pipeline badges.
+- **Span waterfall** — expand any trace to see nested spans with duration bars, per-span pipeline badges, and
+  readable Haystack component labels on `haystack.component.run` spans.
 - **Slowest component signal** — highlights only the single slowest component span per trace when its duration is above the configured threshold.
 - **Kind badges** — each trace shows a kind badge (run, openai, deploy, undeploy, mcp) for at-a-glance classification.
 - **Streaming indicator** — streaming requests get a visible STREAM badge beside the kind badge.
@@ -132,6 +133,17 @@ The dashboard always reads traces from Hayhooks' in-process live trace buffer.
 export HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY=2000
 ```
 
+Pipeline run traces include a `hayhooks.payload.values` tag. By default, this tag records payload shape metadata
+(`question=str(24)`, `top_k=int`, `filters=dict(3)`) instead of raw payload values. To include raw values during
+trusted local debugging, opt in explicitly:
+
+```bash
+export HAYHOOKS_DASHBOARD_TRACE_INCLUDE_PAYLOAD_VALUES=true
+```
+
+Common sensitive keys such as `api_key`, `token`, `authorization`, `password`, `secret`, and `credential` remain
+redacted even when raw-value capture is enabled.
+
 !!! warning "Dashboard with multiple workers"
     Dashboard traces are stored in each worker process memory. If you run Hayhooks with multiple workers
     (for example `hayhooks run --workers 2`), each worker keeps a separate trace buffer.
@@ -186,8 +198,17 @@ the dashboard UI.
 | --- | --- | --- |
 | `/dashboard/api/config` | GET | Fetch dashboard UI polling/list settings |
 | `/dashboard/api/entrypoints` | GET | List deployed pipeline names |
-| `/dashboard/api/traces` | GET | Fetch recent traces (supports `limit` and `since_ms` query params) |
+| `/dashboard/api/traces` | GET | Fetch recent traces (supports `limit`, `since_ms`, and `after_seq` query params) |
 | `/dashboard/api/traces/clear` | POST | Clear the local trace buffer |
+
+`GET /dashboard/api/traces` returns:
+
+- `traces`: normalized trace summaries for the requested page.
+- `next_after_seq`: cursor value to pass as `after_seq` on the next incremental request.
+- `has_more`: whether additional trace updates are available beyond the returned page.
+
+The same cursor is also exposed in the `X-Hayhooks-Trace-Cursor` response header for clients that prefer header-based
+cursor handling.
 
 ## Notes
 

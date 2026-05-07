@@ -19,7 +19,8 @@ The dashboard API reads traces from Hayhooks' in-process live trace buffer.
 - Streaming indicator for SSE/streaming requests
 - Failure highlighting with expandable error details and copyable stack traces
 - Pipeline filtering via sidebar
-- Span waterfall with duration bars, per-span tags, and slowest-component highlighting
+- Span waterfall with duration bars, per-span tags, readable Haystack component labels, and slowest-component
+  highlighting
 - Basic trace stats (count, failures, avg duration with sparkline, last trace time)
 - Dark mode toggle
 - Trace buffer clear with confirmation dialog
@@ -94,6 +95,9 @@ npm run lint && npm run test && npm run build
 - `hayhooks run --with-tracing-dashboard` builds and serves static assets from `dashboard/dist`.
 - You can override where Hayhooks reads built assets with `HAYHOOKS_DASHBOARD_DIST_DIR`.
 - The dashboard trace API (`/dashboard/api/traces`) is local-buffer only (no direct Jaeger/SigNoz fetch mode).
+- Pipeline run payload tags use safe shape metadata by default. Set
+  `HAYHOOKS_DASHBOARD_TRACE_INCLUDE_PAYLOAD_VALUES=true` only for trusted local debugging sessions that need raw
+  request values.
 - Dashboard traces are process-local. With multiple server workers (`hayhooks run --workers >1`), each worker has
   its own trace buffer, so `/dashboard` may show only a subset of traces and clear is worker-local.
 - For consistent dashboard behavior, run with a single worker (`--workers 1`) when relying on the built-in live dashboard.
