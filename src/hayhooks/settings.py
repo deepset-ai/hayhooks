@@ -93,17 +93,39 @@ class AppSettings(BaseSettings):
     cors_allow_headers: list[str] = ["*"]
     cors_allow_credentials: bool = False
     cors_allow_origin_regex: str | None = None
-    cors_expose_headers: list[str] = []
+    cors_expose_headers: list[str] = ["X-Hayhooks-Trace-Cursor"]
     cors_max_age: int = 600
 
     # Stdlib loggers to intercept and route through loguru.
     # Only these loggers are patched; everything else (httpx, haystack, etc.)
     # keeps its default behaviour.
     intercepted_loggers: list[str] = ["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]
+    # Access-log path prefixes to suppress from uvicorn.access output.
+    # Defaults hide noisy dashboard polling endpoints.
+    access_log_excluded_path_prefixes: list[str] = [
+        "/dashboard/api/config",
+        "/dashboard/api/entrypoints",
+        "/dashboard/api/traces",
+    ]
 
     # Exclude low-level ASGI send/receive spans from framework instrumentation
     # to keep streaming traces readable by default.
     tracing_excluded_spans: list[Literal["send", "receive"]] = ["send", "receive"]
+
+    # Dashboard trace API settings (in-process live buffer)
+    dashboard_trace_default_limit: int = Field(default=25, gt=0, le=200)
+    dashboard_trace_max_limit: int = Field(default=100, gt=0, le=500)
+    dashboard_trace_buffer_capacity: int = Field(default=200, gt=0, le=10_000)
+    dashboard_trace_include_haystack_spans: bool = True
+    dashboard_ui_poll_ms: int = Field(default=2500, ge=250, le=60_000)
+    dashboard_ui_list_cap: int = Field(default=100, gt=0, le=500)
+    dashboard_ui_fetch_limit: int = Field(default=50, gt=0, le=500)
+    dashboard_ui_fresh_ms: int = Field(default=6000, ge=0, le=60_000)
+    dashboard_ui_slow_component_min_duration_ms: int = Field(default=1000, gt=0)
+    dashboard_enabled: bool = False
+    dashboard_path: str = "/dashboard"
+    dashboard_dist_dir: str = str(Path.cwd() / "dashboard" / "dist")
+    dashboard_trace_include_payload_values: bool = False
 
     # Chainlit Settings
     # Enable embedded Chainlit UI frontend

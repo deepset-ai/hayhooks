@@ -57,7 +57,7 @@ def test_cors():
     assert default_settings.cors_allow_headers == ["*"]
     assert default_settings.cors_allow_credentials is False
     assert default_settings.cors_allow_origin_regex is None
-    assert default_settings.cors_expose_headers == []
+    assert default_settings.cors_expose_headers == ["X-Hayhooks-Trace-Cursor"]
     assert default_settings.cors_max_age == 600
 
     custom_settings = AppSettings(
@@ -163,3 +163,51 @@ def test_additional_python_path_in_sys_path_via_env(monkeypatch, test_settings):
     finally:
         # Restore original sys.path
         sys.path = original_sys_path
+
+
+def test_access_log_excluded_path_prefixes_default():
+    settings = AppSettings()
+    assert settings.access_log_excluded_path_prefixes == [
+        "/dashboard/api/config",
+        "/dashboard/api/entrypoints",
+        "/dashboard/api/traces",
+    ]
+
+
+def test_access_log_excluded_path_prefixes_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_ACCESS_LOG_EXCLUDED_PATH_PREFIXES", '["/status", "/metrics"]')
+    settings = AppSettings()
+    assert settings.access_log_excluded_path_prefixes == ["/status", "/metrics"]
+
+
+def test_dashboard_trace_include_haystack_spans_default():
+    settings = AppSettings()
+    assert settings.dashboard_trace_include_haystack_spans is True
+
+
+def test_dashboard_trace_include_haystack_spans_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS", "true")
+    settings = AppSettings()
+    assert settings.dashboard_trace_include_haystack_spans is True
+
+
+def test_dashboard_trace_buffer_capacity_default():
+    settings = AppSettings()
+    assert settings.dashboard_trace_buffer_capacity == 200
+
+
+def test_dashboard_trace_buffer_capacity_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY", "2000")
+    settings = AppSettings()
+    assert settings.dashboard_trace_buffer_capacity == 2000
+
+
+def test_dashboard_ui_slow_component_min_duration_ms_default():
+    settings = AppSettings()
+    assert settings.dashboard_ui_slow_component_min_duration_ms == 1000
+
+
+def test_dashboard_ui_slow_component_min_duration_ms_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS", "2500")
+    settings = AppSettings()
+    assert settings.dashboard_ui_slow_component_min_duration_ms == 2500

@@ -14,6 +14,10 @@ env:
   HATCH_VERSION: "1.16.5"
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -50,3 +54,32 @@ jobs:
 
       - name: Ty - check types
         run: hatch run test:types
+
+  dashboard-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        id: changes
+        with:
+          filters: |
+            dashboard:
+              - "dashboard/**"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.changes.outputs.dashboard == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard dependencies
+        if: steps.changes.outputs.dashboard == 'true'
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Run dashboard frontend tests
+        if: steps.changes.outputs.dashboard == 'true'
+        working-directory: dashboard
+        run: npm run test

@@ -1,6 +1,7 @@
 import pytest
 from typer.testing import CliRunner
 
+import hayhooks.cli.base as base_module
 from hayhooks.cli.base import hayhooks_cli
 from hayhooks.settings import settings
 
@@ -18,6 +19,9 @@ def set_default_settings():
     settings.disable_ssl = False
     settings.pipelines_dir = "dummy_pipelines"
     settings.root_path = "/"
+    settings.dashboard_enabled = False
+    settings.dashboard_path = "/dashboard"
+    settings.dashboard_dist_dir = "dashboard/dist"
 
 
 def test_run_command_with_reload(monkeypatch):
@@ -101,6 +105,35 @@ def test_run_command_single_worker(monkeypatch):
     assert isinstance(args[0], FastAPI), "run_app should pass a FastAPI object, not a string"
     assert kwargs.get("host") == "localhost"
     assert kwargs.get("port") == 1416
+
+
+def test_run_command_with_tracing_dashboard_flag(monkeypatch, tmp_path):
+    import uvicorn
+
+    calls = []
+    build_inputs = []
+    built_dist_dir = tmp_path / "built-dashboard-dist"
+
+    def fake_uvicorn_run(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    def fake_prepare_tracing_dashboard_assets(dashboard_dist_dir: str) -> str:
+        build_inputs.append(dashboard_dist_dir)
+        return str(built_dist_dir)
+
+    monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
+    monkeypatch.setattr(base_module, "_prepare_tracing_dashboard_assets", fake_prepare_tracing_dashboard_assets)
+    monkeypatch.setattr(base_module, "_dashboard_assets_available", lambda _dir: False)
+
+    result = runner.invoke(
+        hayhooks_cli,
+        ["run", "--host", "localhost", "--port", "1416", "--reload", "--with-tracing-dashboard"],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls, "uvicorn.run was not called"
+    assert build_inputs == ["dashboard/dist"]
+    assert settings.dashboard_enabled is True
+    assert settings.dashboard_dist_dir == str(built_dist_dir)
 
 
 def test_status_command(monkeypatch):

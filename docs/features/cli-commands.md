@@ -67,7 +67,19 @@ hayhooks run --additional-python-path ./custom_code
 
 # Reload on changes (development)
 hayhooks run --reload
+
+# Enable tracing dashboard UI (auto-builds dashboard frontend locally at runtime)
+hayhooks run --with-tracing-dashboard
 ```
+
+!!! warning "Tracing dashboard with multiple workers"
+    The built-in tracing dashboard reads from an in-process buffer.
+    With `hayhooks run --workers >1`, each worker has a separate trace buffer, so dashboard results can be partial
+    and clear operations are worker-local.
+    For a consistent dashboard view, use `--workers 1`.
+
+For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm run lint`, `npm run build`), see the
+[dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
 
 #### Options for `run`
 
@@ -80,6 +92,8 @@ hayhooks run --reload
 | `--additional-python-path` | | Additional Python path | `None` |
 | `--root-path` | | Root path for API | `/` |
 | `--reload` | | Reload on code changes (development) | `false` |
+| `--with-tracing-dashboard` | | Enable tracing dashboard UI and auto-build dashboard assets locally at runtime | `false` |
+| `--dashboard-path` | | URL path for tracing dashboard (requires `--with-tracing-dashboard`) | `/dashboard` |
 
 ### mcp run
 

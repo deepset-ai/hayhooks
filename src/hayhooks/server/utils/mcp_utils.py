@@ -15,7 +15,7 @@ from starlette.types import Receive, Scope, Send
 
 from hayhooks.server.app import init_pipeline_dir
 from hayhooks.server.logger import log
-from hayhooks.server.pipelines import registry
+from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from hayhooks.server.tracing import (
     SPAN_MCP_CALL_TOOL,

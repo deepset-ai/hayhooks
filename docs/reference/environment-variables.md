@@ -154,6 +154,85 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 !!! note "Installation Required"
     The Chainlit UI requires the `chainlit` extra: `pip install "hayhooks[chainlit]"`
 
+## Dashboard UI
+
+### HAYHOOKS_DASHBOARD_ENABLED
+
+- Default: `false`
+- Description: Enable serving the built dashboard static frontend
+- Notes:
+  - `/dashboard/api/traces` always reads from Hayhooks' in-process live trace buffer.
+  - The dashboard trace buffer is process-local. With `hayhooks run --workers >1`, each worker has its own
+    buffer, so the UI can show partial traces and clear operations are worker-local.
+  - For a consistent dashboard view, run Hayhooks with a single worker (`--workers 1`).
+
+### HAYHOOKS_DASHBOARD_PATH
+
+- Default: `/dashboard`
+- Description: URL path where the dashboard static frontend is mounted
+
+### HAYHOOKS_DASHBOARD_DIST_DIR
+
+- Default: `./dashboard/dist`
+- Description: Directory containing dashboard static assets (`index.html`, JS/CSS chunks). Override this when
+  serving a custom or locally rebuilt dashboard frontend.
+
+### HAYHOOKS_DASHBOARD_UI_POLL_MS
+
+- Default: `2500`
+- Description: Dashboard UI polling interval in milliseconds.
+
+### HAYHOOKS_DASHBOARD_UI_LIST_CAP
+
+- Default: `100`
+- Description: Maximum number of traces the dashboard keeps in the browser list.
+
+### HAYHOOKS_DASHBOARD_UI_FETCH_LIMIT
+
+- Default: `50`
+- Description: Number of traces the dashboard requests per poll. This is capped by
+  `HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT` and `HAYHOOKS_DASHBOARD_UI_LIST_CAP`.
+
+### HAYHOOKS_DASHBOARD_UI_FRESH_MS
+
+- Default: `6000`
+- Description: Duration (milliseconds) that newly seen traces keep the "NEW" highlight state.
+
+### HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS
+
+- Default: `1000`
+- Description: Minimum duration (milliseconds) required for the dashboard to mark a trace component as "slow".
+- Notes:
+  - The UI highlights only the single slowest component per trace.
+  - Highlighting is applied only when that component duration is strictly greater than this threshold.
+
+### HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT
+
+- Default: `25`
+- Description: Default number of traces returned from the in-process live trace buffer per dashboard query
+
+### HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT
+
+- Default: `100`
+- Description: Upper bound for `limit` in `/dashboard/api/traces` (local buffer reads)
+
+### HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY
+
+- Default: `200`
+- Description: Maximum number of traces retained in the in-process live trace buffer.
+- Notes:
+  - Behaves like a capped collection: when full, older traces are evicted automatically.
+  - Increase this (for example to `2000`) if you want a larger local history window.
+
+### HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS
+
+- Default: `true`
+- Description: Include Haystack tracer spans in the dashboard live buffer in addition to Hayhooks operation spans.
+- Notes:
+  - Works in local capture mode even when no external tracing backend is configured.
+  - If OpenTelemetry/Datadog tracing is configured, the same Haystack spans are also exported to that backend.
+  - Keeps dashboard polling/filter behavior unchanged; it only broadens which spans appear in traces.
+
 ## CORS
 
 These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.AppSettings`.
@@ -185,7 +264,7 @@ These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.A
 
 ### HAYHOOKS_CORS_EXPOSE_HEADERS
 
-- Default: `[]`
+- Default: `["X-Hayhooks-Trace-Cursor"]`
 - Description: Headers to expose in response
 
 ### HAYHOOKS_CORS_MAX_AGE
@@ -214,6 +293,14 @@ These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.A
 - Default: `["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]`
 - Description: List of stdlib loggers to intercept and route through Loguru. Only the listed loggers are patched; all others (httpx, haystack, etc.) keep their default behaviour.
 
+### HAYHOOKS_ACCESS_LOG_EXCLUDED_PATH_PREFIXES
+
+- Default: `["/dashboard/api/config", "/dashboard/api/entrypoints", "/dashboard/api/traces"]`
+- Description: Path prefixes for `uvicorn.access` request logs that should be suppressed.
+- Notes:
+  - Useful to reduce noise from dashboard polling requests.
+  - Set to `[]` to keep all access logs.
+
 **Examples:**
 
 ```bash
@@ -225,6 +312,9 @@ export HAYHOOKS_LOG_FORMAT=verbose
 
 # Also intercept haystack logs
 export HAYHOOKS_INTERCEPTED_LOGGERS='["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "haystack"]'
+
+# Keep dashboard polling request logs
+export HAYHOOKS_ACCESS_LOG_EXCLUDED_PATH_PREFIXES='[]'
 ```
 
 ## OpenTelemetry (Tracing)
@@ -342,6 +432,14 @@ HAYHOOKS_STREAMING_COMPONENTS=all
 HAYHOOKS_DEPLOY_CONCURRENCY=serialized
 HAYHOOKS_STARTUP_DEPLOY_STRATEGY=parallel
 HAYHOOKS_STARTUP_DEPLOY_WORKERS=4
+HAYHOOKS_DASHBOARD_ENABLED=true
+HAYHOOKS_DASHBOARD_DIST_DIR=./dashboard/dist
+HAYHOOKS_DASHBOARD_TRACE_DEFAULT_LIMIT=25
+HAYHOOKS_DASHBOARD_TRACE_MAX_LIMIT=100
+# Optional: only highlight slowest components above 1s
+# HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS=1000
+# Optional: exclude Haystack component spans (included by default)
+# HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=false
 HAYHOOKS_CORS_ALLOW_ORIGINS=["*"]
 HAYHOOKS_LOG_LEVEL=INFO
 HAYHOOKS_LOG_FORMAT=default

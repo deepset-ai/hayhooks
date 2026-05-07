@@ -9,7 +9,7 @@ With Hayhooks, you can:
 - 💬 **Integrate your Haystack pipelines and agents with [Open WebUI](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
 - 🖥️ **Embed a [Chainlit](https://chainlit.io/) chat UI** directly in Hayhooks with `pip install "hayhooks[chainlit]"` and `hayhooks run --with-chainlit` -- zero-configuration frontend with streaming, pipeline selection, and custom UI widgets.
 - 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
-- 📈 **Trace Hayhooks lifecycle actions with OpenTelemetry** (`pip install "hayhooks[tracing]"`) for deploy/run/undeploy visibility across REST and MCP.
+- 📈 **Trace Hayhooks lifecycle actions with OpenTelemetry** (`pip install "hayhooks[tracing]"`) for deploy/run/undeploy visibility across REST and MCP, with a `/dashboard` UI via `hayhooks run --with-tracing-dashboard` (backed by a local live trace buffer).
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hayhooks.svg)](https://pypi.org/project/hayhooks)
@@ -157,6 +157,7 @@ Or chat with it in the [embedded Chainlit UI](docs/features/chainlit-integration
 - [Quick Start Guide](docs/getting-started/quick-start.md) - Get started with Hayhooks
 - [Installation](docs/getting-started/installation.md) - Install Hayhooks and dependencies
 - [Configuration](docs/getting-started/configuration.md) - Configure Hayhooks for your needs
+- [Tracing Dashboard Frontend](dashboard/README.md) - Local dashboard setup and frontend development commands
 - [Examples](docs/examples/overview.md) - Explore example implementations
 
 ## Community & Support
