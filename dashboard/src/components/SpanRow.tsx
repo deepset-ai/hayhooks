@@ -5,6 +5,9 @@ import type { TraceSpanNode } from "../types"
 import { fmtDur } from "../utils/formatting"
 import { spanTagValue } from "../utils/traces"
 
+const HAYSTACK_COMPONENT_NAME_TAG_KEY = "haystack.component.name"
+const HAYSTACK_COMPONENT_RUN_SPAN_NAME = "haystack.component.run"
+
 type SpanRowProps = {
   span: TraceSpanNode
   depth: number
@@ -30,6 +33,9 @@ export const SpanRow = memo(function SpanRow({
   const widthPct = traceDuration > 0 ? Math.max((span.duration_ms / traceDuration) * 100, 1) : 100
   const pipelineName = spanTagValue(span, "hayhooks.pipeline.name")
   const showPipeline = pipelineName !== undefined && pipelineName !== traceEntrypoint
+  const componentName = span.name === HAYSTACK_COMPONENT_RUN_SPAN_NAME
+    ? spanTagValue(span, HAYSTACK_COMPONENT_NAME_TAG_KEY)
+    : undefined
   const isSlowComponent = slowSpanId === span.span_id
   const isSelected = span.span_id === selectedSpanId
 
@@ -55,6 +61,14 @@ export const SpanRow = memo(function SpanRow({
             <span className="min-w-0 break-words font-mono text-foreground/85">
               {span.name}
             </span>
+            {componentName !== undefined && (
+              <span
+                title={componentName}
+                className="inline-flex max-w-48 items-center truncate rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-primary"
+              >
+                {componentName}
+              </span>
+            )}
             {showPipeline && (
               <span className="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 font-sans text-[10px] font-medium text-primary">
                 {pipelineName}

@@ -93,6 +93,31 @@ describe("TraceCard", () => {
     expect(screen.queryByText("/root-route")).not.toBeInTheDocument()
   })
 
+  it("shows component names directly on component run span rows", () => {
+    const childSpan = makeSpan({
+      span_id: "span-child",
+      name: "haystack.component.run",
+      duration_ms: 50,
+      tags: [{ key: "haystack.component.name", value: "prompt_builder" }],
+    })
+    const trace = makeTrace({
+      span_count: 2,
+      root_span: makeSpan({
+        span_id: "span-root",
+        duration_ms: 200,
+        children: [childSpan],
+      }),
+    })
+
+    render(<TraceCard trace={trace} isFresh={false} />)
+    fireEvent.click(screen.getByRole("button", { name: /my_pipeline/i }))
+
+    const componentRunRow = screen.getByRole("button", { name: /haystack.component.run/i })
+    const componentLabel = within(componentRunRow).getByText("prompt_builder")
+    expect(componentLabel).toBeInTheDocument()
+    expect(componentLabel).toHaveClass("border-primary/30", "bg-primary/10", "text-primary")
+  })
+
   it("truncates selected span tag values in chips", () => {
     const longValue = "component-input-type-value-".repeat(4)
     const trace = makeTrace({
@@ -180,10 +205,10 @@ describe("TraceCard", () => {
     const spansHeader = screen.getByText("Spans").closest("div")
     expect(spansHeader).toBeTruthy()
     expect(within(spansHeader as HTMLElement).getByText("Slowest component")).toBeInTheDocument()
-    expect(screen.getByText("retriever")).toBeInTheDocument()
-    expect(screen.queryByText("llm")).not.toBeInTheDocument()
-    expect(screen.queryByText("ranker")).not.toBeInTheDocument()
-    expect(screen.queryByText("writer")).not.toBeInTheDocument()
+    expect(within(spansHeader as HTMLElement).getByText("retriever")).toBeInTheDocument()
+    expect(within(spansHeader as HTMLElement).queryByText("llm")).not.toBeInTheDocument()
+    expect(within(spansHeader as HTMLElement).queryByText("ranker")).not.toBeInTheDocument()
+    expect(within(spansHeader as HTMLElement).queryByText("writer")).not.toBeInTheDocument()
 
     const componentRunButtons = screen.getAllByRole("button", { name: /haystack.component.run/i })
     expect(componentRunButtons).toHaveLength(4)
