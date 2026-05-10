@@ -101,6 +101,12 @@ async def test_list_tools_with_one_pipeline_deployed(mcp_server_instance, deploy
             "title": "chat_with_websiteRunRequest",
             "type": "object",
         }
+        assert pipeline_tool.annotations is not None
+        assert pipeline_tool.annotations.title == "Chat With Website"
+        assert pipeline_tool.annotations.readOnlyHint is True
+        assert pipeline_tool.annotations.destructiveHint is False
+        assert pipeline_tool.annotations.idempotentHint is True
+        assert pipeline_tool.annotations.openWorldHint is True
 
 
 @pytest.mark.asyncio

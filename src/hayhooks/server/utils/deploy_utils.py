@@ -47,6 +47,7 @@ from hayhooks.server.utils.module_loader import (
     unload_pipeline_modules,
 )
 from hayhooks.server.utils.streaming_response_utils import _streaming_response_from_result
+from hayhooks.server.utils.yaml_utils import parse_yaml_pipeline
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 from hayhooks.settings import DeployConcurrencyPolicy, settings
 
@@ -618,6 +619,7 @@ def _register_prepared_pipeline(
         "description": description,
         "request_model": request_model,
         "skip_mcp": pipeline_wrapper.skip_mcp,
+        "tool_hints": getattr(pipeline_wrapper, "tool_hints", {}) or {},
     }
 
     # Merge extra metadata (e.g., YAML-specific fields)
@@ -695,6 +697,13 @@ def prepare_pipeline_yaml(
     save_file: bool = True if options is None else bool(options.get("save_file", True))
     description = (options or {}).get("description")
     skip_mcp = bool((options or {}).get("skip_mcp", False))
+    tool_hints = (options or {}).get("tool_hints")
+    if tool_hints is None:
+        # Only parse YAML metadata when tool_hints is not provided via options.
+        # YAMLPipelineWrapper.from_yaml() will parse the full YAML again later,
+        # but parse_yaml_pipeline is lightweight (just yaml.safe_load).
+        yaml_metadata = parse_yaml_pipeline(source_code).get("metadata", {}) or {}
+        tool_hints = yaml_metadata.get("tool_hints", {}) or {}
 
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_PREPARE,
@@ -713,6 +722,7 @@ def prepare_pipeline_yaml(
 
         pipeline_wrapper = YAMLPipelineWrapper.from_yaml(source_code, description=description)
         pipeline_wrapper.skip_mcp = skip_mcp
+        pipeline_wrapper.tool_hints = tool_hints
         pipeline_wrapper.setup()
 
         extra_metadata = {
@@ -720,6 +730,7 @@ def prepare_pipeline_yaml(
             "streaming_components": pipeline_wrapper.streaming_components,
             "include_outputs_from": pipeline_wrapper.include_outputs_from,
             "input_resolutions": pipeline_wrapper.input_resolutions,
+            "tool_hints": tool_hints,
         }
 
         return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper, extra_metadata=extra_metadata)
