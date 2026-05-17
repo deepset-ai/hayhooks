@@ -120,6 +120,7 @@ A [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools) requires:
 - `name`: The name of the tool
 - `description`: The description of the tool
 - `inputSchema`: JSON Schema describing the tool's input parameters
+- `annotations`: Optional hints describing tool behavior to MCP clients
 
 **How Hayhooks Creates MCP Tools:**
 
@@ -130,6 +131,7 @@ For each deployed pipeline, Hayhooks will:
   - If you use Google-style or reStructuredText-style docstrings, use the first line as MCP Tool `description` and the rest as `parameters` (if present)
   - Each parameter description will be used as the `description` of the corresponding Pydantic model field (if present)
 - Generate a Pydantic model from the `inputSchema` using the **`run_api` method arguments as fields**
+- Build MCP `ToolAnnotations` from optional pipeline `tool_hints`
 
 **Example:**
 
@@ -140,6 +142,14 @@ from hayhooks import BasePipelineWrapper
 
 
 class PipelineWrapper(BasePipelineWrapper):
+    tool_hints = {
+        "title": "Website Q&A",
+        "readOnly": True,
+        "destructive": False,
+        "idempotent": True,
+        "openWorld": True,
+    }
+
     def setup(self) -> None:
         pipeline_yaml = (Path(__file__).parent / "chat_with_website.yml").read_text()
         self.pipeline = Pipeline.loads(pipeline_yaml)
@@ -158,6 +168,20 @@ class PipelineWrapper(BasePipelineWrapper):
 ### YAML Pipeline as MCP Tool
 
 YAML-deployed pipelines are also automatically exposed as MCP tools. When you deploy via `hayhooks pipeline deploy-yaml`, the pipeline becomes available as an MCP tool with its input schema derived from the YAML `inputs` section.
+
+You can also declare MCP tool hints directly in the YAML `metadata` block:
+
+```yaml
+metadata:
+  tool_hints:
+    title: Calculator
+    readOnly: true
+    destructive: false
+    idempotent: true
+    openWorld: false
+```
+
+If `tool_hints` is omitted, Hayhooks uses these defaults for pipeline tools: title-cased pipeline name, `readOnly=true`, `destructive=false`, `idempotent=true`, and `openWorld=true`.
 
 For complete examples and detailed information, see [YAML Pipeline Deployment](../concepts/yaml-pipeline-deployment.md).
 

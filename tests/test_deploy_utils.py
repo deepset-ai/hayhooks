@@ -689,6 +689,27 @@ def test_deploy_pipeline_files_skip_mcp(mocker):
     assert registry.get_metadata("chat_with_website_mcp_skip").get("skip_mcp") is True
 
 
+def test_deploy_pipeline_files_stores_tool_hints(mocker):
+    mock_app = mocker.Mock()
+    mock_app.routes = []
+
+    test_file_path = Path("tests/test_files/files/chat_with_website_mcp_hints/pipeline_wrapper.py")
+    files = {"pipeline_wrapper.py": test_file_path.read_text()}
+
+    result = deploy_pipeline_files(
+        app=mock_app, pipeline_name="chat_with_website_mcp_hints", files=files, save_files=False
+    )
+    assert result == {"name": "chat_with_website_mcp_hints"}
+
+    assert registry.get_metadata("chat_with_website_mcp_hints").get("tool_hints") == {
+        "title": "Website Q&A",
+        "readOnly": True,
+        "destructive": False,
+        "idempotent": True,
+        "openWorld": False,
+    }
+
+
 def test_deploy_pipeline_files_overwrite_preserves_new_sibling_files(test_settings):
     pipeline_name = "wrapper_with_sibling_file"
     wrapper_source = """
