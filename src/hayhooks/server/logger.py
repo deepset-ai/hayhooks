@@ -195,8 +195,9 @@ def log_elapsed(level: str = "DEBUG") -> Callable[[F], F]:
             t0 = time.monotonic()
             result = func(*args, **kwargs)
             elapsed_ms = (time.monotonic() - t0) * 1000
+            func_name = getattr(func, "__name__", type(func).__name__)
             log.opt(depth=1, colors=True).log(
-                level, "<bold>{}</bold>() completed in <bold>{:.0f}ms</bold>", func.__name__, elapsed_ms
+                level, "<bold>{}</bold>() completed in <bold>{:.0f}ms</bold>", func_name, elapsed_ms
             )
             return result
 
