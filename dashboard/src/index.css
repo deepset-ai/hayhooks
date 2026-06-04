@@ -57,53 +57,53 @@
 }
 
 .dark {
-  --haystack-green: #4ade80;
-  --haystack-blue: #60a5fa;
-  --warning: #fbbf24;
-  --warning-soft: rgb(245 158 11 / 12%);
-  --warning-border: rgb(245 158 11 / 35%);
-  --kind-deploy: #fbbf24;
-  --kind-deploy-soft: rgb(245 158 11 / 15%);
-  --kind-deploy-border: rgb(245 158 11 / 30%);
-  --kind-openai: #c4b5fd;
-  --kind-openai-soft: rgb(139 92 246 / 15%);
-  --kind-openai-border: rgb(139 92 246 / 30%);
-  --kind-mcp: #5eead4;
-  --kind-mcp-soft: rgb(20 184 166 / 15%);
-  --kind-mcp-border: rgb(20 184 166 / 30%);
-  --stream: #22d3ee;
-  --background: #0f1117;
-  --foreground: #e2e8f0;
-  --card: #181b23;
-  --card-foreground: #e2e8f0;
-  --popover: #181b23;
-  --popover-foreground: #e2e8f0;
-  --primary: #60a5fa;
-  --primary-foreground: #0f1117;
-  --secondary: #1e2130;
-  --secondary-foreground: #cbd5e1;
-  --muted: #1e2130;
-  --muted-foreground: #94a3b8;
-  --accent: #1e2130;
-  --accent-foreground: #e2e8f0;
-  --destructive: #f87171;
+  --haystack-green: #5cf08f;
+  --haystack-blue: #74b4ff;
+  --warning: #ffd43b;
+  --warning-soft: color-mix(in srgb, var(--warning) 8%, transparent);
+  --warning-border: color-mix(in srgb, var(--warning) 60%, transparent);
+  --kind-deploy: #ffa94d;
+  --kind-deploy-soft: color-mix(in srgb, var(--kind-deploy) 10%, transparent);
+  --kind-deploy-border: color-mix(in srgb, var(--kind-deploy) 52%, transparent);
+  --kind-openai: #b197fc;
+  --kind-openai-soft: color-mix(in srgb, var(--kind-openai) 18%, transparent);
+  --kind-openai-border: color-mix(in srgb, var(--kind-openai) 45%, transparent);
+  --kind-mcp: #3bf7d4;
+  --kind-mcp-soft: color-mix(in srgb, var(--kind-mcp) 16%, transparent);
+  --kind-mcp-border: color-mix(in srgb, var(--kind-mcp) 45%, transparent);
+  --stream: #38d9f5;
+  --background: #08090c;
+  --foreground: #f5f7fa;
+  --card: #101216;
+  --card-foreground: #f5f7fa;
+  --popover: #101216;
+  --popover-foreground: #f5f7fa;
+  --primary: #74b4ff;
+  --primary-foreground: #08090c;
+  --secondary: #1a1d24;
+  --secondary-foreground: #e2e8f0;
+  --muted: #1a1d24;
+  --muted-foreground: #aab4c0;
+  --accent: #1a1d24;
+  --accent-foreground: #f5f7fa;
+  --destructive: #ff6b6b;
   --destructive-foreground: #1f0a0a;
-  --border: rgb(255 255 255 / 8%);
-  --input: rgb(255 255 255 / 10%);
-  --ring: #60a5fa;
-  --chart-1: #60a5fa;
-  --chart-2: #4ade80;
-  --chart-3: #fbbf24;
+  --border: rgb(255 255 255 / 14%);
+  --input: rgb(255 255 255 / 16%);
+  --ring: #74b4ff;
+  --chart-1: #74b4ff;
+  --chart-2: #5cf08f;
+  --chart-3: #ffd43b;
   --chart-4: #a78bfa;
   --chart-5: #f472b6;
-  --sidebar: #13151d;
-  --sidebar-foreground: #e2e8f0;
-  --sidebar-primary: #60a5fa;
-  --sidebar-primary-foreground: #0f1117;
-  --sidebar-accent: #1e2130;
-  --sidebar-accent-foreground: #e2e8f0;
-  --sidebar-border: rgb(255 255 255 / 8%);
-  --sidebar-ring: #60a5fa;
+  --sidebar: #0b0c10;
+  --sidebar-foreground: #f5f7fa;
+  --sidebar-primary: #74b4ff;
+  --sidebar-primary-foreground: #08090c;
+  --sidebar-accent: #1a1d24;
+  --sidebar-accent-foreground: #f5f7fa;
+  --sidebar-border: rgb(255 255 255 / 14%);
+  --sidebar-ring: #74b4ff;
 }
 
 @theme inline {
@@ -198,8 +198,8 @@
 
 .waterfall-bar-selected {
   box-shadow:
-    0 0 0 1px rgb(46 108 223 / 68%),
-    0 0 0 3px rgb(46 108 223 / 16%);
+    0 0 0 1px color-mix(in srgb, var(--haystack-blue) 68%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--haystack-blue) 16%, transparent);
 }
 
 /* Animate new trace cards */
@@ -236,50 +236,37 @@
     trace-enter 400ms ease-out,
     trace-glow 2s ease-in-out infinite;
   --glow-color: var(--haystack-blue);
-  --glow-color-soft: rgb(46 108 223 / 20%);
+  --glow-color-soft: color-mix(in srgb, var(--glow-color) 22%, transparent);
   border-top-color: var(--glow-color);
   border-right-color: var(--glow-color);
   border-bottom-color: var(--glow-color);
 }
 
+/* Each variant only sets --glow-color; the soft glow derives from it, and the
+   token vars already swap per theme, so no light/dark overrides are needed. */
 .trace-card-fresh-deploy {
-  --glow-color: #f59e0b;
-  --glow-color-soft: rgb(245 158 11 / 20%);
+  --glow-color: var(--kind-deploy);
 }
 
-.trace-card-fresh-undeploy {
-  --glow-color: #94a3b8;
-  --glow-color-soft: rgb(148 163 184 / 18%);
+.trace-card-fresh-undeploy,
+.trace-card-fresh-other {
+  --glow-color: var(--muted-foreground);
 }
 
 .trace-card-fresh-openai {
-  --glow-color: #8b5cf6;
-  --glow-color-soft: rgb(139 92 246 / 20%);
+  --glow-color: var(--kind-openai);
 }
 
 .trace-card-fresh-mcp {
-  --glow-color: #14b8a6;
-  --glow-color-soft: rgb(20 184 166 / 20%);
+  --glow-color: var(--kind-mcp);
 }
 
 .trace-card-fresh-run {
   --glow-color: var(--haystack-blue);
-  --glow-color-soft: rgb(46 108 223 / 20%);
-}
-
-.trace-card-fresh-other {
-  --glow-color: #94a3b8;
-  --glow-color-soft: rgb(148 163 184 / 18%);
 }
 
 .trace-card-fresh-failed {
-  --glow-color: #dc2626;
-  --glow-color-soft: rgb(220 38 38 / 22%);
-}
-
-.dark .trace-card-fresh-failed {
-  --glow-color: #f87171;
-  --glow-color-soft: rgb(248 113 113 / 24%);
+  --glow-color: var(--destructive);
 }
 
 /* Animate ongoing traces — only the outer glow pulses; the border stays a
@@ -295,8 +282,7 @@
 }
 
 .trace-card-ongoing {
-  --ongoing-strong: rgb(46 108 223 / 52%);
-  --ongoing-soft: rgb(46 108 223 / 16%);
+  --ongoing-strong: color-mix(in srgb, var(--haystack-blue) 55%, transparent);
   border-top-color: var(--ongoing-strong);
   border-right-color: var(--ongoing-strong);
   border-bottom-color: var(--ongoing-strong);
