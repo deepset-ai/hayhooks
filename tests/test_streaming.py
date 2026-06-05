@@ -13,6 +13,7 @@ from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
 from haystack.dataclasses.streaming_chunk import ToolCallDelta
 from haystack.utils import Secret
+from haystack.utils.callable_serialization import serialize_callable
 
 from hayhooks.events import PipelineEvent
 from hayhooks.server.pipelines.streaming import (
@@ -305,6 +306,23 @@ async def test_agent_streaming(create_mock_agent, use_async):
     streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
     assert len(streaming_chunks) == 3
     assert streaming_chunks[0].content == "Agent "
+
+
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_agent_streaming_callback_is_serializable(create_mock_agent, use_async):
+    mock_agent = create_mock_agent()
+
+    if use_async:
+        gen = async_streaming_generator(mock_agent, pipeline_run_args={"messages": []})
+        _ = [chunk async for chunk in gen]
+        callback = mock_agent.run_async.call_args.kwargs["streaming_callback"]
+    else:
+        gen = streaming_generator(mock_agent, pipeline_run_args={"messages": []})
+        list(gen)
+        callback = mock_agent.run.call_args.kwargs["streaming_callback"]
+
+    assert "<locals>" not in callback.__qualname__
+    assert serialize_callable(callback)
 
 
 @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
@@ -637,9 +655,7 @@ async def test_on_reasoning_callback_invoked(create_mock_agent, use_async):
         return PipelineEvent(type="status", data={"description": f"Reasoning: {text}"})
 
     if use_async:
-        gen = async_streaming_generator(
-            mock_agent, pipeline_run_args={"messages": []}, on_reasoning=on_reasoning
-        )
+        gen = async_streaming_generator(mock_agent, pipeline_run_args={"messages": []}, on_reasoning=on_reasoning)
         chunks = [chunk async for chunk in gen]
     else:
         gen = streaming_generator(mock_agent, pipeline_run_args={"messages": []}, on_reasoning=on_reasoning)
