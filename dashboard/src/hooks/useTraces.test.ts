@@ -45,6 +45,8 @@ const TEST_CONFIG: DashboardConfig = {
   freshMs: 5000,
   slowComponentMinDurationMs: 1000,
   apiBase: "",
+  // These tests exercise the polling/merge path; SSE is covered separately.
+  streamEnabled: false,
 }
 
 vi.mock("../api", async (importOriginal) => {

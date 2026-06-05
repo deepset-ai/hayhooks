@@ -18,15 +18,17 @@ import { SpanRow } from "./SpanRow"
 type TraceCardProps = {
   trace: TraceSummary
   isFresh: boolean
+  isLatest?: boolean
   slowComponentMinDurationMs?: number
 }
 
 export const TraceCard = memo(function TraceCard({
   trace,
   isFresh,
+  isLatest = false,
   slowComponentMinDurationMs = DEFAULT_DASHBOARD_CONFIG.slowComponentMinDurationMs,
 }: TraceCardProps) {
-  const [open, setOpen] = useState(false)
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
   const [selectedSpanId, setSelectedSpanId] = useState(trace.root_span.span_id)
   const traceIdCopy = useCopyToClipboard()
   const summaryTags = useMemo(
@@ -47,6 +49,11 @@ export const TraceCard = memo(function TraceCard({
   const failed = isFailed(trace)
   const ongoing = isOngoing(trace)
   const streaming = isStreaming(trace)
+
+  // Keep the latest trace (and any still-ongoing one) expanded; older finished
+  // traces collapse to their compact header so the history stays light. A
+  // manual toggle overrides and sticks for the life of the card.
+  const open = manualOpen ?? (isLatest || ongoing)
   const kind = traceKind(trace)
   const kindStyle = KIND_STYLE[kind]
   const freshHighlightTone = failed ? "failed" : kind
@@ -69,7 +76,7 @@ export const TraceCard = memo(function TraceCard({
   }, [failed, trace.tags, trace.root_span])
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
+    <Collapsible open={open} onOpenChange={setManualOpen}>
       <div
         className={cn(
           "rounded-lg border border-l-2 bg-card text-card-foreground transition-shadow",

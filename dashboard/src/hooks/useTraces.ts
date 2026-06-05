@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { clearTraces as apiClearTraces, fetchEntrypoints, fetchTraces, resolveApiBase } from "../api"
+import {
+  clearTraces as apiClearTraces,
+  fetchEntrypoints,
+  fetchTraces,
+  parseTracesPayload,
+  resolveApiBase,
+  traceStreamUrl,
+} from "../api"
 import type { DashboardConfig, TraceSummary } from "../types"
 import { mergeTraces } from "../utils/traces"
 
@@ -74,6 +81,10 @@ function computeFreshUntil(
 
 export function useTraces(config: DashboardConfig): UseTracesResult {
   const [state, setState] = useState<State>(INITIAL_STATE)
+  // Bumped by clear() to force the SSE connection to reconnect (the server
+  // resets its cursor on clear, so an open stream must restart from a fresh
+  // snapshot to keep receiving new traces).
+  const [streamEpoch, setStreamEpoch] = useState(0)
 
   /**
    * Refs carry imperative state between refresh cycles without triggering
@@ -99,6 +110,34 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
       mountedRef.current = false
     }
   }, [])
+
+  /**
+   * Apply an incoming batch of traces to visible state: track freshness for
+   * genuinely new traces, then merge/dedup/cap. Shared by the polling path and
+   * the SSE stream so both produce identical state transitions.
+   */
+  const applyIncoming = useCallback(
+    (incoming: TraceSummary[]) => {
+      const now = Date.now()
+      const incomingIds = incoming.map((t) => t.trace_id)
+      const freshUntil = computeFreshUntil(freshUntilRef.current, incomingIds, seenRef.current, now, config.freshMs)
+      for (const id of incomingIds) seenRef.current.add(id)
+
+      const currentTraces = tracesRef.current
+      const capped = currentTraces.length > config.listCap ? currentTraces.slice(0, config.listCap) : currentTraces
+      const nextTraces = incoming.length === 0 ? capped : mergeTraces(capped, incoming, config.listCap)
+
+      if (incoming.length === 0 && capped !== currentTraces) {
+        seenRef.current = new Set(capped.map((t) => t.trace_id))
+      }
+      if (nextTraces !== capped) {
+        seenRef.current = new Set(nextTraces.map((t) => t.trace_id))
+      }
+
+      setState((prev) => ({ ...prev, traces: nextTraces, freshUntil, updatedAt: now, error: null }))
+    },
+    [config.freshMs, config.listCap],
+  )
 
   const refresh = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -156,36 +195,8 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
           if (nextAfterSeq !== null) afterSeqRef.current = nextAfterSeq
         }
 
-        // 3. Track freshness
-        const now = Date.now()
-        const incomingIds = incoming.map((t) => t.trace_id)
-        const freshUntil = computeFreshUntil(freshUntilRef.current, incomingIds, seenRef.current, now, config.freshMs)
-        for (const id of incomingIds) seenRef.current.add(id)
-
-        // 4. Merge incoming traces into the visible list
-        const currentTraces = tracesRef.current
-        const capped = currentTraces.length > config.listCap
-          ? currentTraces.slice(0, config.listCap)
-          : currentTraces
-
-        const nextTraces = incoming.length === 0
-          ? capped
-          : mergeTraces(capped, incoming, config.listCap)
-
-        if (incoming.length === 0 && capped !== currentTraces) {
-          seenRef.current = new Set(capped.map((t) => t.trace_id))
-        }
-        if (nextTraces !== capped) {
-          seenRef.current = new Set(nextTraces.map((t) => t.trace_id))
-        }
-
-        setState((prev) => ({
-          ...prev,
-          traces: nextTraces,
-          freshUntil,
-          updatedAt: now,
-          error: null,
-        }))
+        // 3. Track freshness + merge into the visible list (shared with SSE).
+        applyIncoming(incoming)
 
         if (!isCurrent()) return
       } catch (e) {
@@ -204,7 +215,7 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
         return mountedRef.current && epoch === epochRef.current
       }
     },
-    [config.fetchLimit, config.freshMs, config.listCap],
+    [applyIncoming, config.fetchLimit],
   )
 
   const clear = useCallback(async () => {
@@ -224,6 +235,9 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
         error: null,
         clearing: false,
       }))
+      // Force the SSE stream to reconnect from a fresh (empty) snapshot, since
+      // the server resets its trace cursor on clear.
+      setStreamEpoch((epoch) => epoch + 1)
     } catch (e) {
       if (mountedRef.current) {
         setState((prev) => ({
@@ -236,18 +250,86 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
   }, [])
 
   /**
-   * Initial fetch fires immediately (via setTimeout 0), then repeats on the
-   * configured interval. Both use "silent" mode so the UI doesn't flash the
-   * loading indicator on background polls.
+   * Live updates.
+   *
+   * Primary path is an SSE stream (`EventSource`): the server pushes a
+   * `snapshot` on connect, then `trace` deltas as spans start/finish. If the
+   * stream can't connect or repeatedly errors, we fall back to interval polling
+   * until it recovers — and when SSE is disabled by the server (or unavailable
+   * in the runtime) we use polling directly, preserving the original behavior.
    */
   useEffect(() => {
-    const timeout = window.setTimeout(() => void refresh({ silent: true }), 0)
-    const interval = window.setInterval(() => void refresh({ silent: true }), config.pollMs)
-    return () => {
-      window.clearTimeout(timeout)
-      window.clearInterval(interval)
+    const base = baseRef.current
+
+    if (!config.streamEnabled || typeof EventSource === "undefined") {
+      const timeout = window.setTimeout(() => void refresh({ silent: true }), 0)
+      const interval = window.setInterval(() => void refresh({ silent: true }), config.pollMs)
+      return () => {
+        window.clearTimeout(timeout)
+        window.clearInterval(interval)
+      }
     }
-  }, [config.pollMs, refresh])
+
+    let source: EventSource | null = null
+    let pollInterval: number | null = null
+    let failures = 0
+    let disposed = false
+    const FAILURE_THRESHOLD = 3
+
+    const stopPolling = () => {
+      if (pollInterval !== null) {
+        window.clearInterval(pollInterval)
+        pollInterval = null
+      }
+    }
+    const startPollingFallback = () => {
+      if (pollInterval !== null) return
+      void refresh({ silent: true })
+      pollInterval = window.setInterval(() => void refresh({ silent: true }), config.pollMs)
+    }
+
+    const loadEntrypoints = () => {
+      void fetchEntrypoints(base)
+        .then((next) => {
+          if (disposed) return
+          setState((prev) => (sameStrings(prev.entrypoints, next) ? prev : { ...prev, entrypoints: next }))
+        })
+        .catch(() => {
+          /* entrypoints are best-effort; ignore transient failures */
+        })
+    }
+
+    const handlePayload = (raw: string) => {
+      try {
+        const result = parseTracesPayload(JSON.parse(raw))
+        if (result.nextAfterSeq !== null) afterSeqRef.current = result.nextAfterSeq
+        applyIncoming(result.traces)
+      } catch {
+        /* ignore malformed SSE frame */
+      }
+    }
+
+    source = new EventSource(traceStreamUrl(base, afterSeqRef.current))
+    source.addEventListener("open", () => {
+      failures = 0
+      stopPolling()
+      loadEntrypoints()
+      setState((prev) => (prev.error === null ? prev : { ...prev, error: null }))
+    })
+    source.addEventListener("snapshot", (event) => handlePayload((event as MessageEvent<string>).data))
+    source.addEventListener("trace", (event) => handlePayload((event as MessageEvent<string>).data))
+    source.addEventListener("error", () => {
+      // EventSource auto-reconnects; after repeated failures, fall back to polling.
+      failures += 1
+      if (failures >= FAILURE_THRESHOLD) startPollingFallback()
+    })
+
+    return () => {
+      disposed = true
+      stopPolling()
+      source?.close()
+    }
+  }, [config.streamEnabled, config.pollMs, streamEpoch, refresh, applyIncoming])
 
   return {
     entrypoints: state.entrypoints,

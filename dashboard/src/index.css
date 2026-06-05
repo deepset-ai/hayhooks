@@ -202,6 +202,45 @@
     0 0 0 3px color-mix(in srgb, var(--haystack-blue) 16%, transparent);
 }
 
+/* In-progress span: an indeterminate stripe sweeping across the track so a
+   running span reads as "live" even before it has a measurable duration. */
+@keyframes waterfall-running {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
+.waterfall-bar-running {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 45%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, transparent, var(--haystack-blue), var(--haystack-green), transparent);
+  animation: waterfall-running 1.2s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Gentle pulsing glow on the row of a span that is still running. */
+@keyframes span-row-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 12px -4px color-mix(in srgb, var(--haystack-blue) 55%, transparent);
+  }
+}
+
+.span-row-running {
+  background: color-mix(in srgb, var(--haystack-blue) 8%, transparent);
+  animation: span-row-glow 1.6s ease-in-out infinite;
+}
+
 /* Animate new trace cards */
 @keyframes trace-enter {
   from {
@@ -269,24 +308,47 @@
   --glow-color: var(--destructive);
 }
 
-/* Animate ongoing traces — only the outer glow pulses; the border stays a
-   constant blue so we never see two adjacent rings. */
-@keyframes trace-ongoing {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-  50% {
-    box-shadow: 0 0 24px -8px var(--ongoing-strong);
+/* Ongoing traces: a "border beam" — a bright segment of the Haystack gradient
+   orbits the card's perimeter to signal live activity. Distinct from the
+   `trace-card-fresh` glow so ongoing never reads the same as just-arrived. */
+@property --ongoing-beam-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes trace-ongoing-beam {
+  to {
+    --ongoing-beam-angle: 360deg;
   }
 }
 
 .trace-card-ongoing {
-  --ongoing-strong: color-mix(in srgb, var(--haystack-blue) 55%, transparent);
-  border-top-color: var(--ongoing-strong);
-  border-right-color: var(--ongoing-strong);
-  border-bottom-color: var(--ongoing-strong);
-  animation: trace-ongoing 1.6s ease-in-out infinite;
+  position: relative;
+}
+
+.trace-card-ongoing::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  padding: 1.5px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--ongoing-beam-angle),
+    transparent 60%,
+    var(--haystack-blue) 80%,
+    var(--haystack-green) 92%,
+    transparent 100%
+  );
+  /* Mask to just the border ring (show only the padding band). */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: trace-ongoing-beam 2.6s linear infinite;
 }
 
 /* Live pulse indicator */
@@ -315,9 +377,22 @@
 @media (prefers-reduced-motion: reduce) {
   .trace-card-fresh,
   .trace-card-ongoing,
+  .trace-card-ongoing::before,
   .live-dot,
-  .live-dot-ongoing {
+  .live-dot-ongoing,
+  .waterfall-bar-running,
+  .span-row-running {
     animation: none !important;
+  }
+  /* Keep a visible (static) running indicator when motion is reduced. */
+  .waterfall-bar-running {
+    width: 100%;
+    background: linear-gradient(90deg, var(--haystack-blue), var(--haystack-green));
+    opacity: 0.55;
+  }
+  /* Static uniform border ring instead of a frozen beam arc. */
+  .trace-card-ongoing::before {
+    background: color-mix(in srgb, var(--haystack-blue) 45%, transparent);
   }
 }
 

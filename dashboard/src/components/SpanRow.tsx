@@ -38,6 +38,7 @@ export const SpanRow = memo(function SpanRow({
     : undefined
   const isSlowComponent = slowSpanId === span.span_id
   const isSelected = span.span_id === selectedSpanId
+  const running = span.running === true
 
   return (
     <div className="space-y-1.5">
@@ -50,9 +51,11 @@ export const SpanRow = memo(function SpanRow({
           "flex w-full cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           isSelected
             ? "border-primary/40 bg-primary/10 shadow-sm"
-            : isSlowComponent
-              ? "border-warning-border bg-warning-soft hover:border-primary/30 hover:bg-warning/15"
-              : "border-border/40 hover:border-primary/30 hover:bg-muted",
+            : running
+              ? "span-row-running border-haystack-blue/40"
+              : isSlowComponent
+                ? "border-warning-border bg-warning-soft hover:border-primary/30 hover:bg-warning/15"
+                : "border-transparent hover:bg-muted",
         )}
       >
         <div className="min-w-0 grow" style={{ paddingLeft: depth * 16 }}>
@@ -77,13 +80,24 @@ export const SpanRow = memo(function SpanRow({
           </div>
         </div>
         <span className="w-14 shrink-0 text-right whitespace-nowrap tabular-nums text-muted-foreground">
-          {fmtDur(span.duration_ms)}
+          {running ? (
+            <span className="inline-flex items-center justify-end gap-1 font-sans text-[10px] font-semibold text-haystack-blue">
+              <span className="live-dot live-dot-ongoing" />
+              live
+            </span>
+          ) : (
+            fmtDur(span.duration_ms)
+          )}
         </span>
         <div className={cn("waterfall-track", isSelected && "waterfall-track-selected")}>
-          <div
-            className={cn("waterfall-bar", isSelected && "waterfall-bar-selected")}
-            style={{ marginLeft: `${offsetPct}%`, width: `${widthPct}%` }}
-          />
+          {running ? (
+            <div className="waterfall-bar-running" />
+          ) : (
+            <div
+              className={cn("waterfall-bar", isSelected && "waterfall-bar-selected")}
+              style={{ marginLeft: `${offsetPct}%`, width: `${widthPct}%` }}
+            />
+          )}
         </div>
       </button>
       {span.children.map((c) => (

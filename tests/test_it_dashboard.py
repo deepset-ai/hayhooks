@@ -18,6 +18,7 @@ def _sample_trace(trace_id: str, start_time_ms: int) -> dict[str, object]:
             "name": "hayhooks.pipeline.run",
             "start_time_ms": start_time_ms,
             "duration_ms": 12,
+            "running": False,
             "tags": [],
             "children": [
                 {
@@ -25,6 +26,7 @@ def _sample_trace(trace_id: str, start_time_ms: int) -> dict[str, object]:
                     "name": "hayhooks.openai.run",
                     "start_time_ms": start_time_ms + 4,
                     "duration_ms": 3,
+                    "running": False,
                     "tags": [],
                     "children": [],
                 }

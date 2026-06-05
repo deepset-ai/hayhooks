@@ -5,6 +5,7 @@ export type TraceSpanNode = {
   name: string
   start_time_ms: number
   duration_ms: number
+  running?: boolean
   tags?: TraceTag[]
   children: TraceSpanNode[]
 }
@@ -26,6 +27,7 @@ export type DashboardConfigResponse = {
   fresh_ms: number
   slow_component_min_duration_ms: number
   api_base: string
+  stream_enabled: boolean
 }
 
 export type SortMode = "newest" | "slowest"
@@ -38,4 +40,5 @@ export type DashboardConfig = {
   freshMs: number
   slowComponentMinDurationMs: number
   apiBase: string
+  streamEnabled: boolean
 }

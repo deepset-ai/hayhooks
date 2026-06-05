@@ -121,6 +121,19 @@ describe("isOngoing", () => {
     const trace = makeTrace({ root_span: makeSpan({ duration_ms: 42 }), tags: [{ key: "service.name", value: "hayhooks" }] })
     expect(isOngoing(trace)).toBe(false)
   })
+
+  it("uses the root running flag over a leaked child success tag", () => {
+    const trace = makeTrace({
+      root_span: makeSpan({ duration_ms: 0, running: true }),
+      tags: [{ key: "hayhooks.success", value: "true" }],
+    })
+    expect(isOngoing(trace)).toBe(true)
+  })
+
+  it("returns false when the root running flag is false", () => {
+    const trace = makeTrace({ root_span: makeSpan({ duration_ms: 0, running: false }), tags: [] })
+    expect(isOngoing(trace)).toBe(false)
+  })
 })
 
 describe("traceKind", () => {
