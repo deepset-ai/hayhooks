@@ -148,4 +148,24 @@ describe("useTraces (SSE)", () => {
     // Third failure crosses the threshold and triggers a polling fetch.
     await waitFor(() => expect(mockedApi.fetchTraces).toHaveBeenCalled())
   })
+
+  it("falls back when the connection flaps (open then error) without ever delivering data", async () => {
+    mockedApi.fetchTraces.mockResolvedValue(makeFetchResult({ traces: [makeTrace()], nextAfterSeq: 5 }))
+    renderHook(() => useTraces(STREAM_CONFIG))
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1))
+    const source = MockEventSource.instances[0]
+
+    // open must NOT reset the failure counter — otherwise a flapping connection
+    // that never sends a payload would bounce below the threshold forever.
+    act(() => {
+      source.emit("open")
+      source.emit("error")
+      source.emit("open")
+      source.emit("error")
+      source.emit("open")
+      source.emit("error")
+    })
+
+    await waitFor(() => expect(mockedApi.fetchTraces).toHaveBeenCalled())
+  })
 })

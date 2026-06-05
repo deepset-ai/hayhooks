@@ -273,8 +273,10 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
     let source: EventSource | null = null
     let pollInterval: number | null = null
     let failures = 0
+    let gotData = false
     let disposed = false
     const FAILURE_THRESHOLD = 3
+    const CONNECT_TIMEOUT_MS = 4000
 
     const stopPolling = () => {
       if (pollInterval !== null) {
@@ -303,6 +305,13 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
       try {
         const result = parseTracesPayload(JSON.parse(raw))
         if (result.nextAfterSeq !== null) afterSeqRef.current = result.nextAfterSeq
+        // The stream is genuinely delivering data: only now is it safe to treat
+        // it as healthy. Resetting on `open` instead would let a connection that
+        // flaps (open → error → open …) without ever delivering a payload bounce
+        // below FAILURE_THRESHOLD forever and never fall back to polling.
+        gotData = true
+        failures = 0
+        stopPolling()
         applyIncoming(result.traces)
       } catch {
         /* ignore malformed SSE frame */
@@ -310,12 +319,14 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
     }
 
     source = new EventSource(traceStreamUrl(base, afterSeqRef.current))
-    source.addEventListener("open", () => {
-      failures = 0
-      stopPolling()
-      loadEntrypoints()
-      setState((prev) => (prev.error === null ? prev : { ...prev, error: null }))
-    })
+    // Safety net: if the stream never delivers data (e.g. `open` never fires, or
+    // it opens then stalls), fall back to polling so the UI is never left blank
+    // or stale with no error surfaced.
+    const watchdog = window.setTimeout(() => {
+      if (!disposed && !gotData) startPollingFallback()
+    }, CONNECT_TIMEOUT_MS)
+
+    source.addEventListener("open", loadEntrypoints)
     source.addEventListener("snapshot", (event) => handlePayload((event as MessageEvent<string>).data))
     source.addEventListener("trace", (event) => handlePayload((event as MessageEvent<string>).data))
     source.addEventListener("error", () => {
@@ -326,6 +337,7 @@ export function useTraces(config: DashboardConfig): UseTracesResult {
 
     return () => {
       disposed = true
+      window.clearTimeout(watchdog)
       stopPolling()
       source?.close()
     }
