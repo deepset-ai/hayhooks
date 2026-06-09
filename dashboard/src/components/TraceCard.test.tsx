@@ -51,6 +51,53 @@ describe("TraceCard", () => {
     expect(container.querySelector(".trace-card-ongoing")).toBeFalsy()
   })
 
+  it("treats a trace as ongoing while its root span is running despite a leaked success tag", () => {
+    const trace = makeTrace({
+      duration_ms: 0,
+      root_span: makeSpan({ duration_ms: 0, running: true }),
+      tags: [{ key: "hayhooks.success", value: "true" }],
+    })
+    const { container } = render(<TraceCard trace={trace} isFresh={false} />)
+
+    expect(screen.getByText("ONGOING")).toBeInTheDocument()
+    expect(container.querySelector(".trace-card-ongoing")).toBeTruthy()
+  })
+
+  it("auto-expands an ongoing trace so its spans are visible", () => {
+    const trace = makeTrace({
+      duration_ms: 0,
+      root_span: makeSpan({ duration_ms: 0, running: true }),
+      tags: [],
+    })
+    render(<TraceCard trace={trace} isFresh={false} />)
+
+    // The collapsible trigger reflects expanded state via aria-expanded.
+    const triggers = screen.getAllByRole("button").filter((el) => el.getAttribute("aria-expanded") !== null)
+    expect(triggers[0]).toHaveAttribute("aria-expanded", "true")
+  })
+
+  it("keeps the latest trace expanded even after it has finished", () => {
+    const trace = makeTrace({
+      tags: [{ key: "hayhooks.success", value: "true" }],
+      root_span: makeSpan({ duration_ms: 100, running: false }),
+    })
+    render(<TraceCard trace={trace} isFresh={false} isLatest />)
+
+    const triggers = screen.getAllByRole("button").filter((el) => el.getAttribute("aria-expanded") !== null)
+    expect(triggers[0]).toHaveAttribute("aria-expanded", "true")
+  })
+
+  it("collapses an older finished trace that is neither latest nor ongoing", () => {
+    const trace = makeTrace({
+      tags: [{ key: "hayhooks.success", value: "true" }],
+      root_span: makeSpan({ duration_ms: 100, running: false }),
+    })
+    render(<TraceCard trace={trace} isFresh={false} isLatest={false} />)
+
+    const triggers = screen.getAllByRole("button").filter((el) => el.getAttribute("aria-expanded") !== null)
+    expect(triggers[0]).toHaveAttribute("aria-expanded", "false")
+  })
+
   it("uses failed fresh highlight when trace is fresh and failed", () => {
     const trace = makeTrace({
       tags: [{ key: "hayhooks.success", value: "false" }],

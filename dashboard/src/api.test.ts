@@ -28,6 +28,7 @@ describe("normalizeDashboardConfig", () => {
       freshMs: 3000,
       slowComponentMinDurationMs: 1750,
       apiBase: "",
+      streamEnabled: true,
     })
   })
 

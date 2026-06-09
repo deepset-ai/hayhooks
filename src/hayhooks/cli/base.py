@@ -224,6 +224,7 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
             reload=reload,
             factory=True,
             log_config=None,
+            timeout_graceful_shutdown=settings.graceful_shutdown_timeout,
         )
     else:
         from hayhooks.server.app import run_app

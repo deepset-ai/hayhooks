@@ -68,4 +68,10 @@ def run(  # noqa: PLR0913
         settings.intercepted_loggers,
         access_log_excluded_path_prefixes=settings.access_log_excluded_path_prefixes,
     )
-    uvicorn.run(app, host=host, port=port, log_config=None)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_config=None,
+        timeout_graceful_shutdown=settings.graceful_shutdown_timeout,
+    )

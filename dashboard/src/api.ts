@@ -37,6 +37,7 @@ function isTraceSpanNode(value: unknown): value is TraceSummary["root_span"] {
     typeof value.name !== "string" ||
     !isFiniteNumber(value.start_time_ms) ||
     !isFiniteNumber(value.duration_ms) ||
+    (value.running !== undefined && typeof value.running !== "boolean") ||
     !Array.isArray(value.children) ||
     !isOptionalTraceTags(value.tags)
   ) {
@@ -102,6 +103,30 @@ function parseTraceCursor(headerValue: string | null): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
+/**
+ * Validate and normalize a traces payload (the `{ traces, next_after_seq, has_more }`
+ * shape returned by both `GET /traces` and the SSE stream's `snapshot`/`trace`
+ * events). When the body omits `next_after_seq`, falls back to the optional
+ * response-header cursor.
+ */
+export function parseTracesPayload(payload: unknown, headerCursor?: string | null): FetchTracesResult {
+  if (!isRecord(payload) || !Array.isArray(payload.traces) || payload.traces.some((trace) => !isTraceSummary(trace))) {
+    throw new Error("Traces payload invalid")
+  }
+
+  const nextAfterSeqFromBody = typeof payload.next_after_seq === "number" && Number.isFinite(payload.next_after_seq)
+    ? payload.next_after_seq as number
+    : null
+  const hasMore = typeof payload.has_more === "boolean" ? payload.has_more : false
+  const nextAfterSeq = nextAfterSeqFromBody ?? (headerCursor !== undefined ? parseTraceCursor(headerCursor) : null)
+
+  return {
+    traces: payload.traces,
+    nextAfterSeq,
+    hasMore,
+  }
+}
+
 export async function fetchTraces(
   base: string,
   limit: number,
@@ -116,21 +141,14 @@ export async function fetchTraces(
   if (!response.ok) throw new Error(`Traces ${response.status}`)
 
   const payload = await response.json()
-  if (!isRecord(payload) || !Array.isArray(payload.traces) || payload.traces.some((trace) => !isTraceSummary(trace))) {
-    throw new Error("Traces payload invalid")
-  }
+  return parseTracesPayload(payload, response.headers.get("X-Hayhooks-Trace-Cursor"))
+}
 
-  const nextAfterSeqFromBody = typeof payload.next_after_seq === "number" && Number.isFinite(payload.next_after_seq)
-    ? payload.next_after_seq as number
-    : null
-  const hasMore = typeof payload.has_more === "boolean" ? payload.has_more : false
-  const nextAfterSeq = nextAfterSeqFromBody ?? parseTraceCursor(response.headers.get("X-Hayhooks-Trace-Cursor"))
-
-  return {
-    traces: payload.traces,
-    nextAfterSeq,
-    hasMore,
-  }
+export function traceStreamUrl(base: string, afterSeq?: number | null): string {
+  const params = new URLSearchParams()
+  if (afterSeq != null) params.set("after_seq", String(afterSeq))
+  const query = params.toString()
+  return query ? `${base}/traces/stream?${query}` : `${base}/traces/stream`
 }
 
 export async function clearTraces(base: string): Promise<void> {

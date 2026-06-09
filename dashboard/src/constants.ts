@@ -7,6 +7,7 @@ export const DEFAULT_DASHBOARD_CONFIG: DashboardConfig = {
   freshMs: 6000,
   slowComponentMinDurationMs: 1000,
   apiBase: "",
+  streamEnabled: true,
 }
 
 export const TAG_PRIORITY = [

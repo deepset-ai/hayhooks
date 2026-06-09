@@ -48,9 +48,16 @@ export function isFailed(trace: TraceSummary): boolean {
 
 export function isOngoing(trace: TraceSummary): boolean {
   if (isFailed(trace)) return false
+  const root = trace.root_span
+  // Prefer the explicit per-span running flag: a trace is ongoing iff its root
+  // span has not finished. This is robust against a finished *child* span
+  // leaking a `hayhooks.success` tag up to the trace level (which would
+  // otherwise make a still-running trace look complete).
+  if (typeof root.running === "boolean") return root.running
+  // Fallback for payloads without the flag: root still open and no success tag.
   const successTag = (trace.tags ?? []).find((tag) => tag.key === SUCCESS_TAG_KEY)
   if (successTag?.value === "true" || successTag?.value === "false") return false
-  return trace.root_span.duration_ms === 0
+  return root.duration_ms === 0
 }
 
 export function isStreaming(trace: TraceSummary): boolean {

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from threading import RLock
 from time import time
 from typing import Any, TypedDict
 
 from typing_extensions import NotRequired
 
+from hayhooks.server.logger import log
 from hayhooks.settings import settings
 
 _TRACE_TAG_PRIORITY = (
@@ -42,6 +43,7 @@ class TraceSpanNodeDict(TypedDict):
     name: str
     start_time_ms: int
     duration_ms: int
+    running: bool
     tags: list[TraceTagDict]
     children: list[TraceSpanNodeDict]
 
@@ -63,6 +65,7 @@ class _SpanState(TypedDict):
     name: str
     start_time_ms: int
     duration_ms: int
+    running: bool
     tags: dict[str, Any]
 
 
@@ -100,6 +103,7 @@ def _new_span_state(
         "name": operation_name,
         "start_time_ms": start_time_ms,
         "duration_ms": 0,
+        "running": True,
         "tags": tags,
     }
 
@@ -271,6 +275,7 @@ class _LiveTraceBuffer:
                 return
 
             span["duration_ms"] = max(0, duration_ms)
+            span["running"] = False
             if tags:
                 span["tags"].update(_truncate_tag_values(dict(tags)))
                 if (
@@ -309,6 +314,7 @@ class _LiveTraceBuffer:
                         "name": span["name"],
                         "start_time_ms": span["start_time_ms"],
                         "duration_ms": span["duration_ms"],
+                        "running": span["running"],
                         "tags": tags_copy,
                     }
                 trace_copies.append(
@@ -368,6 +374,7 @@ class _LiveTraceBuffer:
                 "name": span["name"],
                 "start_time_ms": span["start_time_ms"],
                 "duration_ms": span["duration_ms"],
+                "running": span["running"],
                 "tags": _collect_span_tags(span.get("tags", {})),
                 "children": [build_span_tree(child_id) for child_id in child_ids],
             }
@@ -404,6 +411,29 @@ class _LiveTraceBuffer:
 
 _TRACE_BUFFER = _LiveTraceBuffer()
 
+_change_listeners: list[Callable[[], None]] = []
+
+
+def register_change_listener(listener: Callable[[], None]) -> None:
+    """
+    Register a callback fired after any span start/finish is recorded.
+
+    Used by the SSE layer to wake streaming subscribers. Kept dependency-free
+    (no asyncio import here) so the buffer stays a plain in-memory store. The
+    callback must be cheap and non-blocking; it must never raise. Registration
+    is idempotent.
+    """
+    if listener not in _change_listeners:
+        _change_listeners.append(listener)
+
+
+def _emit_change() -> None:
+    for listener in _change_listeners:
+        try:
+            listener()
+        except Exception as exc:  # never let notification break span recording
+            log.debug("Trace change listener raised: {}", exc)
+
 
 def record_live_span_start(  # noqa: PLR0913
     *,
@@ -422,6 +452,7 @@ def record_live_span_start(  # noqa: PLR0913
         start_time_ms=start_time_ms,
         tags=tags,
     )
+    _emit_change()
 
 
 def record_live_span_finish(
@@ -438,6 +469,7 @@ def record_live_span_finish(
         completed_at_ms=int(time() * 1000),
         tags=tags,
     )
+    _emit_change()
 
 
 def get_recent_traces(

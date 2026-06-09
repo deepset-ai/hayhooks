@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -44,6 +45,7 @@ from hayhooks.server.utils.deploy_utils import (
     read_pipeline_files_from_dir,
     rebuild_openapi,
 )
+from hayhooks.server.utils.live_trace_stream import get_trace_stream_broadcaster
 from hayhooks.server.utils.models import PreparedPipeline
 from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy, check_cors_settings, settings
 
@@ -242,7 +244,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.pipelines_dir:
         deploy_pipelines(app, settings.pipelines_dir)
 
-    yield
+    # Capture the running loop so synchronous span recording can wake SSE
+    # subscribers via call_soon_threadsafe.
+    broadcaster = get_trace_stream_broadcaster()
+    broadcaster.set_loop(asyncio.get_running_loop())
+    try:
+        yield
+    finally:
+        broadcaster.clear_loop()
 
 
 @lru_cache(maxsize=1)
@@ -364,6 +373,7 @@ def run_app(
         host=host or settings.host,
         port=port or settings.port,
         log_config=None,
+        timeout_graceful_shutdown=settings.graceful_shutdown_timeout,
     )
 
 

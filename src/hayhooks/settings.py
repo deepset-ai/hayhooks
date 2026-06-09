@@ -46,6 +46,12 @@ class AppSettings(BaseSettings):
     # Hayhooks Port
     port: int = 1416
 
+    # Max seconds to wait for in-flight connections to drain on shutdown (Ctrl-C)
+    # before they are cancelled. Bounds graceful shutdown so long-lived
+    # connections (e.g. the dashboard SSE stream) don't block server exit
+    # indefinitely. Passed to uvicorn as ``timeout_graceful_shutdown``.
+    graceful_shutdown_timeout: int = Field(default=5, ge=0, le=300)
+
     # Whether to use HTTPS when running CLI commands
     # Example: `hayhooks status`
     # NOTE: This is NOT used to specify the protocol for the uvicorn server
@@ -122,6 +128,12 @@ class AppSettings(BaseSettings):
     dashboard_ui_fetch_limit: int = Field(default=50, gt=0, le=500)
     dashboard_ui_fresh_ms: int = Field(default=6000, ge=0, le=60_000)
     dashboard_ui_slow_component_min_duration_ms: int = Field(default=1000, gt=0)
+    # Real-time trace streaming (SSE). When enabled, the dashboard receives trace
+    # updates over a Server-Sent Events stream instead of polling; polling stays
+    # as an automatic client-side fallback. Heartbeat keeps the connection alive
+    # through proxies during idle periods.
+    dashboard_stream_enabled: bool = True
+    dashboard_stream_heartbeat_ms: int = Field(default=15_000, ge=1_000, le=120_000)
     dashboard_enabled: bool = False
     dashboard_path: str = "/dashboard"
     dashboard_dist_dir: str = str(Path.cwd() / "dashboard" / "dist")

@@ -29,6 +29,7 @@ export function normalizeDashboardConfig(raw: unknown): DashboardConfig {
   const freshMs =         parseConfigInt(config, "fresh_ms",         DEFAULT_DASHBOARD_CONFIG.freshMs, 0)
   const slowComponentMs = parseConfigInt(config, "slow_component_min_duration_ms", DEFAULT_DASHBOARD_CONFIG.slowComponentMinDurationMs, 1)
   const apiBase =         typeof config.api_base === "string" ? config.api_base : DEFAULT_DASHBOARD_CONFIG.apiBase
+  const streamEnabled =   typeof config.stream_enabled === "boolean" ? config.stream_enabled : DEFAULT_DASHBOARD_CONFIG.streamEnabled
 
   return {
     pollMs,
@@ -37,5 +38,6 @@ export function normalizeDashboardConfig(raw: unknown): DashboardConfig {
     freshMs,
     slowComponentMinDurationMs: slowComponentMs,
     apiBase,
+    streamEnabled,
   }
 }
