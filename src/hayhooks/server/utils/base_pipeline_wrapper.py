@@ -1,5 +1,14 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Generator
+from typing import TypedDict
+
+
+class MCPToolHints(TypedDict, total=False):
+    title: str
+    readOnly: bool
+    destructive: bool
+    idempotent: bool
+    openWorld: bool
 
 
 class BasePipelineWrapper(ABC):
@@ -7,6 +16,8 @@ class BasePipelineWrapper(ABC):
     # If True, the pipeline will not be listed as an MCP tool
     # Even if it has a description and a request model
     skip_mcp: bool = False
+    # Optional MCP tool annotations hints used when exposing this pipeline as a tool.
+    tool_hints: MCPToolHints = {}
 
     def __init__(self):
         self.pipeline = None

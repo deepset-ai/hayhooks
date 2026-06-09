@@ -50,6 +50,15 @@ async def deploy_chat_with_website_mcp_skip():
     deploy_pipeline_files(pipeline_name="chat_with_website_mcp_skip", files=files, save_files=False)
 
 
+@pytest.fixture
+async def deploy_chat_with_website_mcp_hints():
+    pipeline_wrapper_path = Path("tests/test_files/files/chat_with_website_mcp_hints/pipeline_wrapper.py")
+    files = {
+        "pipeline_wrapper.py": await pipeline_wrapper_path.read_text(),
+    }
+    deploy_pipeline_files(pipeline_name="chat_with_website_mcp_hints", files=files, save_files=False)
+
+
 @pytest.mark.asyncio
 async def test_list_pipelines_as_tools_no_pipelines():
     tools = await list_pipelines_as_tools()
@@ -72,6 +81,12 @@ async def test_list_pipelines_as_tools(deploy_chat_with_website_mcp):
         "title": "chat_with_websiteRunRequest",
         "type": "object",
     }
+    assert tools[0].annotations is not None
+    assert tools[0].annotations.title == "Chat With Website"
+    assert tools[0].annotations.readOnlyHint is True
+    assert tools[0].annotations.destructiveHint is False
+    assert tools[0].annotations.idempotentHint is True
+    assert tools[0].annotations.openWorldHint is True
 
 
 @pytest.mark.asyncio
@@ -125,6 +140,20 @@ async def test_run_pipeline_as_tool_emits_trace_span(deploy_chat_with_website_mc
 async def test_skip_pipeline_from_mcp_listing(deploy_chat_with_website_mcp_skip):
     tools = await list_pipelines_as_tools()
     assert len(tools) == 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_tool_hints_override_default_annotations(deploy_chat_with_website_mcp_hints):
+    tools = await list_pipelines_as_tools()
+
+    assert len(tools) == 1
+    assert tools[0].name == "chat_with_website_mcp_hints"
+    assert tools[0].annotations is not None
+    assert tools[0].annotations.title == "Website Q&A"
+    assert tools[0].annotations.readOnlyHint is True
+    assert tools[0].annotations.destructiveHint is False
+    assert tools[0].annotations.idempotentHint is True
+    assert tools[0].annotations.openWorldHint is False
 
 
 @pytest.mark.asyncio

@@ -889,6 +889,32 @@ def run_api(self, urls: list[str], question: str) -> str:
     return result["llm"]["replies"][0]
 ```
 
+### MCP Tool Hints
+
+Use `tool_hints` to add MCP tool annotations for clients such as Claude Desktop:
+
+```python
+class PipelineWrapper(BasePipelineWrapper):
+    tool_hints = {
+        "title": "Website Q&A",
+        "readOnly": True,
+        "destructive": False,
+        "idempotent": True,
+        "openWorld": True,
+    }
+
+    def setup(self) -> None:
+        ...
+```
+
+If omitted, Hayhooks applies safe defaults for pipeline tools:
+
+- `title`: title-cased pipeline name
+- `readOnly`: `True`
+- `destructive`: `False`
+- `idempotent`: `True`
+- `openWorld`: `True`
+
 ## Examples
 
 For complete, working examples see:

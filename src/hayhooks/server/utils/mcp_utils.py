@@ -54,7 +54,7 @@ with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
     from mcp.server import Server
     from mcp.server.sse import SseServerTransport
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-    from mcp.types import TextContent, Tool
+    from mcp.types import TextContent, Tool, ToolAnnotations
 
 
 def deploy_pipelines() -> None:
@@ -132,14 +132,29 @@ async def list_pipelines_as_tools() -> list["Tool"]:
             log.debug("Skipping pipeline '{}' as it has skip_mcp set to True", pipeline_name)
             continue
 
+        hints = metadata.get("tool_hints", {}) or {}
+        annotations = ToolAnnotations(
+            title=hints.get("title", pipeline_name.replace("_", " ").title()),
+            readOnlyHint=hints.get("readOnly", True),
+            destructiveHint=hints.get("destructive", False),
+            idempotentHint=hints.get("idempotent", True),
+            openWorldHint=hints.get("openWorld", True),
+        )
+
         tools.append(
             Tool(
                 name=pipeline_name,
                 description=metadata.get("description", ""),
                 inputSchema=metadata["request_model"].model_json_schema(),
+                annotations=annotations,
             )
         )
-        log.debug("Added pipeline as MCP tool '{}' with description: '{}'", pipeline_name, metadata["description"])
+        log.debug(
+            "Added pipeline as MCP tool '{}' with description '{}' and annotations {}",
+            pipeline_name,
+            metadata.get("description", ""),
+            annotations.model_dump(exclude_none=True),
+        )
 
     log.debug("Pipelines listed as MCP tools: {}", [tool.name for tool in tools])
 

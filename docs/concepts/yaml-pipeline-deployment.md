@@ -76,6 +76,18 @@ outputs:
   replies: llm.replies
 ```
 
+You can optionally add MCP tool hints inside the YAML metadata block:
+
+```yaml
+metadata:
+  tool_hints:
+    title: Website Q&A
+    readOnly: true
+    destructive: false
+    idempotent: true
+    openWorld: true
+```
+
 ### Key Requirements
 
 1. **`inputs` Section**: Maps friendly names to pipeline component fields

@@ -164,3 +164,33 @@ def test_deploy_yaml_pipeline_with_streaming_components_all_keyword():
 
     # Verify the wrapper has an AsyncPipeline internally
     assert isinstance(wrapper.pipeline, AsyncPipeline)
+
+
+def test_deploy_yaml_pipeline_reads_tool_hints_from_metadata():
+    pipeline_file = Path(__file__).parent / "test_files/yaml/sample_calc_pipeline.yml"
+    source_code = pipeline_file.read_text().replace(
+        "metadata: {}",
+        """metadata:
+  tool_hints:
+    title: Calculator
+    readOnly: true
+    destructive: false
+    idempotent: true
+    openWorld: false""",
+    )
+
+    deploy_pipeline_yaml(
+        pipeline_name="calc_with_hints",
+        source_code=source_code,
+        options={"save_file": False},
+    )
+
+    metadata = registry.get_metadata("calc_with_hints")
+    assert metadata is not None
+    assert metadata["tool_hints"] == {
+        "title": "Calculator",
+        "readOnly": True,
+        "destructive": False,
+        "idempotent": True,
+        "openWorld": False,
+    }
