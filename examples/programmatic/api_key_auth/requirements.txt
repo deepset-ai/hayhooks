@@ -1,2 +1,2 @@
-hayhooks==1.13.0
-haystack-ai==2.25.0
+hayhooks
+haystack-ai>=3.0.0.dev0
