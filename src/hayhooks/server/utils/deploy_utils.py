@@ -867,7 +867,7 @@ def deploy_pipeline_yaml(
 
     Raises:
         PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
-        ValueError: If the YAML cannot be parsed into an AsyncPipeline.
+        ValueError: If the YAML cannot be parsed into a Pipeline.
         InvalidYamlIOError: If the YAML is missing inputs/outputs declarations.
     """
     with trace_operation(

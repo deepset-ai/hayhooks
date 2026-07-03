@@ -1,3 +1,4 @@
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Literal
@@ -9,6 +10,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from hayhooks.server.logger import log
 
 load_dotenv(dotenv_path=find_dotenv(usecwd=True))
+
+# Haystack v3 gates pipeline deserialization (``Pipeline.loads`` / ``Pipeline.from_dict``) behind a module allowlist.
+# Hayhooks deploys operator-provided pipelines that routinely reference custom components, so we disable the allowlist
+# by default (via the wildcard pattern) to preserve pre-v3 loading behavior. Operators can tighten this by setting the
+# env var explicitly, e.g. HAYSTACK_DESERIALIZATION_ALLOWLIST="haystack.*,mypkg.*".
+os.environ.setdefault("HAYSTACK_DESERIALIZATION_ALLOWLIST", "*")
 
 
 APP_TITLE = "Hayhooks"
