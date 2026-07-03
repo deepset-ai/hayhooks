@@ -16,7 +16,7 @@ The pipeline wrapper provides a flexible foundation for deploying Haystack pipel
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
-from haystack import AsyncPipeline, Pipeline
+from haystack import Pipeline
 
 from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator, streaming_generator
 
@@ -241,7 +241,7 @@ async def run_api_async(self, urls: list[str], question: str) -> str:
 
 **When to use `run_api_async`:**
 
-- Working with `AsyncPipeline` instances
+- Running your `Pipeline` asynchronously with `run_async`
 - Handling many concurrent requests
 - Integrating with async-compatible components
 - Better performance for I/O-bound operations
@@ -279,12 +279,14 @@ async def run_chat_completion_async(self, model: str, messages: list[dict], body
 ## Hybrid Streaming: Mixing Async and Sync Components
 
 !!! tip "Compatibility for Legacy Components"
-    When working with legacy pipelines or components that only support sync streaming callbacks (like `OpenAIGenerator`), use `allow_sync_streaming_callbacks=True` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
+    When working with legacy pipelines or components that only support sync streaming callbacks (i.e. components without `run_async`), use `allow_sync_streaming_callbacks=True` to enable hybrid mode. For new code, prefer async-compatible components and use the default strict mode.
 
 Some Haystack components only support synchronous streaming callbacks and don't have async equivalents. Examples include:
 
-- `OpenAIGenerator` - Legacy OpenAI text generation (⚠️ Note: `OpenAIChatGenerator` IS async-compatible)
-- Other components without `run_async()` support
+- A sync-only component (one without `run_async()` support)
+- Third-party components that don't provide an async interface
+
+⚠️ Note: `OpenAIChatGenerator` IS async-compatible.
 
 ### The Problem
 
@@ -292,9 +294,9 @@ By default, `async_streaming_generator` requires all streaming components to sup
 
 ```python
 async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
-    # This will FAIL if pipeline contains OpenAIGenerator
+    # This will FAIL if the pipeline contains a sync-only component (no run_async)
     return async_streaming_generator(
-        pipeline=self.pipeline,  # AsyncPipeline with OpenAIGenerator
+        pipeline=self.pipeline,  # Pipeline with a sync-only component
         pipeline_run_args={"prompt": {"query": question}},
     )
 ```
@@ -302,7 +304,7 @@ async def run_chat_completion_async(self, model: str, messages: list[dict], body
 **Error:**
 
 ```text
-ValueError: Component 'llm' of type 'OpenAIGenerator' seems to not support
+ValueError: Component 'llm' of type 'SyncOnlyGenerator' seems to not support
 async streaming callbacks...
 ```
 
@@ -349,43 +351,46 @@ allow_sync_streaming_callbacks=True
 # → Best for: Legacy pipelines, components without async support, gradual migration
 ```
 
-### Example: Legacy OpenAI Generator with Async Pipeline
+### Example: Sync-Only Component with an Async Pipeline
 
 ```python
 from collections.abc import AsyncGenerator
+from typing import Any
 
-from haystack import AsyncPipeline
-from haystack.components.builders import PromptBuilder
-from haystack.components.generators import OpenAIGenerator
-from haystack.utils import Secret
+from haystack import Pipeline
+from haystack.core.component import component
+from haystack.dataclasses import StreamingChunk
 from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator
 
-class LegacyOpenAIWrapper(BasePipelineWrapper):
+
+@component
+class SyncOnlyGenerator:
+    """A sync-only component: implements run() with a streaming_callback but no run_async()."""
+
+    @component.output_types(replies=list[str])
+    def run(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
+        reply = f"Answer: {prompt}"
+        if streaming_callback:
+            for index, word in enumerate(reply.split()):
+                streaming_callback(StreamingChunk(content=word + " ", index=index))
+        return {"replies": [reply]}
+
+
+class SyncOnlyWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        # OpenAIGenerator only supports sync streaming (legacy component)
-        llm = OpenAIGenerator(
-            api_key=Secret.from_env_var("OPENAI_API_KEY"),
-            model="gpt-4o-mini"
-        )
-
-        prompt_builder = PromptBuilder(
-            template="Answer this question: {{question}}"
-        )
-
-        self.pipeline = AsyncPipeline()
-        self.pipeline.add_component("prompt", prompt_builder)
-        self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("prompt.prompt", "llm.prompt")
+        # SyncOnlyGenerator only supports sync streaming (no run_async)
+        self.pipeline = Pipeline()
+        self.pipeline.add_component("llm", SyncOnlyGenerator())
 
     async def run_chat_completion_async(
         self, model: str, messages: list[dict], body: dict
     ) -> AsyncGenerator:
         question = get_last_user_message(messages)
 
-        # Enable hybrid mode for OpenAIGenerator
+        # Enable hybrid mode so the sync-only component can stream in an async pipeline
         return async_streaming_generator(
             pipeline=self.pipeline,
-            pipeline_run_args={"prompt": {"question": question}},
+            pipeline_run_args={"llm": {"prompt": question}},
             allow_sync_streaming_callbacks=True  # ✅ Handles sync component
         )
 ```
@@ -401,7 +406,7 @@ class LegacyOpenAIWrapper(BasePipelineWrapper):
 
 **Use `allow_sync_streaming_callbacks=True` when:**
 
-- Working with legacy pipelines that use `OpenAIGenerator` or other sync-only components
+- Working with legacy pipelines that use sync-only components (those without `run_async`)
 - Deploying YAML pipelines with unknown/legacy component types
 - Migrating old code that doesn't have async equivalents yet
 - Third-party components without async support

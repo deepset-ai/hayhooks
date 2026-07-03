@@ -65,7 +65,7 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         # Initialize async pipeline
         pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
-        self.pipeline = AsyncPipeline.loads(pipeline_yaml)
+        self.pipeline = Pipeline.loads(pipeline_yaml)
 
     async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
         log.trace("Running pipeline with model: {}, messages: {}, body: {}", model, messages, body)
@@ -288,7 +288,7 @@ from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_us
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        self.pipeline = AsyncPipeline.loads(...)
+        self.pipeline = Pipeline.loads(...)
 
     async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> AsyncGenerator:
         question = get_last_user_input_text(input_items)
@@ -501,7 +501,7 @@ class SyncChatWrapper(BasePipelineWrapper):
 ```python
 class AsyncStreamingWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        from haystack import AsyncPipeline
+        from haystack import Pipeline
         from haystack.components.builders import ChatPromptBuilder
         from haystack.components.generators.chat import OpenAIChatGenerator
         from haystack.dataclasses import ChatMessage
@@ -510,7 +510,7 @@ class AsyncStreamingWrapper(BasePipelineWrapper):
         chat_prompt_builder = ChatPromptBuilder(template=template)
         llm = OpenAIChatGenerator(model="gpt-4o")
 
-        self.pipeline = AsyncPipeline()
+        self.pipeline = Pipeline()
         self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
         self.pipeline.add_component("llm", llm)
         self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
