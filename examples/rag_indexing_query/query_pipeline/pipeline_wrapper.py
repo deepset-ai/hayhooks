@@ -7,9 +7,9 @@ from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         from haystack.components.builders import ChatPromptBuilder
-        from haystack.components.embedders import SentenceTransformersTextEmbedder
-        from haystack.components.generators.chat import HuggingFaceAPIChatGenerator
         from haystack.dataclasses import ChatMessage
+        from haystack_integrations.components.embedders.sentence_transformers import SentenceTransformersTextEmbedder
+        from haystack_integrations.components.generators.huggingface_api import HuggingFaceAPIChatGenerator
         from haystack_integrations.components.retrievers.elasticsearch import ElasticsearchEmbeddingRetriever
         from haystack_integrations.document_stores.elasticsearch import ElasticsearchDocumentStore
 

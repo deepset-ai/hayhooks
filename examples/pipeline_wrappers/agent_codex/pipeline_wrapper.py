@@ -10,7 +10,7 @@ backed by Open-Meteo.
 
 from collections.abc import AsyncGenerator
 
-from haystack import AsyncPipeline
+from haystack import Pipeline
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage
 
@@ -46,7 +46,7 @@ def _is_tool_followup(input_items: list[dict]) -> bool:
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        self.pipeline = AsyncPipeline()
+        self.pipeline = Pipeline()
         self.pipeline.add_component("llm", OpenAIChatGenerator(model=AGENT_MODEL))
         self.weather_agent = create_weather_agent()
 

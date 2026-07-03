@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from haystack import AsyncPipeline
+from haystack import Pipeline
 from haystack.dataclasses import ChatMessage
 
 from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_user_message, log
@@ -12,7 +12,7 @@ SYSTEM_MESSAGE = "You are a helpful assistant that can answer questions about th
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         pipeline_yaml = (Path(__file__).parent / "question_answer.yml").read_text()
-        self.pipeline = AsyncPipeline.loads(pipeline_yaml)
+        self.pipeline = Pipeline.loads(pipeline_yaml)
 
     async def run_api_async(self, question: str) -> str:
         log.trace("Running pipeline with question: {}", question)

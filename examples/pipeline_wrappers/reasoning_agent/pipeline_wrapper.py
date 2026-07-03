@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator
 
-from haystack import AsyncPipeline
+from haystack import Pipeline
 from haystack.components.generators.chat import OpenAIResponsesChatGenerator
 from haystack.dataclasses import ChatMessage
 
@@ -20,10 +20,10 @@ DEFAULT_GENERATION_KWARGS = {
 
 
 class PipelineWrapper(BasePipelineWrapper):
-    pipeline: AsyncPipeline
+    pipeline: Pipeline
 
     def setup(self) -> None:
-        self.pipeline = AsyncPipeline()
+        self.pipeline = Pipeline()
         self.pipeline.add_component(
             "llm",
             OpenAIResponsesChatGenerator(

@@ -1,22 +1,46 @@
 from collections.abc import AsyncGenerator
-from pathlib import Path
+from typing import Any
 
-from haystack import AsyncPipeline
+from haystack import Pipeline
+from haystack.core.component import component
+from haystack.dataclasses import StreamingChunk
 
 from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_user_message, log
+
+
+@component
+class SyncOnlyGenerator:
+    """
+    A minimal sync-only generator.
+
+    It implements ``run`` with a ``streaming_callback`` but intentionally does NOT
+    implement ``run_async``. Haystack v3 removed the legacy ``OpenAIGenerator``, but
+    sync-only components (custom or third-party) still exist. This component stands in
+    for one so the example can demonstrate hybrid streaming without any external service.
+    """
+
+    @component.output_types(replies=list[str])
+    def run(self, query: str, streaming_callback: Any | None = None) -> dict[str, Any]:
+        reply = f"You asked: {query}"
+        if streaming_callback:
+            # Emit the reply token-by-token via a *sync* callback.
+            for index, word in enumerate(reply.split()):
+                streaming_callback(StreamingChunk(content=word + " ", index=index))
+        return {"replies": [reply]}
 
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         """
-        Setup an AsyncPipeline with a legacy OpenAIGenerator component.
+        Build a Pipeline containing a sync-only component.
 
-        OpenAIGenerator only supports sync streaming callbacks (no run_async() method).
-        To use it with AsyncPipeline and async_streaming_generator, we need to enable
-        hybrid mode with allow_sync_streaming_callbacks=True.
+        Because ``SyncOnlyGenerator`` has no ``run_async()``, streaming it through
+        ``async_streaming_generator`` requires hybrid mode
+        (``allow_sync_streaming_callbacks=True``), which bridges the sync streaming
+        callback onto the async event loop.
         """
-        pipeline_yaml = (Path(__file__).parent / "hybrid_streaming.yml").read_text()
-        self.pipeline = AsyncPipeline.loads(pipeline_yaml)
+        self.pipeline = Pipeline()
+        self.pipeline.add_component("llm", SyncOnlyGenerator())
 
     async def run_api_async(self, question: str) -> str:
         """
@@ -26,11 +50,11 @@ class PipelineWrapper(BasePipelineWrapper):
             question: The user's question
 
         Returns:
-            The LLM's answer as a string
+            The generator's reply as a string
         """
         log.trace("Running pipeline with question: {}", question)
 
-        result = await self.pipeline.run_async({"prompt": {"query": question}})
+        result = await self.pipeline.run_async({"llm": {"query": question}})
         return result["llm"]["replies"][0]
 
     async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
@@ -38,7 +62,7 @@ class PipelineWrapper(BasePipelineWrapper):
         OpenAI-compatible chat completion endpoint with streaming support.
 
         This demonstrates using allow_sync_streaming_callbacks=True to enable hybrid mode,
-        which allows the sync-only OpenAIGenerator to work with async_streaming_generator.
+        which allows the sync-only component to work with async_streaming_generator.
 
         Args:
             model: The model name (ignored in this example)
@@ -54,13 +78,13 @@ class PipelineWrapper(BasePipelineWrapper):
         log.trace("Question: {}", question)
 
         # ✅ Enable hybrid mode with allow_sync_streaming_callbacks=True
-        # This is required because OpenAIGenerator (legacy component) only supports
-        # sync streaming callbacks. The hybrid mode automatically detects this and
-        # bridges the sync callback to work with the async event loop.
+        # This is required because SyncOnlyGenerator only supports sync streaming
+        # callbacks (no run_async). Hybrid mode automatically detects this and bridges
+        # the sync callback to work with the async event loop.
         #
         # If all components supported async, this would use pure async mode with no overhead.
         return async_streaming_generator(
             pipeline=self.pipeline,
-            pipeline_run_args={"prompt": {"query": question}},
+            pipeline_run_args={"llm": {"query": question}},
             allow_sync_streaming_callbacks=True,
         )
