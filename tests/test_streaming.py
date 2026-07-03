@@ -5,10 +5,9 @@ from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
 import pytest
-from haystack import AsyncPipeline, Pipeline, component
+from haystack import Pipeline, component
 from haystack.components.agents import Agent
 from haystack.components.builders import ChatPromptBuilder, PromptBuilder
-from haystack.components.generators import OpenAIGenerator
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
 from haystack.dataclasses.streaming_chunk import ToolCallDelta
@@ -30,6 +29,23 @@ requires_openai_api_key = pytest.mark.skipif(
     not os.environ.get("OPENAI_API_KEY"),
     reason="Export an env var called OPENAI_API_KEY containing the OpenAI API key to run this test.",
 )
+
+
+@component
+class MockSyncOnlyGenerator:
+    """
+    Sync-only generator: defines ``run`` but NOT ``run_async``.
+
+    Replaces the Haystack v2 ``OpenAIGenerator`` (removed in v3) in tests that exercise
+    the sync-only / hybrid streaming code paths. Requires no API key.
+    """
+
+    @component.output_types(replies=list[str])
+    def run(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
+        if streaming_callback:
+            streaming_callback(StreamingChunk(content="Yes", index=0))
+            streaming_callback(StreamingChunk(content=", it is.", index=1))
+        return {"replies": ["Yes, it is."]}
 
 
 @component
@@ -73,12 +89,12 @@ class MockFailingGenerator:
 @pytest.fixture
 def pipeline_with_sync_only_generator():
     """
-    Pipeline with OpenAIGenerator - a sync-only component (no run_async method).
-    This is a real integration test fixture requiring OPENAI_API_KEY.
+    Pipeline with a sync-only generator (defines run but not run_async).
+    Uses a mock component so no API key is required.
     """
     pipe = Pipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
-    pipe.add_component("llm", OpenAIGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
+    pipe.add_component("llm", MockSyncOnlyGenerator())
     pipe.connect("prompt_builder.prompt", "llm.prompt")
     return pipe
 
@@ -86,12 +102,13 @@ def pipeline_with_sync_only_generator():
 @pytest.fixture
 def async_pipeline_with_sync_only_generator():
     """
-    AsyncPipeline with OpenAIGenerator - a sync-only component (no run_async method).
-    This demonstrates the case where async pipeline contains sync-only streaming components.
+    Pipeline with a sync-only generator (defines run but not run_async).
+    Exercises the case where a pipeline run through run_async contains sync-only
+    streaming components. Uses a mock component so no API key is required.
     """
-    pipe = AsyncPipeline()
+    pipe = Pipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
-    pipe.add_component("llm", OpenAIGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
+    pipe.add_component("llm", MockSyncOnlyGenerator())
     pipe.connect("prompt_builder.prompt", "llm.prompt")
     return pipe
 
@@ -109,10 +126,10 @@ def pipeline_with_slow_generator():
 @pytest.fixture
 def async_pipeline_with_async_capable_generator():
     """
-    AsyncPipeline with OpenAIChatGenerator - supports both sync and async streaming callbacks.
+    Pipeline with OpenAIChatGenerator - supports both sync and async streaming callbacks.
     This is a real integration test fixture requiring OPENAI_API_KEY.
     """
-    pipe = AsyncPipeline()
+    pipe = Pipeline()
     pipe.add_component("prompt_builder", ChatPromptBuilder(template=[ChatMessage.from_user(QUESTION)]))
     pipe.add_component("llm", OpenAIChatGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
     pipe.connect("prompt_builder.prompt", "llm.messages")
@@ -160,8 +177,6 @@ def create_mock_agent(mocker):  # noqa: C901
     return _factory
 
 
-@requires_openai_api_key
-@pytest.mark.integration
 def test_streaming_generator_with_sync_only_generator(pipeline_with_sync_only_generator):
     generator = streaming_generator(pipeline_with_sync_only_generator, pipeline_run_args={})
 
@@ -169,23 +184,18 @@ def test_streaming_generator_with_sync_only_generator(pipeline_with_sync_only_ge
     chunks = list(generator)
     streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
 
-    # Real OpenAI response will have multiple chunks
     assert len(streaming_chunks) > 0
     # Content should contain Yes or No as per the question
     full_content = "".join(c.content for c in streaming_chunks)
     assert "Yes" in full_content or "No" in full_content
 
 
-@requires_openai_api_key
-@pytest.mark.integration
 async def test_async_streaming_rejects_sync_only_components(async_pipeline_with_sync_only_generator):
     with pytest.raises(ValueError, match="seems to not support async streaming callbacks"):
         async_gen = async_streaming_generator(async_pipeline_with_sync_only_generator, pipeline_run_args={})
         _ = [chunk async for chunk in async_gen]
 
 
-@requires_openai_api_key
-@pytest.mark.integration
 async def test_async_streaming_hybrid_mode(async_pipeline_with_sync_only_generator):
     async_gen = async_streaming_generator(
         async_pipeline_with_sync_only_generator,
@@ -197,7 +207,6 @@ async def test_async_streaming_hybrid_mode(async_pipeline_with_sync_only_generat
     chunks = [chunk async for chunk in async_gen]
     streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
 
-    # Real OpenAI response will have multiple chunks
     assert len(streaming_chunks) > 0
 
 
@@ -216,8 +225,6 @@ async def test_async_streaming_async_pipeline_emits_chunks(async_pipeline_with_a
     assert "Yes" in full_content or "No" in full_content
 
 
-@requires_openai_api_key
-@pytest.mark.integration
 async def test_async_streaming_does_not_mutate_args(async_pipeline_with_sync_only_generator):
     original_args: dict[str, Any] = {}
 
@@ -261,7 +268,7 @@ def test_streaming_generator_pipeline_exception():
 async def test_async_streaming_generator_pipeline_exception():
     from haystack.core.errors import PipelineRuntimeError
 
-    pipe = AsyncPipeline()
+    pipe = Pipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
     pipe.add_component("llm", MockFailingGenerator())
     pipe.connect("prompt_builder.prompt", "llm.prompt")
@@ -275,7 +282,7 @@ async def test_async_streaming_generator_pipeline_exception():
 async def test_async_streaming_exception_after_chunks():
     from haystack.core.errors import PipelineRuntimeError
 
-    pipe = AsyncPipeline()
+    pipe = Pipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
     pipe.add_component("llm", MockFailingGenerator(fail_after_chunks=2))
     pipe.connect("prompt_builder.prompt", "llm.prompt")

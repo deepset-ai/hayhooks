@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from haystack import AsyncPipeline
+from haystack import Pipeline
 from haystack.core.errors import PipelineError
 
 from hayhooks.server.exceptions import InvalidYamlIOError
@@ -264,7 +264,7 @@ def test_setup_loads_async_pipeline(sample_calc_yaml):
     wrapper = YAMLPipelineWrapper.from_yaml(sample_calc_yaml)
     wrapper.setup()
 
-    assert isinstance(wrapper.pipeline, AsyncPipeline)
+    assert isinstance(wrapper.pipeline, Pipeline)
 
 
 def test_setup_is_idempotent(sample_calc_yaml):
@@ -274,7 +274,7 @@ def test_setup_is_idempotent(sample_calc_yaml):
 
     # Store reference to first pipeline instance
     first_pipeline = wrapper.pipeline
-    assert isinstance(first_pipeline, AsyncPipeline)
+    assert isinstance(first_pipeline, Pipeline)
 
     # Call setup again
     wrapper.setup()

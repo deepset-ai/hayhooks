@@ -30,7 +30,7 @@ def test_yaml_pipeline_passes_include_outputs_from_to_haystack(
     wrapper = registry.get("test_run_include")
     mock_run_async = AsyncMock(return_value={"double": {"value": 10}, "second_addition": {"result": 15}})
 
-    # Patch the internal AsyncPipeline's run_async method
+    # Patch the internal Pipeline's run_async method
     monkeypatch.setattr(wrapper.pipeline, "run_async", mock_run_async)
 
     response = client.post("/test_run_include/run", json={"value": 3})

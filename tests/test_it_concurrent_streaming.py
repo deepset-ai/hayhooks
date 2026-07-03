@@ -3,7 +3,7 @@ import concurrent.futures
 import os
 
 import pytest
-from haystack import AsyncPipeline, Pipeline
+from haystack import Pipeline
 from haystack.components.builders import ChatPromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def async_streaming_pipeline():
-    pipeline = AsyncPipeline()
+    pipeline = Pipeline()
     pipeline.add_component("prompt_builder", ChatPromptBuilder())
     pipeline.add_component(
         "llm",

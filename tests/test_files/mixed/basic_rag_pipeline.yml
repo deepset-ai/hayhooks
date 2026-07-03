@@ -45,28 +45,21 @@ components:
     type: haystack.components.retrievers.in_memory.embedding_retriever.InMemoryEmbeddingRetriever
   text_embedder:
     init_parameters:
-      batch_size: 32
-      config_kwargs: null
-      device:
-        device: mps
-        type: single
-      model: sentence-transformers/all-MiniLM-L6-v2
-      model_kwargs: null
-      normalize_embeddings: false
-      precision: float32
-      prefix: ''
-      progress_bar: true
-      suffix: ''
-      token:
+      api_base_url: null
+      api_key:
         env_vars:
-        - HF_API_TOKEN
-        - HF_TOKEN
-        strict: false
+        - OPENAI_API_KEY
+        strict: true
         type: env_var
-      tokenizer_kwargs: null
-      truncate_dim: null
-      trust_remote_code: false
-    type: haystack.components.embedders.sentence_transformers_text_embedder.SentenceTransformersTextEmbedder
+      dimensions: null
+      http_client_kwargs: null
+      max_retries: null
+      model: text-embedding-ada-002
+      organization: null
+      prefix: ''
+      suffix: ''
+      timeout: null
+    type: haystack.components.embedders.openai_text_embedder.OpenAITextEmbedder
 connections:
 - receiver: retriever.query_embedding
   sender: text_embedder.embedding

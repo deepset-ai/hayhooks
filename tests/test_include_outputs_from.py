@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 import pytest
-from haystack import AsyncPipeline, Pipeline
+from haystack import Pipeline
 from haystack.components.builders import ChatPromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.components.retrievers.in_memory import InMemoryBM25Retriever
@@ -62,7 +62,7 @@ def sync_pipeline_with_retriever(document_store):
 
 @pytest.fixture
 def async_pipeline_with_retriever(document_store):
-    pipeline = AsyncPipeline()
+    pipeline = Pipeline()
     pipeline.add_component("retriever", InMemoryBM25Retriever(document_store=document_store))
 
     # Create a template that uses documents
