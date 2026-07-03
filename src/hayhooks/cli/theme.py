@@ -30,20 +30,27 @@ def apply_typer_theme() -> None:
     """Override typer.rich_utils style constants to match the hayhooks theme."""
     import typer.rich_utils as ru
 
-    ru.STYLE_OPTION = f"bold {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
-    ru.STYLE_SWITCH = f"bold {SUCCESS_COLOR}"  # ty: ignore[invalid-assignment]
-    ru.STYLE_METAVAR = f"bold {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
-    ru.STYLE_USAGE = BRAND_COLOR  # ty: ignore[invalid-assignment]
-    ru.STYLE_USAGE_COMMAND = "bold"
-    ru.STYLE_DEPRECATED = ERROR_COLOR  # ty: ignore[invalid-assignment]
-    ru.STYLE_HELPTEXT_FIRST_LINE = ""
-    ru.STYLE_HELPTEXT = "dim"
-    ru.STYLE_OPTION_ENVVAR = f"dim {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
-    ru.STYLE_REQUIRED_SHORT = ERROR_COLOR  # ty: ignore[invalid-assignment]
-    ru.STYLE_REQUIRED_LONG = f"dim {ERROR_COLOR}"  # ty: ignore[invalid-assignment]
-    ru.STYLE_OPTIONS_PANEL_BORDER = BRAND_COLOR  # ty: ignore[invalid-assignment]
-    ru.STYLE_COMMANDS_PANEL_BORDER = BRAND_COLOR  # ty: ignore[invalid-assignment]
-    ru.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"bold {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
-    ru.STYLE_ERRORS_PANEL_BORDER = ERROR_COLOR  # ty: ignore[invalid-assignment]
-    ru.STYLE_ABORTED = ERROR_COLOR  # ty: ignore[invalid-assignment]
-    ru.RICH_HELP = f"Try [{BRAND_COLOR}]'{{command_path}} {{help_option}}'[/] for help."
+    # Assign via setattr: these are module-level style constants that Typer reads at
+    # render time. Doing it dynamically keeps the override robust across Typer versions
+    # (some constants come and go) without per-line type-checker suppressions.
+    style_overrides = {
+        "STYLE_OPTION": f"bold {BRAND_COLOR}",
+        "STYLE_SWITCH": f"bold {SUCCESS_COLOR}",
+        "STYLE_METAVAR": f"bold {BRAND_COLOR}",
+        "STYLE_USAGE": BRAND_COLOR,
+        "STYLE_USAGE_COMMAND": "bold",
+        "STYLE_DEPRECATED": ERROR_COLOR,
+        "STYLE_HELPTEXT_FIRST_LINE": "",
+        "STYLE_HELPTEXT": "dim",
+        "STYLE_OPTION_ENVVAR": f"dim {BRAND_COLOR}",
+        "STYLE_REQUIRED_SHORT": ERROR_COLOR,
+        "STYLE_REQUIRED_LONG": f"dim {ERROR_COLOR}",
+        "STYLE_OPTIONS_PANEL_BORDER": BRAND_COLOR,
+        "STYLE_COMMANDS_PANEL_BORDER": BRAND_COLOR,
+        "STYLE_COMMANDS_TABLE_FIRST_COLUMN": f"bold {BRAND_COLOR}",
+        "STYLE_ERRORS_PANEL_BORDER": ERROR_COLOR,
+        "STYLE_ABORTED": ERROR_COLOR,
+        "RICH_HELP": f"Try [{BRAND_COLOR}]'{{command_path}} {{help_option}}'[/] for help.",
+    }
+    for name, value in style_overrides.items():
+        setattr(ru, name, value)
