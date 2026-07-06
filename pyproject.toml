@@ -25,7 +25,8 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-  "haystack-ai>=3.0.0.dev0",
+  # Supports both Haystack v2 and v3 (v3 merged AsyncPipeline into Pipeline; handled at runtime).
+  "haystack-ai!=2.18.0",
   "fastapi[standard]",
   "typer",
   "uvicorn",

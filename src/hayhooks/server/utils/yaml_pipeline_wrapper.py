@@ -1,8 +1,9 @@
 import inspect
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import haystack
 from haystack import Pipeline
 
 from hayhooks.server.logger import log
@@ -15,6 +16,10 @@ from hayhooks.server.utils.yaml_utils import (
     get_streaming_components_from_yaml,
     parse_yaml_pipeline,
 )
+
+# Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline. Resolve the class
+# dynamically so run_api_async can call run_async on both versions (v2 Pipeline has no run_async).
+_ASYNC_PIPELINE: type[Pipeline] = getattr(haystack, "AsyncPipeline", Pipeline)
 
 
 def _set_method_signature(
@@ -116,7 +121,9 @@ def _create_dynamic_run_api_async(
         if include_outputs_from is not None:
             run_kwargs["include_outputs_from"] = include_outputs_from
 
-        return await pipeline.run_async(**run_kwargs)
+        # cast: the Haystack v2 Pipeline type has no run_async; the pipeline was loaded via
+        # AsyncPipeline (v2) / Pipeline (v3), both of which provide it at runtime.
+        return await cast("Any", pipeline).run_async(**run_kwargs)
 
     _set_method_signature(run_api_async, params, return_annotation=dict)
     return run_api_async
@@ -254,12 +261,14 @@ class YAMLPipelineWrapper(BasePipelineWrapper):
         if getattr(self, "pipeline", None) is not None:
             return
 
-        log.debug("Setting up YAMLPipelineWrapper - loading Pipeline from YAML")
+        # Load via AsyncPipeline so run_api_async can call run_async: on Haystack v2 this
+        # is the dedicated async class, on v3 it is Pipeline (which has run_async natively).
+        log.debug("Setting up YAMLPipelineWrapper - loading pipeline from YAML")
         try:
-            self.pipeline = Pipeline.loads(self._yaml_source)
+            self.pipeline = _ASYNC_PIPELINE.loads(self._yaml_source)
             log.debug("Pipeline successfully loaded from YAML")
         except Exception as e:
-            msg = f"Failed to load Pipeline from YAML: {e!s}"
+            msg = f"Failed to load pipeline from YAML: {e!s}"
             raise ValueError(msg) from e
 
     @property

@@ -3,6 +3,11 @@ from pathlib import Path
 import pytest
 from haystack import Pipeline
 
+try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
+    from haystack import AsyncPipeline
+except ImportError:  # Haystack >= 3.0
+    AsyncPipeline = Pipeline
+
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_yaml
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
@@ -51,8 +56,8 @@ def test_yaml_pipeline_wrapper_has_async_pipeline():
 
     wrapper = registry.get(pipeline_name)
     assert isinstance(wrapper, YAMLPipelineWrapper)
-    # The internal pipeline should be a Pipeline
-    assert isinstance(wrapper.pipeline, Pipeline)
+    # The internal pipeline should be an AsyncPipeline
+    assert isinstance(wrapper.pipeline, AsyncPipeline)
 
 
 def test_deploy_yaml_pipeline_with_utf8_characters():
@@ -111,8 +116,8 @@ def test_deploy_yaml_pipeline_with_streaming_components():
     assert metadata["streaming_components"] is not None
     assert metadata["streaming_components"] == ["llm_1", "llm_2"]
 
-    # Verify the wrapper has a Pipeline internally
-    assert isinstance(wrapper.pipeline, Pipeline)
+    # Verify the wrapper has an AsyncPipeline internally
+    assert isinstance(wrapper.pipeline, AsyncPipeline)
 
 
 def test_deploy_yaml_pipeline_without_streaming_components():
@@ -162,5 +167,5 @@ def test_deploy_yaml_pipeline_with_streaming_components_all_keyword():
     assert "streaming_components" in metadata
     assert metadata["streaming_components"] == "all"
 
-    # Verify the wrapper has a Pipeline internally
-    assert isinstance(wrapper.pipeline, Pipeline)
+    # Verify the wrapper has an AsyncPipeline internally
+    assert isinstance(wrapper.pipeline, AsyncPipeline)

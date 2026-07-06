@@ -8,6 +8,11 @@ import pytest
 from haystack import Pipeline
 from haystack.core.errors import PipelineError
 
+try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
+    from haystack import AsyncPipeline
+except ImportError:  # Haystack >= 3.0
+    AsyncPipeline = Pipeline
+
 from hayhooks.server.exceptions import InvalidYamlIOError
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.yaml_pipeline_wrapper import (
@@ -264,7 +269,7 @@ def test_setup_loads_async_pipeline(sample_calc_yaml):
     wrapper = YAMLPipelineWrapper.from_yaml(sample_calc_yaml)
     wrapper.setup()
 
-    assert isinstance(wrapper.pipeline, Pipeline)
+    assert isinstance(wrapper.pipeline, AsyncPipeline)
 
 
 def test_setup_is_idempotent(sample_calc_yaml):
@@ -274,7 +279,7 @@ def test_setup_is_idempotent(sample_calc_yaml):
 
     # Store reference to first pipeline instance
     first_pipeline = wrapper.pipeline
-    assert isinstance(first_pipeline, Pipeline)
+    assert isinstance(first_pipeline, AsyncPipeline)
 
     # Call setup again
     wrapper.setup()

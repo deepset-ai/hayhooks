@@ -22,6 +22,11 @@ from hayhooks.server.pipelines.streaming import (
     streaming_generator,
 )
 
+try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
+    from haystack import AsyncPipeline
+except ImportError:  # Haystack >= 3.0
+    AsyncPipeline = Pipeline
+
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 
 # skip decorator for tests requiring OpenAI API key
@@ -106,7 +111,7 @@ def async_pipeline_with_sync_only_generator():
     Exercises the case where a pipeline run through run_async contains sync-only
     streaming components. Uses a mock component so no API key is required.
     """
-    pipe = Pipeline()
+    pipe = AsyncPipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
     pipe.add_component("llm", MockSyncOnlyGenerator())
     pipe.connect("prompt_builder.prompt", "llm.prompt")
@@ -129,7 +134,7 @@ def async_pipeline_with_async_capable_generator():
     Pipeline with OpenAIChatGenerator - supports both sync and async streaming callbacks.
     This is a real integration test fixture requiring OPENAI_API_KEY.
     """
-    pipe = Pipeline()
+    pipe = AsyncPipeline()
     pipe.add_component("prompt_builder", ChatPromptBuilder(template=[ChatMessage.from_user(QUESTION)]))
     pipe.add_component("llm", OpenAIChatGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
     pipe.connect("prompt_builder.prompt", "llm.messages")
@@ -268,7 +273,7 @@ def test_streaming_generator_pipeline_exception():
 async def test_async_streaming_generator_pipeline_exception():
     from haystack.core.errors import PipelineRuntimeError
 
-    pipe = Pipeline()
+    pipe = AsyncPipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
     pipe.add_component("llm", MockFailingGenerator())
     pipe.connect("prompt_builder.prompt", "llm.prompt")
@@ -282,7 +287,7 @@ async def test_async_streaming_generator_pipeline_exception():
 async def test_async_streaming_exception_after_chunks():
     from haystack.core.errors import PipelineRuntimeError
 
-    pipe = Pipeline()
+    pipe = AsyncPipeline()
     pipe.add_component("prompt_builder", PromptBuilder(template=QUESTION))
     pipe.add_component("llm", MockFailingGenerator(fail_after_chunks=2))
     pipe.connect("prompt_builder.prompt", "llm.prompt")

@@ -9,6 +9,11 @@ from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
 from haystack.utils import Secret
 
+try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
+    from haystack import AsyncPipeline
+except ImportError:  # Haystack >= 3.0
+    AsyncPipeline = Pipeline
+
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator
 
 # Test configuration
@@ -27,7 +32,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def async_streaming_pipeline():
-    pipeline = Pipeline()
+    pipeline = AsyncPipeline()
     pipeline.add_component("prompt_builder", ChatPromptBuilder())
     pipeline.add_component(
         "llm",

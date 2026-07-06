@@ -3,6 +3,11 @@ from pathlib import Path
 
 from haystack import Pipeline
 
+try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
+    from haystack import AsyncPipeline
+except ImportError:  # Haystack >= 3.0
+    AsyncPipeline = Pipeline
+
 from hayhooks import BasePipelineWrapper, log
 
 SYSTEM_MESSAGE = "You are a helpful assistant that can answer questions about the world."
@@ -11,7 +16,7 @@ SYSTEM_MESSAGE = "You are a helpful assistant that can answer questions about th
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         pipeline_yaml = (Path(__file__).parent / "question_answer.yml").read_text()
-        self.pipeline = Pipeline.loads(pipeline_yaml)
+        self.pipeline = AsyncPipeline.loads(pipeline_yaml)
 
     async def run_api_async(self, question: str) -> str:
         log.trace("Running pipeline with question: {}", question)
