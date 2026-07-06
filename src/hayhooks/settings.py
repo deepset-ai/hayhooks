@@ -63,6 +63,20 @@ class AppSettings(BaseSettings):
     # Port for the MCP app
     mcp_port: int = 1417
 
+    # Host for the A2A app
+    a2a_host: str = "localhost"
+
+    # Port for the A2A app
+    a2a_port: int = 1418
+
+    # Base URL advertised in A2A agent cards (e.g. when behind a reverse proxy).
+    # When empty, defaults to http://{a2a_host}:{a2a_port}
+    a2a_external_url: str = ""
+
+    # Accept A2A spec 0.3 requests on the same endpoints (many clients and
+    # tools, e.g. the a2a-inspector, still speak 0.3 during the 1.0 transition)
+    a2a_v0_3_compat: bool = True
+
     # Disable SSL verification when making requests from the CLI
     disable_ssl: bool = False
 

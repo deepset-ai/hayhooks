@@ -108,6 +108,7 @@ def caplog(caplog: LogCaptureFixture):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "mcp: mark tests that require the MCP package")
+    config.addinivalue_line("markers", "a2a: mark tests that require the a2a-sdk package")
 
 
 @pytest.fixture(scope="session", autouse=True)

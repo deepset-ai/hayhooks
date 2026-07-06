@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Generator
+from typing import Any
 
 
 class BasePipelineWrapper(ABC):
@@ -7,6 +8,16 @@ class BasePipelineWrapper(ABC):
     # If True, the pipeline will not be listed as an MCP tool
     # Even if it has a description and a request model
     skip_mcp: bool = False
+
+    # Class attribute to skip exposing the pipeline as an A2A agent
+    # If True, the pipeline will not be exposed over the A2A protocol
+    # even if it implements run_chat_completion or run_chat_completion_async
+    skip_a2a: bool = False
+
+    # Optional overrides for the auto-generated A2A agent card.
+    # Supported keys: "name", "description", "version" and "skills"
+    # (a list of dicts with "id", "name", "description", "tags", "examples")
+    a2a_card: dict[str, Any] | None = None
 
     def __init__(self):
         self.pipeline = None
