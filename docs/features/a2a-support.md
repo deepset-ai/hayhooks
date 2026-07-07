@@ -155,6 +155,7 @@ See [examples/a2a_multi_agent](https://github.com/deepset-ai/hayhooks/tree/main/
 
 ## Current limitations
 
+- **Request-bound task execution**: Hayhooks currently treats A2A as a chat-shaped bridge. Each task runs inside the request handler by calling `run_chat_completion` / `run_chat_completion_async`, so non-streaming `SendMessage` returns after the task has completed or failed. This means detached task execution via [`returnImmediately`](https://a2a-protocol.org/latest/specification/#322-sendmessageconfiguration), [`input-required`](https://a2a-protocol.org/latest/specification/#63-multi-turn-interaction) pauses, and [push notification delivery](https://a2a-protocol.org/latest/specification/#353-push-notification-delivery) are not supported yet.
 - **Static agents list**: A2A routes are built from the registry at startup. Pipelines deployed or undeployed at runtime require restarting `hayhooks a2a run`.
 - **In-memory task store**: task state is kept in memory and lost on restart.
 - **Path-prefixed agent cards**: one server hosts many agents, so cards live under `/{pipeline_name}/.well-known/agent-card.json` instead of the domain root. If a consumer requires strict root-level discovery, run one A2A server instance per agent (separate `--pipelines-dir` and `--port`).
