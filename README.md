@@ -6,6 +6,7 @@ With Hayhooks, you can:
 
 - 📦 **Deploy your Haystack pipelines and agents as REST APIs** with maximum flexibility and minimal boilerplate code.
 - 🛠️ **Expose your Haystack pipelines and agents over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline and agent as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
+- 🤝 **Expose your Haystack pipelines and agents over the [A2A protocol](https://a2a-protocol.org)** (`pip install "hayhooks[a2a]"`), so other agents can discover them through auto-generated agent cards and delegate tasks to them via `hayhooks a2a run`.
 - 💬 **Integrate your Haystack pipelines and agents with [Open WebUI](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
 - 🖥️ **Embed a [Chainlit](https://chainlit.io/) chat UI** directly in Hayhooks with `pip install "hayhooks[chainlit]"` and `hayhooks run --with-chainlit` -- zero-configuration frontend with streaming, pipeline selection, and custom UI widgets.
 - 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
@@ -135,6 +136,7 @@ Or chat with it in the [embedded Chainlit UI](docs/features/chainlit-integration
 ### 🌐 Multiple Integration Options
 
 - **MCP Protocol**: Expose pipelines as MCP tools for use in AI development environments
+- **A2A Protocol**: Expose pipelines as A2A agents that other agents can discover and delegate tasks to
 - **Chainlit UI**: Embedded chat frontend with streaming, pipeline selection, and custom UI widgets
 - **Open WebUI Integration**: Use Hayhooks as a backend for Open WebUI with streaming support
 - **OpenAI Compatibility**: Seamless integration with OpenAI-compatible tools and frameworks

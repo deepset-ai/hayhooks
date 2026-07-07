@@ -119,6 +119,28 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Default: `1417`
 - Description: Port for the MCP server
 
+## A2A
+
+### HAYHOOKS_A2A_HOST
+
+- Default: `localhost`
+- Description: Host for the A2A server
+
+### HAYHOOKS_A2A_PORT
+
+- Default: `1418`
+- Description: Port for the A2A server
+
+### HAYHOOKS_A2A_EXTERNAL_URL
+
+- Default: `""` (empty)
+- Description: Base URL advertised in A2A agent cards (e.g. when Hayhooks runs behind a reverse proxy). When empty, defaults to `http://{HAYHOOKS_A2A_HOST}:{HAYHOOKS_A2A_PORT}`
+
+### HAYHOOKS_A2A_V0_3_COMPAT
+
+- Default: `true`
+- Description: Accept A2A spec 0.3 requests on the same endpoints. Many clients and tools (e.g. the a2a-inspector) still speak 0.3 during the 1.0 transition
+
 ## Chainlit UI
 
 ### HAYHOOKS_CHAINLIT_ENABLED

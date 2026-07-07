@@ -32,7 +32,7 @@ def apply_typer_theme() -> None:
 
     ru.STYLE_OPTION = f"bold {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
     ru.STYLE_SWITCH = f"bold {SUCCESS_COLOR}"  # ty: ignore[invalid-assignment]
-    ru.STYLE_METAVAR = f"bold {BRAND_COLOR}"  # ty: ignore[invalid-assignment]
+    vars(ru)["STYLE_METAVAR"] = f"bold {BRAND_COLOR}"
     ru.STYLE_USAGE = BRAND_COLOR  # ty: ignore[invalid-assignment]
     ru.STYLE_USAGE_COMMAND = "bold"
     ru.STYLE_DEPRECATED = ERROR_COLOR  # ty: ignore[invalid-assignment]
