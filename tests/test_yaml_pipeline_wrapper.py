@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from haystack import Pipeline
-from haystack.core.errors import PipelineError
+from haystack.core.errors import DeserializationError, PipelineError
 
 try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
     from haystack import AsyncPipeline
@@ -243,7 +243,9 @@ inputs:
 outputs:
   result: invalid.result
 """
-    with pytest.raises(PipelineError, match="not imported"):
+    # Haystack v2 attempts the import and fails with PipelineError ("not imported"); v3's
+    # secure deserialization allowlist rejects the unknown module first with DeserializationError.
+    with pytest.raises((PipelineError, DeserializationError), match=r"not imported|allowlist"):
         YAMLPipelineWrapper.from_yaml(invalid_yaml)
 
 

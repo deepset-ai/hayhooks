@@ -246,6 +246,9 @@ async def run_api_async(self, urls: list[str], question: str) -> str:
 - Integrating with async-compatible components
 - Better performance for I/O-bound operations
 
+!!! note "Haystack 2.x vs 3.x"
+    The examples here call `run_async()` on `Pipeline`, which works out of the box on **Haystack 3.x**. On **Haystack 2.x**, `Pipeline` has no `run_async()` method — load the pipeline with `AsyncPipeline` instead (`self.pipeline = AsyncPipeline.loads(...)`), otherwise you'll hit an `AttributeError`. Haystack 3.x merged the async support into `Pipeline`, so `AsyncPipeline` is no longer required there.
+
 ### run_chat_completion()
 
 Enable OpenAI-compatible chat endpoints for integration with chat interfaces.

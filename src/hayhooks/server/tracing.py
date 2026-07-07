@@ -21,6 +21,7 @@ from time import monotonic, time
 from typing import Any
 from uuid import uuid4
 
+import haystack.tracing
 from fastapi import HTTPException
 from haystack.lazy_imports import LazyImport
 from haystack.tracing import Span, Tracer, enable_tracing, is_tracing_enabled, tracer
@@ -387,6 +388,13 @@ def _configure_otel_tracer_from_env() -> bool:
     return True
 
 
+# Haystack v2 exposes ``auto_enable_tracing`` to pick up externally configured tracer providers
+# (e.g. an OpenTelemetry provider already set on the process); Haystack v3 removed it since there
+# is no built-in backend to auto-enable anymore. Resolve it dynamically so v2 users keep automatic
+# tracing detection while v3 simply falls through to the explicit OTLP bootstrap below.
+_auto_enable_tracing = getattr(haystack.tracing, "auto_enable_tracing", None)
+
+
 def configure_tracing() -> bool:
     """
     Ensure Haystack tracing is enabled when possible.
@@ -394,12 +402,16 @@ def configure_tracing() -> bool:
     Order:
       1. No-op if tracing is already enabled (e.g. a Haystack tracing connector such as
          ``OpenTelemetryConnector``/``LangfuseConnector`` already called ``enable_tracing``).
-      2. Fallback to Hayhooks OTLP bootstrap when OTLP env vars are present.
-
-    NOTE: Haystack v3 removed ``auto_enable_tracing`` (there is no built-in backend to
-    auto-enable anymore), so external tracing must be enabled explicitly by the user.
+      2. On Haystack v2, try ``auto_enable_tracing()`` for externally configured providers.
+         (Haystack v3 removed this, so the shim is a no-op there.)
+      3. Fallback to Hayhooks OTLP bootstrap when OTLP env vars are present.
     """
     tracing_enabled = is_tracing_enabled()
+    if not tracing_enabled and _auto_enable_tracing is not None:
+        _auto_enable_tracing()
+        tracing_enabled = is_tracing_enabled()
+        if tracing_enabled:
+            log.debug("Hayhooks tracing enabled by Haystack auto-configuration")
     if not tracing_enabled:
         tracing_enabled = _configure_otel_tracer_from_env()
         if tracing_enabled:

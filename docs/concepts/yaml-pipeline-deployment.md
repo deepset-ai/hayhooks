@@ -83,6 +83,27 @@ outputs:
 3. **Valid Components**: All components must be properly defined
 4. **Valid Connections**: All connections must reference existing components
 
+## Deserialization Allowlist (Haystack 3.x)
+
+Deploying a YAML pipeline deserializes user-supplied definitions into live component instances. On **Haystack 3.x**, `Pipeline.loads()` only instantiates components whose module matches the `HAYSTACK_DESERIALIZATION_ALLOWLIST`. Hayhooks does **not** override this — it deliberately keeps Haystack's secure default so that deserializing untrusted YAML can't instantiate arbitrary modules.
+
+If your pipeline references custom components outside the default allowlist, list their modules explicitly:
+
+```bash
+export HAYSTACK_DESERIALIZATION_ALLOWLIST="haystack.*,my_company.components.*"
+```
+
+To disable the allowlist entirely (only when you fully trust the YAML source), use the wildcard as an explicit opt-out:
+
+```bash
+export HAYSTACK_DESERIALIZATION_ALLOWLIST="*"
+```
+
+!!! warning
+    `*` allows deserializing components from any importable module. Only use it when the YAML you deploy is trusted.
+
+    Haystack 2.x does not gate deserialization this way, so this setting has no effect there.
+
 ## Deployment Methods
 
 === "CLI"
