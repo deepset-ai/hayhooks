@@ -3,13 +3,14 @@ import concurrent.futures
 import os
 
 import pytest
-from haystack import AsyncPipeline, Pipeline
+from haystack import Pipeline
 from haystack.components.builders import ChatPromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
 from haystack.utils import Secret
 
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 
 # Test configuration
 OPENAI_MODEL = "gpt-4o-mini"

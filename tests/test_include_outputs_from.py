@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 import pytest
-from haystack import AsyncPipeline, Pipeline
+from haystack import Pipeline
 from haystack.components.builders import ChatPromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.components.retrievers.in_memory import InMemoryBM25Retriever
@@ -13,6 +13,7 @@ from haystack.document_stores.in_memory import InMemoryDocumentStore
 from haystack.utils import Secret
 
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 
 QUESTION = "What is the capital of France?"
 

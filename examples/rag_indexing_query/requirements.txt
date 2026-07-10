@@ -1,6 +1,7 @@
 hayhooks
 elasticsearch-haystack
-sentence-transformers
+sentence-transformers-haystack
+huggingface-api-haystack
 pypdf
 markdown-it-py
 mdit_plain

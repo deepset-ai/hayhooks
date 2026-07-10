@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import pytest
-from haystack import AsyncPipeline
 
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_yaml
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 
 

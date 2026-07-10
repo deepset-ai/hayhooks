@@ -6,9 +6,8 @@ from queue import Queue
 from typing import Any
 
 import pytest
-from haystack import AsyncPipeline, Pipeline
+from haystack import Pipeline, component
 from haystack.components.builders import ChatPromptBuilder, PromptBuilder
-from haystack.components.generators import OpenAIGenerator
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall, ToolCallDelta, ToolCallResult
 from haystack.utils import Secret
@@ -23,9 +22,29 @@ from hayhooks.server.pipelines.utils import (
     is_streaming_component,
     streaming_generator,
 )
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.settings import AppSettings
 
+# True on Haystack v3 (single Pipeline with run_async); False on Haystack v2 (sync-only Pipeline).
+PIPELINE_HAS_RUN_ASYNC = hasattr(Pipeline, "run_async")
+
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
+
+
+@component
+class SyncOnlyGenerator:
+    """
+    Sync-only generator: defines ``run`` but NOT ``run_async``.
+
+    Replaces the Haystack v2 ``OpenAIGenerator`` (removed in v3) in tests that exercise
+    the sync-only streaming code paths. Requires no API key.
+    """
+
+    @component.output_types(replies=list[str])
+    def run(self, prompt: str, streaming_callback: Any | None = None) -> dict[str, Any]:
+        if streaming_callback:
+            streaming_callback(StreamingChunk(content="Yes", index=0))
+        return {"replies": ["Yes"]}
 
 
 @pytest.fixture
@@ -57,7 +76,7 @@ def async_pipeline_with_async_streaming_callback_support():
 def async_pipeline_without_async_streaming_callback_support():
     pipeline = AsyncPipeline()
     pipeline.add_component("prompt_builder", PromptBuilder(template=QUESTION, required_variables="*"))
-    pipeline.add_component("llm", OpenAIGenerator(api_key=Secret.from_env_var("OPENAI_API_KEY"), model="gpt-4o-mini"))
+    pipeline.add_component("llm", SyncOnlyGenerator())
     pipeline.connect("prompt_builder.prompt", "llm.prompt")
     return pipeline
 
@@ -130,8 +149,7 @@ async def test_async_pipeline_async_streaming_callback_async_streaming_generator
 ):
     pipeline = async_pipeline_with_async_streaming_callback_support
 
-    # Here streaming_generator will call the .run() method of the AsyncPipeline,
-    # which will wrap the call to .run_async() with asyncio.run().
+    # Here async_streaming_generator will call the .run_async() method of the AsyncPipeline.
     async_generator = async_streaming_generator(
         pipeline,
         pipeline_run_args={
@@ -1660,9 +1678,13 @@ async def test_async_streaming_generator_external_queue_interleaved(mocker, mock
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    PIPELINE_HAS_RUN_ASYNC,
+    reason="Haystack v2 only: a sync Pipeline (no run_async) forces hybrid sync streaming callbacks.",
+)
 async def test_sync_pipeline_with_agent_like_streaming(mocker):
     """
-    Regression test: sync Pipeline with a component that rejects coroutine callbacks.
+    Regression test (Haystack v2): sync Pipeline with a component that rejects coroutine callbacks.
 
     When async_streaming_generator is used with a sync Pipeline containing a component
     that validates the streaming_callback is not a coroutine (like Haystack Agent),
@@ -1701,6 +1723,49 @@ async def test_sync_pipeline_with_agent_like_streaming(mocker):
         return {"agent": {"response": "ok"}}
 
     pipeline.run.side_effect = mock_run
+
+    generator = async_streaming_generator(pipeline, pipeline_run_args={})
+    chunks = [chunk async for chunk in generator]
+
+    streaming_chunks = [c for c in chunks if isinstance(c, StreamingChunk)]
+    assert len(streaming_chunks) == 2
+    assert streaming_chunks[0].content == "agent "
+    assert streaming_chunks[1].content == "response"
+
+
+@pytest.mark.asyncio
+async def test_async_pipeline_with_agent_like_streaming(mocker):
+    """
+    In Haystack v3, AsyncPipeline was merged into Pipeline: async_streaming_generator runs a
+    Pipeline via run_async. A streaming component that supports run_async receives an async
+    streaming callback, and its chunks are emitted through the async queue.
+    """
+
+    class AgentLikeComponent:
+        """Mock component that supports async streaming callbacks (like Agent)."""
+
+        def __init__(self, has_async_run=True):
+            if has_async_run:
+                self.run_async = lambda: None
+
+        def run(self, messages=None, streaming_callback=None, **kwargs):
+            return {"response": "ok"}
+
+    component = AgentLikeComponent(has_async_run=True)
+
+    pipeline = mocker.Mock(spec=AsyncPipeline)
+    pipeline._spec_class = AsyncPipeline
+    pipeline.walk.return_value = [("agent", component)]
+
+    async def mock_run_async(data, **kwargs):
+        callback = data.get("agent", {}).get("streaming_callback")
+        assert callback is not None, "streaming_callback should be set"
+        assert inspect.iscoroutinefunction(callback), "callback should be async for a run_async-capable component"
+        await callback(StreamingChunk(content="agent ", index=0))
+        await callback(StreamingChunk(content="response", index=1))
+        return {"agent": {"response": "ok"}}
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
 
     generator = async_streaming_generator(pipeline, pipeline_run_args={})
     chunks = [chunk async for chunk in generator]

@@ -156,6 +156,9 @@ def test_a2a_run_debug_enables_tracebacks(monkeypatch):
     monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
     monkeypatch.setattr(deploy_utils, "deploy_pipelines", fake_deploy_pipelines)
     monkeypatch.setattr(a2a_utils, "create_a2a_app", fake_create_a2a_app)
+    # Neutralize the optional-dependency guard so this CLI-plumbing test runs
+    # even when the optional 'a2a' package isn't installed.
+    monkeypatch.setattr(a2a_utils.a2a_import, "check", lambda: None)
 
     settings.show_tracebacks = False
     result = runner.invoke(hayhooks_cli, ["a2a", "run", "--debug", "--pipelines-dir", "dummy_pipelines"])

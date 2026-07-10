@@ -93,17 +93,16 @@ Pipelines that spend most of their time waiting on external services -- LLM API 
 
 **Recommendations:**
 
-- **Use async methods.** Implement `run_api_async()` (or `run_chat_completion_async()`) and build your pipeline with `AsyncPipeline`. This lets a single worker handle many concurrent requests because it can switch to another request while waiting on I/O.
+- **Use async methods.** Implement `run_api_async()` (or `run_chat_completion_async()`) and run an async-capable pipeline with `run_async()`. This lets a single worker handle many concurrent requests because it can switch to another request while waiting on I/O.
 - **A single worker is usually enough.** Adding more workers does not help much when the bottleneck is network latency, not CPU.
 - **Scale horizontally if needed.** If you need more throughput, add replicas (Kubernetes pods, Docker containers) rather than workers.
 
 ```python
-from haystack import AsyncPipeline
-from hayhooks import BasePipelineWrapper
+from hayhooks import BasePipelineWrapper, Pipeline
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        self.pipeline = AsyncPipeline()
+        self.pipeline = Pipeline()
         # ... build pipeline ...
 
     async def run_api_async(self, query: str) -> str:

@@ -6,15 +6,16 @@ import json
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from queue import Empty, Queue
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from haystack import AsyncPipeline, Pipeline
+from haystack import Pipeline
 from haystack.components.agents import Agent
 from haystack.core.component import Component
 from haystack.dataclasses import StreamingChunk
 
 from hayhooks.events import PipelineEvent
 from hayhooks.server.logger import log
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.settings import settings
 
 # Timeout for thread cleanup when generator is terminated early (e.g., consumer breaks out of loop)
@@ -97,7 +98,7 @@ def is_streaming_component(component: Component) -> bool:
     return False
 
 
-def find_all_streaming_components(pipeline: Pipeline | AsyncPipeline) -> list[tuple[Component, str]]:
+def find_all_streaming_components(pipeline: Pipeline) -> list[tuple[Component, str]]:
     """
     Finds all components in the pipeline that support streaming_callback.
 
@@ -148,7 +149,7 @@ def parse_streaming_components_setting(setting_value: str) -> list[str] | Litera
 
 
 def _setup_streaming_callback_for_pipeline(
-    pipeline: Pipeline | AsyncPipeline,
+    pipeline: Pipeline,
     pipeline_run_args: dict[str, Any],
     streaming_callback: StreamingCallback,
     streaming_components: list[str] | Literal["all"] | None = None,
@@ -232,7 +233,7 @@ def _setup_streaming_callback_for_agent(
 
 
 def _setup_streaming_callback(
-    pipeline: Pipeline | AsyncPipeline | Agent,
+    pipeline: Pipeline | Agent,
     pipeline_run_args: dict[str, Any],
     streaming_callback: StreamingCallback,
     streaming_components: list[str] | Literal["all"] | None = None,
@@ -385,7 +386,7 @@ def _process_pipeline_end(result: dict[str, Any], on_pipeline_end: OnPipelineEnd
 
 
 def _execute_pipeline_sync(
-    pipeline: Pipeline | AsyncPipeline | Agent,
+    pipeline: Pipeline | Agent,
     pipeline_run_args: dict[str, Any],
     include_outputs_from: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -395,7 +396,7 @@ def _execute_pipeline_sync(
     Args:
         pipeline: The pipeline or agent to execute
         pipeline_run_args: Execution arguments
-        include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
+        include_outputs_from: Optional set of component names to include outputs from (Pipeline only)
     """
     if isinstance(pipeline, Agent):
         return pipeline.run(**pipeline_run_args)
@@ -408,7 +409,7 @@ def _execute_pipeline_sync(
 
 
 def _execute_pipeline_in_thread(
-    pipeline: Pipeline | AsyncPipeline | Agent,
+    pipeline: Pipeline | Agent,
     configured_args: dict[str, Any],
     include_outputs_from: set[str] | None,
     on_pipeline_end: OnPipelineEnd,
@@ -495,7 +496,7 @@ def _cleanup_pipeline_sync(thread: threading.Thread) -> None:
 
 
 def streaming_generator(  # noqa: PLR0913
-    pipeline: Pipeline | AsyncPipeline | Agent,
+    pipeline: Pipeline | Agent,
     *,
     pipeline_run_args: dict[str, Any] | None = None,
     on_tool_call_start: OnToolCallStart = None,
@@ -513,7 +514,7 @@ def streaming_generator(  # noqa: PLR0913
     You can control which components stream using streaming_components or HAYHOOKS_STREAMING_COMPONENTS.
 
     Args:
-        pipeline: The Pipeline, AsyncPipeline, or Agent to execute
+        pipeline: The Pipeline or Agent to execute
         pipeline_run_args: Arguments for execution
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
@@ -524,7 +525,7 @@ def streaming_generator(  # noqa: PLR0913
                              - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
                              - "all": stream all capable components
                              - list[str]: ["llm_1", "llm_2"] to enable specific components
-        include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
+        include_outputs_from: Optional set of component names to include outputs from (Pipeline only)
         external_event_queue: Optional external queue to merge with internal events. Events from this queue
                              will be yielded alongside streaming chunks from the pipeline. Supports
                              StreamingChunk, PipelineEvent, str, or custom dict events.
@@ -614,7 +615,7 @@ def _create_hybrid_streaming_callback(
 
 
 def _validate_async_streaming_support(
-    pipeline: Pipeline | AsyncPipeline,
+    pipeline: Pipeline,
     allow_sync_streaming_callbacks: bool = False,
 ) -> tuple[bool, list[tuple[Component, str]]]:
     """
@@ -648,8 +649,7 @@ def _validate_async_streaming_support(
             msg = (
                 f"Component '{streaming_component_name}' of type '{component_type}' seems to not support async "
                 "streaming callbacks. Use the sync 'streaming_generator' function instead, switch to a component "
-                "that supports async streaming callbacks (e.g., OpenAIChatGenerator instead of OpenAIGenerator), "
-                "or set allow_sync_streaming_callbacks=True to enable hybrid mode."
+                "that implements 'run_async', or set allow_sync_streaming_callbacks=True to enable hybrid mode."
             )
             raise ValueError(msg)
 
@@ -732,7 +732,7 @@ def _setup_hybrid_streaming_callbacks_for_pipeline(
 
 
 async def _execute_pipeline_async(
-    pipeline: Pipeline | AsyncPipeline | Agent,
+    pipeline: Pipeline | Agent,
     pipeline_run_args: dict[str, Any],
     queue: asyncio.Queue[StreamingChunk],
     loop: asyncio.AbstractEventLoop,
@@ -746,7 +746,7 @@ async def _execute_pipeline_async(
         pipeline_run_args: Execution arguments
         queue: Queue made available to module-level streaming callbacks during execution
         loop: Event loop made available to sync-to-async streaming callbacks during execution
-        include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
+        include_outputs_from: Optional set of component names to include outputs from (Pipeline only)
 
     Returns:
         Async task for pipeline execution
@@ -762,10 +762,12 @@ async def _execute_pipeline_async(
         if include_outputs_from is not None:
             kwargs["include_outputs_from"] = include_outputs_from
 
-        if isinstance(pipeline, AsyncPipeline):
-            return asyncio.create_task(pipeline.run_async(**kwargs))
-        else:  # Regular Pipeline
-            return asyncio.create_task(asyncio.to_thread(pipeline.run, **kwargs))
+        # Haystack v3 Pipeline and Haystack v2 AsyncPipeline both expose run_async().
+        # A Haystack v2 sync Pipeline does not, so run it in a thread instead.
+        # cast: the Haystack v2 Pipeline type has no run_async attribute (only AsyncPipeline does).
+        if hasattr(pipeline, "run_async"):
+            return asyncio.create_task(cast("Any", pipeline).run_async(**kwargs))
+        return asyncio.create_task(asyncio.to_thread(pipeline.run, **kwargs))
     finally:
         _ASYNC_STREAMING_LOOP.reset(loop_token)
         _ASYNC_STREAMING_QUEUE.reset(queue_token)
@@ -854,7 +856,7 @@ async def _cleanup_pipeline_async(pipeline_task: asyncio.Task) -> None:
 
 
 def async_streaming_generator(  # noqa: PLR0913, C901
-    pipeline: Pipeline | AsyncPipeline | Agent,
+    pipeline: Pipeline | Agent,
     *,
     pipeline_run_args: dict[str, Any] | None = None,
     on_tool_call_start: OnToolCallStart = None,
@@ -873,7 +875,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
     You can control which components stream using streaming_components or HAYHOOKS_STREAMING_COMPONENTS.
 
     Args:
-        pipeline: The Pipeline, AsyncPipeline, or Agent to execute
+        pipeline: The Pipeline or Agent to execute
         pipeline_run_args: Arguments for execution
         on_tool_call_start: Callback for tool call start
         on_tool_call_end: Callback for tool call end
@@ -884,13 +886,13 @@ def async_streaming_generator(  # noqa: PLR0913, C901
                              - None: use HAYHOOKS_STREAMING_COMPONENTS or default (last only)
                              - "all": stream all capable components
                              - list[str]: ["llm_1", "llm_2"] to enable specific components
-        include_outputs_from: Optional set of component names to include outputs from (Pipeline/AsyncPipeline only)
+        include_outputs_from: Optional set of component names to include outputs from (Pipeline only)
         allow_sync_streaming_callbacks: Controls hybrid streaming mode:
                                        - False (default): Strict mode - all components must support async callbacks
                                        - True: Automatically detect and enable hybrid mode only if needed
                                        When True, the system automatically detects components with sync-only
-                                       streaming callbacks (e.g., OpenAIGenerator) and enables hybrid mode to
-                                       bridge them to work in async pipelines. If all components support async,
+                                       streaming callbacks (components without run_async) and enables hybrid mode
+                                       to bridge them to work in async pipelines. If all components support async,
                                        no bridging is applied (pure async mode).
         external_event_queue: Optional external asyncio queue to merge with internal events. Events from this
                              queue will be yielded alongside streaming chunks from the pipeline. Supports
@@ -902,9 +904,9 @@ def async_streaming_generator(  # noqa: PLR0913, C901
         str: Tool name or stream content
         dict: Custom events from external queue
 
-    NOTE: This generator works with sync/async pipelines and agents. For pipelines, the streaming components
+    NOTE: This generator works with pipelines and agents. For pipelines, the streaming components
           should support an _async_ `streaming_callback`. However, if allow_sync_streaming_callbacks=True,
-          components with only sync callbacks (e.g., OpenAIGenerator) will also work by automatically
+          components with only sync callbacks (components without run_async) will also work by automatically
           enabling hybrid mode when needed. Agents have built-in async streaming support. By default, only
           the last streaming-capable component will stream.
     """
@@ -915,18 +917,20 @@ def async_streaming_generator(  # noqa: PLR0913, C901
     all_streaming_components: list[tuple[Component, str]] = []
     force_sync_callbacks = False
 
-    if isinstance(pipeline, AsyncPipeline):
-        # Async pipeline: run_async() accepts async callbacks natively.
-        # Hybrid mode only needed when some components lack run_async.
-        use_hybrid_mode, all_streaming_components = _validate_async_streaming_support(
-            pipeline, allow_sync_streaming_callbacks
-        )
-    elif isinstance(pipeline, Pipeline):
-        # Sync pipeline: Pipeline.run() calls components' run() synchronously,
-        # which rejects coroutine callbacks. Force hybrid mode with sync callbacks.
-        use_hybrid_mode = True
-        force_sync_callbacks = True
-        all_streaming_components = find_all_streaming_components(pipeline)
+    if isinstance(pipeline, (Pipeline, AsyncPipeline)):
+        if hasattr(pipeline, "run_async"):
+            # Haystack v3 Pipeline / v2 AsyncPipeline: run_async() accepts async callbacks
+            # natively. Hybrid mode is only needed when some components lack run_async
+            # (sync-only), where their sync callbacks bridge to the async queue.
+            use_hybrid_mode, all_streaming_components = _validate_async_streaming_support(
+                pipeline, allow_sync_streaming_callbacks
+            )
+        else:
+            # Haystack v2 sync Pipeline: run() calls components' run() synchronously,
+            # which rejects coroutine callbacks. Force hybrid mode with sync callbacks.
+            use_hybrid_mode = True
+            force_sync_callbacks = True
+            all_streaming_components = find_all_streaming_components(pipeline)
     # else: Agent — run_async() natively accepts async callbacks, pure async path below.
 
     queue: asyncio.Queue[StreamingChunk] = asyncio.Queue()

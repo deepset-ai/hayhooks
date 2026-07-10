@@ -21,17 +21,10 @@ from time import monotonic, time
 from typing import Any
 from uuid import uuid4
 
+import haystack.tracing
 from fastapi import HTTPException
 from haystack.lazy_imports import LazyImport
-from haystack.tracing import (
-    OpenTelemetryTracer,
-    Span,
-    Tracer,
-    auto_enable_tracing,
-    enable_tracing,
-    is_tracing_enabled,
-    tracer,
-)
+from haystack.tracing import Span, Tracer, enable_tracing, is_tracing_enabled, tracer
 from haystack.tracing.tracer import NullTracer
 
 from hayhooks.server.logger import log, normalize_trace_correlation_data
@@ -84,6 +77,29 @@ with LazyImport(_LAZY_IMPORT_HINT) as otel_sdk_import:
     from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # ty: ignore[unresolved-import]
     from opentelemetry.sdk.trace import TracerProvider  # ty: ignore[unresolved-import]
     from opentelemetry.sdk.trace.export import BatchSpanProcessor  # ty: ignore[unresolved-import]
+
+# In Haystack v3 the OpenTelemetryTracer moved out of core into the ``opentelemetry-haystack`` integration package
+# (installed by the ``tracing`` extra).
+with LazyImport(_LAZY_IMPORT_HINT) as otel_haystack_tracer_import:
+    from haystack_integrations.tracing.opentelemetry import OpenTelemetryTracer  # ty: ignore[unresolved-import]
+
+
+# Returns type[Any] rather than type[Tracer]: both branches resolve the class dynamically,
+# and the abstract Tracer type would reject the concrete constructor call at the use site.
+def _resolve_otel_tracer_class() -> type[Any] | None:
+    """
+    Resolve the Haystack OpenTelemetry tracer class.
+
+    Prefer the ``opentelemetry-haystack`` integration package (required on Haystack v3, installed
+    by the ``tracing`` extra), and fall back to the tracer bundled in Haystack v2 core so v2
+    environments without the integration package keep working. Returns None when neither exists.
+    """
+    try:
+        otel_haystack_tracer_import.check()
+    except ImportError:
+        return getattr(haystack.tracing, "OpenTelemetryTracer", None)
+    return OpenTelemetryTracer
+
 
 with LazyImport(_LAZY_IMPORT_HINT) as otlp_http_exporter_import:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # ty: ignore[unresolved-import]
@@ -362,9 +378,12 @@ def _configure_otel_tracer_from_env() -> bool:
         )
         return False
 
+    tracer_class = _resolve_otel_tracer_class()
     try:
         otel_sdk_import.check()
     except ImportError:
+        tracer_class = None
+    if tracer_class is None:
         log.warning(
             "OpenTelemetry OTLP runtime unavailable. {} "
             "If you upgraded Hayhooks, reinstall extras to pull new tracing dependencies.",
@@ -381,7 +400,7 @@ def _configure_otel_tracer_from_env() -> bool:
         provider = TracerProvider(resource=Resource.create({SERVICE_NAME: service_name}))
         provider.add_span_processor(BatchSpanProcessor(exporter))
         otel_trace.set_tracer_provider(provider)
-        enable_tracing(OpenTelemetryTracer(otel_trace.get_tracer(service_name)))
+        enable_tracing(tracer_class(otel_trace.get_tracer(service_name)))
     except Exception as exc:  # pragma: no cover - defensive guard for SDK/runtime failures
         log.warning("Failed to bootstrap OpenTelemetry tracing from environment: {}", exc)
         return False
@@ -390,23 +409,34 @@ def _configure_otel_tracer_from_env() -> bool:
     return True
 
 
+# Haystack v2 exposes ``auto_enable_tracing`` to pick up externally configured tracer providers
+# (e.g. an OpenTelemetry provider already set on the process); Haystack v3 removed it since there
+# is no built-in backend to auto-enable anymore. Resolve it dynamically so v2 users keep automatic
+# tracing detection while v3 simply falls through to the explicit OTLP bootstrap below.
+_auto_enable_tracing = getattr(haystack.tracing, "auto_enable_tracing", None)
+
+
 def configure_tracing() -> bool:
     """
     Ensure Haystack tracing is enabled when possible.
 
     Order:
-      1. No-op if tracing is already enabled.
-      2. Try Haystack's ``auto_enable_tracing()`` for externally configured providers.
+      1. No-op if tracing is already enabled (e.g. a Haystack tracing connector such as
+         ``OpenTelemetryConnector``/``LangfuseConnector`` already called ``enable_tracing``).
+      2. On Haystack v2, try ``auto_enable_tracing()`` for externally configured providers.
+         (Haystack v3 removed this, so the shim is a no-op there.)
       3. Fallback to Hayhooks OTLP bootstrap when OTLP env vars are present.
     """
     tracing_enabled = is_tracing_enabled()
-    if not tracing_enabled:
-        auto_enable_tracing()
+    if not tracing_enabled and _auto_enable_tracing is not None:
+        _auto_enable_tracing()
         tracing_enabled = is_tracing_enabled()
         if tracing_enabled:
             log.debug("Hayhooks tracing enabled by Haystack auto-configuration")
-        else:
-            tracing_enabled = _configure_otel_tracer_from_env()
+    if not tracing_enabled:
+        tracing_enabled = _configure_otel_tracer_from_env()
+        if tracing_enabled:
+            log.debug("Hayhooks tracing enabled by OTLP environment configuration")
 
     if settings.dashboard_trace_include_haystack_spans:
         _enable_live_buffer_span_capture()

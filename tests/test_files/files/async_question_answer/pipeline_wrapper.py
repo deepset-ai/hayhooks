@@ -1,9 +1,8 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from haystack import AsyncPipeline
-
 from hayhooks import BasePipelineWrapper, log
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 
 SYSTEM_MESSAGE = "You are a helpful assistant that can answer questions about the world."
 

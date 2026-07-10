@@ -10,6 +10,10 @@ from hayhooks.server.logger import log
 
 load_dotenv(dotenv_path=find_dotenv(usecwd=True))
 
+# NOTE: We intentionally do not set HAYSTACK_DESERIALIZATION_ALLOWLIST. Haystack v3 gates pipeline
+# deserialization behind a module allowlist, and since Hayhooks deserializes operator-supplied YAML we
+# keep Haystack's secure default. Operators configure the allowlist (or opt out with "*") via the env var.
+
 
 APP_TITLE = "Hayhooks"
 APP_DESCRIPTION = "Hayhooks makes it easy to deploy and serve Haystack pipelines as REST APIs or MCP Tools"

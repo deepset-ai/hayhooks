@@ -1,12 +1,13 @@
 import inspect
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from haystack import AsyncPipeline
+from haystack import Pipeline
 
 from hayhooks.server.logger import log
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.server.utils.yaml_utils import (
     InputResolution,
     OutputResolution,
@@ -106,7 +107,7 @@ def _create_dynamic_run_api_async(
 
     async def run_api_async(self, **kwargs) -> dict:
         """Execute the YAML pipeline with the provided inputs."""
-        pipeline: AsyncPipeline = self.pipeline
+        pipeline: Pipeline = self.pipeline
 
         # Map flat inputs to component inputs
         data = _map_flat_inputs_to_components(kwargs, input_resolutions)
@@ -116,7 +117,9 @@ def _create_dynamic_run_api_async(
         if include_outputs_from is not None:
             run_kwargs["include_outputs_from"] = include_outputs_from
 
-        return await pipeline.run_async(**run_kwargs)
+        # cast: the Haystack v2 Pipeline type has no run_async; the pipeline was loaded via
+        # AsyncPipeline (v2) / Pipeline (v3), both of which provide it at runtime.
+        return await cast("Any", pipeline).run_async(**run_kwargs)
 
     _set_method_signature(run_api_async, params, return_annotation=dict)
     return run_api_async
@@ -246,7 +249,7 @@ class YAMLPipelineWrapper(BasePipelineWrapper):
 
     def setup(self) -> None:
         """
-        Initialize the Haystack AsyncPipeline from the stored YAML source.
+        Initialize the Haystack Pipeline from the stored YAML source.
 
         This method is called during deployment to instantiate the actual pipeline.
         If the pipeline is already initialized, this method does nothing.
@@ -254,12 +257,14 @@ class YAMLPipelineWrapper(BasePipelineWrapper):
         if getattr(self, "pipeline", None) is not None:
             return
 
-        log.debug("Setting up YAMLPipelineWrapper - loading AsyncPipeline from YAML")
+        # Load via AsyncPipeline so run_api_async can call run_async: on Haystack v2 this
+        # is the dedicated async class, on v3 it is Pipeline (which has run_async natively).
+        log.debug("Setting up YAMLPipelineWrapper - loading pipeline from YAML")
         try:
             self.pipeline = AsyncPipeline.loads(self._yaml_source)
-            log.debug("AsyncPipeline successfully loaded from YAML")
+            log.debug("Pipeline successfully loaded from YAML")
         except Exception as e:
-            msg = f"Failed to load AsyncPipeline from YAML: {e!s}"
+            msg = f"Failed to load pipeline from YAML: {e!s}"
             raise ValueError(msg) from e
 
     @property

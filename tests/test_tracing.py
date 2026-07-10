@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import haystack.tracing
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -20,6 +21,7 @@ from hayhooks.server.tracing import (
     _OTLP_HTTP_PROTOBUF,
     _build_otlp_span_exporter,
     _normalize_otlp_protocol,
+    _resolve_otel_tracer_class,
     configure_tracing,
     instrument_fastapi_app,
     instrument_starlette_app,
@@ -172,63 +174,124 @@ def test_build_otlp_http_exporter_uses_env_endpoint_resolution(monkeypatch):
     assert exporter.kwargs == {}
 
 
+def test_resolve_otel_tracer_class_prefers_integration_package(monkeypatch):
+    class _FakeLazyImport:
+        @staticmethod
+        def check() -> None:
+            return None
+
+    integration_tracer = type("FakeIntegrationTracer", (), {})
+    monkeypatch.setattr("hayhooks.server.tracing.otel_haystack_tracer_import", _FakeLazyImport())
+    monkeypatch.setattr("hayhooks.server.tracing.OpenTelemetryTracer", integration_tracer, raising=False)
+
+    assert _resolve_otel_tracer_class() is integration_tracer
+
+
+def test_resolve_otel_tracer_class_falls_back_to_haystack_v2_core(monkeypatch):
+    # When the opentelemetry-haystack integration package is missing, fall back to the
+    # tracer bundled in Haystack v2 core so pre-existing v2 tracing setups keep working.
+    class _FailingLazyImport:
+        @staticmethod
+        def check() -> None:
+            raise ImportError("opentelemetry-haystack not installed")
+
+    core_tracer = type("FakeCoreTracer", (), {})
+    monkeypatch.setattr("hayhooks.server.tracing.otel_haystack_tracer_import", _FailingLazyImport())
+    monkeypatch.setattr(haystack.tracing, "OpenTelemetryTracer", core_tracer, raising=False)
+
+    assert _resolve_otel_tracer_class() is core_tracer
+
+
+def test_resolve_otel_tracer_class_none_when_unavailable(monkeypatch):
+    # Haystack v3 without the opentelemetry-haystack integration package: no tracer anywhere.
+    class _FailingLazyImport:
+        @staticmethod
+        def check() -> None:
+            raise ImportError("opentelemetry-haystack not installed")
+
+    monkeypatch.setattr("hayhooks.server.tracing.otel_haystack_tracer_import", _FailingLazyImport())
+    monkeypatch.delattr(haystack.tracing, "OpenTelemetryTracer", raising=False)
+
+    assert _resolve_otel_tracer_class() is None
+
+
 def test_configure_tracing_noop_when_already_enabled(monkeypatch):
-    calls = {"auto": 0, "bootstrap": 0}
+    # When tracing is already enabled externally (e.g. by a Haystack tracing connector
+    # such as OpenTelemetryConnector/LangfuseConnector), configure_tracing is a no-op
+    # and does not attempt the OTLP env bootstrap.
+    calls = {"bootstrap": 0}
     monkeypatch.setattr("hayhooks.server.tracing.is_tracing_enabled", lambda: True)
 
-    def fake_auto_enable():
-        calls["auto"] += 1
-
     def fake_bootstrap():
         calls["bootstrap"] += 1
         return True
 
-    monkeypatch.setattr("hayhooks.server.tracing.auto_enable_tracing", fake_auto_enable)
     monkeypatch.setattr("hayhooks.server.tracing._configure_otel_tracer_from_env", fake_bootstrap)
 
     assert configure_tracing() is True
-    assert calls == {"auto": 0, "bootstrap": 0}
-
-
-def test_configure_tracing_uses_haystack_auto_enable(monkeypatch):
-    state = {"enabled": False}
-    calls = {"bootstrap": 0}
-
-    def fake_is_tracing_enabled():
-        return state["enabled"]
-
-    def fake_auto_enable():
-        state["enabled"] = True
-
-    def fake_bootstrap():
-        calls["bootstrap"] += 1
-        return True
-
-    monkeypatch.setattr("hayhooks.server.tracing.is_tracing_enabled", fake_is_tracing_enabled)
-    monkeypatch.setattr("hayhooks.server.tracing.auto_enable_tracing", fake_auto_enable)
-    monkeypatch.setattr("hayhooks.server.tracing._configure_otel_tracer_from_env", fake_bootstrap)
-
-    assert configure_tracing() is True
-    assert calls["bootstrap"] == 0
+    assert calls == {"bootstrap": 0}
 
 
 def test_configure_tracing_falls_back_to_otlp_bootstrap(monkeypatch):
-    calls = {"auto": 0, "bootstrap": 0}
+    # On Haystack v3 the auto_enable_tracing shim is None, so when tracing isn't already
+    # enabled configure_tracing falls straight back to the Hayhooks OTLP env bootstrap.
+    calls = {"bootstrap": 0}
+
+    monkeypatch.setattr("hayhooks.server.tracing.is_tracing_enabled", lambda: False)
+    monkeypatch.setattr("hayhooks.server.tracing._auto_enable_tracing", None)
+
+    def fake_bootstrap():
+        calls["bootstrap"] += 1
+        return True
+
+    monkeypatch.setattr("hayhooks.server.tracing._configure_otel_tracer_from_env", fake_bootstrap)
+
+    assert configure_tracing() is True
+    assert calls == {"bootstrap": 1}
+
+
+def test_configure_tracing_uses_v2_auto_enable_shim(monkeypatch):
+    # On Haystack v2 auto_enable_tracing exists; when it enables tracing, configure_tracing
+    # must not also run the OTLP bootstrap fallback.
+    calls = {"auto_enable": 0, "bootstrap": 0, "enabled": False}
+
+    monkeypatch.setattr("hayhooks.server.tracing.is_tracing_enabled", lambda: calls["enabled"])
+
+    def fake_auto_enable():
+        calls["auto_enable"] += 1
+        calls["enabled"] = True
+
+    def fake_bootstrap():
+        calls["bootstrap"] += 1
+        return True
+
+    monkeypatch.setattr("hayhooks.server.tracing._auto_enable_tracing", fake_auto_enable)
+    monkeypatch.setattr("hayhooks.server.tracing._configure_otel_tracer_from_env", fake_bootstrap)
+
+    assert configure_tracing() is True
+    assert calls["auto_enable"] == 1
+    assert calls["bootstrap"] == 0
+
+
+def test_configure_tracing_v2_auto_enable_then_otlp_fallback(monkeypatch):
+    # When the v2 auto_enable shim does not enable tracing, configure_tracing still falls
+    # back to the OTLP env bootstrap.
+    calls = {"auto_enable": 0, "bootstrap": 0}
 
     monkeypatch.setattr("hayhooks.server.tracing.is_tracing_enabled", lambda: False)
 
     def fake_auto_enable():
-        calls["auto"] += 1
+        calls["auto_enable"] += 1
 
     def fake_bootstrap():
         calls["bootstrap"] += 1
         return True
 
-    monkeypatch.setattr("hayhooks.server.tracing.auto_enable_tracing", fake_auto_enable)
+    monkeypatch.setattr("hayhooks.server.tracing._auto_enable_tracing", fake_auto_enable)
     monkeypatch.setattr("hayhooks.server.tracing._configure_otel_tracer_from_env", fake_bootstrap)
 
     assert configure_tracing() is True
-    assert calls == {"auto": 1, "bootstrap": 1}
+    assert calls == {"auto_enable": 1, "bootstrap": 1}
 
 
 def test_deploy_and_undeploy_emit_lifecycle_spans(recording_tracer):

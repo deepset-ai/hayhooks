@@ -8,12 +8,12 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         from haystack import Pipeline
         from haystack.components.converters import MarkdownToDocument, PyPDFToDocument, TextFileToDocument
-        from haystack.components.embedders import SentenceTransformersDocumentEmbedder
         from haystack.components.joiners import DocumentJoiner
         from haystack.components.preprocessors import DocumentCleaner, DocumentSplitter
         from haystack.components.routers import FileTypeRouter
         from haystack.components.writers import DocumentWriter
         from haystack.document_stores.types import DuplicatePolicy
+        from haystack_integrations.components.embedders.sentence_transformers import SentenceTransformersDocumentEmbedder
         from haystack_integrations.document_stores.elasticsearch import ElasticsearchDocumentStore
 
         document_store = ElasticsearchDocumentStore(hosts="http://localhost:9200")

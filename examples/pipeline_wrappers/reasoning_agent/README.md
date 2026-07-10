@@ -8,7 +8,7 @@ This example shows how to stream reasoning content to Open WebUI using:
 
 ## Why this example exists
 
-`async_hybrid_streaming` uses the legacy `OpenAIGenerator`, which does not expose
+`async_hybrid_streaming` uses a sync-only component (one without `run_async`), which does not expose
 reasoning chunks in Haystack `StreamingChunk` objects. As a result, Open WebUI
 cannot render "Thinking" blocks from that example.
 

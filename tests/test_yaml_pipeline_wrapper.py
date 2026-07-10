@@ -5,11 +5,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from haystack import AsyncPipeline
-from haystack.core.errors import PipelineError
+from haystack.core.errors import DeserializationError, PipelineError
 
 from hayhooks.server.exceptions import InvalidYamlIOError
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.server.utils.yaml_pipeline_wrapper import (
     YAMLPipelineWrapper,
     _create_dynamic_run_api_async,
@@ -238,7 +238,9 @@ inputs:
 outputs:
   result: invalid.result
 """
-    with pytest.raises(PipelineError, match="not imported"):
+    # Haystack v2 attempts the import and fails with PipelineError ("not imported"); v3's
+    # secure deserialization allowlist rejects the unknown module first with DeserializationError.
+    with pytest.raises((PipelineError, DeserializationError), match=r"not imported|allowlist"):
         YAMLPipelineWrapper.from_yaml(invalid_yaml)
 
 
