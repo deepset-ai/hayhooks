@@ -1,0 +1,4 @@
+hayhooks[a2a]
+mcp>=1.8.0
+mcp-haystack
+httpx

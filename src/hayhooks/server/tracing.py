@@ -46,6 +46,7 @@ SPAN_OPENAI_FILE_UPLOAD = "hayhooks.openai.file_upload"
 SPAN_MCP_LIST_TOOLS = "hayhooks.mcp.list_tools"
 SPAN_MCP_CALL_TOOL = "hayhooks.mcp.call_tool"
 SPAN_MCP_RUN_PIPELINE_TOOL = "hayhooks.mcp.run_pipeline_tool"
+SPAN_A2A_RUN_AGENT = "hayhooks.a2a.run_agent"
 
 _TAG_SUCCESS = "hayhooks.success"
 _TAG_ERROR_TYPE = "hayhooks.error.type"

@@ -122,6 +122,28 @@ hayhooks mcp run --host 0.0.0.0 --port 1417
 | `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
 | `--additional-python-path` | | Additional Python path | `None` |
 
+### a2a run
+
+Start the A2A server, exposing deployed pipelines as [A2A agents](a2a-support.md):
+
+```bash
+# Start A2A server
+hayhooks a2a run
+
+# With custom host and port
+hayhooks a2a run --host 0.0.0.0 --port 1418
+```
+
+#### Options for `a2a run`
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--host` | | A2A server host | `localhost` |
+| `--port` | | A2A server port | `1418` |
+| `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
+| `--additional-python-path` | | Additional Python path | `None` |
+| `--external-url` | | Base URL advertised in agent cards | `None` |
+
 ## Pipeline Management Commands
 
 ### pipeline deploy-files

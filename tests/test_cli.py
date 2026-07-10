@@ -136,6 +136,35 @@ def test_run_command_with_tracing_dashboard_flag(monkeypatch, tmp_path):
     assert settings.dashboard_dist_dir == str(built_dist_dir)
 
 
+def test_a2a_run_debug_enables_tracebacks(monkeypatch):
+    import uvicorn
+
+    from hayhooks.server.utils import a2a_utils, deploy_utils
+    from hayhooks.settings import settings
+
+    calls = []
+
+    def fake_uvicorn_run(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    def fake_create_a2a_app(*, debug: bool = False):
+        return object()
+
+    def fake_deploy_pipelines() -> None:
+        return None
+
+    monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", fake_deploy_pipelines)
+    monkeypatch.setattr(a2a_utils, "create_a2a_app", fake_create_a2a_app)
+
+    settings.show_tracebacks = False
+    result = runner.invoke(hayhooks_cli, ["a2a", "run", "--debug", "--pipelines-dir", "dummy_pipelines"])
+
+    assert result.exit_code == 0, result.output
+    assert settings.show_tracebacks is True
+    assert calls, "uvicorn.run was not called"
+
+
 def test_status_command(monkeypatch):
     """
     Test the status command. We patch make_request (used in the status command)

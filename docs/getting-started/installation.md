@@ -30,6 +30,16 @@ This guide covers how to install Hayhooks and its dependencies.
     !!! warning "Python 3.10+ Required"
         You'll need to run at least Python 3.10+ to use the MCP Server.
 
+=== "With A2A Support"
+
+    ```bash
+    pip install "hayhooks[a2a]"
+    ```
+
+    Includes all standard features plus [A2A Server](../features/a2a-support.md) support, exposing deployed
+    pipelines and agents over the [A2A protocol](https://a2a-protocol.org) so other agents can discover
+    and delegate tasks to them.
+
 === "With Tracing Support"
 
     ```bash

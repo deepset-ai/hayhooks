@@ -618,6 +618,8 @@ def _register_prepared_pipeline(
         "description": description,
         "request_model": request_model,
         "skip_mcp": pipeline_wrapper.skip_mcp,
+        "skip_a2a": pipeline_wrapper.skip_a2a,
+        "a2a_card": pipeline_wrapper.a2a_card,
     }
 
     # Merge extra metadata (e.g., YAML-specific fields)
@@ -926,6 +928,32 @@ def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
             continue
 
     return files
+
+
+def deploy_pipelines() -> None:
+    """Deploy pipelines from the configured directory"""
+    # Imported here to avoid a circular import (hayhooks.server.app imports this module)
+    from hayhooks.server.app import init_pipeline_dir
+
+    pipelines_dir = init_pipeline_dir(settings.pipelines_dir)
+
+    log.info("Pipelines dir set to: '{}'", pipelines_dir)
+    pipelines_path = Path(pipelines_dir)
+
+    pipeline_dirs = [d for d in pipelines_path.iterdir() if d.is_dir()]
+    log.debug("Found {} pipeline directories", len(pipeline_dirs))
+
+    for pipeline_dir in pipeline_dirs:
+        log.debug("Deploying pipeline from '{}'", pipeline_dir)
+
+        try:
+            deploy_pipeline_files(
+                pipeline_name=pipeline_dir.name,
+                files=read_pipeline_files_from_dir(pipeline_dir),
+                save_files=False,  # Files already exist on disk
+            )
+        except Exception as e:
+            log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
 
 
 def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:

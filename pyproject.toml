@@ -44,6 +44,9 @@ dependencies = [
 mcp = [
   "mcp>=1.8.0 ; python_version >= '3.10'",
 ]
+a2a = [
+  "a2a-sdk[http-server]>=1.1.0,<2.0",
+]
 chainlit = [
   "chainlit>=2.0.0",
   "httpx>=0.27.0",
@@ -115,7 +118,7 @@ build = "mkdocs build {args}"
 deploy = "mkdocs gh-deploy --remote-name origin --force --no-history -m \"Deploy docs via automation\" {args}"
 
 [tool.hatch.envs.test]
-features = ["mcp"]
+features = ["mcp", "a2a"]
 extra-dependencies = [
   "qdrant-haystack",
   "trafilatura",
@@ -250,4 +253,5 @@ markers = [
   "integration: integration tests",
   "asyncio: mark a test as an asyncio coroutine",
   "mcp: tests that require the MCP package",
+  "a2a: tests that require the a2a-sdk package",
 ]

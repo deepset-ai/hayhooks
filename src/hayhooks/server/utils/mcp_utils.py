@@ -3,7 +3,6 @@ import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 from fastapi.concurrency import run_in_threadpool
@@ -13,7 +12,6 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
-from hayhooks.server.app import init_pipeline_dir
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest
@@ -28,9 +26,8 @@ from hayhooks.server.tracing import (
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
-    deploy_pipeline_files,
     deploy_pipeline_files_async,
-    read_pipeline_files_from_dir,
+    deploy_pipelines,  # noqa: F401  (re-exported; historically lived in this module)
     undeploy_pipeline_async,
 )
 from hayhooks.settings import settings
@@ -55,29 +52,6 @@ with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
     from mcp.server.sse import SseServerTransport
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from mcp.types import TextContent, Tool
-
-
-def deploy_pipelines() -> None:
-    """Deploy pipelines from the configured directory"""
-    pipelines_dir = init_pipeline_dir(settings.pipelines_dir)
-
-    log.info("Pipelines dir set to: '{}'", pipelines_dir)
-    pipelines_path = Path(pipelines_dir)
-
-    pipeline_dirs = [d for d in pipelines_path.iterdir() if d.is_dir()]
-    log.debug("Found {} pipeline directories", len(pipeline_dirs))
-
-    for pipeline_dir in pipeline_dirs:
-        log.debug("Deploying pipeline from '{}'", pipeline_dir)
-
-        try:
-            deploy_pipeline_files(
-                pipeline_name=pipeline_dir.name,
-                files=read_pipeline_files_from_dir(pipeline_dir),
-                save_files=False,  # Files already exist on disk
-            )
-        except Exception as e:
-            log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
 
 
 async def list_core_tools() -> list["Tool"]:

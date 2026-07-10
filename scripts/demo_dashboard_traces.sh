@@ -14,7 +14,7 @@
 set -euo pipefail
 
 BASE="${HAYHOOKS_BASE_URL:-http://localhost:1416}"
-DELAY="${DELAY:-0.3}"
+DELAY="${DELAY:-1}"
 EXAMPLES="$(cd "$(dirname "$0")/../examples/pipeline_wrappers" && pwd)"
 HAS_KEY="${OPENAI_API_KEY:+true}"
 HAS_KEY="${HAS_KEY:-false}"

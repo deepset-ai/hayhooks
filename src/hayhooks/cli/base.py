@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 from fastapi import FastAPI
 
+from hayhooks.cli.a2a import a2a
 from hayhooks.cli.mcp import mcp
 from hayhooks.cli.pipeline import pipeline
 from hayhooks.cli.theme import apply_typer_theme
@@ -18,6 +19,7 @@ apply_typer_theme()
 hayhooks_cli = typer.Typer(name="hayhooks", rich_markup_mode="rich")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
 hayhooks_cli.add_typer(mcp, name="mcp")
+hayhooks_cli.add_typer(a2a, name="a2a")
 
 
 def _set_env(key: str, value: str | None) -> None:
