@@ -1,14 +1,8 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from haystack import Pipeline
-
-try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
-    from haystack import AsyncPipeline
-except ImportError:  # Haystack >= 3.0
-    AsyncPipeline = Pipeline
-
 from hayhooks import BasePipelineWrapper, log
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 
 SYSTEM_MESSAGE = "You are a helpful assistant that can answer questions about the world."
 

@@ -8,7 +8,6 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from queue import Empty, Queue
 from typing import Any, Literal, cast
 
-import haystack
 from haystack import Pipeline
 from haystack.components.agents import Agent
 from haystack.core.component import Component
@@ -16,11 +15,8 @@ from haystack.dataclasses import StreamingChunk
 
 from hayhooks.events import PipelineEvent
 from hayhooks.server.logger import log
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.settings import settings
-
-# Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline. Resolve the class
-# dynamically so a single code path supports both without a version-specific import.
-_ASYNC_PIPELINE: type[Pipeline] = getattr(haystack, "AsyncPipeline", Pipeline)
 
 # Timeout for thread cleanup when generator is terminated early (e.g., consumer breaks out of loop)
 # The thread continues running after this timeout - this just controls how long we block
@@ -256,7 +252,7 @@ def _setup_streaming_callback(
     """
     pipeline_run_args = pipeline_run_args.copy()
 
-    if isinstance(pipeline, (Pipeline, _ASYNC_PIPELINE)):
+    if isinstance(pipeline, (Pipeline, AsyncPipeline)):
         return _setup_streaming_callback_for_pipeline(
             pipeline, pipeline_run_args, streaming_callback, streaming_components
         )
@@ -921,7 +917,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
     all_streaming_components: list[tuple[Component, str]] = []
     force_sync_callbacks = False
 
-    if isinstance(pipeline, (Pipeline, _ASYNC_PIPELINE)):
+    if isinstance(pipeline, (Pipeline, AsyncPipeline)):
         if hasattr(pipeline, "run_async"):
             # Haystack v3 Pipeline / v2 AsyncPipeline: run_async() accepts async callbacks
             # natively. Hybrid mode is only needed when some components lack run_async

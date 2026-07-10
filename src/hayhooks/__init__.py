@@ -13,10 +13,13 @@ from hayhooks.server.pipelines.utils import (
     streaming_generator,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.haystack_compat import AsyncPipeline, Pipeline
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 
 __all__ = [
+    "AsyncPipeline",
     "BasePipelineWrapper",
+    "Pipeline",
     "PipelineEvent",
     "SSEStream",
     "YAMLPipelineWrapper",

@@ -1,10 +1,9 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from haystack import Pipeline
 from haystack.dataclasses import ChatMessage
 
-from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_user_message, log
+from hayhooks import BasePipelineWrapper, Pipeline, async_streaming_generator, get_last_user_message, log
 
 SYSTEM_MESSAGE = "You are a helpful assistant that can answer questions about the world."
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import haystack.tracing
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -20,6 +21,7 @@ from hayhooks.server.tracing import (
     _OTLP_HTTP_PROTOBUF,
     _build_otlp_span_exporter,
     _normalize_otlp_protocol,
+    _resolve_otel_tracer_class,
     configure_tracing,
     instrument_fastapi_app,
     instrument_starlette_app,
@@ -170,6 +172,47 @@ def test_build_otlp_http_exporter_uses_env_endpoint_resolution(monkeypatch):
 
     assert isinstance(exporter, _FakeExporter)
     assert exporter.kwargs == {}
+
+
+def test_resolve_otel_tracer_class_prefers_integration_package(monkeypatch):
+    class _FakeLazyImport:
+        @staticmethod
+        def check() -> None:
+            return None
+
+    integration_tracer = type("FakeIntegrationTracer", (), {})
+    monkeypatch.setattr("hayhooks.server.tracing.otel_haystack_tracer_import", _FakeLazyImport())
+    monkeypatch.setattr("hayhooks.server.tracing.OpenTelemetryTracer", integration_tracer, raising=False)
+
+    assert _resolve_otel_tracer_class() is integration_tracer
+
+
+def test_resolve_otel_tracer_class_falls_back_to_haystack_v2_core(monkeypatch):
+    # When the opentelemetry-haystack integration package is missing, fall back to the
+    # tracer bundled in Haystack v2 core so pre-existing v2 tracing setups keep working.
+    class _FailingLazyImport:
+        @staticmethod
+        def check() -> None:
+            raise ImportError("opentelemetry-haystack not installed")
+
+    core_tracer = type("FakeCoreTracer", (), {})
+    monkeypatch.setattr("hayhooks.server.tracing.otel_haystack_tracer_import", _FailingLazyImport())
+    monkeypatch.setattr(haystack.tracing, "OpenTelemetryTracer", core_tracer, raising=False)
+
+    assert _resolve_otel_tracer_class() is core_tracer
+
+
+def test_resolve_otel_tracer_class_none_when_unavailable(monkeypatch):
+    # Haystack v3 without the opentelemetry-haystack integration package: no tracer anywhere.
+    class _FailingLazyImport:
+        @staticmethod
+        def check() -> None:
+            raise ImportError("opentelemetry-haystack not installed")
+
+    monkeypatch.setattr("hayhooks.server.tracing.otel_haystack_tracer_import", _FailingLazyImport())
+    monkeypatch.delattr(haystack.tracing, "OpenTelemetryTracer", raising=False)
+
+    assert _resolve_otel_tracer_class() is None
 
 
 def test_configure_tracing_noop_when_already_enabled(monkeypatch):

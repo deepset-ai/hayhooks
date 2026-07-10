@@ -22,12 +22,8 @@ from hayhooks.server.pipelines.utils import (
     is_streaming_component,
     streaming_generator,
 )
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.settings import AppSettings
-
-try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
-    from haystack import AsyncPipeline
-except ImportError:  # Haystack >= 3.0
-    AsyncPipeline = Pipeline
 
 # True on Haystack v3 (single Pipeline with run_async); False on Haystack v2 (sync-only Pipeline).
 PIPELINE_HAS_RUN_ASYNC = hasattr(Pipeline, "run_async")

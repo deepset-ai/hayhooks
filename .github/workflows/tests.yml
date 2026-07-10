@@ -37,13 +37,13 @@ jobs:
       - name: Run tests and generate coverage report
         run: hatch run test:all-cov
 
-  # The `tests` job above resolves Haystack v2 (uv/pip exclude pre-releases by default).
-  # This job pins the Haystack v3 pre-release so we keep both v2 and v3 green.
+  # The `tests` job above is the Haystack v2 environment (the hatch test env pins haystack-ai<3).
+  # This job installs the Haystack v3 pre-release so we keep both v2 and v3 green.
   tests-haystack-v3:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -53,7 +53,7 @@ jobs:
 
       - name: Install project with the Haystack v3 pre-release
         run: |
-          pip install -e ".[mcp]" pytest pytest-asyncio pytest-cov pytest-mock qdrant-haystack trafilatura ty
+          pip install -e ".[mcp,a2a]" pytest pytest-asyncio pytest-cov pytest-mock qdrant-haystack trafilatura ty
           pip install --pre --upgrade "haystack-ai>=3.0.0.dev0"
           python -c "import haystack; print('haystack', haystack.__version__)"
 

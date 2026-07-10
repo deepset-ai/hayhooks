@@ -141,8 +141,7 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 Implement async methods for better I/O-bound performance:
 
 ```python
-from haystack import Pipeline
-from hayhooks import BasePipelineWrapper
+from hayhooks import BasePipelineWrapper, Pipeline
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:

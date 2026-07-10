@@ -83,6 +83,24 @@ with LazyImport(_LAZY_IMPORT_HINT) as otel_sdk_import:
 with LazyImport(_LAZY_IMPORT_HINT) as otel_haystack_tracer_import:
     from haystack_integrations.tracing.opentelemetry import OpenTelemetryTracer  # ty: ignore[unresolved-import]
 
+
+# Returns type[Any] rather than type[Tracer]: both branches resolve the class dynamically,
+# and the abstract Tracer type would reject the concrete constructor call at the use site.
+def _resolve_otel_tracer_class() -> type[Any] | None:
+    """
+    Resolve the Haystack OpenTelemetry tracer class.
+
+    Prefer the ``opentelemetry-haystack`` integration package (required on Haystack v3, installed
+    by the ``tracing`` extra), and fall back to the tracer bundled in Haystack v2 core so v2
+    environments without the integration package keep working. Returns None when neither exists.
+    """
+    try:
+        otel_haystack_tracer_import.check()
+    except ImportError:
+        return getattr(haystack.tracing, "OpenTelemetryTracer", None)
+    return OpenTelemetryTracer
+
+
 with LazyImport(_LAZY_IMPORT_HINT) as otlp_http_exporter_import:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # ty: ignore[unresolved-import]
         OTLPSpanExporter as OTLPHTTPSpanExporter,
@@ -360,10 +378,12 @@ def _configure_otel_tracer_from_env() -> bool:
         )
         return False
 
+    tracer_class = _resolve_otel_tracer_class()
     try:
         otel_sdk_import.check()
-        otel_haystack_tracer_import.check()
     except ImportError:
+        tracer_class = None
+    if tracer_class is None:
         log.warning(
             "OpenTelemetry OTLP runtime unavailable. {} "
             "If you upgraded Hayhooks, reinstall extras to pull new tracing dependencies.",
@@ -380,7 +400,7 @@ def _configure_otel_tracer_from_env() -> bool:
         provider = TracerProvider(resource=Resource.create({SERVICE_NAME: service_name}))
         provider.add_span_processor(BatchSpanProcessor(exporter))
         otel_trace.set_tracer_provider(provider)
-        enable_tracing(OpenTelemetryTracer(otel_trace.get_tracer(service_name)))
+        enable_tracing(tracer_class(otel_trace.get_tracer(service_name)))
     except Exception as exc:  # pragma: no cover - defensive guard for SDK/runtime failures
         log.warning("Failed to bootstrap OpenTelemetry tracing from environment: {}", exc)
         return False

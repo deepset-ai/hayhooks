@@ -3,11 +3,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 
-import haystack
 from haystack import Pipeline
 
 from hayhooks.server.logger import log
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.server.utils.yaml_utils import (
     InputResolution,
     OutputResolution,
@@ -16,10 +16,6 @@ from hayhooks.server.utils.yaml_utils import (
     get_streaming_components_from_yaml,
     parse_yaml_pipeline,
 )
-
-# Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline. Resolve the class
-# dynamically so run_api_async can call run_async on both versions (v2 Pipeline has no run_async).
-_ASYNC_PIPELINE: type[Pipeline] = getattr(haystack, "AsyncPipeline", Pipeline)
 
 
 def _set_method_signature(
@@ -265,7 +261,7 @@ class YAMLPipelineWrapper(BasePipelineWrapper):
         # is the dedicated async class, on v3 it is Pipeline (which has run_async natively).
         log.debug("Setting up YAMLPipelineWrapper - loading pipeline from YAML")
         try:
-            self.pipeline = _ASYNC_PIPELINE.loads(self._yaml_source)
+            self.pipeline = AsyncPipeline.loads(self._yaml_source)
             log.debug("Pipeline successfully loaded from YAML")
         except Exception as e:
             msg = f"Failed to load pipeline from YAML: {e!s}"

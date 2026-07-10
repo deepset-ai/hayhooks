@@ -1,15 +1,10 @@
 from pathlib import Path
 
 import pytest
-from haystack import Pipeline
-
-try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
-    from haystack import AsyncPipeline
-except ImportError:  # Haystack >= 3.0
-    AsyncPipeline = Pipeline
 
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_yaml
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 
 

@@ -120,6 +120,10 @@ deploy = "mkdocs gh-deploy --remote-name origin --force --no-history -m \"Deploy
 [tool.hatch.envs.test]
 features = ["mcp", "a2a"]
 extra-dependencies = [
+  # This env is the designated Haystack v2 environment: pinning <3 keeps v2 coverage even
+  # after Haystack 3.0 goes stable (pip would then resolve v3 in the base dependency).
+  # The `tests-haystack-v3` CI job covers Haystack v3.
+  "haystack-ai>=2,<3",
   "qdrant-haystack",
   "trafilatura",
   "pytest",

@@ -1,11 +1,10 @@
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from haystack import Pipeline
 from haystack.core.component import component
 from haystack.dataclasses import StreamingChunk
 
-from hayhooks import BasePipelineWrapper, async_streaming_generator, get_last_user_message, log
+from hayhooks import BasePipelineWrapper, Pipeline, async_streaming_generator, get_last_user_message, log
 
 
 @component

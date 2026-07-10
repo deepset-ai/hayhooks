@@ -21,11 +21,7 @@ from hayhooks.server.pipelines.streaming import (
     async_streaming_generator,
     streaming_generator,
 )
-
-try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
-    from haystack import AsyncPipeline
-except ImportError:  # Haystack >= 3.0
-    AsyncPipeline = Pipeline
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 
 QUESTION = "Is Haystack a framework for developing AI applications? Answer Yes or No"
 

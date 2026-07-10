@@ -9,12 +9,8 @@ from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, StreamingChunk
 from haystack.utils import Secret
 
-try:  # Haystack v2 ships a separate AsyncPipeline; v3 merged it into Pipeline.
-    from haystack import AsyncPipeline
-except ImportError:  # Haystack >= 3.0
-    AsyncPipeline = Pipeline
-
 from hayhooks.server.pipelines.utils import async_streaming_generator, streaming_generator
+from hayhooks.server.utils.haystack_compat import AsyncPipeline
 
 # Test configuration
 OPENAI_MODEL = "gpt-4o-mini"

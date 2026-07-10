@@ -39,9 +39,11 @@ connections:
 metadata: {}
 
 
+# The retriever's mandatory `query` input must be mapped too, or running the pipeline fails.
 inputs:
   question:
     - prompt_builder.question
+    - retriever.query
 
 outputs:
   answer:

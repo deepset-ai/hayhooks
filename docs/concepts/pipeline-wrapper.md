@@ -241,13 +241,19 @@ async def run_api_async(self, urls: list[str], question: str) -> str:
 
 **When to use `run_api_async`:**
 
-- Running your `Pipeline` asynchronously with `run_async`
+- Running an async-capable pipeline with `run_async`
 - Handling many concurrent requests
 - Integrating with async-compatible components
 - Better performance for I/O-bound operations
 
 !!! note "Haystack 2.x vs 3.x"
-    The examples here call `run_async()` on `Pipeline`, which works out of the box on **Haystack 3.x**. On **Haystack 2.x**, `Pipeline` has no `run_async()` method — load the pipeline with `AsyncPipeline` instead (`self.pipeline = AsyncPipeline.loads(...)`), otherwise you'll hit an `AttributeError`. Haystack 3.x merged the async support into `Pipeline`, so `AsyncPipeline` is no longer required there.
+    `Pipeline.run_async()` works out of the box on **Haystack 3.x**. On **Haystack 2.x**, Haystack's own `Pipeline` has no `run_async()` method. Hayhooks exposes a compatibility alias that resolves to Haystack v2 `AsyncPipeline` or Haystack v3 `Pipeline`:
+
+    ```python
+    from hayhooks import Pipeline
+
+    self.pipeline = Pipeline.loads(pipeline_yaml)
+    ```
 
 ### run_chat_completion()
 
