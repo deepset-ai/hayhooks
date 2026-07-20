@@ -1,3 +1,4 @@
+import inspect
 import time
 from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass
@@ -104,6 +105,25 @@ def _select_execution_mode(wrapper: BasePipelineWrapper, dispatch: _OpenAIDispat
     raise HTTPException(status_code=501, detail=dispatch.not_implemented_detail)
 
 
+def _method_accepts_kwarg(method: Any, name: str) -> bool:
+    """True if `method` declares keyword argument `name` (explicitly or via **kwargs)."""
+    try:
+        params = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def _build_call_kwargs(
+    wrapper: BasePipelineWrapper, method_name: str, base_kwargs: dict[str, Any], body: dict[str, Any], headers: dict[str, str] | None
+) -> dict[str, Any]:
+    """Assemble the wrapper-call kwargs, forwarding `headers` only if the wrapper method opts in."""
+    call_kwargs = {**base_kwargs, "body": body}
+    if headers is not None and _method_accepts_kwarg(getattr(wrapper, method_name), "headers"):
+        call_kwargs["headers"] = headers
+    return call_kwargs
+
+
 async def _invoke_pipeline_method(
     wrapper: BasePipelineWrapper, *, mode: str, method_name: str, model: str, call_kwargs: dict[str, Any]
 ) -> Any:
@@ -140,6 +160,7 @@ async def _run_pipeline_method(
     model: str,
     kwargs: dict[str, Any],
     body: dict[str, Any],
+    headers: dict[str, str] | None = None,
 ) -> str | Generator | AsyncGenerator:
     """Shared dispatch logic for chat completions and responses endpoints."""
     stream_requested = bool(body.get("stream", False))
@@ -155,8 +176,9 @@ async def _run_pipeline_method(
         try:
             wrapper = _resolve_pipeline_wrapper(model)
             mode, method_name = _select_execution_mode(wrapper, dispatch)
+            call_kwargs = _build_call_kwargs(wrapper, method_name, kwargs, body, headers)
             result = await _invoke_pipeline_method(
-                wrapper, mode=mode, method_name=method_name, model=model, call_kwargs={**kwargs, "body": body}
+                wrapper, mode=mode, method_name=method_name, model=model, call_kwargs=call_kwargs
             )
             normalized_result = await _normalize_result(result, stream_requested=stream_requested)
         except BaseException:
@@ -175,22 +197,27 @@ async def _run_pipeline_method(
         wrapper = _resolve_pipeline_wrapper(model)
         mode, method_name = _select_execution_mode(wrapper, dispatch)
         span.set_tag("hayhooks.openai.execution_mode", mode)
+        call_kwargs = _build_call_kwargs(wrapper, method_name, kwargs, body, headers)
         result = await _invoke_pipeline_method(
-            wrapper, mode=mode, method_name=method_name, model=model, call_kwargs={**kwargs, "body": body}
+            wrapper, mode=mode, method_name=method_name, model=model, call_kwargs=call_kwargs
         )
         return await _normalize_result(result, stream_requested=stream_requested)
 
 
 async def _run_completion(
-    model: str, messages: list[dict[str, Any]], body: dict[str, Any]
+    model: str, messages: list[dict[str, Any]], body: dict[str, Any], headers: dict[str, str] | None = None
 ) -> str | Generator | AsyncGenerator:
-    return await _run_pipeline_method(_CHAT_COMPLETION_DISPATCH, model=model, kwargs={"messages": messages}, body=body)
+    return await _run_pipeline_method(
+        _CHAT_COMPLETION_DISPATCH, model=model, kwargs={"messages": messages}, body=body, headers=headers
+    )
 
 
 async def _run_response(
-    model: str, input_items: list[dict[str, Any]], body: dict[str, Any]
+    model: str, input_items: list[dict[str, Any]], body: dict[str, Any], headers: dict[str, str] | None = None
 ) -> str | Generator | AsyncGenerator:
-    return await _run_pipeline_method(_RESPONSE_DISPATCH, model=model, kwargs={"input_items": input_items}, body=body)
+    return await _run_pipeline_method(
+        _RESPONSE_DISPATCH, model=model, kwargs={"input_items": input_items}, body=body, headers=headers
+    )
 
 
 def _find_file_upload_wrapper() -> BasePipelineWrapper | None:

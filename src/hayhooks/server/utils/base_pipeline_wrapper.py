@@ -77,6 +77,10 @@ class BasePipelineWrapper(ABC):
             model: The `name` of the deployed Haystack pipeline to run
             messages: The history of messages as OpenAI-compatible list of dicts
             body: Additional parameters and configuration options
+
+        Optionally, override this method with an extra ``headers: dict[str, str]`` parameter to
+        receive the incoming request headers (e.g. ``Authorization``). Headers are only passed when
+        the overriding method declares the parameter, so existing implementations are unaffected.
         """
         msg = "run_chat_completion not implemented"
         raise NotImplementedError(msg)
