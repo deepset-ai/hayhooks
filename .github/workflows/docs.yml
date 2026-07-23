@@ -32,5 +32,8 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Validate docs in strict mode
+        run: hatch run docs:build --strict
+
       - name: Deploy docs to GitHub Pages
         run: hatch run docs:deploy

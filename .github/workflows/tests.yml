@@ -41,6 +41,18 @@ jobs:
   # This job installs the Haystack v3 pre-release so we keep both v2 and v3 green.
   tests-haystack-v3:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:6.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      HAYHOOKS_TEST_REDIS_URL: redis://127.0.0.1:6379/15
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
@@ -51,14 +63,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install Redis restart-test binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes redis-server
+
       - name: Install project with the Haystack v3 pre-release
         run: |
           pip install -e ".[mcp,a2a]" pytest pytest-asyncio pytest-cov pytest-mock qdrant-haystack trafilatura ty
           pip install --pre --upgrade "haystack-ai>=3.0.0.dev0"
           python -c "import haystack; print('haystack', haystack.__version__)"
 
-      - name: Run unit tests
-        run: pytest -vv -m "not integration" tests
+      - name: Run tests
+        run: pytest -vv tests
 
       - name: Ty - check types (Haystack v3)
         run: ty check src/hayhooks
@@ -80,6 +97,14 @@ jobs:
 
       - name: Ty - check types
         run: hatch run test:types
+
+      - name: Build documentation in strict mode
+        run: hatch run docs:build --strict
+
+      - name: Verify every Redis transition script is packaged
+        run: |
+          hatch build -t wheel
+          python -c 'import glob,pathlib,zipfile; wheel=max(glob.glob("dist/*.whl")); expected={p.name for p in pathlib.Path("src/hayhooks/redis_scripts").glob("*.lua")}; assert expected, "source Redis script inventory is empty"; archive=zipfile.ZipFile(wheel); actual={pathlib.PurePosixPath(name).name for name in archive.namelist() if name.startswith("hayhooks/redis_scripts/") and name.endswith(".lua")}; assert actual == expected, (expected, actual)'
 
   dashboard-tests:
     runs-on: ubuntu-latest
