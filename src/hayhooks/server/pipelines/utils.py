@@ -1,9 +1,12 @@
 import json
-from typing import Any
+from dataclasses import is_dataclass
+from types import UnionType
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 from uuid import uuid4
 
 from fastapi_openai_compat import Message
 from haystack.dataclasses import ChatMessage, ToolCall
+from pydantic import BaseModel, TypeAdapter
 
 from hayhooks.server.pipelines.streaming import (
     OnPipelineEnd,
@@ -18,6 +21,9 @@ from hayhooks.server.pipelines.streaming import (
     streaming_generator,
 )
 
+if TYPE_CHECKING:
+    from haystack.core.pipeline.base import PipelineBase
+
 __all__ = [
     "OnPipelineEnd",
     "OnReasoning",
@@ -26,6 +32,7 @@ __all__ = [
     "ToolCallbackReturn",
     "async_streaming_generator",
     "chat_messages_from_openai_response",
+    "coerce_pipeline_inputs",
     "find_all_streaming_components",
     "get_content",
     "get_input_files",
@@ -212,3 +219,137 @@ def chat_messages_from_openai_response(input_items: list[dict[str, Any]]) -> lis
             messages.append(ChatMessage.from_assistant(text))
 
     return messages
+
+
+def _is_union(type_: Any) -> bool:
+    """Whether `type_` is a typing.Union or a PEP 604 `X | Y` union."""
+    return get_origin(type_) in (Union, UnionType)
+
+
+def _coercible_classes(type_: Any) -> set[type]:
+    """
+    Collect the distinct classes involved in `type_` that can deserialize a plain dictionary.
+
+    A class is coercible if it exposes a `from_dict` method (Haystack dataclasses and Components), is a Pydantic
+    model, or is a standard-library dataclass. Follows `list[T]` and optionals/unions of those.
+
+    :param type_: The type to inspect.
+    :returns: The set of coercible classes `type_` involves (empty if none).
+    """
+    if _is_union(type_):
+        classes: set[type] = set()
+        for arm in get_args(type_):
+            classes |= _coercible_classes(arm)
+        return classes
+    if get_origin(type_) is list:
+        args = get_args(type_)
+        return _coercible_classes(args[0]) if args else set()
+    if isinstance(type_, type) and (hasattr(type_, "from_dict") or issubclass(type_, BaseModel) or is_dataclass(type_)):
+        return {type_}
+    return set()
+
+
+def _deserialize_one(value: dict[str, Any], target_class: Any) -> Any:
+    """
+    Deserialize a single dictionary into an instance of `target_class`.
+
+    `from_dict`-capable classes take priority so Haystack objects keep their native deserialization. Pydantic
+    models and standard-library dataclasses are deserialized with Pydantic.
+    """
+    if hasattr(target_class, "from_dict"):
+        return target_class.from_dict(value)
+    if issubclass(target_class, BaseModel):
+        return target_class.model_validate(value)
+    return TypeAdapter(target_class).validate_python(value)
+
+
+def _deserialize_from_dict(value: Any, target_class: Any) -> Any:
+    """
+    Deserialize `value` into instances of `target_class`.
+
+    Dictionaries are deserialized directly, lists element-wise (leaving non-dictionary items untouched). Any other
+    value is returned unchanged.
+    """
+    if isinstance(value, dict):
+        return _deserialize_one(value, target_class)
+    if isinstance(value, list):
+        return [_deserialize_one(item, target_class) if isinstance(item, dict) else item for item in value]
+    return value
+
+
+def _needs_coercion(value: Any) -> bool:
+    """Whether `value` carries dictionaries that could be deserialized (a dict, or a list containing one)."""
+    return isinstance(value, dict) or (isinstance(value, list) and any(isinstance(item, dict) for item in value))
+
+
+def _coerce_input_value(value: Any, socket_types: list[Any]) -> Any:
+    if not _needs_coercion(value):
+        return value
+    for type_ in socket_types:
+        classes = _coercible_classes(type_)
+        if len(classes) > 1:
+            names = ", ".join(sorted(cls.__name__ for cls in classes))
+            msg = (
+                f"Cannot coerce input for socket type '{type_}': it has multiple deserializable members "
+                f"({names}) and the serialized payload carries no type information to choose between them. "
+                f"Provide this input as an already-deserialized object."
+            )
+            raise ValueError(msg)
+        if classes:
+            return _deserialize_from_dict(value, next(iter(classes)))
+    return value
+
+
+def coerce_pipeline_inputs(pipeline: "PipelineBase", data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Deserialize serialized Haystack objects in pipeline input data, based on the pipeline's input socket types.
+
+    Web frameworks such as FastAPI hand pipeline inputs over as plain JSON (often typed loosely as
+    `dict[str, Any]`), so serialized Haystack objects arrive as plain dictionaries rather than instances. This
+    utility recovers them: for every provided value whose input socket type involves a coercible class, plain
+    dictionaries are converted into instances of that class. A class is coercible if it exposes a `from_dict`
+    method (such as `ChatMessage` or `Document`), is a Pydantic model, or is a standard-library dataclass.
+    Socket types of the form `T`, `list[T]`, and optionals/unions of those are supported. Values that are already
+    deserialized, or whose socket types involve no coercible class, are returned unchanged. A socket type that
+    involves more than one distinct coercible class (such as `GeneratedAnswer | ExtractedAnswer`) is ambiguous,
+    since the payload carries no type information to select one; coercing a dictionary against it raises a
+    `ValueError`.
+
+    Like `Pipeline.run`, `data` accepts the nested format (`{"component_name": {"input_name": value}}`) and the
+    flat format (`{"input_name": value}`). The same format detection rules apply and the returned dictionary keeps
+    the format of `data`.
+
+    Usage example:
+    ```python
+    from hayhooks import coerce_pipeline_inputs
+
+    inputs = coerce_pipeline_inputs(pipeline, serialized_inputs)
+    result = pipeline.run(inputs)
+    ```
+
+    :param pipeline: The pipeline whose input socket types drive the coercion.
+    :param data: The pipeline input data, in nested or flat format.
+    :returns: A new dictionary with the same structure as `data` and deserialized values.
+    :raises ValueError: If a socket type involves more than one distinct coercible class and the corresponding
+        value is a serialized dictionary.
+    """
+    # mirrors the format detection in Pipeline.run: nested if all values are dictionaries
+    if all(isinstance(value, dict) for value in data.values()):
+        available_inputs = pipeline.inputs(include_components_with_connected_inputs=True)
+        coerced: dict[str, Any] = {}
+        for component_name, component_inputs in data.items():
+            sockets = available_inputs.get(component_name, {})
+            coerced[component_name] = {
+                input_name: _coerce_input_value(value, [sockets[input_name]["type"]] if input_name in sockets else [])
+                for input_name, value in component_inputs.items()
+            }
+        return coerced
+
+    # flat format: input names are matched across components like in Pipeline.run
+    available_inputs = pipeline.inputs()
+    return {
+        input_name: _coerce_input_value(
+            value, [sockets[input_name]["type"] for sockets in available_inputs.values() if input_name in sockets]
+        )
+        for input_name, value in data.items()
+    }

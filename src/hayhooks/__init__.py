@@ -6,6 +6,7 @@ from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.pipelines.utils import (
     async_streaming_generator,
     chat_messages_from_openai_response,
+    coerce_pipeline_inputs,
     get_input_files,
     get_last_user_input_text,
     get_last_user_message,
@@ -25,6 +26,7 @@ __all__ = [
     "YAMLPipelineWrapper",
     "async_streaming_generator",
     "chat_messages_from_openai_response",
+    "coerce_pipeline_inputs",
     "create_app",
     "default_on_pipeline_end",
     "default_on_tool_call_end",
