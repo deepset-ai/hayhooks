@@ -4,6 +4,7 @@ import importlib.metadata
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,12 +35,19 @@ from hayhooks.execution import (
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import add_pipeline_api_route
-from hayhooks.server.utils.module_loader import _set_method_implementation_flags
+from hayhooks.server.utils.module_loader import (
+    _set_method_implementation_flags,
+    create_pipeline_wrapper_instance,
+    load_pipeline_module,
+    unload_pipeline_modules,
+)
 from hayhooks.settings import settings
 
 pytestmark = pytest.mark.skipif(
     not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
 )
+
+_DURABLE_CHAT_EXAMPLE = Path("examples/durable_chat_with_website/pipelines/chat_with_website")
 
 
 class Request(BaseModel):
@@ -682,3 +690,55 @@ def test_durable_agent_uses_native_run_and_public_hooks(monkeypatch) -> None:
 
     assert inspected.json()["result"]["last_message"]["content"][0]["text"] == "done"
     assert inspected.json()["progress"][0]["kind"] == "checkpoint"
+
+
+@pytest.mark.asyncio
+async def test_durable_chat_with_website_example_loads_and_maps_pipeline_input(monkeypatch) -> None:
+    class ExampleContext:
+        def __init__(self) -> None:
+            self.progress: list[tuple[str, str]] = []
+            self.pipeline_input = None
+            self.checkpoint_at = None
+
+        async def report_progress(self, message, *, kind="progress", metadata=None):
+            self.progress.append((kind, message))
+
+        async def run_pipeline_async(self, data, *, checkpoint_at):
+            self.pipeline_input = data
+            self.checkpoint_at = checkpoint_at
+            return {"llm": {"replies": [ChatMessage.from_assistant(text="Generators yield values lazily.")]}}
+
+        async def retry(self, message, *, delay=None):
+            pytest.fail(f"unexpected retry: {message}, delay={delay}")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    module_name = "durable_chat_with_website_example"
+    module = load_pipeline_module(module_name, _DURABLE_CHAT_EXAMPLE)
+    try:
+        wrapper = create_pipeline_wrapper_instance(module)
+        assert list(wrapper.pipeline.graph.nodes) == ["converter", "fetcher", "llm", "prompt"]
+        assert wrapper._is_run_api_implemented
+        assert wrapper._is_run_durable_async_implemented
+
+        request = module.WebsiteQuestionRequest(
+            urls=["https://docs.python.org/3/howto/functional.html"],
+            question="What is a generator?",
+        )
+        context = ExampleContext()
+        result = await wrapper.run_durable_async(context, request)
+
+        assert context.pipeline_input == {
+            "fetcher": {"urls": ["https://docs.python.org/3/howto/functional.html"]},
+            "prompt": {"query": "What is a generator?"},
+        }
+        assert context.checkpoint_at == ["converter", "prompt", "llm"]
+        assert context.progress == [
+            ("accepted", "Website question accepted"),
+            ("completed", "Website answer completed"),
+        ]
+        assert result.model_dump() == {
+            "answer": "Generators yield values lazily.",
+            "sources": ["https://docs.python.org/3/howto/functional.html"],
+        }
+    finally:
+        unload_pipeline_modules(module_name)

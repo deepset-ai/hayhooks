@@ -38,6 +38,26 @@ curl -X POST http://localhost:1416/v1/chat/completions \
     - For development, use `--overwrite` to redeploy a changed wrapper: `hayhooks pipeline deploy-files -n chat_with_website --overwrite <dir>`
     - Some examples may require extra Python packages (e.g., `trafilatura`). Install as needed.
 
+## Durable execution
+
+The [durable variant](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_chat_with_website) keeps the
+same fetcher → converter → prompt → OpenAI generator graph and adds a typed `run_durable_async()` method. Hayhooks
+persists Pipeline snapshots before the converter, prompt, and LLM, allowing completed upstream work to survive a
+restart.
+
+```bash
+curl -i -X POST http://localhost:1416/chat_with_website/run-durable \
+  -H 'content-type: application/json' \
+  -H 'Idempotency-Key: python-generators-v1' \
+  -d '{
+    "urls": ["https://docs.python.org/3/howto/functional.html"],
+    "question": "What is a generator and why would I use one?"
+  }'
+```
+
+See the example README for Redis startup, result inspection, restart testing, cancellation, and the at-least-once
+limitations around LLM requests.
+
 ## Related
 
 - General guide: [Main docs](../index.md)
