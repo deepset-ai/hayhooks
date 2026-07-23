@@ -136,6 +136,27 @@ def run_api(self, urls: list[str], question: str) -> str:
 - Default values are supported
 - Complex types like `dict[str, Any]` are allowed
 
+#### Deserializing loosely-typed inputs
+
+When an input is typed strictly (e.g. `messages: list[ChatMessage]`), Hayhooks' generated request model deserializes it for you. But if you accept pipeline inputs through a loose type like `dict[str, Any]` — for example a generic `/run` endpoint that forwards whatever the caller sends to the pipeline — Pydantic can't tell which entries are serialized Haystack objects, so `ChatMessage`, `Document`, and similar arrive as plain dictionaries. Passing those to `pipeline.run()` fails, because the pipeline expects instances.
+
+Use `coerce_pipeline_inputs()` to convert them back into instances, based on the pipeline's input socket types, before running:
+
+```python
+from typing import Any
+from hayhooks import BasePipelineWrapper, coerce_pipeline_inputs
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.pipeline = ...
+
+    def run_api(self, pipeline_inputs: dict[str, Any]) -> dict[str, Any]:
+        inputs = coerce_pipeline_inputs(self.pipeline, pipeline_inputs)
+        return self.pipeline.run(inputs)
+```
+
+It accepts both the nested (`{"component": {"input": value}}`) and flat (`{"input": value}`) formats, converts dictionaries into the class each socket expects (anything with a `from_dict` method, a Pydantic model, or a dataclass), and leaves already-deserialized values — or values whose socket type isn't a coercible object — untouched.
+
 #### Streaming responses
 
 Hayhooks can stream results from `run_api()` or `run_api_async()` when you return a generator instead of a fully materialized value. This is especially useful when you already rely on `streaming_generator()` / `async_streaming_generator()` inside chat endpoints and want the same behaviour on the generic `/run` route.
