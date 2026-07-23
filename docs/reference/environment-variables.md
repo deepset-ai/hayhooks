@@ -141,6 +141,142 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Default: `true`
 - Description: Accept A2A spec 0.3 requests on the same endpoints. Many clients and tools (e.g. the a2a-inspector) still speak 0.3 during the 1.0 transition
 
+### HAYHOOKS_A2A_TASK_STORE
+
+- Default: `auto`
+- Description: Built-in A2A task-store backend
+- Options:
+  - `auto`: Select Redis for Redis-backed durable A2A Agents, otherwise memory
+  - `memory`: Process-local task records
+  - `redis`: Persistent task records using the configured Redis URL and key prefix
+
+### HAYHOOKS_A2A_REDIS_URL
+
+- Default: `redis://localhost:6379/0`
+- Description: Redis URL used by the built-in A2A task store
+
+### HAYHOOKS_A2A_REDIS_KEY_PREFIX
+
+- Default: `hayhooks:a2a`
+- Description: Prefix applied to built-in Redis A2A task-store keys. Use a distinct prefix when multiple environments share Redis.
+
+### HAYHOOKS_A2A_TASK_STORE_PROVIDER
+
+- Default: `""` (empty; use the selected built-in provider)
+- Description: Import path in `module:ClassName` form for a custom [`TaskStoreProvider`](../features/a2a-support.md#task-storage). The class must have a no-argument constructor.
+- Note: Cannot be combined with `HAYHOOKS_A2A_TASK_STORE=redis`.
+
+### HAYHOOKS_A2A_TERMINAL_TASK_TTL_SECONDS
+
+- Default: `604800` (seven days)
+- Description: Retention window for terminal A2A tasks. Cleanup also removes owner, active, and projection-version indexes.
+
+### HAYHOOKS_A2A_PROJECTION_LEASE_MS
+
+- Default: `15000`
+- Description: Renewable lease duration for one replica to project a durable execution into one A2A task.
+
+### HAYHOOKS_A2A_PROJECTION_BATCH_SIZE
+
+- Default: `100`
+- Description: Maximum active A2A tasks reconciled in one bounded pass.
+
+### HAYHOOKS_A2A_PROJECTION_INTERVAL
+
+- Default: `0.1`
+- Description: Minimum seconds between A2A reconciliation passes.
+
+## Durable execution
+
+### HAYHOOKS_DURABLE_STORE
+
+- Default: `redis`
+- Description: Built-in durable execution-store backend. Redis is required for restart recovery; memory is an explicit local-development choice.
+- Options:
+  - `memory`: Request-detached execution whose records are lost on process exit
+  - `redis`: Redis Streams, fenced claims, checkpoints, cancellation, and restart recovery
+
+### HAYHOOKS_DURABLE_REDIS_URL
+
+- Default: `redis://localhost:6379/0`
+- Description: Redis URL used by durable REST and A2A execution.
+
+### HAYHOOKS_DURABLE_REDIS_KEY_PREFIX
+
+- Default: `hayhooks:durable`
+- Description: Key prefix used by durable execution records and queues.
+
+### HAYHOOKS_DURABLE_REDIS_CLAIM_IDLE_MS
+
+- Default: `30000`
+- Description: Milliseconds before an unrenewed execution claim can be recovered by another worker. This also controls the claim lease duration.
+
+### HAYHOOKS_DURABLE_REDIS_CANCELLATION_TTL_SECONDS
+
+- Default: `86400` (one day)
+- Description: Deprecated compatibility setting. Cancellation now lives in the execution record and never expires while nonterminal.
+
+### HAYHOOKS_DURABLE_REDIS_STREAM_MAX_LENGTH
+
+- Default: `0`
+- Description: Deprecated compatibility setting. Hayhooks never trims a Stream that contains live work; acknowledged entries are deleted explicitly.
+
+### HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_INTERVAL
+
+- Default: `0.25`
+- Description: Minimum seconds between checks that promote due retries from the delayed set back to the execution stream.
+
+### HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_BATCH_SIZE
+
+- Default: `100`
+- Description: Maximum due retries promoted atomically during one delayed-set check.
+
+### HAYHOOKS_DURABLE_TERMINAL_TTL_SECONDS
+
+- Default: `604800` (seven days)
+- Description: Retention period for terminal execution records.
+
+### HAYHOOKS_DURABLE_MAX_PROGRESS_EVENTS
+
+- Default: `100`
+- Description: Maximum retained client-visible progress events per execution.
+
+### HAYHOOKS_DURABLE_MAX_RECORD_BYTES
+
+- Default: `1000000`
+- Description: Maximum serialized durable execution record size.
+
+### HAYHOOKS_DURABLE_SHUTDOWN_GRACE_PERIOD
+
+- Default: `5.0`
+- Description: Seconds to wait for workers during shutdown. Synchronous work that exceeds the window retains its claim and heartbeat until the underlying thread exits.
+
+### HAYHOOKS_DURABLE_MAX_ATTEMPTS
+
+- Default: `3`
+- Description: Maximum application attempts, including the first attempt, before retry exhaustion becomes terminal failure.
+
+### HAYHOOKS_DURABLE_RETRY_BASE_DELAY
+
+- Default: `1.0`
+- Description: Base seconds for bounded exponential retry delay when application code does not provide a delay.
+
+### HAYHOOKS_DURABLE_RETRY_MAX_DELAY
+
+- Default: `60.0`
+- Description: Maximum seconds for the next retry delay, including explicit application overrides.
+
+### HAYHOOKS_DURABLE_TRUSTED_OWNER_HEADER
+
+- Default: `""` (bearer execution-ID mode)
+- Description: Trusted reverse-proxy header containing the authenticated owner. When set, submit, inspect, cancel, and resume enforce owner equality.
+- Security: The proxy must remove client-supplied copies and inject this header over a trusted hop.
+
+### HAYHOOKS_DURABLE_EXECUTION_CONCURRENCY
+
+- Default: `1`
+- Description: Maximum concurrent durable executions per deployment. Increase it only when the Pipeline or Agent and its shared dependencies are concurrency-safe.
+
 ## Chainlit UI
 
 ### HAYHOOKS_CHAINLIT_ENABLED

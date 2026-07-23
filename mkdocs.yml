@@ -30,6 +30,7 @@ nav:
   - Advanced Usage:
     - Running Pipelines: advanced/running-pipelines.md
     - Advanced Configuration: advanced/advanced-configuration.md
+    - Durable Execution Operations: advanced/durable-execution-operations.md
     - Code Sharing: advanced/code-sharing.md
   - Guides:
     - Development Best Practices: guides/development-best-practices.md
@@ -118,6 +119,7 @@ plugins:
         Advanced Usage:
           - advanced/running-pipelines.md: Execute Haystack Pipelines and manage runs programmatically.
           - advanced/advanced-configuration.md: Fine-tune advanced configuration settings.
+          - advanced/durable-execution-operations.md: Operate durable execution with explicit Redis, recovery, security, and scaling contracts.
           - advanced/code-sharing.md: Share Python code securely across deployments.
         Guides:
           - guides/development-best-practices.md: Development workflow tips for Hayhooks pipelines.

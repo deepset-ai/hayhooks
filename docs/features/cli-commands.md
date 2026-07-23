@@ -143,6 +143,14 @@ hayhooks a2a run --host 0.0.0.0 --port 1418
 | `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
 | `--additional-python-path` | | Additional Python path | `None` |
 | `--external-url` | | Base URL advertised in agent cards | `None` |
+| `--task-store` | | Built-in A2A task-store backend: `memory` or `redis` | `memory` |
+| `--a2a-redis-url` | | Redis URL for the built-in A2A task store | `redis://localhost:6379/0` |
+| `--a2a-redis-key-prefix` | | Redis key prefix for the built-in A2A task store | `hayhooks:a2a` |
+| `--task-store-provider` | | Custom A2A `TaskStoreProvider` as `module:ClassName` | `None` |
+| `--execution-store` | | Built-in durable execution backend: `memory` or `redis` | `redis` |
+| `--execution-redis-url` | | Redis URL for durable execution storage | `redis://localhost:6379/0` |
+| `--execution-redis-key-prefix` | | Redis key prefix for durable execution storage | `hayhooks:durable` |
+| `--durable-execution-concurrency` | | Maximum concurrent durable Agent executions per deployed agent | `1` |
 
 ## Pipeline Management Commands
 

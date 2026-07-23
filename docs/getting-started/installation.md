@@ -38,7 +38,17 @@ This guide covers how to install Hayhooks and its dependencies.
 
     Includes all standard features plus [A2A Server](../features/a2a-support.md) support, exposing deployed
     pipelines and agents over the [A2A protocol](https://a2a-protocol.org) so other agents can discover
-    and delegate tasks to them.
+    and delegate tasks to them. This extra also includes Redis support for durable execution.
+
+=== "With Durable Execution"
+
+    ```bash
+    pip install "hayhooks[durable]"
+    ```
+
+    Includes Redis support and Haystack 3, required for restart-safe Pipeline and Agent execution. See the
+    [durable Pipeline example](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_execution).
+    Durable execution requires Redis server 6.2 or newer.
 
 === "With Tracing Support"
 

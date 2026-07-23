@@ -192,6 +192,9 @@ chainlit.md
 .env.local
 .env.*.local
 
+# Local A2A long-running demo client checkpoint
+.a2a-long-running-demo-session.json
+
 # Temporary files
 *.tmp
 *.temp

@@ -229,6 +229,63 @@ For a full working example, see the [Image Generation example](https://github.co
 
 ## Optional Methods
 
+### start() and close()
+
+Override the asynchronous lifecycle hooks when a wrapper owns event-loop resources or background work. Hayhooks calls
+`start()` after the wrapper is registered and the server loop is running, and calls `close()` before the wrapper is
+undeployed or the server shuts down. `setup()` remains synchronous and should only construct the resources.
+
+```python
+def setup(self) -> None:
+    self.manager = create_background_manager()
+
+async def start(self) -> None:
+    await self.manager.start()
+
+async def close(self) -> None:
+    await self.manager.close()
+```
+
+The hooks also run for wrappers deployed or undeployed through Hayhooks' runtime APIs.
+
+### Durable execution
+
+Implement `run_durable()` or `run_durable_async()` on an ordinary `BasePipelineWrapper` to submit restart-safe work.
+The method receives a `DurableContext` and one Pydantic request model; it returns a Pydantic result model. Hayhooks
+owns records, worker lifecycle, Redis, cancellation, and resume.
+
+```python
+from haystack import Pipeline
+from pydantic import BaseModel
+
+from hayhooks import BasePipelineWrapper, DurableContext
+
+
+class JobRequest(BaseModel):
+    source: str
+
+
+class JobResult(BaseModel):
+    processed: int
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        self.pipeline = Pipeline()
+        # Add and connect components.
+
+    async def run_durable_async(self, context: DurableContext, request: JobRequest) -> JobResult:
+        outputs = await context.run_pipeline_async(
+            {"source": {"value": request.source}}, checkpoint_at=["process"]
+        )
+        return JobResult(processed=outputs["process"]["count"])
+```
+
+Hayhooks exposes `POST /{pipeline}/run-durable`, `GET /{pipeline}/executions/{execution_id}`, and cancel/resume
+endpoints. The submit response and status endpoint expose only a safe result view; validated inputs and checkpoint
+state remain server-side. The built-in Redis store is the default. Set `HAYHOOKS_DURABLE_STORE=memory` only for
+volatile local development. See the [complete durable example](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_execution).
+
 ### run_api_async()
 
 The asynchronous version of `run_api()` for better performance under high load.
