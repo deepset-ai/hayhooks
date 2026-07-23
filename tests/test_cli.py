@@ -22,6 +22,11 @@ def set_default_settings():
     settings.dashboard_enabled = False
     settings.dashboard_path = "/dashboard"
     settings.dashboard_dist_dir = "dashboard/dist"
+    settings.durable_execution_concurrency = 1
+    settings.a2a_task_store = "memory"
+    settings.a2a_task_store_provider = ""
+    settings.a2a_redis_url = "redis://localhost:6379/0"
+    settings.a2a_redis_key_prefix = "hayhooks:a2a"
 
 
 def test_run_command_with_reload(monkeypatch):
@@ -166,6 +171,153 @@ def test_a2a_run_debug_enables_tracebacks(monkeypatch):
     assert result.exit_code == 0, result.output
     assert settings.show_tracebacks is True
     assert calls, "uvicorn.run was not called"
+
+
+def test_a2a_run_sets_task_store_provider(monkeypatch):
+    import uvicorn
+
+    from hayhooks.server.utils import a2a_utils, deploy_utils
+    from hayhooks.settings import settings
+
+    def fake_uvicorn_run(*_args, **_kwargs):
+        return None
+
+    def fake_create_a2a_app(**_kwargs):
+        return object()
+
+    monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(a2a_utils, "create_a2a_app", fake_create_a2a_app)
+    monkeypatch.setattr(a2a_utils.a2a_import, "check", lambda: None)
+    monkeypatch.setattr(settings, "a2a_task_store_provider", "")
+
+    result = runner.invoke(
+        hayhooks_cli,
+        [
+            "a2a",
+            "run",
+            "--task-store-provider",
+            "my_project.a2a:ProjectTaskStoreProvider",
+            "--pipelines-dir",
+            "dummy_pipelines",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert settings.a2a_task_store_provider == "my_project.a2a:ProjectTaskStoreProvider"
+
+
+def test_a2a_run_sets_builtin_redis_task_store(monkeypatch):
+    import uvicorn
+
+    from hayhooks.server.utils import a2a_utils, deploy_utils
+
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(a2a_utils, "create_a2a_app", lambda **_kwargs: object())
+    monkeypatch.setattr(a2a_utils.a2a_import, "check", lambda: None)
+
+    result = runner.invoke(
+        hayhooks_cli,
+        [
+            "a2a",
+            "run",
+            "--task-store",
+            "redis",
+            "--a2a-redis-url",
+            "redis://localhost:6379/4",
+            "--a2a-redis-key-prefix",
+            "demo:a2a",
+            "--pipelines-dir",
+            "dummy_pipelines",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert settings.a2a_task_store == "redis"
+    assert settings.a2a_redis_url == "redis://localhost:6379/4"
+    assert settings.a2a_redis_key_prefix == "demo:a2a"
+
+
+def test_a2a_run_rejects_ambiguous_task_store_configuration(monkeypatch):
+    from hayhooks.server.utils import a2a_utils, deploy_utils
+
+    deployed = False
+
+    def record_deploy():
+        nonlocal deployed
+        deployed = True
+
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", record_deploy)
+    monkeypatch.setattr(a2a_utils.a2a_import, "check", lambda: None)
+
+    result = runner.invoke(
+        hayhooks_cli,
+        [
+            "a2a",
+            "run",
+            "--task-store",
+            "redis",
+            "--task-store-provider",
+            "my_project.a2a:ProjectTaskStoreProvider",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "task-store-provider" in result.output
+    assert "together" in result.output
+    assert not deployed
+
+
+def test_a2a_run_sets_durable_execution_concurrency(monkeypatch):
+    import uvicorn
+
+    from hayhooks.server.utils import a2a_utils, deploy_utils
+
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(a2a_utils, "create_a2a_app", lambda **_kwargs: object())
+    monkeypatch.setattr(a2a_utils.a2a_import, "check", lambda: None)
+
+    result = runner.invoke(
+        hayhooks_cli,
+        ["a2a", "run", "--durable-execution-concurrency", "3", "--pipelines-dir", "dummy_pipelines"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert settings.durable_execution_concurrency == 3
+
+
+def test_a2a_run_sets_durable_execution_store_configuration(monkeypatch):
+    import uvicorn
+
+    from hayhooks.server.utils import a2a_utils, deploy_utils
+
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(a2a_utils, "create_a2a_app", lambda **_kwargs: object())
+    monkeypatch.setattr(a2a_utils.a2a_import, "check", lambda: None)
+
+    result = runner.invoke(
+        hayhooks_cli,
+        [
+            "a2a",
+            "run",
+            "--execution-store",
+            "redis",
+            "--execution-redis-url",
+            "redis://localhost:6379/5",
+            "--execution-redis-key-prefix",
+            "demo:durable",
+            "--pipelines-dir",
+            "dummy_pipelines",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert settings.durable_store == "redis"
+    assert settings.durable_redis_url == "redis://localhost:6379/5"
+    assert settings.durable_redis_key_prefix == "demo:durable"
 
 
 def test_status_command(monkeypatch):
