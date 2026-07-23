@@ -50,6 +50,42 @@ def test_env_var_prefix(monkeypatch):
     assert settings.port == 5678
 
 
+def test_durable_redis_settings_defaults(monkeypatch):
+    names = (
+        "HAYHOOKS_DURABLE_REDIS_CLAIM_IDLE_MS",
+        "HAYHOOKS_DURABLE_REDIS_CANCELLATION_TTL_SECONDS",
+        "HAYHOOKS_DURABLE_REDIS_STREAM_MAX_LENGTH",
+        "HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_INTERVAL",
+        "HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_BATCH_SIZE",
+    )
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+    settings = AppSettings()
+
+    assert settings.durable_redis_claim_idle_ms == 30_000
+    assert settings.durable_redis_cancellation_ttl_seconds == 86_400
+    assert settings.durable_redis_stream_max_length == 0
+    assert settings.durable_redis_delayed_promotion_interval == 0.25
+    assert settings.durable_redis_delayed_promotion_batch_size == 100
+
+
+def test_durable_redis_settings_from_environment(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_CLAIM_IDLE_MS", "45000")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_CANCELLATION_TTL_SECONDS", "120")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_STREAM_MAX_LENGTH", "2500")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_INTERVAL", "0.75")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_BATCH_SIZE", "250")
+
+    settings = AppSettings()
+
+    assert settings.durable_redis_claim_idle_ms == 45_000
+    assert settings.durable_redis_cancellation_ttl_seconds == 120
+    assert settings.durable_redis_stream_max_length == 2_500
+    assert settings.durable_redis_delayed_promotion_interval == 0.75
+    assert settings.durable_redis_delayed_promotion_batch_size == 250
+
+
 def test_cors():
     default_settings = AppSettings()
     assert default_settings.cors_allow_origins == ["*"]

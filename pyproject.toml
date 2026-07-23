@@ -46,6 +46,11 @@ mcp = [
 ]
 a2a = [
   "a2a-sdk[http-server]>=1.1.0,<2.0",
+  "redis>=5,<9",
+]
+durable = [
+  "haystack-ai>=3,<4",
+  "redis>=5,<9",
 ]
 chainlit = [
   "chainlit>=2.0.0",
@@ -138,6 +143,24 @@ unit = "pytest -vv -m 'not integration' {args:tests}"
 integration = "pytest -vv -m integration {args:tests}"
 all = "pytest -vv {args:tests}"
 all-cov = "all --cov=hayhooks"
+types = "ty check {args:src/hayhooks}"
+
+[tool.hatch.envs.test-v3]
+features = ["durable", "a2a"]
+extra-dependencies = [
+  "qdrant-haystack",
+  "trafilatura",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-mock",
+  "ty",
+]
+
+[tool.hatch.envs.test-v3.scripts]
+unit = "pytest -vv -m 'not integration' {args:tests}"
+integration = "pytest -vv -m integration {args:tests}"
+all = "pytest -vv {args:tests}"
 types = "ty check {args:src/hayhooks}"
 
 

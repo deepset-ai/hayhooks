@@ -81,6 +81,53 @@ class AppSettings(BaseSettings):
     # tools, e.g. the a2a-inspector, still speak 0.3 during the 1.0 transition)
     a2a_v0_3_compat: bool = True
 
+    # Optional import path (module:ClassName) for a custom A2A TaskStoreProvider.
+    # The default provider creates an independent in-memory store for each agent.
+    a2a_task_store_provider: str = ""
+
+    # Built-in A2A task-store backend. ``auto`` selects Redis only when durable
+    # A2A execution also uses Redis; an explicit memory choice is never changed.
+    a2a_task_store: Literal["auto", "memory", "redis"] = "auto"
+
+    # Connection settings for the built-in Redis task store.
+    a2a_redis_url: str = "redis://localhost:6379/0"
+    a2a_redis_key_prefix: str = "hayhooks:a2a"
+    a2a_terminal_task_ttl_seconds: int = Field(default=604_800, ge=1)
+    a2a_projection_lease_ms: int = Field(default=15_000, ge=1_000, le=300_000)
+    a2a_projection_batch_size: int = Field(default=100, ge=1, le=10_000)
+    a2a_projection_interval: float = Field(default=0.1, ge=0.01, le=60.0)
+
+    # Durable executions use Redis by default. Memory is an explicit volatile
+    # development/test choice and is never selected after a Redis failure.
+    durable_store: Literal["memory", "redis"] = "redis"
+    durable_redis_url: str = "redis://localhost:6379/0"
+    durable_redis_key_prefix: str = "hayhooks:durable"
+
+    # Retention and safety limits are application settings, not wrapper API.
+    durable_terminal_ttl_seconds: int = Field(default=604_800, ge=1)
+    durable_max_progress_events: int = Field(default=100, ge=1, le=10_000)
+    durable_max_record_bytes: int = Field(default=1_000_000, ge=1_024)
+    durable_shutdown_grace_period: float = Field(default=5.0, ge=0.0)
+    durable_max_attempts: int = Field(default=3, ge=1, le=1_000)
+    durable_retry_base_delay: float = Field(default=1.0, ge=0.0, le=86_400.0)
+    durable_retry_max_delay: float = Field(default=60.0, ge=0.0, le=604_800.0)
+    # When configured, a trusted reverse proxy must strip any client-supplied
+    # value and inject the authenticated owner. Empty means bearer-ID mode.
+    durable_trusted_owner_header: str = ""
+
+    # Redis execution-store scheduling, fencing, and retention controls.
+    durable_redis_claim_idle_ms: int = Field(default=30_000, ge=1, le=86_400_000)
+    # Deprecated compatibility inputs. Cancellation is persisted on the record
+    # and live Stream deliveries are never trimmed.
+    durable_redis_cancellation_ttl_seconds: int = Field(default=86_400, ge=1)
+    durable_redis_stream_max_length: int = Field(default=0, ge=0)
+    durable_redis_delayed_promotion_interval: float = Field(default=0.25, ge=0.0, le=60.0)
+    durable_redis_delayed_promotion_batch_size: int = Field(default=100, ge=1, le=10_000)
+
+    # Keep the default conservative until Agent tools and shared components are
+    # proven concurrency-safe.
+    durable_execution_concurrency: int = Field(default=1, ge=1, le=128)
+
     # Disable SSL verification when making requests from the CLI
     disable_ssl: bool = False
 
