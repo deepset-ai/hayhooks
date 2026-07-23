@@ -13,6 +13,7 @@ from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
 from hayhooks.server.logger import log
+from hayhooks.server.pipelines.lifecycle import close_pipeline_wrappers, start_pipeline_wrappers
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from hayhooks.server.tracing import (
@@ -299,11 +300,15 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:  # noqa: ARG001
         async with session_manager.run():
+            await start_pipeline_wrappers()
             log.info("Hayhooks MCP server started")
             try:
                 yield
             finally:
-                log.info("Hayhooks MCP server shutting down...")
+                try:
+                    await close_pipeline_wrappers()
+                finally:
+                    log.info("Hayhooks MCP server shutting down...")
 
     async def handle_sse(request):
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:

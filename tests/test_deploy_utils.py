@@ -4,7 +4,7 @@ import shutil
 import sys
 from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import docstring_parser
 import pytest
@@ -448,6 +448,26 @@ def test_create_response_model_no_docstring():
     assert "result" in schema["required"]
 
 
+def test_callable_models_resolve_postponed_annotations():
+    def func(action: Literal["start", "status"], execution_id: str | None = None) -> dict[str, Any]:
+        return {}
+
+    func.__annotations__ = {
+        "action": 'Literal["start", "status"]',
+        "execution_id": "str | None",
+        "return": "dict[str, Any]",
+    }
+    docstring = docstring_parser.parse("")
+
+    request_model = create_request_model_from_callable(func, "Postponed", docstring)
+    response_model = create_response_model_from_callable(func, "Postponed", docstring)
+
+    request_schema = request_model.model_json_schema()
+    assert request_schema["properties"]["action"]["enum"] == ["start", "status"]
+    assert request_schema["properties"]["execution_id"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
+    assert response_model.model_json_schema()["properties"]["result"]["type"] == "object"
+
+
 @pytest.mark.parametrize(
     "return_type",
     [
@@ -586,7 +606,8 @@ def test_create_pipeline_wrapper_instance_missing_methods():
     with pytest.raises(
         PipelineWrapperError,
         match=re.escape(
-            "At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, run_response, or run_response_async must be implemented"
+            "At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, run_response, "
+            "run_response_async, or create_a2a_agent_executor (via A2APipelineWrapper) must be implemented"
         ),
     ):
         create_pipeline_wrapper_instance(module)

@@ -12,6 +12,7 @@ This module centralizes:
 
 from __future__ import annotations
 
+import importlib
 import os
 import traceback
 from collections.abc import AsyncGenerator, Generator, Iterator, Mapping
@@ -47,6 +48,9 @@ SPAN_MCP_LIST_TOOLS = "hayhooks.mcp.list_tools"
 SPAN_MCP_CALL_TOOL = "hayhooks.mcp.call_tool"
 SPAN_MCP_RUN_PIPELINE_TOOL = "hayhooks.mcp.run_pipeline_tool"
 SPAN_A2A_RUN_AGENT = "hayhooks.a2a.run_agent"
+SPAN_A2A_DURABLE_PROJECT = "hayhooks.a2a.durable.project"
+SPAN_DURABLE_SUBMIT = "hayhooks.durable.submit"
+SPAN_DURABLE_ATTEMPT = "hayhooks.durable.attempt"
 
 _TAG_SUCCESS = "hayhooks.success"
 _TAG_ERROR_TYPE = "hayhooks.error.type"
@@ -309,6 +313,35 @@ def _load_fastapi_instrumentor() -> type[Any] | None:
     return FastAPIInstrumentor
 
 
+def _patch_fastapi_route_details() -> None:
+    """
+    Make older OpenTelemetry FastAPI instrumentation safe with FastAPI routers.
+
+    Recent FastAPI versions represent included routers as private route objects
+    without a ``path`` attribute.  OpenTelemetry's route discovery dereferences
+    that attribute for partial matches, causing every request to fail before it
+    reaches the application.  Preserve tracing while falling back to the
+    concrete request path until the dependency handles this router shape.
+    """
+    try:
+        otel_fastapi: Any = importlib.import_module("opentelemetry.instrumentation.fastapi")
+    except ImportError:  # pragma: no cover - guarded by the lazy import above
+        return
+
+    original = otel_fastapi._get_route_details
+    if getattr(original, "_hayhooks_safe", False):
+        return
+
+    def safe_get_route_details(scope: Any) -> str | None:
+        try:
+            return original(scope)
+        except AttributeError:
+            return scope.get("path")
+
+    safe_get_route_details.__dict__["_hayhooks_safe"] = True
+    otel_fastapi._get_route_details = safe_get_route_details
+
+
 def _load_starlette_instrumentor() -> type[Any] | None:
     """Return Starlette OTel instrumentor when tracing extras are installed."""
     try:
@@ -460,6 +493,8 @@ def _instrument_app(
         return False
 
     try:
+        if framework_name == "FastAPI":
+            _patch_fastapi_route_details()
         instrument_kwargs: dict[str, Any] = {}
         if settings.tracing_excluded_spans:
             instrument_kwargs["exclude_spans"] = settings.tracing_excluded_spans

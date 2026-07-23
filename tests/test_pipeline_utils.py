@@ -206,3 +206,10 @@ class TestGetInputFiles:
         ]
         result = get_input_files(items)
         assert result[0]["filename"] == "doc.pdf"
+
+
+def test_legacy_pipeline_utilities_remain_publicly_importable():
+    from hayhooks import chat_messages_from_openai_response, is_user_message
+
+    assert callable(chat_messages_from_openai_response)
+    assert callable(is_user_message)

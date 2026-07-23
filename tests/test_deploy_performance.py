@@ -89,6 +89,44 @@ async def test_deploy_pipeline_files_async(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dynamic_deploy_and_undeploy_run_wrapper_lifecycle(monkeypatch):
+    monkeypatch.setattr(settings, "deploy_concurrency", DeployConcurrencyPolicy.SERIALIZED)
+    source = """
+from hayhooks import BasePipelineWrapper
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def setup(self):
+        self.pipeline = object()
+        self.started = False
+        self.closed = False
+
+    async def start(self):
+        self.started = True
+
+    async def close(self):
+        self.closed = True
+
+    def run_api(self, value: int) -> int:
+        return value
+"""
+
+    await deploy_pipeline_files_async(
+        pipeline_name="lifecycle_async_test",
+        files={"pipeline_wrapper.py": source},
+        save_files=False,
+    )
+    wrapper = registry.get("lifecycle_async_test")
+    assert wrapper is not None
+    assert wrapper.started
+
+    await undeploy_pipeline_async(pipeline_name="lifecycle_async_test")
+
+    assert wrapper.closed
+    assert registry.get("lifecycle_async_test") is None
+
+
+@pytest.mark.asyncio
 async def test_undeploy_pipeline_async(monkeypatch):
     monkeypatch.setattr(settings, "deploy_concurrency", DeployConcurrencyPolicy.SERIALIZED)
 
@@ -127,7 +165,7 @@ async def test_serialized_policy_wraps_with_lock(monkeypatch):
         options={"save_file": False},
     )
 
-    assert lock_calls == ["deploy_pipeline_yaml"]
+    assert lock_calls == ["prepare_pipeline_yaml"]
 
 
 def test_defer_openapi_rebuild_skips_setup():

@@ -1,7 +1,9 @@
 import asyncio
 import inspect
 import json
+import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -10,16 +12,27 @@ from collections.abc import AsyncGenerator, Callable, Generator
 from functools import wraps
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote
 
 import docstring_parser
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import Body, FastAPI, Form, Header, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, create_model
 
+from hayhooks.durable import ExecutionResult
+from hayhooks.durable_runtime import (
+    DefinitionRevisionConflictError,
+    DurableDeployment,
+    IdempotencyConflictError,
+    durable_runtime,
+)
+from hayhooks.execution import ExecutionStoreError
 from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
 from hayhooks.server.logger import log, log_elapsed
+from hayhooks.server.pipelines.lifecycle import close_pipeline_wrapper_lifecycle as _close_wrapper_lifecycle
+from hayhooks.server.pipelines.lifecycle import start_pipeline_wrapper_lifecycle as _start_wrapper_lifecycle
 from hayhooks.server.pipelines.models import (
     create_request_model_from_callable,
     create_response_model_from_callable,
@@ -53,6 +66,16 @@ from hayhooks.settings import DeployConcurrencyPolicy, settings
 # threading.Lock (not asyncio.Lock) because it's only acquired inside worker
 # threads spawned by asyncio.to_thread, so never on the event loop itself.
 _deploy_lock = threading.Lock()
+_deployment_transaction_lock = asyncio.Lock()
+
+_DURABLE_ROUTE_SUFFIXES = (
+    "/run-durable",
+    "/executions/{execution_id}",
+    "/executions/{execution_id}/cancel",
+    "/executions/{execution_id}/resume",
+)
+_IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{1,256}$")
+_MAX_DURABLE_OWNER_LENGTH = 512
 
 
 def _with_deploy_lock(func: Callable) -> Callable:
@@ -73,6 +96,181 @@ async def _offload(func: Callable, **kwargs: Any) -> Any:
     return await asyncio.to_thread(func, **kwargs)
 
 
+class _DeploymentSnapshot:
+    """Rollback state captured before preparation mutates files or loaded modules."""
+
+    def __init__(self, pipeline_name: str, app: FastAPI | None) -> None:
+        self.pipeline_name = pipeline_name
+        self.app = app
+        self.wrapper = registry.get(pipeline_name)
+        metadata = registry.get_metadata(pipeline_name)
+        self.metadata = dict(metadata) if metadata is not None else None
+        self.deployment = durable_runtime.current_deployment(pipeline_name)
+        self.routes = list(app.routes) if app is not None else None
+        self.openapi_schema = app.openapi_schema if app is not None else None
+        self.modules = {
+            name: module
+            for name, module in sys.modules.items()
+            if name == pipeline_name or name.startswith(f"{pipeline_name}.")
+        }
+        self.backup_dir = Path(tempfile.mkdtemp(prefix="hayhooks-deploy-rollback-"))
+        pipelines_dir = Path(settings.pipelines_dir)
+        source_dir = pipelines_dir / pipeline_name
+        if source_dir.is_dir():
+            shutil.copytree(source_dir, self.backup_dir / "pipeline")
+        for extension in (".yml", ".yaml"):
+            source = pipelines_dir / f"{pipeline_name}{extension}"
+            if source.is_file():
+                shutil.copy2(source, self.backup_dir / f"pipeline{extension}")
+
+    @classmethod
+    def capture(cls, pipeline_name: str, app: FastAPI | None) -> "_DeploymentSnapshot":
+        return cls(pipeline_name, app)
+
+    def restore_publication(self) -> None:
+        registry.remove(self.pipeline_name)
+        if self.wrapper is not None:
+            registry.add(self.pipeline_name, self.wrapper, metadata=dict(self.metadata or {}))
+        durable_runtime.install_deployment(self.pipeline_name, self.deployment)
+        if self.app is not None and self.routes is not None:
+            self.app.routes[:] = self.routes
+            self.app.openapi_schema = self.openapi_schema
+
+    def restore_files_and_modules(self) -> None:
+        remove_pipeline_files(self.pipeline_name, settings.pipelines_dir)
+        pipelines_dir = Path(settings.pipelines_dir)
+        pipelines_dir.mkdir(parents=True, exist_ok=True)
+        backup_pipeline = self.backup_dir / "pipeline"
+        if backup_pipeline.is_dir():
+            shutil.copytree(backup_pipeline, pipelines_dir / self.pipeline_name)
+        for extension in (".yml", ".yaml"):
+            backup = self.backup_dir / f"pipeline{extension}"
+            if backup.is_file():
+                shutil.copy2(backup, pipelines_dir / f"{self.pipeline_name}{extension}")
+
+        unload_pipeline_modules(self.pipeline_name)
+        sys.modules.update(self.modules)
+
+    def cleanup(self) -> None:
+        shutil.rmtree(self.backup_dir, ignore_errors=True)
+
+
+async def _publish_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
+    prepared: PreparedPipeline,
+    snapshot: _DeploymentSnapshot,
+    *,
+    app: FastAPI | None,
+    overwrite: bool,
+    cleanup_files_on_overwrite: bool,
+) -> dict[str, str]:
+    """Start and initialize a candidate, then swap all observable deployment state."""
+    if snapshot.wrapper is not None and not overwrite:
+        msg = f"Pipeline '{prepared.name}' already exists"
+        raise PipelineAlreadyExistsError(msg)
+
+    candidate = durable_runtime.create_deployment(prepared.name, prepared.wrapper)
+    candidate_lifecycle_started = True
+    old_quiesced = False
+    try:
+        await _start_wrapper_lifecycle(prepared.name, prepared.wrapper)
+        if candidate is not None and durable_runtime.started:
+            await candidate.prepare()
+
+        if snapshot.deployment is not None:
+            snapshot.deployment.deactivate()
+            old_quiesced = True
+            await snapshot.deployment.close()
+
+        result = commit_prepared_pipeline(
+            prepared,
+            app=app,
+            overwrite=overwrite,
+            cleanup_files_on_overwrite=cleanup_files_on_overwrite,
+            _durable_deployment=candidate,
+        )
+        durable_runtime.install_deployment(prepared.name, candidate)
+        if candidate is not None and durable_runtime.started:
+            candidate.activate()
+    except BaseException:
+        snapshot.restore_publication()
+        if candidate is not None:
+            candidate.deactivate()
+            await candidate.close()
+        if old_quiesced and snapshot.deployment is not None and durable_runtime.started:
+            await snapshot.deployment.start()
+        if candidate_lifecycle_started:
+            try:
+                await _close_wrapper_lifecycle(prepared.name, prepared.wrapper)
+            except Exception as error:
+                log.opt(exception=True).warning("Error rolling back pipeline '{}' lifecycle: {}", prepared.name, error)
+        raise
+
+    old_wrapper = snapshot.wrapper
+    if old_wrapper is not None and old_wrapper is not prepared.wrapper:
+        old_deployment = snapshot.deployment
+        retirement = candidate or old_deployment
+        target_revision = candidate.revision if candidate is not None else "__deployment_removed__"
+
+        async def retirement_pass() -> None:
+            if retirement is not None:
+                retired = await retirement.store.retire_incompatible(target_revision)
+                if retired:
+                    log.info(
+                        "{} | retired {} durable execution(s) from a replaced definition",
+                        prepared.name,
+                        retired,
+                    )
+
+        async def retire_until_success() -> None:
+            while True:
+                try:
+                    await retirement_pass()
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    log.opt(exception=error).warning(
+                        "{} | durable revision retirement failed; retrying: {}",
+                        prepared.name,
+                        error,
+                    )
+                    await asyncio.sleep(1)
+
+        async def close_old_wrapper() -> None:
+            try:
+                await _close_wrapper_lifecycle(prepared.name, old_wrapper)
+            except Exception as error:
+                log.opt(exception=True).warning("Error closing replaced pipeline '{}': {}", prepared.name, error)
+
+        try:
+            await retirement_pass()
+        except Exception as error:
+            log.opt(exception=error).warning(
+                "{} | initial durable revision retirement failed; retrying in background: {}",
+                prepared.name,
+                error,
+            )
+            durable_runtime.track_background_task(
+                retire_until_success(),
+                name=f"durable-revision-retirement:{prepared.name}",
+            )
+
+        if old_deployment is not None and old_deployment.manager.draining:
+
+            async def finish_replacement() -> None:
+                await old_deployment.manager.wait_drained()
+                await close_old_wrapper()
+                await retire_until_success()
+
+            durable_runtime.track_background_task(
+                finish_replacement(),
+                name=f"durable-replacement-cleanup:{prepared.name}",
+            )
+        else:
+            await close_old_wrapper()
+    return result
+
+
 async def deploy_pipeline_yaml_async(
     pipeline_name: str,
     source_code: str,
@@ -83,18 +281,33 @@ async def deploy_pipeline_yaml_async(
     """
     Async wrapper that offloads ``deploy_pipeline_yaml`` off the event loop.
 
-    Respects the ``deploy_concurrency`` setting: when *serialized* (default), a
-    global lock ensures only one deploy/undeploy runs at a time; when *parallel*,
-    the call runs in a thread without serialization.
+    Preparation respects ``deploy_concurrency``. Publication and lifecycle are
+    always serialized so registry, route, file, and runtime state change together.
     """
-    return await _offload(
-        deploy_pipeline_yaml,
-        pipeline_name=pipeline_name,
-        source_code=source_code,
-        app=app,
-        overwrite=overwrite,
-        options=options,
-    )
+    async with _deployment_transaction_lock:
+        save_file = True if options is None else bool(options.get("save_file", True))
+        snapshot = _DeploymentSnapshot.capture(pipeline_name, app)
+        try:
+            if overwrite and save_file:
+                remove_pipeline_files(pipeline_name, settings.pipelines_dir)
+            prepared = await _offload(
+                prepare_pipeline_yaml,
+                pipeline_name=pipeline_name,
+                source_code=source_code,
+                options=options,
+            )
+            return await _publish_prepared_pipeline(
+                prepared,
+                snapshot,
+                app=app,
+                overwrite=overwrite,
+                cleanup_files_on_overwrite=overwrite and not save_file,
+            )
+        except BaseException:
+            snapshot.restore_files_and_modules()
+            raise
+        finally:
+            snapshot.cleanup()
 
 
 async def deploy_pipeline_files_async(
@@ -105,19 +318,106 @@ async def deploy_pipeline_files_async(
     overwrite: bool = False,
 ) -> dict[str, str]:
     """Async wrapper that offloads ``deploy_pipeline_files`` off the event loop."""
-    return await _offload(
-        deploy_pipeline_files,
-        pipeline_name=pipeline_name,
-        files=files,
-        app=app,
-        save_files=save_files,
-        overwrite=overwrite,
-    )
+    async with _deployment_transaction_lock:
+        snapshot = _DeploymentSnapshot.capture(pipeline_name, app)
+        try:
+            if overwrite and save_files:
+                remove_pipeline_files(pipeline_name, settings.pipelines_dir)
+            prepared = await _offload(
+                prepare_pipeline_files,
+                pipeline_name=pipeline_name,
+                files=files,
+                save_files=save_files,
+            )
+            return await _publish_prepared_pipeline(
+                prepared,
+                snapshot,
+                app=app,
+                overwrite=overwrite,
+                cleanup_files_on_overwrite=overwrite and not save_files,
+            )
+        except BaseException:
+            snapshot.restore_files_and_modules()
+            raise
+        finally:
+            snapshot.cleanup()
 
 
-async def undeploy_pipeline_async(pipeline_name: str, app: FastAPI | None = None) -> None:
-    """Async wrapper that offloads ``undeploy_pipeline`` off the event loop."""
-    return await _offload(undeploy_pipeline, pipeline_name=pipeline_name, app=app)
+async def undeploy_pipeline_async(  # noqa: C901
+    pipeline_name: str,
+    app: FastAPI | None = None,
+) -> None:
+    """Atomically unpublish a pipeline before stopping its owned resources."""
+    async with _deployment_transaction_lock:
+        wrapper = registry.get(pipeline_name)
+        if wrapper is None:
+            raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
+        deployment = durable_runtime.current_deployment(pipeline_name)
+        if deployment is not None:
+            deployment.deactivate()
+
+        undeploy_pipeline(pipeline_name=pipeline_name, app=app)
+        durable_runtime.install_deployment(pipeline_name, None)
+
+        if deployment is not None:
+            await deployment.close()
+
+        async def close_wrapper() -> None:
+            try:
+                await _close_wrapper_lifecycle(pipeline_name, wrapper)
+            except Exception as error:
+                log.opt(exception=True).warning("Error closing undeployed pipeline '{}': {}", pipeline_name, error)
+
+        if deployment is None:
+            await close_wrapper()
+            return
+
+        async def retirement_pass() -> None:
+            retired = await deployment.store.retire_incompatible("__deployment_removed__")
+            if retired:
+                log.info("{} | retired {} execution(s) during undeploy", pipeline_name, retired)
+
+        async def retire_until_success() -> None:
+            while True:
+                try:
+                    await retirement_pass()
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    log.opt(exception=error).warning(
+                        "{} | undeploy retirement failed; retrying: {}",
+                        pipeline_name,
+                        error,
+                    )
+                    await asyncio.sleep(1)
+
+        try:
+            await retirement_pass()
+        except Exception as error:
+            log.opt(exception=error).warning(
+                "{} | initial undeploy retirement failed; retrying in background: {}",
+                pipeline_name,
+                error,
+            )
+            durable_runtime.track_background_task(
+                retire_until_success(),
+                name=f"durable-undeploy-retirement:{pipeline_name}",
+            )
+
+        if deployment.manager.draining:
+
+            async def finish_undeploy() -> None:
+                await deployment.manager.wait_drained()
+                await close_wrapper()
+                await retire_until_success()
+
+            durable_runtime.track_background_task(
+                finish_undeploy(),
+                name=f"durable-undeploy-cleanup:{pipeline_name}",
+            )
+        else:
+            await close_wrapper()
 
 
 def _is_single_yaml_file(files: dict[str, str]) -> bool:
@@ -442,7 +742,7 @@ def create_run_endpoint_handler(
         if response_model is None:
             return cast(Response | BaseModel, traced_result)
 
-        return cast(Response | BaseModel, response_model(result=traced_result))
+        return cast(Response | BaseModel, cast(Any, response_model)(result=traced_result))
 
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(
@@ -463,6 +763,7 @@ def add_pipeline_api_route(
     pipeline_wrapper: BasePipelineWrapper,
     *,
     _defer_openapi_rebuild: bool = False,
+    _durable_deployment: DurableDeployment | None = None,
 ) -> None:
     """
     Create or replace the wrapper-based pipeline run endpoint at /{pipeline_name}/run.
@@ -495,6 +796,13 @@ def add_pipeline_api_route(
         clog.warning(
             f"Pipeline '{pipeline_name}' does not implement `run_api` or `run_api_async`. "
             f"Skipping /{pipeline_name}/run API route creation."
+        )
+        _add_durable_api_routes(
+            app,
+            pipeline_name,
+            pipeline_wrapper,
+            deployment=_durable_deployment,
+            _defer_openapi_rebuild=_defer_openapi_rebuild,
         )
         return
 
@@ -539,6 +847,14 @@ def add_pipeline_api_route(
 
     app.add_api_route(**route_kwargs)
 
+    _add_durable_api_routes(
+        app,
+        pipeline_name,
+        pipeline_wrapper,
+        deployment=_durable_deployment,
+        _defer_openapi_rebuild=True,
+    )
+
     registry.update_metadata(
         pipeline_name,
         {
@@ -550,6 +866,204 @@ def add_pipeline_api_route(
 
     if not _defer_openapi_rebuild:
         clog.debug("Setting up FastAPI app")
+        app.openapi_schema = None
+        app.setup()
+
+
+def _execution_links(pipeline_name: str, execution_id: str) -> dict[str, str]:
+    root = f"/{pipeline_name}/executions/{quote(execution_id, safe='-._~')}"
+    return {"self": root, "cancel": f"{root}/cancel", "resume": f"{root}/resume"}
+
+
+def _execution_result(
+    deployment: DurableDeployment,
+    record: Any,
+    *,
+    response_model: type[ExecutionResult] = ExecutionResult,
+) -> ExecutionResult:
+    return response_model.model_validate(record.safe_view(links=_execution_links(deployment.name, record.execution_id)))
+
+
+def _durable_response_model(deployment: DurableDeployment) -> type[ExecutionResult]:
+    if deployment.result_type is Any:
+        return ExecutionResult
+    return create_model(
+        f"{deployment.name.title().replace('-', '').replace('_', '')}ExecutionResult",
+        __base__=ExecutionResult,
+        result=(deployment.result_type | None, None),
+    )
+
+
+def _durable_owner(request: Request) -> tuple[str | None, bool]:
+    header = settings.durable_trusted_owner_header.strip()
+    if not header:
+        return None, False
+    owner = request.headers.get(header)
+    if not owner:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Authenticated owner header '{header}' is required",
+        )
+    if len(owner) > _MAX_DURABLE_OWNER_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Authenticated owner header '{header}' exceeds 512 characters",
+        )
+    return owner, True
+
+
+def _remove_pipeline_route(app: FastAPI, path: str, method: str) -> None:
+    for route in list(app.routes):
+        if isinstance(route, APIRoute) and route.path == path and route.methods is not None and method in route.methods:
+            app.routes.remove(route)
+
+
+def _remove_durable_api_routes(app: FastAPI, pipeline_name: str) -> None:
+    root = f"/{pipeline_name}"
+    durable_paths = {f"{root}{suffix}" for suffix in _DURABLE_ROUTE_SUFFIXES}
+    app.routes[:] = [route for route in app.routes if not (isinstance(route, APIRoute) and route.path in durable_paths)]
+
+
+def _add_durable_api_routes(  # noqa: C901, PLR0915 - route-local handlers share generated models
+    app: FastAPI,
+    pipeline_name: str,
+    pipeline_wrapper: BasePipelineWrapper,
+    *,
+    deployment: DurableDeployment | None = None,
+    _defer_openapi_rebuild: bool,
+) -> None:
+    """Register typed durable submission and control resources when opted in."""
+    _remove_durable_api_routes(app, pipeline_name)
+    if not durable_runtime.has_capability(pipeline_wrapper):
+        if not _defer_openapi_rebuild:
+            app.openapi_schema = None
+            app.setup()
+        return
+    deployment = deployment or durable_runtime.deployment(pipeline_name, pipeline_wrapper)
+    request_model = deployment.request_type
+    response_model = _durable_response_model(deployment)
+    root = f"/{pipeline_name}"
+
+    async def submit(
+        run_req: Any,
+        response: Response,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> ExecutionResult:
+        if idempotency_key is not None and _IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key) is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Idempotency-Key must contain 1-256 URL-safe letters, digits, '.', '_', '~', or '-'",
+            )
+        try:
+            owner_id, _ = _durable_owner(request)
+            created, record = await deployment.submit(
+                run_req.model_dump(mode="json"),
+                execution_id=idempotency_key,
+                owner_id=owner_id,
+            )
+        except IdempotencyConflictError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        except DefinitionRevisionConflictError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        except (ValidationError, ValueError) as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+        except (ExecutionStoreError, RuntimeError) as error:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+        response.status_code = status.HTTP_200_OK if not created and record.terminal else status.HTTP_202_ACCEPTED
+        response.headers["Location"] = _execution_links(deployment.name, record.execution_id)["self"]
+        if not created:
+            response.headers["Idempotent-Replay"] = "true"
+        return _execution_result(deployment, record, response_model=response_model)
+
+    # FastAPI consumes the runtime annotation; keep the Python type checker on
+    # the stable BaseModel boundary while preserving the generated request schema.
+    submit.__annotations__["run_req"] = request_model
+
+    async def inspect_execution(execution_id: str, request: Request) -> ExecutionResult:
+        try:
+            owner_id, enforce_owner = _durable_owner(request)
+            record = await deployment.get(execution_id, owner_id=owner_id, enforce_owner=enforce_owner)
+            return _execution_result(deployment, record, response_model=response_model)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Execution not found") from error
+        except DefinitionRevisionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ExecutionStoreError as error:
+            raise HTTPException(status_code=503, detail="Durable execution store is unavailable") from error
+
+    async def cancel_execution(execution_id: str, response: Response, request: Request) -> ExecutionResult:
+        try:
+            owner_id, enforce_owner = _durable_owner(request)
+            accepted = await deployment.request_cancel(
+                execution_id,
+                owner_id=owner_id,
+                enforce_owner=enforce_owner,
+            )
+            record = await deployment.get(execution_id, owner_id=owner_id, enforce_owner=enforce_owner)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Execution not found") from error
+        except DefinitionRevisionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ExecutionStoreError as error:
+            raise HTTPException(status_code=503, detail="Durable execution store is unavailable") from error
+        response.status_code = status.HTTP_202_ACCEPTED if accepted else status.HTTP_200_OK
+        return _execution_result(deployment, record, response_model=response_model)
+
+    async def resume_execution(
+        execution_id: str,
+        response: Response,
+        request: Request,
+        update: Any = Body(default=None),  # noqa: B008
+    ) -> ExecutionResult:
+        try:
+            owner_id, enforce_owner = _durable_owner(request)
+            resumed = await deployment.resume(
+                execution_id,
+                update,
+                owner_id=owner_id,
+                enforce_owner=enforce_owner,
+            )
+            if not resumed:
+                raise HTTPException(status_code=409, detail="Execution is not waiting")
+            record = await deployment.get(execution_id, owner_id=owner_id, enforce_owner=enforce_owner)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Execution not found") from error
+        except DefinitionRevisionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except (ValidationError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except ExecutionStoreError as error:
+            raise HTTPException(status_code=503, detail="Durable execution store is unavailable") from error
+        response.status_code = status.HTTP_202_ACCEPTED
+        return _execution_result(deployment, record, response_model=response_model)
+
+    if deployment.resume_type is not None:
+        resume_execution.__annotations__["update"] = deployment.resume_type | None
+
+    routes = [
+        (f"{root}/run-durable", submit, ["POST"], f"{pipeline_name}_run_durable"),
+        (f"{root}/executions/{{execution_id}}", inspect_execution, ["GET"], f"{pipeline_name}_execution"),
+        (f"{root}/executions/{{execution_id}}/cancel", cancel_execution, ["POST"], f"{pipeline_name}_cancel"),
+        (f"{root}/executions/{{execution_id}}/resume", resume_execution, ["POST"], f"{pipeline_name}_resume"),
+    ]
+    for path, endpoint, methods, name in routes:
+        _remove_pipeline_route(app, path, methods[0])
+        app.add_api_route(
+            path,
+            endpoint,
+            methods=methods,
+            name=name,
+            response_model=response_model,
+            tags=["durable executions"],
+            status_code=status.HTTP_202_ACCEPTED if methods == ["POST"] else status.HTTP_200_OK,
+        )
+
+    registry.update_metadata(
+        pipeline_name,
+        {"durable_request_model": request_model, "durable_response_model": response_model},
+    )
+    if not _defer_openapi_rebuild:
         app.openapi_schema = None
         app.setup()
 
@@ -567,6 +1081,7 @@ def _register_prepared_pipeline(
     extra_metadata: dict[str, Any] | None = None,
     *,
     _defer_openapi_rebuild: bool = False,
+    _durable_deployment: DurableDeployment | None = None,
 ) -> dict[str, str]:
     """
     Register a prepared pipeline wrapper and optionally add its API route.
@@ -633,7 +1148,13 @@ def _register_prepared_pipeline(
 
     # Create API route if app is provided
     if app:
-        add_pipeline_api_route(app, pipeline_name, pipeline_wrapper, _defer_openapi_rebuild=_defer_openapi_rebuild)
+        add_pipeline_api_route(
+            app,
+            pipeline_name,
+            pipeline_wrapper,
+            _defer_openapi_rebuild=_defer_openapi_rebuild,
+            _durable_deployment=_durable_deployment,
+        )
 
     return {"name": pipeline_name}
 
@@ -734,6 +1255,7 @@ def commit_prepared_pipeline(
     *,
     _defer_openapi_rebuild: bool = False,
     cleanup_files_on_overwrite: bool = True,
+    _durable_deployment: DurableDeployment | None = None,
 ) -> dict[str, str]:
     """
     Commit a prepared pipeline to the registry and (optionally) add its route.
@@ -776,6 +1298,7 @@ def commit_prepared_pipeline(
             app=app,
             extra_metadata=prepared.extra_metadata,
             _defer_openapi_rebuild=_defer_openapi_rebuild,
+            _durable_deployment=_durable_deployment,
         )
 
 
@@ -991,13 +1514,13 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
         unload_pipeline_modules(pipeline_name)
 
         if app:
-            # Remove API routes for the pipeline
-            # All pipelines have a run endpoint at /<pipeline_name>/run
-            routes_to_remove = [
-                route for route in app.routes if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run"
+            route_paths = {
+                f"/{pipeline_name}/run",
+                *(f"/{pipeline_name}{suffix}" for suffix in _DURABLE_ROUTE_SUFFIXES),
+            }
+            app.routes[:] = [
+                route for route in app.routes if not (isinstance(route, APIRoute) and route.path in route_paths)
             ]
-            for route in routes_to_remove:
-                app.routes.remove(route)
 
             # Invalidate OpenAPI cache
             app.openapi_schema = None

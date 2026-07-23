@@ -1,6 +1,6 @@
 import inspect
 from collections.abc import AsyncGenerator, Callable, Generator
-from typing import Any, get_origin
+from typing import Any, get_origin, get_type_hints
 
 from docstring_parser.common import Docstring
 from fastapi.responses import Response, StreamingResponse
@@ -8,6 +8,28 @@ from pydantic import BaseModel, Field, create_model
 
 from hayhooks.server.exceptions import PipelineWrapperError
 from hayhooks.server.utils.yaml_utils import InputResolution, OutputResolution
+
+
+def _create_schema_model(model_name: str, **fields: Any) -> type[BaseModel]:
+    """Create a dynamic API model that Pydantic can resolve during OpenAPI generation."""
+    model = create_model(model_name, __module__=__name__, **fields)
+
+    # FastAPI may rebuild a route's TypeAdapter long after the route is
+    # registered.  Pydantic resolves the dynamically-created model by name in
+    # this module's namespace at that point, so keep it available there.
+    globals()[model_name] = model
+    model.model_rebuild()
+    return model
+
+
+def _resolved_annotations(func: Callable) -> dict[str, Any]:
+    """Resolve postponed annotations in the wrapper module that declared them."""
+    try:
+        return get_type_hints(func, include_extras=True)
+    except (NameError, TypeError) as error:
+        name = getattr(func, "__name__", type(func).__name__)
+        msg = f"Pipeline wrapper has an invalid type annotation on '{name}': {error}"
+        raise PipelineWrapperError(msg) from error
 
 
 def get_request_model_from_resolved_io(
@@ -30,7 +52,7 @@ def get_request_model_from_resolved_io(
         default_value = ... if resolution.required else None
         fields[input_name] = (input_type, default_value)
 
-    return create_model(f"{pipeline_name.capitalize()}RunRequest", **fields)
+    return _create_schema_model(f"{pipeline_name.capitalize()}RunRequest", **fields)
 
 
 def get_response_model_from_resolved_io(
@@ -52,7 +74,7 @@ def get_response_model_from_resolved_io(
         output_type = resolution.type
         fields[output_name] = (output_type, ...)
 
-    return create_model(
+    return _create_schema_model(
         f"{pipeline_name.capitalize()}RunResponse", result=(dict, Field(..., description="Pipeline result"))
     )
 
@@ -70,6 +92,7 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
     """
 
     params = inspect.signature(func).parameters
+    annotations = _resolved_annotations(func)
     param_docs = {p.arg_name: p.description for p in docstring.params}
 
     fields: dict[str, Any] = {}
@@ -77,9 +100,9 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
         default_value = ... if param.default == param.empty else param.default
         description = param_docs.get(name) or f"Parameter '{name}'"
         field_info = Field(default=default_value, description=description)
-        fields[name] = (param.annotation, field_info)
+        fields[name] = (annotations.get(name, param.annotation), field_info)
 
-    return create_model(f"{model_name}Request", **fields)
+    return _create_schema_model(f"{model_name}Request", **fields)
 
 
 def _is_streaming_type(return_type: type) -> bool:
@@ -113,7 +136,7 @@ def create_response_model_from_callable(
         Pydantic model class for response, or None for streaming/file responses.
     """
 
-    return_type = inspect.signature(func).return_annotation
+    return_type = _resolved_annotations(func).get("return", inspect.signature(func).return_annotation)
 
     if return_type is inspect.Signature.empty:
         msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"  # ty: ignore[unresolved-attribute]
@@ -134,7 +157,9 @@ def create_response_model_from_callable(
 
     return_description = docstring.returns.description if docstring.returns else None
 
-    return create_model(f"{model_name}Response", result=(return_type, Field(..., description=return_description)))
+    return _create_schema_model(
+        f"{model_name}Response", result=(return_type, Field(..., description=return_description))
+    )
 
 
 def get_response_class_from_callable(func: Callable) -> type[Response] | None:
@@ -154,7 +179,7 @@ def get_response_class_from_callable(func: Callable) -> type[Response] | None:
         * ``None`` for normal JSON endpoints (the caller should omit the ``response_class``
           kwarg so FastAPI uses its default ``JSONResponse``).
     """
-    return_type = inspect.signature(func).return_annotation
+    return_type = _resolved_annotations(func).get("return", inspect.signature(func).return_annotation)
 
     if return_type is inspect.Signature.empty:
         return None

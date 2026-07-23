@@ -19,10 +19,15 @@ class BasePipelineWrapper(ABC):
     # (a list of dicts with "id", "name", "description", "tags", "examples")
     a2a_card: dict[str, Any] | None = None
 
+    # Optional Pydantic model used to type and validate durable resume input.
+    durable_resume_model: type[Any] | None = None
+
     def __init__(self):
         self.pipeline = None
         self._is_run_api_implemented = False
         self._is_run_api_async_implemented = False
+        self._is_run_durable_implemented = False
+        self._is_run_durable_async_implemented = False
         self._is_run_chat_completion_implemented = False
         self._is_run_chat_completion_async_implemented = False
         self._is_run_response_implemented = False
@@ -40,6 +45,14 @@ class BasePipelineWrapper(ABC):
         Pipelines can be loaded from YAML or provided directly as code.
         """
         pass
+
+    async def start(self) -> None:
+        """Start optional event-loop-owned resources after deployment."""
+        return None
+
+    async def close(self) -> None:
+        """Stop optional background work and release resources before removal."""
+        return None
 
     # Execute the pipeline in API mode.
     #
@@ -62,6 +75,22 @@ class BasePipelineWrapper(ABC):
     # Asynchronous version of run_api.
     async def run_api_async(self):
         msg = "run_api_async not implemented"
+        raise NotImplementedError(msg)
+
+    def run_durable(self):
+        """
+        Run one durable execution in a worker thread.
+
+        Override either this method or :meth:`run_durable_async`, never both.
+        The first argument after ``self`` must be ``DurableContext`` and the
+        second must be one annotated Pydantic request model.
+        """
+        msg = "run_durable not implemented"
+        raise NotImplementedError(msg)
+
+    async def run_durable_async(self):
+        """Run one durable execution without blocking the server event loop."""
+        msg = "run_durable_async not implemented"
         raise NotImplementedError(msg)
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
