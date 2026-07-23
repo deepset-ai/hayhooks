@@ -233,8 +233,11 @@ def _coercible_classes(type_: Any) -> set[type]:
     A class is coercible if it exposes a `from_dict` method (Haystack dataclasses and Components), is a Pydantic
     model, or is a standard-library dataclass. Follows `list[T]` and optionals/unions of those.
 
-    :param type_: The type to inspect.
-    :returns: The set of coercible classes `type_` involves (empty if none).
+    Args:
+        type_: The type to inspect.
+
+    Returns:
+        The set of coercible classes `type_` involves (empty if none).
     """
     if _is_union(type_):
         classes: set[type] = set()
@@ -327,11 +330,16 @@ def coerce_pipeline_inputs(pipeline: "PipelineBase", data: dict[str, Any]) -> di
     result = pipeline.run(inputs)
     ```
 
-    :param pipeline: The pipeline whose input socket types drive the coercion.
-    :param data: The pipeline input data, in nested or flat format.
-    :returns: A new dictionary with the same structure as `data` and deserialized values.
-    :raises ValueError: If a socket type involves more than one distinct coercible class and the corresponding
-        value is a serialized dictionary.
+    Args:
+        pipeline: The pipeline whose input socket types drive the coercion.
+        data: The pipeline input data, in nested or flat format.
+
+    Returns:
+        A new dictionary with the same structure as `data` and deserialized values.
+
+    Raises:
+        ValueError: If a socket type involves more than one distinct coercible class and the corresponding
+            value is a serialized dictionary.
     """
     # mirrors the format detection in Pipeline.run: nested if all values are dictionaries
     if all(isinstance(value, dict) for value in data.values()):
