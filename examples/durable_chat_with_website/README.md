@@ -21,7 +21,7 @@ idempotency key:
 ```bash
 curl -i -X POST http://localhost:1416/chat_with_website/run-durable \
   -H 'content-type: application/json' \
-  -H 'Idempotency-Key: python-generators-v1' \
+  -H 'Idempotency-Key: python-generators-v2' \
   -d '{
     "urls": ["https://docs.python.org/3/howto/functional.html"],
     "question": "What is a generator and why would I use one?"
@@ -31,20 +31,20 @@ curl -i -X POST http://localhost:1416/chat_with_website/run-durable \
 The key is also the execution ID, so the result can be inspected directly:
 
 ```bash
-curl -s http://localhost:1416/chat_with_website/executions/python-generators-v1 \
-  | python -m json.tool
+curl -s http://localhost:1416/chat_with_website/executions/python-generators-v2 | jq
 ```
 
-The wrapper checkpoints before `converter`, `prompt`, and `llm`. Each snapshot
-contains completed upstream work. If Hayhooks stops after the `llm` checkpoint,
-restart it with the same command: the persisted Pipeline snapshot resumes at
-the generator without fetching and converting the website again.
+The wrapper checkpoints before `converter`, after the network fetch has
+completed. If Hayhooks stops after that checkpoint, restart it with the same
+command: the persisted Pipeline snapshot resumes without fetching the website
+again. Conversion, prompt construction, and the OpenAI call may repeat. Keeping
+those downstream values out of additional snapshots also avoids duplicating a
+large page until the execution record exceeds its configured size limit.
 
 Cancellation is persisted:
 
 ```bash
-curl -i -X POST \
-  http://localhost:1416/chat_with_website/executions/python-generators-v1/cancel
+curl -i -X POST http://localhost:1416/chat_with_website/executions/python-generators-v2/cancel
 ```
 
 The execution model remains at least once. In particular, an OpenAI request may

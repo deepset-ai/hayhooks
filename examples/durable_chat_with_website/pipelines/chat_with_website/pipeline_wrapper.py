@@ -48,10 +48,10 @@ class PipelineWrapper(BasePipelineWrapper):
                     "fetcher": {"urls": sources},
                     "prompt": {"query": request.question},
                 },
-                # Each checkpoint contains the completed upstream work. After a
-                # restart, Haystack resumes from the next component instead of
-                # fetching and converting the websites again.
-                checkpoint_at=["converter", "prompt", "llm"],
+                # Preserve the expensive network fetch without copying the
+                # converted page and rendered prompt into later snapshots.
+                # Conversion, prompting, and the LLM remain replayable.
+                checkpoint_at=["converter"],
             )
         except PipelineRuntimeError as error:
             await context.retry(f"Website question Pipeline failed: {error}", delay=2)

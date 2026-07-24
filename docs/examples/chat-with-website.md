@@ -42,13 +42,13 @@ curl -X POST http://localhost:1416/v1/chat/completions \
 
 The [durable variant](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_chat_with_website) keeps the
 same fetcher → converter → prompt → OpenAI generator graph and adds a typed `run_durable_async()` method. Hayhooks
-persists Pipeline snapshots before the converter, prompt, and LLM, allowing completed upstream work to survive a
-restart.
+persists a Pipeline snapshot after the network fetch and before conversion, allowing the fetched page to survive a
+restart without duplicating converted documents and rendered prompts in later snapshots.
 
 ```bash
 curl -i -X POST http://localhost:1416/chat_with_website/run-durable \
   -H 'content-type: application/json' \
-  -H 'Idempotency-Key: python-generators-v1' \
+  -H 'Idempotency-Key: python-generators-v2' \
   -d '{
     "urls": ["https://docs.python.org/3/howto/functional.html"],
     "question": "What is a generator and why would I use one?"

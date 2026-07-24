@@ -731,7 +731,7 @@ async def test_durable_chat_with_website_example_loads_and_maps_pipeline_input(m
             "fetcher": {"urls": ["https://docs.python.org/3/howto/functional.html"]},
             "prompt": {"query": "What is a generator?"},
         }
-        assert context.checkpoint_at == ["converter", "prompt", "llm"]
+        assert context.checkpoint_at == ["converter"]
         assert context.progress == [
             ("accepted", "Website question accepted"),
             ("completed", "Website answer completed"),
