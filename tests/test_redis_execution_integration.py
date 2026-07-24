@@ -16,7 +16,6 @@ from hayhooks.execution import (
     ExecutionKind,
     ExecutionLeaseLostError,
     ExecutionRecord,
-    ExecutionRetiredError,
     ExecutionStatus,
     ExecutionStoreError,
     RetryableExecutionError,
@@ -180,13 +179,15 @@ async def test_retirement_cannot_be_overwritten_by_an_already_claimed_worker(red
     record = _record("retired-after-claim")
     record.definition_revision = "old-revision"
     assert await store.submit(record)
-    claim = await store.claim_next("worker")
-    assert claim is not None
 
-    assert await store.retire_incompatible("new-revision") == 1
-    claim.record.status = ExecutionStatus.RUNNING
-    with pytest.raises(ExecutionRetiredError):
-        await claim.checkpoint()
+    save_owned = store._save_owned
+
+    async def retire_before_checkpoint(candidate, token):
+        assert await store.retire_incompatible("new-revision") == 1
+        await save_owned(candidate, token)
+
+    store._save_owned = retire_before_checkpoint  # type: ignore[method-assign]
+    assert await store.claim_next("worker") is None
 
     persisted = await store.get("retired-after-claim")
     assert persisted is not None
@@ -512,6 +513,7 @@ async def test_operational_counts_follow_every_real_redis_state_transition(redis
 
     await redis.delete(store._record_key("counted"))
     await redis.zadd(store.terminal_count_index_key, {"counted": time.time() - 1})
+    store._next_count_cleanup_at = 0
     assert (await store.operational_counts())["completed"] == 0
 
     assert await store.submit(_record("canceled"))
