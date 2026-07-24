@@ -254,6 +254,11 @@ Implement `run_durable()` or `run_durable_async()` on an ordinary `BasePipelineW
 The method receives a `DurableContext` and one Pydantic request model; it returns a Pydantic result model. Hayhooks
 owns records, worker lifecycle, Redis, cancellation, and resume.
 
+Ordinary exceptions from a durable wrapper are terminal failures. For a
+transient dependency failure (for example an LLM timeout or rate limit), call
+`await context.retry(...)` so Hayhooks persists the checkpoint and schedules a
+bounded retry; do not simply re-raise the transient error.
+
 ```python
 from haystack import Pipeline
 from pydantic import BaseModel

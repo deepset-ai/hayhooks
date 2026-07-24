@@ -406,16 +406,31 @@ def _durable_context() -> DurableContext:
 
 def _checkpoint_data(state: Any, context: DurableContext) -> dict[str, Any]:
     """Exclude live resources from State's otherwise public serialization."""
-    payload = state.to_dict()
-    data = dict(payload.get("data", {}))
-    schema = dict(payload.get("schema", {}))
-    for key in ("tools", "hook_context"):
-        data.pop(key, None)
-        schema.pop(key, None)
+    payload = _without_live_agent_resources(state.to_dict())
     return cast(
         dict[str, Any],
-        validate_json({"schema": schema, "data": data}, limit=context.record.max_record_bytes, label="Agent state"),
+        validate_json(payload, limit=context.record.max_record_bytes, label="Agent state"),
     )
+
+
+def _without_live_agent_resources(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove per-run Agent resources from a serialized state checkpoint."""
+    cleaned = dict(payload)
+    data = dict(cast(Mapping[str, Any], cleaned.get("data", {})))
+    schema = dict(cast(Mapping[str, Any], cleaned.get("schema", {})))
+    serialization_schema = dict(data.get("serialization_schema", {}))
+    properties = dict(serialization_schema.get("properties", {}))
+    serialized_data = dict(data.get("serialized_data", {}))
+    for key in ("tools", "hook_context"):
+        schema.pop(key, None)
+        properties.pop(key, None)
+        serialized_data.pop(key, None)
+    serialization_schema["properties"] = properties
+    data["serialization_schema"] = serialization_schema
+    data["serialized_data"] = serialized_data
+    cleaned["schema"] = schema
+    cleaned["data"] = data
+    return cleaned
 
 
 async def _checkpoint_agent_state(context: DurableContext, state: Any) -> None:
@@ -431,7 +446,7 @@ def _restore_agent_state(context: DurableContext, state: Any) -> None:
     restored_flag = "_hayhooks_durable_restored"
     if state.get(restored_flag, False):
         return
-    restored = State.from_dict(cast(dict[str, Any], checkpoint.data))
+    restored = State.from_dict(_without_live_agent_resources(checkpoint.data))
     live_tools = state.data.get("tools")
     live_hook_context = state.data.get("hook_context")
     state.data.clear()

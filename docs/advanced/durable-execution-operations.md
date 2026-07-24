@@ -120,6 +120,12 @@ Cancellation timestamps and reasons live in the versioned execution record and
 do not expire while work is nonterminal. Completion, checkpoint, waiting, and
 retry scripts preserve an accepted cancellation.
 
+Waiting records intentionally have no automatic TTL: they retain the
+checkpoint until the client resumes, cancels, or a replacement retires them.
+Operators that need a maximum approval window should enforce it in their
+application and issue cancellation; terminal retention then follows the normal
+terminal TTL.
+
 Retries use bounded exponential delay. `HAYHOOKS_DURABLE_MAX_ATTEMPTS` includes
 the first attempt. Explicit application delay is clamped to
 `HAYHOOKS_DURABLE_RETRY_MAX_DELAY`.
@@ -162,6 +168,12 @@ client-supplied copy of that header and inject authenticated identity over a
 trusted hop. Owner values longer than 512 characters are rejected rather than
 truncated, so distinct identities cannot collapse onto the same authorization
 boundary. Never expose this mode directly to untrusted clients.
+
+This REST owner mechanism does not authenticate the A2A protocol surface. A2A
+tasks use the A2A task-store owner model and are not addressable through the
+owner-protected durable REST endpoints. Put A2A behind its own authenticated
+gateway or provide an authenticated custom task store when multi-tenant A2A
+access is required.
 
 Terminal records expire through `HAYHOOKS_DURABLE_TERMINAL_TTL_SECONDS`.
 Terminal A2A tasks use their independent

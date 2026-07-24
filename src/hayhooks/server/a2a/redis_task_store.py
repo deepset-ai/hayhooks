@@ -588,6 +588,9 @@ class RedisTaskStoreProvider(TaskStoreProvider):
         owner_resolver: OwnerResolver = _default_owner_resolver,
         close_redis: bool = True,
         terminal_ttl_seconds: int | None = None,
+        socket_timeout: float | None = None,
+        socket_connect_timeout: float | None = None,
+        health_check_interval: int | None = None,
     ) -> None:
         redis_url = redis_url or settings.a2a_redis_url
         key_prefix = key_prefix or settings.a2a_redis_key_prefix
@@ -596,13 +599,26 @@ class RedisTaskStoreProvider(TaskStoreProvider):
         self.stores: dict[str, RedisTaskStore] = {}
         self._close_redis = close_redis
         self.terminal_ttl_seconds = terminal_ttl_seconds or settings.a2a_terminal_task_ttl_seconds
+        self.socket_timeout = socket_timeout if socket_timeout is not None else settings.a2a_redis_socket_timeout
+        self.socket_connect_timeout = (
+            socket_connect_timeout if socket_connect_timeout is not None else settings.a2a_redis_socket_connect_timeout
+        )
+        self.health_check_interval = (
+            health_check_interval if health_check_interval is not None else settings.a2a_redis_health_check_interval
+        )
         if redis is None:
             try:
                 from redis.asyncio import Redis
             except ImportError as error:  # pragma: no cover - depends on optional extras
                 msg = 'Redis task storage requires the A2A extra. Install with `pip install "hayhooks[a2a]"`.'
                 raise ImportError(msg) from error
-            redis = Redis.from_url(redis_url, decode_responses=False)
+            redis = Redis.from_url(
+                redis_url,
+                decode_responses=False,
+                socket_timeout=self.socket_timeout,
+                socket_connect_timeout=self.socket_connect_timeout,
+                health_check_interval=self.health_check_interval,
+            )
         self.redis = redis
 
     def create_task_store(self, agent_name: str) -> RedisTaskStore:

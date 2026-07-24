@@ -160,6 +160,16 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Default: `hayhooks:a2a`
 - Description: Prefix applied to built-in Redis A2A task-store keys. Use a distinct prefix when multiple environments share Redis.
 
+### HAYHOOKS_A2A_REDIS_SOCKET_TIMEOUT / HAYHOOKS_A2A_REDIS_SOCKET_CONNECT_TIMEOUT
+
+- Default: `5.0` seconds each
+- Description: Bound established-socket operations and new Redis connections for the built-in A2A task store.
+
+### HAYHOOKS_A2A_REDIS_HEALTH_CHECK_INTERVAL
+
+- Default: `30` seconds
+- Description: Redis-py connection health-check interval for the built-in A2A task store. Set `0` to disable proactive checks.
+
 ### HAYHOOKS_A2A_TASK_STORE_PROVIDER
 
 - Default: `""` (empty; use the selected built-in provider)
@@ -205,6 +215,16 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 
 - Default: `hayhooks:durable`
 - Description: Key prefix used by durable execution records and queues.
+
+### HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT / HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT
+
+- Default: `5.0` seconds each
+- Description: Bound established-socket operations and new Redis connections for durable execution. A timeout is reported as a store failure, causing worker backoff and readiness to return `503` rather than waiting indefinitely.
+
+### HAYHOOKS_DURABLE_REDIS_HEALTH_CHECK_INTERVAL
+
+- Default: `30` seconds
+- Description: Redis-py connection health-check interval for durable execution. Set `0` to disable proactive checks.
 
 ### HAYHOOKS_DURABLE_REDIS_CLAIM_IDLE_MS
 

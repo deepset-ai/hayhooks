@@ -59,6 +59,9 @@ def test_durable_redis_settings_defaults(monkeypatch):
         "HAYHOOKS_DURABLE_REDIS_STREAM_MAX_LENGTH",
         "HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_INTERVAL",
         "HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_BATCH_SIZE",
+        "HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT",
+        "HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT",
+        "HAYHOOKS_DURABLE_REDIS_HEALTH_CHECK_INTERVAL",
     )
     for name in names:
         monkeypatch.delenv(name, raising=False)
@@ -72,6 +75,9 @@ def test_durable_redis_settings_defaults(monkeypatch):
     assert settings.durable_redis_stream_max_length == 0
     assert settings.durable_redis_delayed_promotion_interval == 0.25
     assert settings.durable_redis_delayed_promotion_batch_size == 100
+    assert settings.durable_redis_socket_timeout == 5.0
+    assert settings.durable_redis_socket_connect_timeout == 5.0
+    assert settings.durable_redis_health_check_interval == 30
 
 
 def test_durable_redis_settings_from_environment(monkeypatch):
@@ -82,6 +88,9 @@ def test_durable_redis_settings_from_environment(monkeypatch):
     monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_STREAM_MAX_LENGTH", "2500")
     monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_INTERVAL", "0.75")
     monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_BATCH_SIZE", "250")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT", "3.5")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT", "2.5")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_HEALTH_CHECK_INTERVAL", "20")
 
     settings = AppSettings()
 
@@ -92,6 +101,9 @@ def test_durable_redis_settings_from_environment(monkeypatch):
     assert settings.durable_redis_stream_max_length == 2_500
     assert settings.durable_redis_delayed_promotion_interval == 0.75
     assert settings.durable_redis_delayed_promotion_batch_size == 250
+    assert settings.durable_redis_socket_timeout == 3.5
+    assert settings.durable_redis_socket_connect_timeout == 2.5
+    assert settings.durable_redis_health_check_interval == 20
 
 
 def test_cors():

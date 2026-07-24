@@ -361,6 +361,50 @@ async def test_waiting_follow_up_resumes_with_only_the_new_user_message(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_running_task_rejects_follow_up_message(monkeypatch) -> None:
+    from a2a.helpers import new_text_message
+    from a2a.types import Role
+
+    task = _task()
+    follow_up = new_text_message("follow up", role=Role.ROLE_USER)
+    follow_up.task_id = task.id
+    context = SimpleNamespace(current_task=task, message=follow_up)
+    deployment = _Deployment(status=ExecutionStatus.RUNNING)
+    monkeypatch.setattr("hayhooks.server.a2a.executor.durable_runtime.deployment", lambda *_args: deployment)
+    executor = DurableAgentExecutor(SimpleNamespace(), "agent", _RecoverableStore([]))
+
+    from hayhooks.server.a2a.imports import InvalidParamsError
+
+    with pytest.raises(InvalidParamsError, match="cannot accept another message"):
+        await executor.execute(context, _RecordingQueue())
+    await executor.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_race_rejects_losing_follow_up(monkeypatch) -> None:
+    from a2a.helpers import new_text_message
+    from a2a.types import Role
+
+    class LostResumeDeployment(_Deployment):
+        async def resume(self, _execution_id, _update):
+            return False
+
+    task = _task()
+    follow_up = new_text_message("follow up", role=Role.ROLE_USER)
+    follow_up.task_id = task.id
+    context = SimpleNamespace(current_task=task, message=follow_up)
+    deployment = LostResumeDeployment(status=ExecutionStatus.WAITING)
+    monkeypatch.setattr("hayhooks.server.a2a.executor.durable_runtime.deployment", lambda *_args: deployment)
+    executor = DurableAgentExecutor(SimpleNamespace(), "agent", _RecoverableStore([]))
+
+    from hayhooks.server.a2a.imports import InvalidParamsError
+
+    with pytest.raises(InvalidParamsError, match="no longer accepting follow-up"):
+        await executor.execute(context, _RecordingQueue())
+    await executor.close()
+
+
+@pytest.mark.asyncio
 async def test_durable_executor_forwards_cancellation_to_execution(monkeypatch) -> None:
     task = _task()
     context = SimpleNamespace(current_task=task, message=None)

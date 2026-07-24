@@ -14,6 +14,7 @@ from hayhooks.durable.runtime import DurableDeployment, durable_runtime
 from hayhooks.server.a2a.imports import (
     AgentExecutor,
     EventQueue,
+    InvalidParamsError,
     RequestContext,
     TaskUpdater,
     new_task_from_user_message,
@@ -37,7 +38,7 @@ _RECORD_NOT_LOADED = object()
 
 
 class _RecoveryEventQueue:
-    """Apply watcher events directly to a persisted task when no request queue exists."""
+    """Apply projection events directly to a persisted task when no request queue exists."""
 
     def __init__(
         self,
@@ -110,7 +111,7 @@ class DurableAgentExecutor(AgentExecutor):
         self.pipeline_name = pipeline_name
         self.task_store = task_store
         self._deployment = deployment
-        # Futures keep blocking/streaming SDK requests open; one bounded
+        # Futures retain blocking/streaming SDK requests; one bounded
         # reconciler owns all polling rather than one coroutine per task.
         self._watchers: dict[str, asyncio.Future[None]] = {}
         self._projections: dict[str, _ProjectionCursor] = {}
@@ -157,21 +158,23 @@ class DurableAgentExecutor(AgentExecutor):
             with suppress(KeyError):
                 record = await deployment.get(task.id)
         if record is not None and record.status is ExecutionStatus.WAITING:
-            await deployment.resume(
+            resumed = await deployment.resume(
                 task.id,
                 {"messages": [message.to_dict() for message in build_haystack_resume_messages(context)]},
             )
+            if not resumed:
+                msg = f"Task '{task.id}' is no longer accepting follow-up messages"
+                raise InvalidParamsError(msg)
             await updater.start_work()
         elif record is None:
             await deployment.submit_agent_messages(build_haystack_messages(context), execution_id=task.id)
             await updater.start_work()
         else:
-            # Repeated A2A delivery is idempotent and must not create a second Agent invocation.
-            await updater.start_work()
-        # Keep the SDK's active-task dispatcher alive for this execution. A
-        # return-immediately request stops waiting for events independently,
-        # while blocking and streaming requests continue consuming this queue.
-        await self._ensure_watcher(task.id, updater)
+            msg = f"Task '{task.id}' is already running and cannot accept another message"
+            raise InvalidParamsError(msg)
+        # A return-immediately request stops waiting for events independently,
+        # while blocking and streaming requests wait for terminal projection.
+        await self._ensure_watcher(task.id, updater, task=task)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         task = context.current_task
@@ -211,13 +214,16 @@ class DurableAgentExecutor(AgentExecutor):
         self._watchers.clear()
         self._projections.clear()
 
-    def _ensure_watcher(self, execution_id: str, updater: TaskUpdater) -> asyncio.Future[None]:
+    def _ensure_watcher(
+        self, execution_id: str, updater: TaskUpdater, *, task: Any | None = None
+    ) -> asyncio.Future[None]:
         existing = self._watchers.get(execution_id)
         if existing is not None and not existing.done():
             return existing
         watcher = asyncio.get_running_loop().create_future()
+        watcher.add_done_callback(lambda completed: self._discard_watcher(execution_id, completed))
         self._watchers[execution_id] = watcher
-        self._register_projection(execution_id, updater)
+        self._register_projection(execution_id, updater, task=task)
         return watcher
 
     def _discard_watcher(self, execution_id: str, completed: asyncio.Future[None]) -> None:
@@ -495,7 +501,7 @@ class DurableAgentExecutor(AgentExecutor):
     async def _finish_projection(self, execution_id: str, projection: _ProjectionCursor) -> None:
         self._projections.pop(execution_id, None)
         await self._release_projection(execution_id, projection)
-        watcher = self._watchers.pop(execution_id, None)
+        watcher = self._watchers.get(execution_id)
         if watcher is not None and not watcher.done():
             watcher.set_result(None)
 

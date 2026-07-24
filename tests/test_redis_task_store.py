@@ -329,6 +329,9 @@ def test_redis_task_store_defaults_use_app_settings(monkeypatch):
     from hayhooks.settings import settings
 
     monkeypatch.setattr(settings, "a2a_redis_key_prefix", "configured:a2a:")
+    monkeypatch.setattr(settings, "a2a_redis_socket_timeout", 3.5)
+    monkeypatch.setattr(settings, "a2a_redis_socket_connect_timeout", 2.5)
+    monkeypatch.setattr(settings, "a2a_redis_health_check_interval", 20)
     redis = FakeRedis()
 
     direct_store = RedisTaskStore(redis, "direct")
@@ -336,6 +339,11 @@ def test_redis_task_store_defaults_use_app_settings(monkeypatch):
 
     assert direct_store.key_prefix == "configured:a2a"
     assert provider_store.key_prefix == "configured:a2a"
+
+    provider = RedisTaskStoreProvider(redis=redis, close_redis=False)
+    assert provider.socket_timeout == 3.5
+    assert provider.socket_connect_timeout == 2.5
+    assert provider.health_check_interval == 20
 
 
 def test_create_task_store_provider_selects_builtin_backends():

@@ -23,6 +23,7 @@ from hayhooks.durable.models import (
     ExecutionLeaseLostError,
     ExecutionRecord,
     ExecutionRecordSizeError,
+    ExecutionRetiredError,
     ExecutionStatus,
     ExecutionStoreError,
     ExecutionSuspendedError,
@@ -269,10 +270,9 @@ class DurableExecutionManager:
                 finally:
                     self._active_claims -= 1
                 consecutive_store_errors = 0
-            except ExecutionLeaseLostError:
+            except (ExecutionLeaseLostError, ExecutionRetiredError) as error:
                 consecutive_store_errors = 0
-                self._metrics["lease_losses"] += 1
-                log.warning("{} | lost durable execution claim {}", self.name, claim.record.execution_id)
+                self._record_abandoned_claim(claim, error)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -340,6 +340,8 @@ class DurableExecutionManager:
                     raise
                 except ExecutionLeaseLostError:
                     raise
+                except ExecutionRetiredError:
+                    raise
                 except ExecutionStoreError:
                     raise
                 except asyncio.CancelledError:
@@ -382,6 +384,15 @@ class DurableExecutionManager:
             self._metrics["failed"] += 1
         elif record.status is ExecutionStatus.CANCELED:
             self._metrics["canceled"] += 1
+
+    def _record_abandoned_claim(
+        self, claim: ExecutionClaim, error: ExecutionLeaseLostError | ExecutionRetiredError
+    ) -> None:
+        if isinstance(error, ExecutionRetiredError):
+            log.info("{} | abandoned retired durable execution claim {}", self.name, claim.record.execution_id)
+            return
+        self._metrics["lease_losses"] += 1
+        log.warning("{} | lost durable execution claim {}", self.name, claim.record.execution_id)
 
     def _retry_delay(self, attempt: int, requested_delay: float) -> float:
         exponent = min(max(0, attempt - 1), 30)

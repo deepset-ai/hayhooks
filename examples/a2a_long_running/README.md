@@ -57,6 +57,12 @@ Stop and restart Hayhooks while the three-second tool is running. Redis retains
 both projections; a leased reconciler resumes task projection without allowing
 a stale replica to overwrite a newer version.
 
+The SQLite row is only a local idempotency demonstration. It defaults to
+`/tmp/hayhooks-durable-a2a.sqlite3`, which survives a Hayhooks process restart
+on the same machine but is not a shared or container-durable database. Set
+`HAYHOOKS_EXAMPLE_INDEX_DB` to a mounted, durable path if you want to keep the
+demonstration effect store across container replacement.
+
 Request cancellation:
 
 ```bash
@@ -67,6 +73,11 @@ curl -s http://localhost:1418/long_running_agent/ \
 
 The task first reports “Cancellation requested.” It becomes
 `TASK_STATE_CANCELED` only after the execution record is terminal canceled.
+
+Cancellation is cooperative. Once the synchronous indexing tool has begun, it
+may finish its current work and write its SQLite row before the Agent reaches
+the next cancellation checkpoint. The idempotency key prevents that replay from
+inserting the same logical effect twice.
 
 The SQLite indexing row is an external effect. Its primary key combines
 `current_execution_id()` with the logical indexing step, so replay returns the

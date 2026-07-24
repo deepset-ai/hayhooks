@@ -97,14 +97,20 @@ class _DeploymentSnapshot:
             for name, module in sys.modules.items()
             if name == pipeline_name or name.startswith(f"{pipeline_name}.")
         }
-        self.backup_dir = Path(tempfile.mkdtemp(prefix="hayhooks-deploy-rollback-"))
         pipelines_dir = Path(settings.pipelines_dir)
         source_dir = pipelines_dir / pipeline_name
-        if source_dir.is_dir():
+        sources = [source_dir] if source_dir.is_dir() else []
+        sources.extend(
+            source
+            for extension in (".yml", ".yaml")
+            if (source := pipelines_dir / f"{pipeline_name}{extension}").is_file()
+        )
+        self.backup_dir = Path(tempfile.mkdtemp(prefix="hayhooks-deploy-rollback-")) if sources else None
+        if source_dir.is_dir() and self.backup_dir is not None:
             shutil.copytree(source_dir, self.backup_dir / "pipeline")
         for extension in (".yml", ".yaml"):
             source = pipelines_dir / f"{pipeline_name}{extension}"
-            if source.is_file():
+            if source.is_file() and self.backup_dir is not None:
                 shutil.copy2(source, self.backup_dir / f"pipeline{extension}")
 
     @classmethod
@@ -124,19 +130,21 @@ class _DeploymentSnapshot:
         remove_pipeline_files(self.pipeline_name, settings.pipelines_dir)
         pipelines_dir = Path(settings.pipelines_dir)
         pipelines_dir.mkdir(parents=True, exist_ok=True)
-        backup_pipeline = self.backup_dir / "pipeline"
-        if backup_pipeline.is_dir():
-            shutil.copytree(backup_pipeline, pipelines_dir / self.pipeline_name)
-        for extension in (".yml", ".yaml"):
-            backup = self.backup_dir / f"pipeline{extension}"
-            if backup.is_file():
-                shutil.copy2(backup, pipelines_dir / f"{self.pipeline_name}{extension}")
+        if self.backup_dir is not None:
+            backup_pipeline = self.backup_dir / "pipeline"
+            if backup_pipeline.is_dir():
+                shutil.copytree(backup_pipeline, pipelines_dir / self.pipeline_name)
+            for extension in (".yml", ".yaml"):
+                backup = self.backup_dir / f"pipeline{extension}"
+                if backup.is_file():
+                    shutil.copy2(backup, pipelines_dir / f"{self.pipeline_name}{extension}")
 
         unload_pipeline_modules(self.pipeline_name)
         sys.modules.update(self.modules)
 
     def cleanup(self) -> None:
-        shutil.rmtree(self.backup_dir, ignore_errors=True)
+        if self.backup_dir is not None:
+            shutil.rmtree(self.backup_dir, ignore_errors=True)
 
 
 async def _publish_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
@@ -209,6 +217,7 @@ async def _publish_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
         target_revision = candidate.revision if candidate is not None else "__deployment_removed__"
 
         async def retire_requeued_work_until_success() -> None:
+            delay = 1.0
             while True:
                 try:
                     if retirement is not None:
@@ -228,7 +237,8 @@ async def _publish_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                         prepared.name,
                         error,
                     )
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 30.0)
 
         async def close_old_wrapper() -> None:
             try:
@@ -359,6 +369,7 @@ async def undeploy_pipeline_async(  # noqa: C901
                 log.info("{} | retired {} execution(s) during undeploy", pipeline_name, retired)
 
         async def retire_until_success() -> None:
+            delay = 1.0
             while True:
                 try:
                     await retirement_pass()
@@ -371,7 +382,8 @@ async def undeploy_pipeline_async(  # noqa: C901
                         pipeline_name,
                         error,
                     )
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 30.0)
 
         try:
             await retirement_pass()

@@ -20,6 +20,7 @@ from hayhooks.durable.models import (
     ExecutionLeaseLostError,
     ExecutionRecord,
     ExecutionRecordSizeError,
+    ExecutionRetiredError,
     ExecutionStatus,
     ExecutionStoreError,
     JsonValue,
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 EXECUTION_GROUP = "hayhooks-durable-executions"
 _SCRIPT_PACKAGE = "hayhooks.redis_scripts"
 _SCRIPT_RESULT_CANCELED = 2
+_SCRIPT_RESULT_RETIRED = -2
 _MIN_REDIS_SERVER_VERSION = (6, 2)
 
 
@@ -99,7 +101,7 @@ def _store_operation(operation: str) -> Callable[[Callable[..., Any]], Callable[
                 return await function(*args, **kwargs)
             except asyncio.CancelledError:
                 raise
-            except (ExecutionLeaseLostError, ExecutionRecordSizeError, ExecutionStoreError):
+            except (ExecutionLeaseLostError, ExecutionRecordSizeError, ExecutionRetiredError, ExecutionStoreError):
                 raise
             except Exception as error:
                 msg = f"Durable execution store {operation} failed"
@@ -417,9 +419,13 @@ class RedisExecutionStore:
             record.last_retry_error = record.error
             record.error = None
         record.retry_at = None
-        record.touch()
         try:
             await self._save_owned(record, token)
+        except ExecutionRetiredError:
+            # Replacement won after this worker acquired its lease.  The
+            # retirement script has already persisted the terminal record.
+            await self._release_lease(delivery.execution_id, token)
+            return None
         except Exception:
             await self._release_lease(delivery.execution_id, token)
             raise
@@ -520,7 +526,7 @@ class RedisExecutionStore:
     @_store_operation("operational counts")
     async def operational_counts(self) -> dict[str, int]:
         """Build a constant-time, payload-free state snapshot for health checks."""
-        await self._cleanup_expired_counts(force=True)
+        await self._cleanup_expired_counts()
         stream_length, pending_summary, delayed, state_counts = await asyncio.gather(
             self.redis.xlen(self.stream_key),
             self.redis.xpending(self.stream_key, EXECUTION_GROUP),
@@ -582,7 +588,7 @@ class RedisExecutionStore:
             msg = f"Execution lease for '{claim.record.execution_id}' was lost"
             raise ExecutionLeaseLostError(msg)
         if int(result) == _SCRIPT_RESULT_CANCELED:
-            claim.record.mark_canceled()
+            claim.record.mark_canceled(force=True)
 
     @_store_operation("suspension")
     async def _suspend(self, claim: RedisExecutionClaim) -> None:
@@ -668,6 +674,9 @@ class RedisExecutionStore:
             ],
             args=[token, record.to_json(), record.execution_id],
         )
+        if int(saved) == _SCRIPT_RESULT_RETIRED:
+            msg = f"Execution '{record.execution_id}' was retired during deployment replacement"
+            raise ExecutionRetiredError(msg)
         if not saved:
             msg = f"Execution lease for '{record.execution_id}' was lost"
             raise ExecutionLeaseLostError(msg)
@@ -736,14 +745,14 @@ class RedisExecutionStore:
                 self._next_delayed_promotion_at = 0.0
                 raise
 
-    async def _cleanup_expired_counts(self, *, force: bool = False) -> int:
+    async def _cleanup_expired_counts(self) -> int:
         """Clean one bounded terminal-retention batch outside the health critical path."""
         now = time.monotonic()
-        if not force and now < self._next_count_cleanup_at:
+        if now < self._next_count_cleanup_at:
             return 0
         async with self._count_cleanup_lock:
             now = time.monotonic()
-            if not force and now < self._next_count_cleanup_at:
+            if now < self._next_count_cleanup_at:
                 return 0
             batch_size = 1_000
             removed = int(
@@ -758,7 +767,7 @@ class RedisExecutionStore:
                 )
             )
             # Drain a backlog one worker iteration at a time; otherwise stay idle
-            # for a minute. Health checks may force one bounded pass for freshness.
+            # for a minute.
             self._next_count_cleanup_at = 0.0 if removed == batch_size else now + 60.0
             return removed
 
@@ -851,6 +860,9 @@ class RedisExecutionStoreProvider:
         max_record_bytes: int | None = None,
         delayed_promotion_interval: float | None = None,
         delayed_promotion_batch_size: int | None = None,
+        socket_timeout: float | None = None,
+        socket_connect_timeout: float | None = None,
+        health_check_interval: int | None = None,
         close_redis: bool = True,
     ) -> None:
         self.key_prefix = (key_prefix or settings.durable_redis_key_prefix).rstrip(":")
@@ -887,13 +899,28 @@ class RedisExecutionStoreProvider:
         self.stores: dict[str, RedisExecutionStore] = {}
         self.close_redis = close_redis
         self.redis_url = redis_url or settings.durable_redis_url
+        self.socket_timeout = socket_timeout if socket_timeout is not None else settings.durable_redis_socket_timeout
+        self.socket_connect_timeout = (
+            socket_connect_timeout
+            if socket_connect_timeout is not None
+            else settings.durable_redis_socket_connect_timeout
+        )
+        self.health_check_interval = (
+            health_check_interval if health_check_interval is not None else settings.durable_redis_health_check_interval
+        )
         if redis is None:
             try:
                 from redis.asyncio import Redis as AsyncRedis
             except ImportError as error:  # pragma: no cover - optional feature error
                 msg = 'Durable Redis storage requires `pip install "hayhooks[durable]`.'
                 raise ImportError(msg) from error
-            redis = AsyncRedis.from_url(self.redis_url, decode_responses=False)
+            redis = AsyncRedis.from_url(
+                self.redis_url,
+                decode_responses=False,
+                socket_timeout=self.socket_timeout,
+                socket_connect_timeout=self.socket_connect_timeout,
+                health_check_interval=self.health_check_interval,
+            )
         self.redis = redis
 
     def create_execution_store(self, deployment_name: str) -> RedisExecutionStore:

@@ -84,6 +84,10 @@ class ExecutionLeaseLostError(RuntimeError):
     """A stale worker tried to write a fenced execution record."""
 
 
+class ExecutionRetiredError(RuntimeError):
+    """A deployment replacement terminalized a record owned by this worker."""
+
+
 class ExecutionStoreError(RuntimeError):
     """A storage or lease-heartbeat operation failed transiently."""
 

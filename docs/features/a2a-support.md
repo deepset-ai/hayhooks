@@ -204,6 +204,11 @@ Task storage is server infrastructure rather than pipeline configuration. Hayhoo
 
 The A2A extra includes the official Redis client. Redis task records are protobuf payloads scoped by agent and resolved owner. A bounded reconciler uses renewable per-task leases and compare-and-set projection versions, so additional replicas do not create one polling coroutine per task and a stale projector cannot overwrite a newer state. Reconciliation checks execution sequences in batches and loads full execution records only when they changed. Recovery task payloads are also loaded by owner batches. Persistent task records do not replay historical live event queues.
 
+A durable Agent accepts another user message only while its execution is
+waiting for input. A follow-up sent while it is running is rejected rather than
+being treated as an idempotent redelivery; clients should wait for
+`INPUT_REQUIRED` before continuing a task.
+
 Terminal tasks use `HAYHOOKS_A2A_TERMINAL_TASK_TTL_SECONDS`. Runtime maintenance performs cleanup even when no later A2A request arrives and removes the protobuf payload plus owner, active, retention, and version indexes. Execution-record retention remains independent.
 
 For custom backends, implement `TaskStoreProvider` in an importable Python module. Hayhooks calls `create_task_store()` once for each agent at startup, passing its deployed pipeline name, and calls `close()` when the server shuts down. A custom provider is selected with `HAYHOOKS_A2A_TASK_STORE_PROVIDER` or `--task-store-provider`; it cannot be combined with the built-in Redis selection.

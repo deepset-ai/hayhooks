@@ -36,12 +36,14 @@ This directory contains various examples demonstrating different use cases and f
 
 ## Getting Started
 
-Each example includes:
+Examples intentionally stay lightweight. Every runnable example includes its
+source files; examples that need non-default setup or dependencies also include
+a dedicated README and/or `requirements.txt`.
 
 - **Pipeline wrapper implementation** (`pipeline_wrapper.py`)
 - **Pipeline configuration** (`.yml` files where applicable)
-- **Dependencies** (`requirements.txt` where applicable)
-- **Documentation** (individual README files with setup instructions)
+- **Dependencies** (`requirements.txt` where a demo needs them)
+- **Documentation** (individual README files where a demo needs dedicated setup instructions)
 
 ## Common Prerequisites
 
@@ -57,7 +59,7 @@ Most examples require:
 1. Navigate to the `/examples` directory
 2. Create and activate a virtual environment (recommended)
 3. Install dependencies: `pip install -r requirements.txt` (if present)
-4. Follow the specific example's README for deployment and testing
+4. Follow the example-specific README when present; otherwise deploy its wrapper using the standard Hayhooks command
 
 ## Support
 

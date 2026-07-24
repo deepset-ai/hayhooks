@@ -3,6 +3,8 @@ if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
 local current_payload = redis.call('GET', KEYS[2])
 if not current_payload then return 0 end
 local current = cjson.decode(current_payload)
+local status = current['status']
+if status == 'completed' or status == 'failed' or status == 'canceled' then return -2 end
 local candidate = cjson.decode(ARGV[2])
 local canceled = current['cancel_requested_at'] ~= nil and current['cancel_requested_at'] ~= cjson.null
 if canceled then
@@ -12,7 +14,7 @@ if canceled then
     candidate['sequence'] = math.max(candidate['sequence'] or 0, current['sequence'] or 0)
 end
 redis.call('SET', KEYS[2], cjson.encode(candidate))
-local old_status = current['status']
+local old_status = status
 local new_status = candidate['status']
 if new_status == 'completed' or new_status == 'failed' or new_status == 'canceled' then
     redis.call('HDEL', KEYS[4], ARGV[3])

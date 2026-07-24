@@ -16,6 +16,7 @@ from hayhooks.execution import (
     ExecutionKind,
     ExecutionLeaseLostError,
     ExecutionRecord,
+    ExecutionRetiredError,
     ExecutionStatus,
     ExecutionStoreError,
     RetryableExecutionError,
@@ -172,6 +173,27 @@ async def test_stale_owner_cannot_write_any_fenced_transition(redis_store) -> No
     claim.record.status = ExecutionStatus.COMPLETED
     with pytest.raises(ExecutionLeaseLostError):
         await claim.complete()
+
+
+async def test_retirement_cannot_be_overwritten_by_an_already_claimed_worker(redis_store) -> None:
+    redis, store = redis_store
+    record = _record("retired-after-claim")
+    record.definition_revision = "old-revision"
+    assert await store.submit(record)
+    claim = await store.claim_next("worker")
+    assert claim is not None
+
+    assert await store.retire_incompatible("new-revision") == 1
+    claim.record.status = ExecutionStatus.RUNNING
+    with pytest.raises(ExecutionRetiredError):
+        await claim.checkpoint()
+
+    persisted = await store.get("retired-after-claim")
+    assert persisted is not None
+    assert persisted.status is ExecutionStatus.FAILED
+    assert persisted.error is not None
+    assert persisted.error.code == "definition_revision_conflict"
+    assert await redis.ttl(store._record_key("retired-after-claim")) > 0
 
 
 async def test_persisted_cancellation_wins_before_claim_and_terminal_race(redis_store) -> None:

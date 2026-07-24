@@ -92,6 +92,9 @@ class AppSettings(BaseSettings):
     # Connection settings for the built-in Redis task store.
     a2a_redis_url: str = "redis://localhost:6379/0"
     a2a_redis_key_prefix: str = "hayhooks:a2a"
+    a2a_redis_socket_timeout: float = Field(default=5.0, gt=0.0, le=300.0)
+    a2a_redis_socket_connect_timeout: float = Field(default=5.0, gt=0.0, le=300.0)
+    a2a_redis_health_check_interval: int = Field(default=30, ge=0, le=3_600)
     a2a_terminal_task_ttl_seconds: int = Field(default=604_800, ge=1)
     a2a_projection_lease_ms: int = Field(default=15_000, ge=1_000, le=300_000)
     a2a_projection_batch_size: int = Field(default=100, ge=1, le=10_000)
@@ -102,6 +105,9 @@ class AppSettings(BaseSettings):
     durable_store: Literal["memory", "redis"] = "redis"
     durable_redis_url: str = "redis://localhost:6379/0"
     durable_redis_key_prefix: str = "hayhooks:durable"
+    durable_redis_socket_timeout: float = Field(default=5.0, gt=0.0, le=300.0)
+    durable_redis_socket_connect_timeout: float = Field(default=5.0, gt=0.0, le=300.0)
+    durable_redis_health_check_interval: int = Field(default=30, ge=0, le=3_600)
 
     # Retention and safety limits are application settings, not wrapper API.
     durable_terminal_ttl_seconds: int = Field(default=604_800, ge=1)

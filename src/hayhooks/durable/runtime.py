@@ -149,7 +149,16 @@ class DurableDeployment:
             ),
         ) as span:
             created = await self.manager.submit(record)
-            persisted = await self.get(execution_id, owner_id=owner_id, enforce_owner=owner_id is not None)
+            try:
+                persisted = await self.get(execution_id, owner_id=owner_id, enforce_owner=owner_id is not None)
+            except KeyError:
+                # A retained terminal record can expire after a replay loses the
+                # submit NX race.  Surface a deterministic conflict instead of
+                # leaking an internal missing-record error.
+                if not created:
+                    msg = "Idempotency-Key refers to an execution that has expired"
+                    raise IdempotencyConflictError(msg) from None
+                raise
             if not created and persisted.operation_fingerprint != operation_fingerprint:
                 msg = "Idempotency-Key was already used for a different durable operation"
                 raise IdempotencyConflictError(msg)

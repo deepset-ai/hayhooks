@@ -8,12 +8,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from haystack import Pipeline, component
+from haystack import Document, Pipeline, component
 from haystack.components.agents import Agent
 from haystack.components.agents.state import State
 from haystack.core.errors import PipelineRuntimeError
 from haystack.dataclasses import ChatMessage
 from haystack.dataclasses.breakpoints import PipelineSnapshot
+from haystack.tools import Tool
 from pydantic import BaseModel
 
 from hayhooks import BasePipelineWrapper, DurableContext, DurableOptions
@@ -49,6 +50,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 _DURABLE_CHAT_EXAMPLE = Path("examples/durable_chat_with_website/pipelines/chat_with_website")
+_DURABLE_EXECUTION_EXAMPLE = Path("examples/durable_execution/pipelines/durable_job")
+_DURABLE_A2A_EXAMPLE = Path("examples/a2a_long_running/pipelines/long_running_agent")
 
 
 class Request(BaseModel):
@@ -61,6 +64,10 @@ class Result(BaseModel):
 
 class ResumeInput(BaseModel):
     approved: bool
+
+
+def _checkpoint_test_tool(value: str) -> str:
+    return value
 
 
 class Wrapper(BasePipelineWrapper):
@@ -622,8 +629,11 @@ async def test_agent_state_checkpoint_restores_custom_state_and_typed_resume_mes
     )
     checkpoint_context = DurableContext(Claim(record), adapter=object())
     checkpoint_data = _checkpoint_data(checkpoint_state, checkpoint_context)
-    assert "tools" not in checkpoint_data["data"]
-    assert "hook_context" not in checkpoint_data["data"]
+    checkpoint_payload = checkpoint_data["data"]
+    assert "tools" not in checkpoint_payload["serialized_data"]
+    assert "hook_context" not in checkpoint_payload["serialized_data"]
+    assert "tools" not in checkpoint_payload["serialization_schema"]["properties"]
+    assert "hook_context" not in checkpoint_payload["serialization_schema"]["properties"]
     record.checkpoint = ExecutionCheckpoint(ExecutionKind.AGENT, checkpoint_data)
 
     store = InMemoryExecutionStore()
@@ -653,6 +663,46 @@ async def test_agent_state_checkpoint_restores_custom_state_and_typed_resume_mes
     assert restored_state.data["hook_context"] == {"request": "live"}
     assert [message.text for message in restored_state.data["messages"]] == ["before restart", "after restart"]
     assert context.resume_input is None
+
+
+@pytest.mark.asyncio
+async def test_agent_checkpoint_excludes_custom_tool_deserialization() -> None:
+    class Claim:
+        def __init__(self, record: ExecutionRecord) -> None:
+            self.record = record
+
+    tool = Tool(
+        name="custom_tool",
+        description="A tool defined by the deployed wrapper",
+        parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+        function=_checkpoint_test_tool,
+    )
+    record = ExecutionRecord(
+        execution_id="agent-tool-checkpoint",
+        execution_kind=ExecutionKind.AGENT,
+        deployment_name="agent",
+        definition_revision="revision",
+        validated_input={"messages": []},
+    )
+    checkpoint_context = DurableContext(Claim(record), adapter=object())
+    checkpoint_state = State(
+        schema={"tools": {"type": list}, "hook_context": {"type": dict}},
+        data={"tools": [tool], "hook_context": {"request": "old"}},
+    )
+    checkpoint_data = _checkpoint_data(checkpoint_state, checkpoint_context)
+    checkpoint_payload = checkpoint_data["data"]
+    assert "tools" not in checkpoint_payload["serialized_data"]
+    assert "tools" not in checkpoint_payload["serialization_schema"]["properties"]
+    record.checkpoint = ExecutionCheckpoint(ExecutionKind.AGENT, checkpoint_state.to_dict())
+
+    restored_state = State(
+        schema={"tools": {"type": list}, "hook_context": {"type": dict}},
+        data={"tools": [tool], "hook_context": {"request": "live"}},
+    )
+    _restore_agent_state(DurableContext(Claim(record), adapter=object()), restored_state)
+
+    assert restored_state.data["tools"] == [tool]
+    assert restored_state.data["hook_context"] == {"request": "live"}
 
 
 @pytest.mark.asyncio
@@ -820,5 +870,73 @@ async def test_durable_chat_with_website_example_loads_and_maps_pipeline_input(m
             "answer": "Generators yield values lazily.",
             "sources": ["https://docs.python.org/3/howto/functional.html"],
         }
+    finally:
+        unload_pipeline_modules(module_name)
+
+
+@pytest.mark.asyncio
+async def test_durable_execution_example_loads_and_maps_pipeline_input() -> None:
+    class ExampleContext:
+        attempt = 2
+
+        def __init__(self) -> None:
+            self.progress: list[tuple[str, str]] = []
+            self.pipeline_input = None
+            self.checkpoint_at = None
+
+        async def report_progress(self, message, *, kind="progress", metadata=None):
+            self.progress.append((kind, message))
+
+        async def run_pipeline_async(self, data, *, checkpoint_at):
+            self.pipeline_input = data
+            self.checkpoint_at = checkpoint_at
+            return {
+                "split": {
+                    "documents": [
+                        Document(id="chunk-1", content="prepared", meta={"document_id": "guide"}),
+                    ]
+                }
+            }
+
+    module_name = "durable_execution_example"
+    module = load_pipeline_module(module_name, _DURABLE_EXECUTION_EXAMPLE)
+    try:
+        wrapper = create_pipeline_wrapper_instance(module)
+        assert list(wrapper.pipeline.graph.nodes) == ["clean", "split"]
+        assert wrapper._is_run_durable_async_implemented
+        request = module.DocumentPreparationRequest(documents=[{"document_id": "guide", "content": "raw text"}])
+        context = ExampleContext()
+
+        result = await wrapper.run_durable_async(context, request)
+
+        assert context.pipeline_input == {
+            "clean": {"documents": [Document(id="guide", content="raw text", meta={"document_id": "guide"})]}
+        }
+        assert context.checkpoint_at == ["clean", "split"]
+        assert context.progress == [
+            ("accepted", "Document preparation accepted"),
+            ("completed", "Document preparation completed"),
+        ]
+        assert result.model_dump() == {
+            "document_count": 1,
+            "chunk_count": 1,
+            "chunks": [{"document_id": "guide", "chunk_id": "chunk-1", "content": "prepared"}],
+        }
+    finally:
+        unload_pipeline_modules(module_name)
+
+
+def test_durable_a2a_example_loads_its_agent_and_custom_tool(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    module_name = "durable_a2a_example"
+    module = load_pipeline_module(module_name, _DURABLE_A2A_EXAMPLE)
+    try:
+        wrapper = create_pipeline_wrapper_instance(module)
+
+        assert wrapper.durable
+        deployment = DurableDeployment("durable-a2a-example", wrapper, InMemoryExecutionStoreProvider())
+        assert deployment.builtin_agent
+        assert [tool.name for tool in wrapper.pipeline.tools] == ["prepare_document_for_indexing"]
+        assert {"before_llm", "after_tool", "on_exit"} <= set(wrapper.pipeline.hooks)
     finally:
         unload_pipeline_modules(module_name)

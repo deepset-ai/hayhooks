@@ -167,6 +167,9 @@ def test_redis_execution_provider_uses_app_settings(monkeypatch):
     monkeypatch.setattr(settings, "durable_max_record_bytes", 200_000)
     monkeypatch.setattr(settings, "durable_redis_delayed_promotion_interval", 0.75)
     monkeypatch.setattr(settings, "durable_redis_delayed_promotion_batch_size", 250)
+    monkeypatch.setattr(settings, "durable_redis_socket_timeout", 3.5)
+    monkeypatch.setattr(settings, "durable_redis_socket_connect_timeout", 2.5)
+    monkeypatch.setattr(settings, "durable_redis_health_check_interval", 20)
 
     provider = RedisExecutionStoreProvider(redis=FakeRedis(), close_redis=False)
     store = provider.create_execution_store("agent/name")
@@ -182,6 +185,9 @@ def test_redis_execution_provider_uses_app_settings(monkeypatch):
     assert store.max_record_bytes == 200_000
     assert store.delayed_promotion_interval == 0.75
     assert store.delayed_promotion_batch_size == 250
+    assert provider.socket_timeout == 3.5
+    assert provider.socket_connect_timeout == 2.5
+    assert provider.health_check_interval == 20
 
 
 @pytest.mark.asyncio
@@ -295,11 +301,14 @@ async def test_revision_retirement_reads_only_active_incompatible_index_entries(
 @pytest.mark.asyncio
 async def test_operational_counts_runs_only_one_bounded_cleanup_batch():
     redis = MaintenanceFakeRedis()
-    redis.results["cleanup_expired_counts"] = 1_000
+    redis.results["cleanup_expired_counts"] = 1
     store = RedisExecutionStore(redis, key_prefix="test")
 
     await store.operational_counts()
 
+    assert len(redis.scripts["cleanup_expired_counts"].calls) == 1
+
+    await store.operational_counts()
     assert len(redis.scripts["cleanup_expired_counts"].calls) == 1
 
 
