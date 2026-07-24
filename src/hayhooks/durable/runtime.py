@@ -77,7 +77,11 @@ class DurableDeployment:
         )
 
     async def start(self) -> None:
-        await self.manager.start()
+        if self.manager.started:
+            return
+        await self.prepare()
+        await self.retire_incompatible()
+        self.activate()
 
     async def prepare(self) -> None:
         """Initialize the execution store without allowing the candidate to claim work."""

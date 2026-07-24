@@ -62,7 +62,6 @@ _deploy_lock = threading.Lock()
 _deployment_transaction_lock = asyncio.Lock()
 
 
-
 def _with_deploy_lock(func: Callable) -> Callable:
     """Wrap *func* so it acquires ``_deploy_lock`` before executing."""
 
@@ -166,6 +165,19 @@ async def _publish_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
             old_quiesced = True
             await snapshot.deployment.close()
 
+        old_wrapper = snapshot.wrapper
+        if old_wrapper is not None and old_wrapper is not prepared.wrapper:
+            retirement = candidate or snapshot.deployment
+            target_revision = candidate.revision if candidate is not None else "__deployment_removed__"
+            if retirement is not None:
+                retired = await retirement.store.retire_incompatible(target_revision)
+                if retired:
+                    log.info(
+                        "{} | retired {} durable execution(s) from a replaced definition",
+                        prepared.name,
+                        retired,
+                    )
+
         result = commit_prepared_pipeline(
             prepared,
             app=app,
@@ -196,26 +208,23 @@ async def _publish_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
         retirement = candidate or old_deployment
         target_revision = candidate.revision if candidate is not None else "__deployment_removed__"
 
-        async def retirement_pass() -> None:
-            if retirement is not None:
-                retired = await retirement.store.retire_incompatible(target_revision)
-                if retired:
-                    log.info(
-                        "{} | retired {} durable execution(s) from a replaced definition",
-                        prepared.name,
-                        retired,
-                    )
-
-        async def retire_until_success() -> None:
+        async def retire_requeued_work_until_success() -> None:
             while True:
                 try:
-                    await retirement_pass()
+                    if retirement is not None:
+                        retired = await retirement.store.retire_incompatible(target_revision)
+                        if retired:
+                            log.info(
+                                "{} | retired {} durable execution(s) from a replaced definition",
+                                prepared.name,
+                                retired,
+                            )
                     return
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:
                     log.opt(exception=error).warning(
-                        "{} | durable revision retirement failed; retrying: {}",
+                        "{} | durable post-drain revision retirement failed; retrying: {}",
                         prepared.name,
                         error,
                     )
@@ -227,25 +236,12 @@ async def _publish_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
             except Exception as error:
                 log.opt(exception=True).warning("Error closing replaced pipeline '{}': {}", prepared.name, error)
 
-        try:
-            await retirement_pass()
-        except Exception as error:
-            log.opt(exception=error).warning(
-                "{} | initial durable revision retirement failed; retrying in background: {}",
-                prepared.name,
-                error,
-            )
-            durable_runtime.track_background_task(
-                retire_until_success(),
-                name=f"durable-revision-retirement:{prepared.name}",
-            )
-
         if old_deployment is not None and old_deployment.manager.draining:
 
             async def finish_replacement() -> None:
                 await old_deployment.manager.wait_drained()
                 await close_old_wrapper()
-                await retire_until_success()
+                await retire_requeued_work_until_success()
 
             durable_runtime.track_background_task(
                 finish_replacement(),
@@ -852,9 +848,6 @@ def add_pipeline_api_route(
     if not _defer_openapi_rebuild:
         clog.debug("Setting up FastAPI app")
         app.openapi_schema = None
-        app.setup()
-
-
         app.setup()
 
 

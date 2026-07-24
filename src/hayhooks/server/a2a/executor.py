@@ -147,6 +147,7 @@ class ChatCompletionAgentExecutor(AgentExecutor):
                 return
         await updater.complete()
 
+
 def _is_native_a2a_wrapper(wrapper: BasePipelineWrapper) -> bool:
     from hayhooks.a2a import A2APipelineWrapper
 

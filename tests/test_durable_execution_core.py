@@ -13,6 +13,7 @@ from hayhooks.execution import (
     ExecutionStatus,
     ExecutionStoreError,
     InMemoryExecutionStore,
+    RetryableExecutionError,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
@@ -89,6 +90,23 @@ def test_record_serialization_encodes_payload_once(monkeypatch) -> None:
     record.to_json()
 
     assert calls == 1
+
+
+def test_checkpoint_uses_the_execution_specific_size_limit() -> None:
+    checkpoint = ExecutionCheckpoint(ExecutionKind.PIPELINE, {"snapshot": "x" * 1_050_000})
+
+    record = ExecutionRecord(
+        execution_id="large-checkpoint",
+        execution_kind=ExecutionKind.PIPELINE,
+        deployment_name="test",
+        definition_revision="revision",
+        validated_input={"value": 1},
+        checkpoint=checkpoint,
+        max_record_bytes=1_200_000,
+    )
+
+    assert record.checkpoint is checkpoint
+    assert len(record.to_json().encode("utf-8")) <= record.max_record_bytes
 
 
 @pytest.mark.asyncio
@@ -238,6 +256,46 @@ async def test_manager_terminalizes_a_checkpoint_that_exceeds_the_total_record_l
 
     assert result.status is ExecutionStatus.FAILED
     assert result.checkpoint is None
+    assert result.error is not None
+    assert result.error.code == "record_too_large"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [RuntimeError, RetryableExecutionError])
+async def test_manager_terminalizes_oversized_state_from_all_error_transitions(error_type) -> None:
+    store = InMemoryExecutionStore()
+
+    async def runner(context):
+        context.state["oversized"] = "x" * 2_000
+        raise error_type("again")
+
+    manager = DurableExecutionManager(
+        "test",
+        store,
+        runner,
+        adapter=object(),
+        poll_interval=0.001,
+        retry_base_delay=0,
+        retry_max_delay=0,
+    )
+    record = _record()
+    record.max_record_bytes = 1_024
+    await manager.start()
+    try:
+        assert await manager.submit(record)
+        for _ in range(100):
+            result = await store.get(record.execution_id)
+            if result is not None and result.terminal:
+                break
+            await asyncio.sleep(0.001)
+        else:
+            pytest.fail("oversized state did not become terminal")
+    finally:
+        await manager.close()
+
+    assert result.status is ExecutionStatus.FAILED
+    assert result.attempt == 1
+    assert result.application_state == {}
     assert result.error is not None
     assert result.error.code == "record_too_large"
 

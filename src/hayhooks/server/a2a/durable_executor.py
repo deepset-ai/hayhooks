@@ -82,6 +82,7 @@ class _RecoveryEventQueue:
             self.task.CopyFrom(previous)
             raise
 
+
 @dataclass
 class _ProjectionCursor:
     updater: TaskUpdater
@@ -554,6 +555,7 @@ class DurableAgentExecutor(AgentExecutor):
         if self._deployment is None:
             self._deployment = durable_runtime.deployment(self.pipeline_name, self.wrapper)
         return self._deployment
+
 
 def _result_text(result: Any) -> str:
     if isinstance(result, dict):

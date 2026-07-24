@@ -17,9 +17,8 @@ class DurableAuthoringMode(str, Enum):
 
 def durable_authoring_mode(wrapper: BasePipelineWrapper) -> DurableAuthoringMode:
     """Classify a wrapper once, with explicit wrapper methods taking precedence."""
-    if (
-        getattr(wrapper, "_is_run_durable_implemented", False)
-        or getattr(wrapper, "_is_run_durable_async_implemented", False)
+    if getattr(wrapper, "_is_run_durable_implemented", False) or getattr(
+        wrapper, "_is_run_durable_async_implemented", False
     ):
         return DurableAuthoringMode.WRAPPER
     if getattr(wrapper, "durable", False) and wrapper.pipeline is not None:

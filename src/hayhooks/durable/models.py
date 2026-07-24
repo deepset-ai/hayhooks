@@ -53,17 +53,17 @@ def json_safe(value: Any) -> JsonValue:
     raise TypeError(msg)
 
 
-def validate_json(value: Any, *, limit: int, label: str) -> JsonValue:
-    """Normalize and bound a value that will be persisted in an execution."""
+def validate_json(value: Any, *, limit: int | None, label: str) -> JsonValue:
+    """Normalize a value and, when requested, bound its encoded size."""
     try:
         safe = json_safe(value)
         encoded = json.dumps(safe, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError) as error:
         msg = f"{label} must be JSON serializable"
         raise ValueError(msg) from error
-    if len(encoded.encode("utf-8")) > limit:
+    if limit is not None and len(encoded.encode("utf-8")) > limit:
         msg = f"{label} exceeds the {limit}-byte durable execution limit"
-        raise ValueError(msg)
+        raise ExecutionRecordSizeError(msg)
     return safe
 
 
@@ -214,9 +214,7 @@ class ExecutionCheckpoint:
 
     def __post_init__(self) -> None:
         self.kind = ExecutionKind(self.kind)
-        self.data = cast(
-            dict[str, JsonValue], validate_json(self.data, limit=DEFAULT_MAX_RECORD_BYTES, label="checkpoint")
-        )
+        self.data = cast(dict[str, JsonValue], validate_json(self.data, limit=None, label="checkpoint"))
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {"kind": self.kind.value, "data": self.data}
@@ -287,6 +285,11 @@ class ExecutionRecord:
             self.result = validate_json(self.result, limit=self.max_record_bytes, label="result")
         if self.checkpoint is not None and not isinstance(self.checkpoint, ExecutionCheckpoint):
             self.checkpoint = ExecutionCheckpoint.from_dict(cast(Mapping[str, Any], self.checkpoint))
+        if self.checkpoint is not None:
+            self.checkpoint.data = cast(
+                dict[str, JsonValue],
+                validate_json(self.checkpoint.data, limit=self.max_record_bytes, label="checkpoint"),
+            )
         if self.error is not None and not isinstance(self.error, ExecutionError):
             self.error = ExecutionError.from_dict(cast(Mapping[str, Any], self.error))
         if self.last_retry_error is not None and not isinstance(self.last_retry_error, ExecutionError):
@@ -490,4 +493,3 @@ class ExecutionRecord:
         self.max_progress_events = max(1, self.max_progress_events)
         if len(self.progress) > self.max_progress_events:
             self.progress = self.progress[-self.max_progress_events :]
-

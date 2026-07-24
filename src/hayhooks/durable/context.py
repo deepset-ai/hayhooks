@@ -9,7 +9,6 @@ from contextvars import ContextVar
 from typing import Any, Protocol, cast, runtime_checkable
 
 from hayhooks.durable.models import (
-    DEFAULT_MAX_RECORD_BYTES,
     ExecutionCanceledError,
     ExecutionCheckpoint,
     ExecutionError,
@@ -154,6 +153,10 @@ class DurableContext:
                     f"{self.record.execution_kind.value} execution"
                 )
                 raise ValueError(msg)
+            checkpoint.data = cast(
+                dict[str, JsonValue],
+                validate_json(checkpoint.data, limit=self.record.max_record_bytes, label="checkpoint"),
+            )
             self.record.checkpoint = checkpoint
         await self.claim.checkpoint()
 
@@ -188,13 +191,13 @@ class DurableContext:
     async def suspend(self, wait: Mapping[str, Any], *, update: Mapping[str, Any] | None = None) -> None:
         """Atomically checkpoint and move this execution to durable ``waiting``."""
         self.record.wait = cast(
-            dict[str, JsonValue], validate_json(dict(wait), limit=DEFAULT_MAX_RECORD_BYTES, label="wait")
+            dict[str, JsonValue], validate_json(dict(wait), limit=self.record.max_record_bytes, label="wait")
         )
         if update is not None:
             self.record.application_state.update(
                 cast(
                     dict[str, JsonValue],
-                    validate_json(dict(update), limit=DEFAULT_MAX_RECORD_BYTES, label="wait update"),
+                    validate_json(dict(update), limit=self.record.max_record_bytes, label="wait update"),
                 )
             )
         self.record.status = ExecutionStatus.WAITING

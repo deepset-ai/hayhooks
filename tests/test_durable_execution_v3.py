@@ -87,6 +87,57 @@ class SyncWrapper(BasePipelineWrapper):
         return Result(value=request.value + 2)
 
 
+@pytest.mark.asyncio
+async def test_deployment_start_retires_incompatible_queued_and_waiting_records() -> None:
+    provider = InMemoryExecutionStoreProvider()
+    store = provider.create_execution_store("revision-safe")
+    await store.initialize()
+
+    for execution_id, revision in (("waiting-old", "old"), ("waiting-current", "current"), ("queued-old", "old")):
+        assert await store.submit(
+            ExecutionRecord(
+                execution_id=execution_id,
+                execution_kind=ExecutionKind.PIPELINE,
+                deployment_name="revision-safe",
+                definition_revision=revision,
+                validated_input={"value": 1},
+            )
+        )
+    waiting = await store.claim_next("worker")
+    assert waiting is not None
+    async with waiting:
+        waiting.record.status = ExecutionStatus.WAITING
+        waiting.record.wait = {"kind": "input"}
+        await waiting.suspend()
+    waiting = await store.claim_next("worker")
+    assert waiting is not None
+    async with waiting:
+        waiting.record.status = ExecutionStatus.WAITING
+        waiting.record.wait = {"kind": "input"}
+        await waiting.suspend()
+
+    wrapper = Wrapper()
+    wrapper.durable_options = DurableOptions(revision="current")
+    wrapper.setup()
+    _set_method_implementation_flags(wrapper)
+    deployment = DurableDeployment("revision-safe", wrapper, provider)
+    await deployment.start()
+    try:
+        queued_old = await store.get("queued-old")
+        waiting_old = await store.get("waiting-old")
+        waiting_current = await store.get("waiting-current")
+    finally:
+        await deployment.close()
+
+    for retired in (queued_old, waiting_old):
+        assert retired is not None
+        assert retired.status is ExecutionStatus.FAILED
+        assert retired.error is not None
+        assert retired.error.code == "definition_revision_conflict"
+    assert waiting_current is not None
+    assert waiting_current.status is ExecutionStatus.WAITING
+
+
 @component
 class _CheckpointIncrement:
     def __init__(self, *, fail_once: bool = False) -> None:

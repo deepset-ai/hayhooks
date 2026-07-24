@@ -325,10 +325,11 @@ class HaystackDurableAdapter:
             await _run_fenced_thread(self.run_agent, context, messages=messages, **kwargs),
         )
 
-    def run_agent(self, _context: DurableContext, *, messages: list[Any], **kwargs: Any) -> dict[str, Any]:
+    def run_agent(self, context: DurableContext, *, messages: list[Any], **kwargs: Any) -> dict[str, Any]:
         if self.kind is not ExecutionKind.AGENT:
             msg = "run_agent is available only when self.pipeline is a Haystack Agent"
             raise TypeError(msg)
+        del context
         return cast(dict[str, Any], self.pipeline.run(messages=messages, **kwargs))
 
     def _install_agent_checkpoint_hooks(self) -> None:

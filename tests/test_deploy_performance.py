@@ -194,7 +194,7 @@ def test_no_defer_calls_setup():
         options={"save_file": False},
     )
 
-    mock_app.setup.assert_called()
+    mock_app.setup.assert_called_once()
 
 
 def test_rebuild_openapi():

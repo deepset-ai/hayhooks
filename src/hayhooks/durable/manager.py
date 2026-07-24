@@ -284,69 +284,72 @@ class DurableExecutionManager:
         claim: ExecutionClaim,
     ) -> None:
         async with claim:
-            context = DurableContext(claim, self.adapter)
             try:
-                if await claim.cancellation_requested():
+                context = DurableContext(claim, self.adapter)
+                try:
+                    if await claim.cancellation_requested():
+                        claim.record.mark_canceled()
+                        await claim.complete()
+                        self._record_terminal_metric(claim.record)
+                        return
+                    with execution_context_scope(context):
+                        result = await self.runner(context)
+                    if await claim.cancellation_requested():
+                        claim.record.mark_canceled()
+                    else:
+                        claim.record.result = validate_json(result, limit=claim.record.max_record_bytes, label="result")
+                        claim.record.error = None
+                        claim.record.status = ExecutionStatus.COMPLETED
+                        claim.record.wait = None
+                        claim.record.retry_at = None
+                    claim.record.touch()
+                    await claim.complete()
+                    self._record_terminal_metric(claim.record)
+                except ExecutionSuspendedError:
+                    # ``DurableContext.suspend`` already persisted and released this claim.
+                    if claim.record.terminal:
+                        self._record_terminal_metric(claim.record)
+                    else:
+                        self._metrics["suspended"] += 1
+                    return
+                except ExecutionCanceledError:
                     claim.record.mark_canceled()
                     await claim.complete()
                     self._record_terminal_metric(claim.record)
-                    return
-                with execution_context_scope(context):
-                    result = await self.runner(context)
-                if await claim.cancellation_requested():
-                    claim.record.mark_canceled()
-                else:
-                    claim.record.result = validate_json(result, limit=claim.record.max_record_bytes, label="result")
-                    claim.record.error = None
-                    claim.record.status = ExecutionStatus.COMPLETED
-                    claim.record.wait = None
-                    claim.record.retry_at = None
-                claim.record.touch()
-                await claim.complete()
-                self._record_terminal_metric(claim.record)
-            except ExecutionSuspendedError:
-                # ``DurableContext.suspend`` already persisted and released this claim.
-                if claim.record.terminal:
-                    self._record_terminal_metric(claim.record)
-                else:
-                    self._metrics["suspended"] += 1
-                return
-            except ExecutionCanceledError:
-                claim.record.mark_canceled()
-                await claim.complete()
-                self._record_terminal_metric(claim.record)
-            except RetryableExecutionError as error:
-                if claim.record.attempt >= self.max_attempts:
-                    exhausted = ExecutionError(
-                        type="RetryExhausted",
-                        message=f"Execution exhausted its {self.max_attempts} permitted attempts",
-                        retryable=False,
-                        code="retry_exhausted",
-                    )
-                    claim.record.mark_failed(exhausted)
-                    claim.record.append_progress("Execution retry limit reached", kind="retry_exhausted")
+                except RetryableExecutionError as error:
+                    if claim.record.attempt >= self.max_attempts:
+                        exhausted = ExecutionError(
+                            type="RetryExhausted",
+                            message=f"Execution exhausted its {self.max_attempts} permitted attempts",
+                            retryable=False,
+                            code="retry_exhausted",
+                        )
+                        claim.record.mark_failed(exhausted)
+                        claim.record.append_progress("Execution retry limit reached", kind="retry_exhausted")
+                        await claim.complete()
+                        self._metrics["retries_exhausted"] += 1
+                        self._record_terminal_metric(claim.record)
+                        return
+                    delay = self._retry_delay(claim.record.attempt, error.delay)
+                    await claim.retry(ExecutionError.from_exception(error, retryable=True), delay=delay)
+                    if claim.record.terminal:
+                        self._record_terminal_metric(claim.record)
+                    else:
+                        self._metrics["retries_scheduled"] += 1
+                except ExecutionRecordSizeError:
+                    raise
+                except ExecutionLeaseLostError:
+                    raise
+                except ExecutionStoreError:
+                    raise
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    claim.record.mark_failed(error)
                     await claim.complete()
-                    self._metrics["retries_exhausted"] += 1
                     self._record_terminal_metric(claim.record)
-                    return
-                delay = self._retry_delay(claim.record.attempt, error.delay)
-                await claim.retry(ExecutionError.from_exception(error, retryable=True), delay=delay)
-                if claim.record.terminal:
-                    self._record_terminal_metric(claim.record)
-                else:
-                    self._metrics["retries_scheduled"] += 1
             except ExecutionRecordSizeError:
                 await self._fail_oversized_record(claim)
-            except ExecutionLeaseLostError:
-                raise
-            except ExecutionStoreError:
-                raise
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                claim.record.mark_failed(error)
-                await claim.complete()
-                self._record_terminal_metric(claim.record)
 
     async def _fail_oversized_record(self, claim: ExecutionClaim) -> None:
         """Persist a small terminal record after application state exceeded its bound."""
