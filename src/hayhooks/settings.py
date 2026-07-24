@@ -117,6 +117,8 @@ class AppSettings(BaseSettings):
 
     # Redis execution-store scheduling, fencing, and retention controls.
     durable_redis_claim_idle_ms: int = Field(default=30_000, ge=1, le=86_400_000)
+    durable_redis_queue_block_ms: int = Field(default=1_000, ge=1, le=60_000)
+    durable_redis_reclaim_interval: float = Field(default=1.0, ge=0.0, le=60.0)
     # Deprecated compatibility inputs. Cancellation is persisted on the record
     # and live Stream deliveries are never trimmed.
     durable_redis_cancellation_ttl_seconds: int = Field(default=86_400, ge=1)

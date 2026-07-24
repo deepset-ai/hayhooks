@@ -62,6 +62,27 @@ class InitializingFakeRedis(FakeRedis):
         self.group_created = True
 
 
+class DeliveryFakeRedis(FakeRedis):
+    def __init__(self):
+        super().__init__()
+        self.xautoclaim_calls = []
+        self.xreadgroup_calls = []
+        self.claimed = [b"0-0", [], []]
+        self.fail_next_xautoclaim = False
+
+    async def xautoclaim(self, *args, **kwargs):
+        self.xautoclaim_calls.append((args, kwargs))
+        if self.fail_next_xautoclaim:
+            self.fail_next_xautoclaim = False
+            msg = "temporary reclaim failure"
+            raise ConnectionError(msg)
+        return self.claimed
+
+    async def xreadgroup(self, *args, **kwargs):
+        self.xreadgroup_calls.append((args, kwargs))
+        return []
+
+
 def _record(execution_id="execution"):
     return ExecutionRecord(
         execution_id=execution_id,
@@ -111,6 +132,8 @@ async def test_redis_execution_requires_server_6_2_or_newer():
 def test_redis_execution_provider_uses_app_settings(monkeypatch):
     monkeypatch.setattr(settings, "durable_redis_key_prefix", "configured:durable:")
     monkeypatch.setattr(settings, "durable_redis_claim_idle_ms", 45_000)
+    monkeypatch.setattr(settings, "durable_redis_queue_block_ms", 2_500)
+    monkeypatch.setattr(settings, "durable_redis_reclaim_interval", 2.5)
     monkeypatch.setattr(settings, "durable_terminal_ttl_seconds", 600)
     monkeypatch.setattr(settings, "durable_redis_cancellation_ttl_seconds", 120)
     monkeypatch.setattr(settings, "durable_redis_stream_max_length", 2_500)
@@ -124,6 +147,8 @@ def test_redis_execution_provider_uses_app_settings(monkeypatch):
 
     assert store.key_prefix == "configured:durable:deployment:agent%2Fname"
     assert store.claim_idle_ms == 45_000
+    assert store.queue_block_ms == 2_500
+    assert store.reclaim_interval == 2.5
     assert store.terminal_ttl_seconds == 600
     assert store.cancellation_ttl_seconds == 120
     assert store.max_stream_length == 2_500
@@ -166,6 +191,56 @@ async def test_delayed_promotion_is_throttled_and_retries_after_failure(monkeypa
         await store._promote_delayed()
     await store._promote_delayed()
     assert len(redis.scripts["promote_delayed"].calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_idle_delivery_read_blocks_and_reclaim_scans_are_throttled(monkeypatch):
+    redis = DeliveryFakeRedis()
+    store = RedisExecutionStore(
+        redis,
+        key_prefix="test",
+        queue_block_ms=1_250,
+        reclaim_interval=1.0,
+    )
+    clock = [100.0]
+    monkeypatch.setattr("hayhooks.redis_execution.time.monotonic", lambda: clock[0])
+
+    assert await store._next_delivery("worker") is None
+    clock[0] += 0.5
+    assert await store._next_delivery("worker") is None
+    clock[0] += 0.5
+    assert await store._next_delivery("worker") is None
+
+    assert len(redis.xautoclaim_calls) == 2
+    assert len(redis.xreadgroup_calls) == 3
+    assert all(call[1]["block"] == 1_250 for call in redis.xreadgroup_calls)
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_delivery_skips_new_delivery_read():
+    redis = DeliveryFakeRedis()
+    redis.claimed = [b"42-0", [(b"41-0", {b"execution_id": b"recovered"})], []]
+    store = RedisExecutionStore(redis, key_prefix="test")
+
+    delivery = await store._next_delivery("worker")
+
+    assert delivery is not None
+    assert delivery.execution_id == "recovered"
+    assert store._reclaim_cursors["worker"] == "42-0"
+    assert redis.xreadgroup_calls == []
+
+
+@pytest.mark.asyncio
+async def test_failed_reclaim_scan_is_immediately_eligible_for_retry():
+    redis = DeliveryFakeRedis()
+    redis.fail_next_xautoclaim = True
+    store = RedisExecutionStore(redis, key_prefix="test", reclaim_interval=10.0)
+
+    with pytest.raises(ExecutionStoreError, match="delivery failed"):
+        await store._next_delivery("worker")
+    assert await store._next_delivery("worker") is None
+
+    assert len(redis.xautoclaim_calls) == 2
 
 
 @pytest.mark.asyncio

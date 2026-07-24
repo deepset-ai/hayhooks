@@ -53,6 +53,8 @@ def test_env_var_prefix(monkeypatch):
 def test_durable_redis_settings_defaults(monkeypatch):
     names = (
         "HAYHOOKS_DURABLE_REDIS_CLAIM_IDLE_MS",
+        "HAYHOOKS_DURABLE_REDIS_QUEUE_BLOCK_MS",
+        "HAYHOOKS_DURABLE_REDIS_RECLAIM_INTERVAL",
         "HAYHOOKS_DURABLE_REDIS_CANCELLATION_TTL_SECONDS",
         "HAYHOOKS_DURABLE_REDIS_STREAM_MAX_LENGTH",
         "HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_INTERVAL",
@@ -64,6 +66,8 @@ def test_durable_redis_settings_defaults(monkeypatch):
     settings = AppSettings()
 
     assert settings.durable_redis_claim_idle_ms == 30_000
+    assert settings.durable_redis_queue_block_ms == 1_000
+    assert settings.durable_redis_reclaim_interval == 1.0
     assert settings.durable_redis_cancellation_ttl_seconds == 86_400
     assert settings.durable_redis_stream_max_length == 0
     assert settings.durable_redis_delayed_promotion_interval == 0.25
@@ -72,6 +76,8 @@ def test_durable_redis_settings_defaults(monkeypatch):
 
 def test_durable_redis_settings_from_environment(monkeypatch):
     monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_CLAIM_IDLE_MS", "45000")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_QUEUE_BLOCK_MS", "2500")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_RECLAIM_INTERVAL", "2.5")
     monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_CANCELLATION_TTL_SECONDS", "120")
     monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_STREAM_MAX_LENGTH", "2500")
     monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_DELAYED_PROMOTION_INTERVAL", "0.75")
@@ -80,6 +86,8 @@ def test_durable_redis_settings_from_environment(monkeypatch):
     settings = AppSettings()
 
     assert settings.durable_redis_claim_idle_ms == 45_000
+    assert settings.durable_redis_queue_block_ms == 2_500
+    assert settings.durable_redis_reclaim_interval == 2.5
     assert settings.durable_redis_cancellation_ttl_seconds == 120
     assert settings.durable_redis_stream_max_length == 2_500
     assert settings.durable_redis_delayed_promotion_interval == 0.75

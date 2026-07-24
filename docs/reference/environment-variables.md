@@ -211,6 +211,16 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Default: `30000`
 - Description: Milliseconds before an unrenewed execution claim can be recovered by another worker. This also controls the claim lease duration.
 
+### HAYHOOKS_DURABLE_REDIS_QUEUE_BLOCK_MS
+
+- Default: `1000`
+- Description: Maximum milliseconds an idle durable worker blocks waiting for a new Stream delivery. New work wakes the read immediately.
+
+### HAYHOOKS_DURABLE_REDIS_RECLAIM_INTERVAL
+
+- Default: `1.0`
+- Description: Minimum seconds between abandoned-delivery recovery scans by each worker. Recovery still requires the delivery to exceed `HAYHOOKS_DURABLE_REDIS_CLAIM_IDLE_MS`.
+
 ### HAYHOOKS_DURABLE_REDIS_CANCELLATION_TTL_SECONDS
 
 - Default: `86400` (one day)

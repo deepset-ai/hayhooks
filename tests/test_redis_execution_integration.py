@@ -41,6 +41,8 @@ async def main():
         redis,
         key_prefix=sys.argv[2],
         claim_idle_ms=10_000,
+        queue_block_ms=1,
+        reclaim_interval=0,
         delayed_promotion_interval=0,
     )
     await store.initialize()
@@ -70,6 +72,8 @@ async def redis_store():
         redis,
         key_prefix=prefix,
         claim_idle_ms=50,
+        queue_block_ms=1,
+        reclaim_interval=0,
         terminal_ttl_seconds=60,
         max_stream_length=1,
         delayed_promotion_interval=0,
@@ -103,11 +107,29 @@ async def _complete_next(store: RedisExecutionStore, worker: str) -> None:
         await claim.complete()
 
 
+async def test_blocking_queue_read_wakes_immediately_for_new_work(redis_store) -> None:
+    _, store = redis_store
+    store.queue_block_ms = 1_000
+    waiting_claim = asyncio.create_task(store.claim_next("blocking-reader"))
+    await asyncio.sleep(0.05)
+
+    started = time.monotonic()
+    assert await store.submit(_record("wake-reader"))
+    claim = await asyncio.wait_for(waiting_claim, timeout=0.5)
+
+    assert claim is not None
+    assert time.monotonic() - started < 0.5
+    async with claim:
+        claim.record.status = ExecutionStatus.COMPLETED
+        await claim.complete()
+
+
 async def test_pending_delivery_survives_backlog_larger_than_deprecated_stream_limit(redis_store) -> None:
     redis, store = redis_store
     assert await store.submit(_record("pending"))
     pending = await store.claim_next("original")
     assert pending is not None
+    store.claim_idle_ms = 10_000
 
     for index in range(25):
         execution_id = f"later-{index}"
@@ -115,7 +137,16 @@ async def test_pending_delivery_survives_backlog_larger_than_deprecated_stream_l
         await _complete_next(store, f"completion-{index}")
 
     assert await redis.xlen(store.stream_key) == 1
-    await asyncio.sleep(0.06)
+    store.claim_idle_ms = 1_000
+    await redis.xclaim(
+        store.stream_key,
+        EXECUTION_GROUP,
+        "original",
+        min_idle_time=0,
+        message_ids=[pending.delivery.entry_id],
+        idle=2_000,
+    )
+    await redis.delete(store._lease_key("pending"))
     recovered = await store.claim_next("recovery")
     assert recovered is not None
     assert recovered.record.execution_id == "pending"
@@ -239,6 +270,8 @@ async def test_two_store_instances_never_own_same_execution(redis_store) -> None
         redis,
         key_prefix=first.key_prefix,
         claim_idle_ms=1_000,
+        queue_block_ms=1,
+        reclaim_interval=0,
         delayed_promotion_interval=0,
     )
     await second.initialize()

@@ -202,6 +202,8 @@ class RedisExecutionStore:
         *,
         key_prefix: str | None = None,
         claim_idle_ms: int | None = None,
+        queue_block_ms: int | None = None,
+        reclaim_interval: float | None = None,
         terminal_ttl_seconds: int | None = None,
         cancellation_ttl_seconds: int | None = None,
         max_stream_length: int | None = None,
@@ -213,6 +215,8 @@ class RedisExecutionStore:
     ) -> None:
         key_prefix = key_prefix or settings.durable_redis_key_prefix
         claim_idle_ms = claim_idle_ms if claim_idle_ms is not None else settings.durable_redis_claim_idle_ms
+        queue_block_ms = queue_block_ms if queue_block_ms is not None else settings.durable_redis_queue_block_ms
+        reclaim_interval = reclaim_interval if reclaim_interval is not None else settings.durable_redis_reclaim_interval
         terminal_ttl_seconds = (
             terminal_ttl_seconds if terminal_ttl_seconds is not None else settings.durable_terminal_ttl_seconds
         )
@@ -241,9 +245,17 @@ class RedisExecutionStore:
         if claim_idle_ms < 1:
             msg = "claim_idle_ms must be positive"
             raise ValueError(msg)
+        if queue_block_ms < 1:
+            msg = "queue_block_ms must be positive"
+            raise ValueError(msg)
+        if reclaim_interval < 0:
+            msg = "reclaim_interval cannot be negative"
+            raise ValueError(msg)
         self.redis = redis
         self.key_prefix = key_prefix.rstrip(":")
         self.claim_idle_ms = claim_idle_ms
+        self.queue_block_ms = queue_block_ms
+        self.reclaim_interval = reclaim_interval
         self.terminal_ttl_seconds = terminal_ttl_seconds
         self.cancellation_ttl_seconds = cancellation_ttl_seconds
         self.max_stream_length = max_stream_length
@@ -261,6 +273,7 @@ class RedisExecutionStore:
         self._delayed_promotion_lock = asyncio.Lock()
         self._next_delayed_promotion_at = 0.0
         self._reclaim_cursors: dict[str, str] = {}
+        self._next_reclaim_at: dict[str, float] = {}
 
     @property
     def lease_renewal_interval(self) -> float:
@@ -618,20 +631,42 @@ class RedisExecutionStore:
 
     @_store_operation("delivery")
     async def _next_delivery(self, worker_name: str) -> _Delivery | None:
-        cursor = self._reclaim_cursors.get(worker_name, "0-0")
-        claimed = await self.redis.xautoclaim(
-            self.stream_key, EXECUTION_GROUP, worker_name, self.claim_idle_ms, cursor, count=1
+        reclaimed = await self._reclaim_delivery(worker_name)
+        if reclaimed is not None:
+            return reclaimed
+        batches = cast(
+            list[tuple[Any, list[Any]]],
+            await self.redis.xreadgroup(
+                EXECUTION_GROUP,
+                worker_name,
+                {self.stream_key: ">"},
+                count=1,
+                block=self.queue_block_ms,
+            ),
         )
+        return self._delivery(batches[0][1][0]) if batches else None
+
+    async def _reclaim_delivery(self, worker_name: str) -> _Delivery | None:
+        now = time.monotonic()
+        if now < self._next_reclaim_at.get(worker_name, 0.0):
+            return None
+        self._next_reclaim_at[worker_name] = now + self.reclaim_interval
+        cursor = self._reclaim_cursors.get(worker_name, "0-0")
+        try:
+            claimed = await self.redis.xautoclaim(
+                self.stream_key, EXECUTION_GROUP, worker_name, self.claim_idle_ms, cursor, count=1
+            )
+        except BaseException:
+            # Store failures already back off at the manager; make the next healthy
+            # attempt eligible to recover pending work immediately.
+            self._next_reclaim_at.pop(worker_name, None)
+            raise
         if claimed:
             self._reclaim_cursors[worker_name] = _decode(claimed[0])
             entries = claimed[1] if len(claimed) > 1 else []
             if entries:
                 return self._delivery(entries[0])
-        batches = cast(
-            list[tuple[Any, list[Any]]],
-            await self.redis.xreadgroup(EXECUTION_GROUP, worker_name, {self.stream_key: ">"}, count=1, block=1),
-        )
-        return self._delivery(batches[0][1][0]) if batches else None
+        return None
 
     @_store_operation("delayed promotion")
     async def _promote_delayed(self) -> None:
@@ -722,6 +757,8 @@ class RedisExecutionStoreProvider:
         key_prefix: str | None = None,
         redis: Redis | None = None,
         claim_idle_ms: int | None = None,
+        queue_block_ms: int | None = None,
+        reclaim_interval: float | None = None,
         terminal_ttl_seconds: int | None = None,
         cancellation_ttl_seconds: int | None = None,
         max_stream_length: int | None = None,
@@ -733,6 +770,10 @@ class RedisExecutionStoreProvider:
     ) -> None:
         self.key_prefix = (key_prefix or settings.durable_redis_key_prefix).rstrip(":")
         self.claim_idle_ms = claim_idle_ms if claim_idle_ms is not None else settings.durable_redis_claim_idle_ms
+        self.queue_block_ms = queue_block_ms if queue_block_ms is not None else settings.durable_redis_queue_block_ms
+        self.reclaim_interval = (
+            reclaim_interval if reclaim_interval is not None else settings.durable_redis_reclaim_interval
+        )
         self.terminal_ttl_seconds = (
             terminal_ttl_seconds if terminal_ttl_seconds is not None else settings.durable_terminal_ttl_seconds
         )
@@ -777,6 +818,8 @@ class RedisExecutionStoreProvider:
                 self.redis,
                 key_prefix=f"{self.key_prefix}:deployment:{namespace}",
                 claim_idle_ms=self.claim_idle_ms,
+                queue_block_ms=self.queue_block_ms,
+                reclaim_interval=self.reclaim_interval,
                 terminal_ttl_seconds=self.terminal_ttl_seconds,
                 cancellation_ttl_seconds=self.cancellation_ttl_seconds,
                 max_stream_length=self.max_stream_length,

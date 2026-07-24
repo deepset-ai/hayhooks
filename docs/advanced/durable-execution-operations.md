@@ -62,6 +62,14 @@ Capacity planning must include:
 - A2A task TTL and active projection index;
 - worker concurrency and claim/heartbeat traffic.
 
+Idle workers use blocking Stream reads and wake immediately when work arrives.
+`HAYHOOKS_DURABLE_REDIS_QUEUE_BLOCK_MS` controls the maximum idle block, while
+`HAYHOOKS_DURABLE_REDIS_RECLAIM_INTERVAL` independently limits abandoned-claim
+scans. Increasing the reclaim interval reduces Redis traffic but adds up to that
+interval after lease expiry before another worker recovers the delivery. Each
+blocked worker occupies one pooled Redis connection, so include total durable
+deployment concurrency when sizing managed-service connection limits.
+
 ## Shutdown and replacement
 
 Hayhooks stops new claims, waits for the configured grace period, and keeps
