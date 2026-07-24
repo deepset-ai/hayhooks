@@ -374,8 +374,18 @@ async def test_two_a2a_replicas_recover_only_owned_projections_and_take_over_lea
         result=None,
         error=None,
         updated_at=datetime.now(timezone.utc),
+        sequence=0,
     )
-    deployment = SimpleNamespace(get=lambda _task_id: asyncio.sleep(0, result=record))
+
+    async def get_changed(known_sequences):
+        return {
+            execution_id: record for execution_id, sequence in known_sequences.items() if sequence != record.sequence
+        }
+
+    deployment = SimpleNamespace(
+        get=lambda _task_id: asyncio.sleep(0, result=record),
+        get_changed=get_changed,
+    )
     monkeypatch.setattr("hayhooks.server.a2a.executor.durable_runtime.deployment", lambda *_args: deployment)
     first = DurableAgentExecutor(SimpleNamespace(), "agent", first_store)
     second = DurableAgentExecutor(SimpleNamespace(), "agent", second_store)
@@ -493,6 +503,27 @@ async def test_operational_counts_follow_every_real_redis_state_transition(redis
     counts = await store.operational_counts()
     assert counts["canceled"] == 1
     assert counts["waiting"] == 0
+
+
+async def test_sequence_index_avoids_unchanged_reads_and_active_index_drops_terminal_work(redis_store) -> None:
+    redis, store = redis_store
+    record = _record("indexed")
+    assert await store.submit(record)
+    assert await redis.hget(store.active_revisions_key, record.execution_id) == record.definition_revision.encode()
+
+    assert await store.get_changed({record.execution_id: record.sequence}) == {}
+    assert await store.request_cancel(record.execution_id)
+    changed = await store.get_changed({record.execution_id: record.sequence})
+    assert changed[record.execution_id] is not None
+    assert changed[record.execution_id].cancel_requested_at is not None
+
+    claim = await store.claim_next("indexed-worker")
+    assert claim is not None
+    async with claim:
+        claim.record.mark_canceled()
+        await claim.complete()
+
+    assert await redis.hget(store.active_revisions_key, record.execution_id) is None
 
 
 async def test_same_redis_task_store_rejects_two_stale_in_process_snapshots(redis_store) -> None:

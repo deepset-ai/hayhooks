@@ -50,21 +50,34 @@ class _RecoverableStore:
 
 class _Deployment:
     def __init__(self, status=ExecutionStatus.COMPLETED) -> None:
-        self.record = SimpleNamespace(status=status, progress=[], result={"answer": "recovered"}, error=None)
+        self.record = SimpleNamespace(
+            status=status, progress=[], result={"answer": "recovered"}, error=None, sequence=0
+        )
         self.resume_update = None
         self.cancel_requested = False
+        self.changed_calls = 0
 
     async def get(self, _execution_id):
         return self.record
 
+    async def get_changed(self, known_sequences):
+        self.changed_calls += 1
+        return {
+            execution_id: self.record
+            for execution_id, sequence in known_sequences.items()
+            if sequence != self.record.sequence
+        }
+
     async def resume(self, _execution_id, update):
         self.resume_update = update
         self.record.status = ExecutionStatus.COMPLETED
+        self.record.sequence += 1
         return True
 
     async def request_cancel(self, _execution_id):
         self.cancel_requested = True
         self.record.status = ExecutionStatus.CANCELED
+        self.record.sequence += 1
         return True
 
 
@@ -91,6 +104,7 @@ class _HTTPDeployment(_Deployment):
         self.resume_update = update
         self.record.status = ExecutionStatus.COMPLETED
         self.record.result = {"last_message": {"content": "resumed"}}
+        self.record.sequence += 1
         return True
 
 
@@ -292,17 +306,34 @@ async def test_reconciler_batches_fairly_without_starving_later_tasks(monkeypatc
     executor._projections = {execution_id: _Projection(updater=object()) for execution_id in execution_ids}
     reconciled = []
 
-    async def reconcile(execution_id, _projection):
-        reconciled.append(execution_id)
-        executor._projections.pop(execution_id)
-        if len(reconciled) == len(execution_ids):
-            executor._closed = True
+    async def reconcile(batch):
+        for execution_id, _projection in batch:
+            reconciled.append(execution_id)
+            executor._projections.pop(execution_id)
+            if len(reconciled) == len(execution_ids):
+                executor._closed = True
 
-    monkeypatch.setattr(executor, "_reconcile_one", reconcile)
+    monkeypatch.setattr(executor, "_reconcile_batch", reconcile)
 
     await asyncio.wait_for(executor._reconcile_loop(), timeout=1)
 
     assert reconciled == execution_ids
+
+
+@pytest.mark.asyncio
+async def test_reconciler_batch_skips_full_records_until_sequence_changes(monkeypatch) -> None:
+    deployment = _Deployment(status=ExecutionStatus.RUNNING)
+    monkeypatch.setattr("hayhooks.server.a2a.executor.durable_runtime.deployment", lambda *_args: deployment)
+    executor = DurableAgentExecutor(SimpleNamespace(), "agent", _RecoverableStore([]))
+    projection = _Projection(updater=object())
+    batch = [("execution", projection)]
+
+    await executor._reconcile_batch(batch)
+    await executor._reconcile_batch(batch)
+
+    assert deployment.changed_calls == 2
+    assert projection.record_sequence == deployment.record.sequence
+    assert projection.failures == 0
 
 
 @pytest.mark.asyncio
@@ -384,6 +415,7 @@ async def test_cancel_projection_keeps_redis_lease_fencing_until_terminal(monkey
     assert executor._projections[task.id].lease_token == "lease-token"
 
     deployment.record.status = ExecutionStatus.CANCELED
+    deployment.record.sequence += 1
     await executor._reconcile_one(task.id, executor._projections[task.id])
     await executor.close()
 

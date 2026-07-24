@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import time
 import uuid
@@ -355,14 +356,44 @@ class RedisTaskStore(TaskStore):
         return version
 
     async def recoverable_task_batch(self, cursor: int, limit: int) -> tuple[builtins.list[Task], int | None]:
-        """Return a stable Redis scan page; removals cannot shift later entries."""
+        """Return one active-task page with owner payloads loaded in batches."""
         await self.cleanup_expired_tasks(limit=limit)
         next_cursor, entries = await self.redis.zscan(self._active_tasks_key(), cursor=cursor, count=limit)
+        task_ids = [self._decode_value(raw_task_id) for raw_task_id, _score in entries]
+        if not task_ids:
+            return [], int(next_cursor) or None
+
+        owners = await self.redis.hmget(self._task_index_key(), task_ids)
+        owner_groups: dict[str, builtins.list[str]] = {}
+        for task_id, raw_owner in zip(task_ids, owners, strict=True):
+            if raw_owner is not None:
+                owner_groups.setdefault(self._decode_value(raw_owner), []).append(task_id)
+
+        grouped = list(owner_groups.items())
+        results = await asyncio.gather(
+            *(self.redis.hmget(self._tasks_key_for_owner(owner), owner_task_ids) for owner, owner_task_ids in grouped),
+            self.redis.hmget(self._versions_key(), task_ids),
+        )
+
+        versions = dict(zip(task_ids, results[-1], strict=True))
+        payloads: dict[str, bytes | str] = {}
+        for (_owner, owner_task_ids), owner_payloads in zip(grouped, results[:-1], strict=True):
+            payloads.update(
+                {
+                    task_id: payload
+                    for task_id, payload in zip(owner_task_ids, owner_payloads, strict=True)
+                    if payload is not None
+                }
+            )
+
         tasks: builtins.list[Task] = []
-        for raw_task_id, _score in entries:
-            task = await self.get_for_execution(self._decode_value(raw_task_id))
-            if task is not None:
-                tasks.append(task)
+        for task_id in task_ids:
+            payload = payloads.get(task_id)
+            if payload is None:
+                continue
+            task = self._deserialize(payload)
+            self._remember_task_version(task, int(versions.get(task_id) or 0))
+            tasks.append(task)
         return tasks, int(next_cursor) or None
 
     async def cleanup_expired_tasks(self, *, limit: int = 100) -> int:

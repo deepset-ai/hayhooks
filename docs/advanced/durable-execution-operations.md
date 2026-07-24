@@ -4,6 +4,35 @@ Hayhooks durable execution provides fenced, at-least-once recovery. It does not
 make application side effects exactly once. Use an idempotency key derived from
 the execution ID and logical step for every external write.
 
+## Architecture and ownership
+
+There is one authoritative durable execution and optional transport-specific
+views of it:
+
+```text
+REST request or A2A message
+             │
+             ▼
+Durable execution record + checkpoint + Redis delivery   ← source of truth
+             │
+             ├── durable worker → Haystack Pipeline or Agent
+             │
+             └── A2A reconciler → persisted A2A Task       ← client-facing projection
+```
+
+The durable package is intentionally split by responsibility: `models` owns
+the persisted record and state values; `context` owns the application-facing
+controls and store contracts; `memory` and `redis` implement storage;
+`manager` owns worker transitions; `adapters` owns Haystack checkpoints; and
+`runtime` composes these pieces for a deployed wrapper. REST routes and the A2A
+reconciler do not execute business work directly—they submit, observe, and
+project the same record.
+
+For a durable A2A Agent, Redis therefore holds two independently retained
+objects: the execution record (which enables recovery) and the A2A Task (which
+lets clients poll, subscribe, and resume). Persisting only the A2A Task does
+not make an Agent restart-safe.
+
 ## Supported Redis deployments
 
 The first production release supports:
@@ -59,6 +88,7 @@ Capacity planning must include:
 - queued and pending Stream entries;
 - delayed retries;
 - terminal execution TTL;
+- nonterminal revision and record-sequence indexes;
 - A2A task TTL and active projection index;
 - worker concurrency and claim/heartbeat traffic.
 
@@ -78,8 +108,11 @@ running. The old revision drains active work and its wrapper lifecycle remains
 open until detached thread-backed work exits. A new revision atomically fails
 incompatible queued or waiting work instead of silently running it under changed
 code. Retirement runs again after old active work drains, covering executions
-that enter waiting during replacement. An accepted cancellation still wins and
-becomes terminal canceled. Actual process death is recovered after lease expiry.
+that enter waiting during replacement. Retirement scans only the nonterminal
+revision index and processes incompatible entries in bounded batches; retained
+terminal records are not part of deployment latency. An accepted cancellation
+still wins and becomes terminal canceled. Actual process death is recovered
+after lease expiry.
 
 ## Cancellation, retry, and idempotency
 
@@ -101,7 +134,9 @@ Matching replay returns the existing resource and a `Location` header.
 slots, store error count, last successful claim time, and submission state. It
 also returns constant-time store counts for queued, running, waiting, completed,
 failed, and canceled records, plus Stream deliveries, pending deliveries, and
-delayed retries. A prepared durable deployment that is not accepting work, has
+delayed retries. Expired-count maintenance is bounded to one batch on the
+readiness path and is drained incrementally by idle workers. A prepared durable
+deployment that is not accepting work, has
 missing worker slots, or cannot read its store health makes readiness return
 `503`. The projection also exposes per-process active-claim gauges and bounded
 operational counters for attempts, terminal outcomes, suspension, retry, lease

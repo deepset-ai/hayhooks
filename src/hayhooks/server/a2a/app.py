@@ -7,7 +7,8 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from hayhooks.a2a import TaskStoreProvider
-from hayhooks.durable_runtime import durable_runtime
+from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
+from hayhooks.durable.runtime import durable_runtime
 from hayhooks.server.a2a.cards import create_agent_card, get_a2a_base_url, is_a2a_exposable
 from hayhooks.server.a2a.executor import create_agent_executor
 from hayhooks.server.a2a.imports import (
@@ -127,7 +128,11 @@ def create_a2a_app(*, base_url: str | None = None, debug: bool = False, runtime:
     """
     a2a_import.check()
 
-    durable_agents_deployed = any(bool(getattr(registry.get(name), "durable", False)) for name in registry.get_names())
+    durable_agents_deployed = any(
+        wrapper is not None and durable_authoring_mode(wrapper) is DurableAuthoringMode.MANAGED_AGENT
+        for name in registry.get_names()
+        if (wrapper := registry.get(name)) is not None
+    )
     runtime = runtime or A2ARuntime(
         task_store_provider=_create_app_task_store_provider(durable_agents_deployed),
     )

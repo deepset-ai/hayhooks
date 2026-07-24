@@ -1,5 +1,6 @@
 from typing import Any
 
+from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
 from hayhooks.server.a2a.imports import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, a2a_import
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
@@ -31,7 +32,7 @@ def is_a2a_exposable(pipeline_name: str) -> bool:
 
     exposable = (
         hasattr(pipeline_wrapper, "create_a2a_agent_executor")
-        or bool(getattr(pipeline_wrapper, "durable", False))
+        or durable_authoring_mode(pipeline_wrapper) is DurableAuthoringMode.MANAGED_AGENT
         or pipeline_wrapper._is_run_chat_completion_implemented
         or pipeline_wrapper._is_run_chat_completion_async_implemented
     )

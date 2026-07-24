@@ -1,7 +1,9 @@
 import asyncio
+import json
 
 import pytest
 
+from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
 from hayhooks.execution import (
     DurableExecutionManager,
     ExecutionCheckpoint,
@@ -12,6 +14,7 @@ from hayhooks.execution import (
     ExecutionStoreError,
     InMemoryExecutionStore,
 )
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 
 def _record(execution_id: str = "execution", *, revision: str = "revision") -> ExecutionRecord:
@@ -41,6 +44,23 @@ def test_execution_errors_redact_structured_and_transport_secrets() -> None:
     assert "safe=value" in error.message
 
 
+def test_durable_authoring_mode_gives_explicit_wrapper_methods_precedence() -> None:
+    class Wrapper(BasePipelineWrapper):
+        durable = True
+
+        def setup(self) -> None:
+            pass
+
+    wrapper = Wrapper()
+    assert durable_authoring_mode(wrapper) is DurableAuthoringMode.NONE
+
+    wrapper.pipeline = object()
+    assert durable_authoring_mode(wrapper) is DurableAuthoringMode.MANAGED_AGENT
+
+    wrapper._is_run_durable_async_implemented = True
+    assert durable_authoring_mode(wrapper) is DurableAuthoringMode.WRAPPER
+
+
 def test_record_serialization_trims_old_progress_to_fit_total_size_limit() -> None:
     record = _record()
     record.max_record_bytes = 1_024
@@ -52,6 +72,23 @@ def test_record_serialization_trims_old_progress_to_fit_total_size_limit() -> No
     assert len(payload.encode("utf-8")) <= record.max_record_bytes
     assert 0 < len(record.progress) < 20
     assert record.progress[-1].message.startswith("event-19-")
+
+
+def test_record_serialization_encodes_payload_once(monkeypatch) -> None:
+    record = _record()
+    original_dumps = json.dumps
+    calls = 0
+
+    def counting_dumps(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_dumps(*args, **kwargs)
+
+    monkeypatch.setattr("hayhooks.execution.json.dumps", counting_dumps)
+
+    record.to_json()
+
+    assert calls == 1
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from hayhooks.durable_runtime import durable_runtime
+from hayhooks.durable.runtime import durable_runtime
 from hayhooks.server.pipelines.registry import registry
 
 router = APIRouter()

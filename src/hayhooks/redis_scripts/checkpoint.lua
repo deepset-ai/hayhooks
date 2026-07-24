@@ -14,6 +14,12 @@ end
 redis.call('SET', KEYS[2], cjson.encode(candidate))
 local old_status = current['status']
 local new_status = candidate['status']
+if new_status == 'completed' or new_status == 'failed' or new_status == 'canceled' then
+    redis.call('HDEL', KEYS[4], ARGV[3])
+else
+    redis.call('HSET', KEYS[4], ARGV[3], candidate['definition_revision'])
+end
+redis.call('HSET', KEYS[5], ARGV[3], candidate['sequence'] or 0)
 if old_status ~= new_status then
     local remaining = redis.call('HINCRBY', KEYS[3], old_status, -1)
     if remaining < 0 then redis.call('HSET', KEYS[3], old_status, 0) end

@@ -8,15 +8,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from hayhooks.execution import (
-    DurableExecutionStore,
-    DurableExecutionStoreProvider,
-    ExecutionProgressEvent,
-    ExecutionStatus,
-    InMemoryExecutionStore,
-    InMemoryExecutionStoreProvider,
-    get_current_durable_context,
-)
+from hayhooks.durable.context import DurableExecutionStore, DurableExecutionStoreProvider, get_current_durable_context
+from hayhooks.durable.memory import InMemoryExecutionStore, InMemoryExecutionStoreProvider
+from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
+from hayhooks.durable.models import ExecutionProgressEvent, ExecutionStatus
 
 
 @dataclass(frozen=True)
@@ -69,6 +64,7 @@ def current_durable_context() -> Any | None:
 
 
 __all__ = [
+    "DurableAuthoringMode",
     "DurableExecutionStore",
     "DurableExecutionStoreProvider",
     "DurableOptions",
@@ -79,4 +75,5 @@ __all__ = [
     "InMemoryExecutionStoreProvider",
     "current_durable_context",
     "current_execution_id",
+    "durable_authoring_mode",
 ]

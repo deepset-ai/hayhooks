@@ -184,7 +184,7 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 ### HAYHOOKS_A2A_PROJECTION_INTERVAL
 
 - Default: `0.1`
-- Description: Minimum seconds between A2A reconciliation passes.
+- Description: Minimum seconds between batched A2A sequence checks. Full execution records are loaded only after their sequence changes.
 
 ## Durable execution
 

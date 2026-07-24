@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hayhooks.durable_runtime import durable_runtime
+from hayhooks.durable.runtime import durable_runtime
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper

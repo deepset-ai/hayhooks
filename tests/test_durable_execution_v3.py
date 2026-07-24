@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from hayhooks import BasePipelineWrapper, DurableContext, DurableOptions
 from hayhooks.durable_adapters import (
     HaystackDurableAdapter,
+    _checkpoint_agent_state,
     _checkpoint_data,
     _restore_agent_state,
     definition_revision,
@@ -601,6 +602,34 @@ async def test_agent_state_checkpoint_restores_custom_state_and_typed_resume_mes
     assert restored_state.data["hook_context"] == {"request": "live"}
     assert [message.text for message in restored_state.data["messages"]] == ["before restart", "after restart"]
     assert context.resume_input is None
+
+
+@pytest.mark.asyncio
+async def test_agent_checkpoint_and_progress_share_one_store_write() -> None:
+    class Claim:
+        def __init__(self, record: ExecutionRecord) -> None:
+            self.record = record
+            self.checkpoints = 0
+
+        async def checkpoint(self) -> None:
+            self.checkpoints += 1
+
+    record = ExecutionRecord(
+        execution_id="coalesced-agent-checkpoint",
+        execution_kind=ExecutionKind.AGENT,
+        deployment_name="agent",
+        definition_revision="revision",
+        validated_input={"messages": []},
+    )
+    claim = Claim(record)
+    context = DurableContext(claim, adapter=object())
+    state = State(schema={"counter": {"type": int}}, data={"counter": 1})
+
+    await _checkpoint_agent_state(context, state)
+
+    assert claim.checkpoints == 1
+    assert record.checkpoint is not None
+    assert [event.kind for event in record.progress] == ["checkpoint"]
 
 
 @pytest.mark.asyncio

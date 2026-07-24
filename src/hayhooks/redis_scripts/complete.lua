@@ -26,4 +26,6 @@ redis.call('SET', KEYS[2], payload, 'EX', ARGV[4])
 redis.call('XACK', KEYS[3], ARGV[5], ARGV[6])
 redis.call('XDEL', KEYS[3], ARGV[6])
 redis.call('DEL', KEYS[1])
+redis.call('HDEL', KEYS[7], ARGV[7])
+redis.call('HSET', KEYS[8], ARGV[7], final['sequence'] or 0)
 return canceled and 2 or 1

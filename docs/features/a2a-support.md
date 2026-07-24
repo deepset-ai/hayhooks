@@ -202,7 +202,7 @@ With `HAYHOOKS_A2A_TASK_STORE=auto`, Hayhooks uses Redis for Redis-backed durabl
 
 Task storage is server infrastructure rather than pipeline configuration. Hayhooks includes independent in-memory and Redis-backed providers. Select the built-in Redis provider with `HAYHOOKS_A2A_TASK_STORE=redis` or `hayhooks a2a run --task-store redis`; configure its URL and key prefix with `HAYHOOKS_A2A_REDIS_URL` and `HAYHOOKS_A2A_REDIS_KEY_PREFIX`.
 
-The A2A extra includes the official Redis client. Redis task records are protobuf payloads scoped by agent and resolved owner. A bounded reconciler uses renewable per-task leases and compare-and-set projection versions, so additional replicas do not create one polling coroutine per task and a stale projector cannot overwrite a newer state. Persistent task records do not replay historical live event queues.
+The A2A extra includes the official Redis client. Redis task records are protobuf payloads scoped by agent and resolved owner. A bounded reconciler uses renewable per-task leases and compare-and-set projection versions, so additional replicas do not create one polling coroutine per task and a stale projector cannot overwrite a newer state. Reconciliation checks execution sequences in batches and loads full execution records only when they changed. Recovery task payloads are also loaded by owner batches. Persistent task records do not replay historical live event queues.
 
 Terminal tasks use `HAYHOOKS_A2A_TERMINAL_TASK_TTL_SECONDS`. Runtime maintenance performs cleanup even when no later A2A request arrives and removes the protobuf payload plus owner, active, retention, and version indexes. Execution-record retention remains independent.
 
@@ -339,6 +339,9 @@ A native executor that owns background execution resources may also implement as
 For the managed mode, set `durable = True` on an `A2APipelineWrapper` with a Haystack 3 `Agent`. Hayhooks creates the
 execution record using the A2A task ID, captures public Agent state at model/tool boundaries, and projects safe
 progress, waiting, completion, failure, and cancellation states back to the A2A task.
+
+The execution record is authoritative; the A2A Task is its persisted client-facing projection. This is why the two
+records have separate retention settings, and why a persistent A2A task store alone cannot recover interrupted work.
 
 ```python
 from haystack.components.agents import Agent

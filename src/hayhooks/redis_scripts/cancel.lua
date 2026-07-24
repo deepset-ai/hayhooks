@@ -33,7 +33,11 @@ if record['status'] == 'waiting' then
     redis.call('ZADD', KEYS[3], ARGV[6], ARGV[5])
     redis.call('HSET', KEYS[4], ARGV[5], 'canceled')
     redis.call('SET', KEYS[1], cjson.encode(record), 'EX', ARGV[3])
+    redis.call('HDEL', KEYS[5], ARGV[5])
+    redis.call('HSET', KEYS[6], ARGV[5], record['sequence'] or 0)
     return 2
 end
 redis.call('SET', KEYS[1], cjson.encode(record))
+redis.call('HSET', KEYS[5], ARGV[5], record['definition_revision'])
+redis.call('HSET', KEYS[6], ARGV[5], record['sequence'] or 0)
 return 1

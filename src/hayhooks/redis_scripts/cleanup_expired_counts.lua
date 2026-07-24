@@ -7,6 +7,7 @@ for _, id in ipairs(ids) do
             local remaining = redis.call('HINCRBY', KEYS[1], status, -1)
             if remaining < 0 then redis.call('HSET', KEYS[1], status, 0) end
             redis.call('HDEL', KEYS[3], id)
+            redis.call('HDEL', KEYS[4], id)
         end
     end
 end

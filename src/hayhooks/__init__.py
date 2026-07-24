@@ -9,8 +9,9 @@ from hayhooks.durable import (
     current_durable_context,
     current_execution_id,
 )
+from hayhooks.durable.context import DurableContext
+from hayhooks.durable.models import ExecutionStatus
 from hayhooks.events import PipelineEvent
-from hayhooks.execution import DurableContext, ExecutionStatus
 from hayhooks.server.app import create_app, run_app
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.sse import SSEStream

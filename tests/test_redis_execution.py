@@ -83,6 +83,32 @@ class DeliveryFakeRedis(FakeRedis):
         return []
 
 
+class MaintenanceFakeRedis(FakeRedis):
+    def __init__(self):
+        super().__init__()
+        self.revisions = {}
+        self.hscan_calls = 0
+
+    async def hscan(self, name, *, cursor, count):
+        assert name.endswith(":active-revisions")
+        assert cursor == 0
+        assert count == 100
+        self.hscan_calls += 1
+        return 0, self.revisions
+
+    async def xlen(self, _name):
+        return 0
+
+    async def xpending(self, _name, _group):
+        return {"pending": 0}
+
+    async def zcard(self, _name):
+        return 0
+
+    async def hmget(self, _name, values):
+        return [0 for _value in values]
+
+
 def _record(execution_id="execution"):
     return ExecutionRecord(
         execution_id=execution_id,
@@ -167,8 +193,14 @@ async def test_redis_execution_uses_registered_script_handles():
     assert await store.submit(record)
 
     keys, args = redis.scripts["submit"].calls[0]
-    assert keys == ["test:execution:execution:record", "test:queue", "test:state-counts"]
-    assert args == [record.to_json(), "execution"]
+    assert keys == [
+        "test:execution:execution:record",
+        "test:queue",
+        "test:state-counts",
+        "test:active-revisions",
+        "test:record-sequences",
+    ]
+    assert args == [record.to_json(), "execution", "revision", 0]
 
 
 @pytest.mark.asyncio
@@ -241,6 +273,34 @@ async def test_failed_reclaim_scan_is_immediately_eligible_for_retry():
     assert await store._next_delivery("worker") is None
 
     assert len(redis.xautoclaim_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_revision_retirement_reads_only_active_incompatible_index_entries():
+    redis = MaintenanceFakeRedis()
+    redis.revisions = {
+        b"current": b"current-revision",
+        b"old-one": b"old-revision",
+        b"old-two": b"old-revision",
+    }
+    store = RedisExecutionStore(redis, key_prefix="test")
+
+    assert await store.retire_incompatible("current-revision") == 2
+
+    assert redis.hscan_calls == 1
+    calls = redis.scripts["retire_incompatible"].calls
+    assert [call[1][-1] for call in calls] == ["old-one", "old-two"]
+
+
+@pytest.mark.asyncio
+async def test_operational_counts_runs_only_one_bounded_cleanup_batch():
+    redis = MaintenanceFakeRedis()
+    redis.results["cleanup_expired_counts"] = 1_000
+    store = RedisExecutionStore(redis, key_prefix="test")
+
+    await store.operational_counts()
+
+    assert len(redis.scripts["cleanup_expired_counts"].calls) == 1
 
 
 @pytest.mark.asyncio
