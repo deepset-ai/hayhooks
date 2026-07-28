@@ -442,7 +442,10 @@ def create_run_endpoint_handler(
         if response_model is None:
             return cast(Response | BaseModel, traced_result)
 
-        return cast(Response | BaseModel, response_model(result=traced_result))
+        # response_model is built dynamically via create_model(..., result=(...)); cast to Any so ty does not
+        # treat the real `result` field as an extra, discarded argument.
+        response_instance = cast("Any", response_model)(result=traced_result)
+        return cast(Response | BaseModel, response_instance)
 
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(
