@@ -84,7 +84,7 @@ def get_app() -> FastAPI:
 
 
 @hayhooks_cli.command()
-def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def run(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     host: Annotated[str | None, typer.Option("--host", "-h", help="Host to run the server on")] = None,
     port: Annotated[int | None, typer.Option("--port", "-p", help="Port to run the server on")] = None,
     pipelines_dir: Annotated[

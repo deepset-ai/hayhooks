@@ -50,7 +50,7 @@ def _deploy_with_progress(ctx: typer.Context, name: str, endpoint: str, payload:
 
 
 @pipeline.command(name="deploy-yaml")
-def deploy_yaml(  # noqa: PLR0913
+def deploy_yaml(  # noqa: PLR0913, PLR0917
     ctx: typer.Context,
     pipeline_file: Path = typer.Argument(  # noqa: B008
         help="The path to the YAML pipeline file to deploy."
@@ -172,7 +172,7 @@ def undeploy(
 
 
 @pipeline.command()
-def run(  # noqa: PLR0912, C901, PLR0913
+def run(  # noqa: C901, PLR0912, PLR0913, PLR0917
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The name of the pipeline to run.")],
     file: Annotated[

@@ -11,7 +11,7 @@ with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
 
 
 @mcp.command()
-def run(  # noqa: PLR0913
+def run(  # noqa: PLR0913, PLR0917
     host: Annotated[str | None, typer.Option("--host", "-h", help="Host to run the MCP server on")] = None,
     port: Annotated[int | None, typer.Option("--port", "-p", help="Port to run the MCP server on")] = None,
     pipelines_dir: Annotated[
