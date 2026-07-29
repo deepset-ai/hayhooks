@@ -133,7 +133,7 @@ class YAMLPipelineWrapper(BasePipelineWrapper):
     pipeline wrappers, supporting the same API patterns and registry mechanisms.
     """
 
-    def __init__(  # noqa: PLR0913, PLR0917
+    def __init__(  # noqa: PLR0913
         self,
         yaml_source: str,
         input_resolutions: dict[str, InputResolution],

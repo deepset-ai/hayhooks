@@ -7,7 +7,7 @@ a2a = typer.Typer(rich_markup_mode="rich")
 
 
 @a2a.command()
-def run(  # noqa: PLR0913, PLR0917
+def run(  # noqa: PLR0913
     host: Annotated[str | None, typer.Option("--host", "-h", help="Host to run the A2A server on")] = None,
     port: Annotated[int | None, typer.Option("--port", "-p", help="Port to run the A2A server on")] = None,
     pipelines_dir: Annotated[

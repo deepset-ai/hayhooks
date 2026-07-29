@@ -84,7 +84,7 @@ def make_request(
 ) -> requests.Response: ...
 
 
-def make_request(  # noqa: PLR0913, PLR0917
+def make_request(  # noqa: PLR0913
     host: str,
     port: int,
     endpoint: str,
