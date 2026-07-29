@@ -154,6 +154,10 @@ exclude = ["tests/**/*"]
 line-length = 120
 extend-exclude = ["tests", "examples"]
 
+[tool.ruff.format]
+# Ruff 0.16+ formats Markdown files; the project does not want Markdown reformatted.
+exclude = ["*.md"]
+
 [tool.ruff.lint]
 isort.split-on-trailing-comma = false
 flake8-tidy-imports.ban-relative-imports = "all"
