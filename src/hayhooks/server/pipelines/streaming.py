@@ -38,7 +38,7 @@ _ASYNC_STREAMING_LOOP: contextvars.ContextVar[asyncio.AbstractEventLoop] = conte
 # Streaming callbacks are module-level so Haystack can serialize snapshot inputs.
 # The active queues live in ContextVars and are set around pipeline execution, so
 # callbacks should be invoked from the pipeline's execution task/thread.
-ToolCallbackReturn = PipelineEvent | str | None | list[PipelineEvent | str]
+ToolCallbackReturn = PipelineEvent | str | list[PipelineEvent | str] | None
 OnToolCallStart = Callable[[str, dict[str, Any], str | None], ToolCallbackReturn] | None
 OnToolCallEnd = Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn] | None
 OnReasoning = Callable[[str, dict[str, Any] | None], ToolCallbackReturn] | None
