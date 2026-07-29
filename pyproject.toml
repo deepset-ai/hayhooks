@@ -210,6 +210,7 @@ ignore = [
   "N806",    # Variable in function should be lowercase
   "PERF203", # `try`-`except` within a loop incurs performance overhead
   "PLC0415", # `import` should be at the top-level of a file
+  "PLR0917", # Too many positional arguments (CLI commands / constructors take many typer options by design)
   "S101",    # Use of `assert` detected
 ]
 
