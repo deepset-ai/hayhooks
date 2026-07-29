@@ -102,6 +102,8 @@ resp = requests.post(
 print(resp.json())
 ```
 
+> **Sending serialized Haystack objects?** If a request carries serialized `ChatMessage`, `Document`, or similar objects (for example through a `dict[str, Any]` input), see [Deserializing loosely-typed inputs](../concepts/pipeline-wrapper.md#deserializing-loosely-typed-inputs) for how your wrapper turns them back into instances before running the pipeline.
+
 ### Async (httpx)
 
 ```python

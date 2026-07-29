@@ -25,7 +25,7 @@ _THREAD_JOIN_TIMEOUT_SECONDS = 1.0
 # Timeout for queue polling - allows periodic checking of external event queue
 _QUEUE_POLL_TIMEOUT_SECONDS = 0.01
 
-_SYNC_STREAMING_QUEUE: contextvars.ContextVar[Queue[StreamingChunk | None | Exception]] = contextvars.ContextVar(
+_SYNC_STREAMING_QUEUE: contextvars.ContextVar[Queue[StreamingChunk | Exception | None]] = contextvars.ContextVar(
     "_hayhooks_sync_streaming_queue"
 )
 _ASYNC_STREAMING_QUEUE: contextvars.ContextVar[asyncio.Queue[StreamingChunk]] = contextvars.ContextVar(
@@ -38,7 +38,7 @@ _ASYNC_STREAMING_LOOP: contextvars.ContextVar[asyncio.AbstractEventLoop] = conte
 # Streaming callbacks are module-level so Haystack can serialize snapshot inputs.
 # The active queues live in ContextVars and are set around pipeline execution, so
 # callbacks should be invoked from the pipeline's execution task/thread.
-ToolCallbackReturn = PipelineEvent | str | None | list[PipelineEvent | str]
+ToolCallbackReturn = PipelineEvent | str | list[PipelineEvent | str] | None
 OnToolCallStart = Callable[[str, dict[str, Any], str | None], ToolCallbackReturn] | None
 OnToolCallEnd = Callable[[str, dict[str, Any], str, bool], ToolCallbackReturn] | None
 OnReasoning = Callable[[str, dict[str, Any] | None], ToolCallbackReturn] | None
@@ -413,7 +413,7 @@ def _execute_pipeline_in_thread(
     configured_args: dict[str, Any],
     include_outputs_from: set[str] | None,
     on_pipeline_end: OnPipelineEnd,
-    internal_queue: Queue[StreamingChunk | None | Exception],
+    internal_queue: Queue[StreamingChunk | Exception | None],
 ) -> None:
     """
     Runs the pipeline in a thread and puts results in the queue.
@@ -441,7 +441,7 @@ def _execute_pipeline_in_thread(
 
 
 def _stream_chunks_from_queue_sync(
-    internal_queue: Queue[StreamingChunk | None | Exception],
+    internal_queue: Queue[StreamingChunk | Exception | None],
     external_event_queue: Queue[StreamingChunk | PipelineEvent | str | dict[str, Any]] | None = None,
 ) -> Generator[StreamingChunk | PipelineEvent | str | dict[str, Any], None, None]:
     """
@@ -543,7 +543,7 @@ def streaming_generator(  # noqa: PLR0913
     if pipeline_run_args is None:
         pipeline_run_args = {}
 
-    internal_queue: Queue[StreamingChunk | None | Exception] = Queue()
+    internal_queue: Queue[StreamingChunk | Exception | None] = Queue()
 
     configured_args = _setup_streaming_callback(pipeline, pipeline_run_args, _streaming_callback, streaming_components)
     log.trace("Streaming pipeline run args '{}'", configured_args)

@@ -172,7 +172,7 @@ def undeploy(
 
 
 @pipeline.command()
-def run(  # noqa: PLR0912, C901, PLR0913
+def run(  # noqa: C901, PLR0912, PLR0913
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The name of the pipeline to run.")],
     file: Annotated[
