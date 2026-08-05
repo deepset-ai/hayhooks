@@ -1,2 +1,2 @@
 hayhooks
-haystack-ai>=3.0.0.dev0
+haystack-ai>=3.0.0
