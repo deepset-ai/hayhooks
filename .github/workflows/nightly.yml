@@ -3,7 +3,6 @@ name: Nightly tests with Haystack main
 on:
   schedule:
     - cron: "0 4 * * *"
-  pull_request:
 
 permissions:
   contents: read
@@ -27,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Hatch
-        run: exit 1 #pip install hatch==${{ env.HATCH_VERSION }}
+        run: pip install hatch==${{ env.HATCH_VERSION }}
 
       - name: Install Haystack from main into the test env
         run: |
