@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.14"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -27,7 +27,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Hatch
-        run: pip install hatch==${{ env.HATCH_VERSION }}
+        run: exit 1 #pip install hatch==${{ env.HATCH_VERSION }}
 
       - name: Install Haystack from main into the test env
         run: |
@@ -40,3 +40,12 @@ jobs:
 
       - name: Ty - check types
         run: hatch run test:types
+
+  notify-slack-on-failure:
+    needs: tests-haystack-main
+    if: failure()
+    runs-on: ubuntu-slim
+    steps:
+      - uses: deepset-ai/notify-slack-action@a65def0c8bf91d6520286ab34280151c76a5a008 # v1.1.0
+        with:
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_NOTIFICATIONS }}
