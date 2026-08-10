@@ -167,13 +167,13 @@ async def _run_pipeline_method(
         streaming_trace_tags = build_streaming_trace_tags(trace_tags, stream_type="sse")
         if isinstance(normalized_result, AsyncGenerator):
             return trace_async_stream(
-                normalized_result,  # ty: ignore[invalid-argument-type]
+                normalized_result,
                 SPAN_OPENAI_RUN,
                 tags=streaming_trace_tags,
             )
         if isinstance(normalized_result, Generator):
             return trace_sync_stream(
-                normalized_result,  # ty: ignore[invalid-argument-type]
+                normalized_result,
                 SPAN_OPENAI_RUN,
                 tags=streaming_trace_tags,
             )
