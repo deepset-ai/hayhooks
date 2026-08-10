@@ -37,8 +37,7 @@ jobs:
       - name: Run tests and generate coverage report
         run: hatch run test:all-cov
 
-  # The `tests` job above is the Haystack v2 environment (the hatch test env pins haystack-ai<3).
-  # This job installs the Haystack v3 pre-release so we keep both v2 and v3 green.
+
   tests-haystack-v3:
     runs-on: ubuntu-latest
     strategy:
@@ -51,17 +50,20 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install project with the Haystack v3 pre-release
+      - name: Install Hatch
+        run: pip install hatch==${{ env.HATCH_VERSION }}
+
+      - name: Install Haystack v3 into the test env
         run: |
-          pip install -e ".[mcp,a2a]" pytest pytest-asyncio pytest-cov pytest-mock qdrant-haystack trafilatura ty
-          pip install --pre --upgrade "haystack-ai>=3.0.0.dev0"
-          python -c "import haystack; print('haystack', haystack.__version__)"
+          hatch env create test
+          hatch -e test env run -- uv pip install --upgrade "haystack-ai>=3"
+          hatch -e test env run -- python -c "import haystack, sys; v = haystack.__version__; print('haystack', v); sys.exit(0 if int(v.split('.')[0]) >= 3 else 'expected Haystack v3+, got ' + v)"
 
       - name: Run unit tests
-        run: pytest -vv -m "not integration" tests
+        run: hatch run test:unit
 
       - name: Ty - check types (Haystack v3)
-        run: ty check src/hayhooks
+        run: hatch run test:types
 
   linting:
     runs-on: ubuntu-slim
