@@ -20,6 +20,12 @@
   --kind-mcp: #0f766e;
   --kind-mcp-soft: rgb(20 184 166 / 15%);
   --kind-mcp-border: rgb(20 184 166 / 25%);
+  --kind-durable: #1d4ed8;
+  --kind-durable-soft: rgb(37 99 235 / 15%);
+  --kind-durable-border: rgb(37 99 235 / 25%);
+  --kind-a2a: #be185d;
+  --kind-a2a-soft: rgb(219 39 119 / 15%);
+  --kind-a2a-border: rgb(219 39 119 / 25%);
   --stream: #0891b2;
   --background: #fafbfc;
   --foreground: #1a1d21;
@@ -71,6 +77,12 @@
   --kind-mcp: #3bf7d4;
   --kind-mcp-soft: color-mix(in srgb, var(--kind-mcp) 16%, transparent);
   --kind-mcp-border: color-mix(in srgb, var(--kind-mcp) 45%, transparent);
+  --kind-durable: #93c5fd;
+  --kind-durable-soft: color-mix(in srgb, var(--kind-durable) 16%, transparent);
+  --kind-durable-border: color-mix(in srgb, var(--kind-durable) 45%, transparent);
+  --kind-a2a: #f9a8d4;
+  --kind-a2a-soft: color-mix(in srgb, var(--kind-a2a) 16%, transparent);
+  --kind-a2a-border: color-mix(in srgb, var(--kind-a2a) 45%, transparent);
   --stream: #38d9f5;
   --background: #08090c;
   --foreground: #f5f7fa;
@@ -156,6 +168,12 @@
   --color-kind-mcp: var(--kind-mcp);
   --color-kind-mcp-soft: var(--kind-mcp-soft);
   --color-kind-mcp-border: var(--kind-mcp-border);
+  --color-kind-durable: var(--kind-durable);
+  --color-kind-durable-soft: var(--kind-durable-soft);
+  --color-kind-durable-border: var(--kind-durable-border);
+  --color-kind-a2a: var(--kind-a2a);
+  --color-kind-a2a-soft: var(--kind-a2a-soft);
+  --color-kind-a2a-border: var(--kind-a2a-border);
   --color-stream: var(--stream);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -298,6 +316,14 @@
 
 .trace-card-fresh-mcp {
   --glow-color: var(--kind-mcp);
+}
+
+.trace-card-fresh-durable {
+  --glow-color: var(--kind-durable);
+}
+
+.trace-card-fresh-a2a {
+  --glow-color: var(--kind-a2a);
 }
 
 .trace-card-fresh-run {

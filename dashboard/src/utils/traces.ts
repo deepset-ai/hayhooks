@@ -8,6 +8,8 @@ const TRACE_KIND_RULES: Array<{ includes: string; kind: TraceKind }> = [
   { includes: ".deploy", kind: "deploy" },
   { includes: ".openai.", kind: "openai" },
   { includes: ".mcp.", kind: "mcp" },
+  { includes: ".a2a.", kind: "a2a" },
+  { includes: ".durable.", kind: "durable" },
   { includes: ".run", kind: "run" },
 ]
 

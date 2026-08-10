@@ -142,6 +142,8 @@ describe("traceKind", () => {
     ["hayhooks.deploy", "deploy"],
     ["hayhooks.openai.chat", "openai"],
     ["hayhooks.mcp.tool", "mcp"],
+    ["hayhooks.durable.submit", "durable"],
+    ["hayhooks.a2a.durable.project", "a2a"],
     ["hayhooks.run", "run"],
     ["something.else", "other"],
   ] as const)("classifies '%s' as '%s'", (spanName, expected) => {

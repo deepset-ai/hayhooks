@@ -19,6 +19,10 @@ export const TAG_PRIORITY = [
   "hayhooks.openai.execution_mode",
   "hayhooks.response.stream_type",
   "hayhooks.response.streaming",
+  "hayhooks.a2a.action",
+  "hayhooks.a2a.task_id",
+  "hayhooks.a2a.context_id",
+  "hayhooks.durable.execution_id",
   "hayhooks.payload.values",
   "hayhooks.payload.has_files",
   "hayhooks.success",
@@ -40,6 +44,10 @@ export const TAG_LABELS: Record<string, string> = {
   "hayhooks.openai.execution_mode": "exec mode",
   "hayhooks.response.stream_type": "stream type",
   "hayhooks.response.streaming": "streaming",
+  "hayhooks.a2a.action": "A2A action",
+  "hayhooks.a2a.task_id": "A2A task",
+  "hayhooks.a2a.context_id": "A2A context",
+  "hayhooks.durable.execution_id": "execution",
   "hayhooks.success": "success",
   "hayhooks.error.type": "error",
   "hayhooks.http.status_code": "http",
@@ -56,6 +64,9 @@ export const TAG_LABELS: Record<string, string> = {
 
 export const SUMMARY_TAG_KEYS = new Set([
   "hayhooks.transport",
+  "hayhooks.a2a.action",
+  "hayhooks.a2a.task_id",
+  "hayhooks.durable.execution_id",
   "hayhooks.success",
   "hayhooks.error.type",
 ])
@@ -85,6 +96,16 @@ export const KIND_STYLE: Record<TraceKind, { label: string; badge: string; borde
     label: "mcp",
     badge: "bg-kind-mcp-soft text-kind-mcp border-kind-mcp-border",
     border: "border-l-kind-mcp",
+  },
+  durable: {
+    label: "durable",
+    badge: "bg-kind-durable-soft text-kind-durable border-kind-durable-border",
+    border: "border-l-kind-durable",
+  },
+  a2a: {
+    label: "A2A",
+    badge: "bg-kind-a2a-soft text-kind-a2a border-kind-a2a-border",
+    border: "border-l-kind-a2a",
   },
   other: {
     label: "trace",

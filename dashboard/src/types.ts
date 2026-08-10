@@ -31,7 +31,7 @@ export type DashboardConfigResponse = {
 }
 
 export type SortMode = "newest" | "slowest"
-export type TraceKind = "deploy" | "undeploy" | "run" | "openai" | "mcp" | "other"
+export type TraceKind = "deploy" | "undeploy" | "run" | "openai" | "mcp" | "durable" | "a2a" | "other"
 
 export type DashboardConfig = {
   pollMs: number
