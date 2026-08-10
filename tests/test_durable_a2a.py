@@ -18,6 +18,7 @@ from hayhooks.server.a2a.durable_executor import DurableAgentExecutor, DurableTa
 from hayhooks.server.a2a.imports import TaskStore, new_task_from_user_message, new_text_part
 from hayhooks.server.a2a.runtime import A2ARuntime
 from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.tracing import SPAN_A2A_DURABLE_PROJECT
 from hayhooks.settings import settings
 
 pytestmark = pytest.mark.skipif(
@@ -237,6 +238,29 @@ def test_a2a_http_cancel_reaches_durable_execution(monkeypatch, http_store) -> N
 
     assert deployment.cancel_requested
     assert canceled["status"]["state"] == "TASK_STATE_CANCELED"
+
+
+@pytest.mark.asyncio
+async def test_durable_a2a_projection_emits_correlated_trace(recording_tracer, http_store) -> None:
+    task = _recoverable_task()
+    context = SimpleNamespace(
+        current_task=None,
+        message=task.history[0],
+        call_context=SimpleNamespace(user=SimpleNamespace(is_authenticated=False)),
+    )
+    queue = SimpleNamespace(enqueue_event=AsyncMock())
+    executor = DurableAgentExecutor("durable-agent", http_store, _Deployment())
+
+    await executor.execute(context, queue)
+
+    spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_A2A_DURABLE_PROJECT]
+    assert spans
+    assert spans[-1].tags["hayhooks.transport"] == "a2a"
+    assert spans[-1].tags["hayhooks.pipeline.name"] == "durable-agent"
+    assert spans[-1].tags["hayhooks.a2a.task_id"] == task.id
+    assert spans[-1].tags["hayhooks.a2a.context_id"] == task.context_id
+    assert spans[-1].tags["hayhooks.a2a.action"] == "submit"
+    assert spans[-1].tags["hayhooks.durable.execution_id"] == execution_id_for("anonymous", task.id)
 
 
 def test_return_immediately_waits_for_durable_submission(monkeypatch, http_store) -> None:

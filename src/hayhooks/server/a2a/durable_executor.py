@@ -28,10 +28,30 @@ from hayhooks.server.a2a.messages import (
     task_matches_filters,
 )
 from hayhooks.server.logger import log
+from hayhooks.server.tracing import SPAN_A2A_DURABLE_PROJECT, build_trace_tags, trace_operation
 from hayhooks.settings import settings
 
 DURABLE_PROGRESS_ARTIFACT_NAME = "durable-progress"
 DURABLE_RESULT_ARTIFACT_NAME = "durable-result"
+
+
+def _projection_trace_tags(
+    pipeline_name: str,
+    task: Any,
+    execution_id: str,
+    *,
+    action: str | None = None,
+) -> dict[str, Any]:
+    return build_trace_tags(
+        {
+            "hayhooks.transport": "a2a",
+            "hayhooks.pipeline.name": pipeline_name,
+            "hayhooks.a2a.task_id": task.id,
+            "hayhooks.a2a.context_id": task.context_id,
+            "hayhooks.durable.execution_id": execution_id,
+            "hayhooks.a2a.action": action,
+        }
+    )
 
 
 class _TaskProjectionQueue:
@@ -252,20 +272,28 @@ class DurableAgentExecutor(AgentExecutor):
                 return
         if record is not None and record.status is ExecutionStatus.WAITING:
             action = "resume"
-            resumed = await self.deployment.resume(
-                execution_id,
-                {"messages": [message.to_dict() for message in build_haystack_resume_messages(context)]},
-                owner_id=owner_id,
-                enforce_owner=True,
-            )
-            if not resumed:
-                msg = f"Task '{task.id}' is no longer accepting follow-up messages"
-                raise InvalidParamsError(msg)
+            with trace_operation(
+                SPAN_A2A_DURABLE_PROJECT,
+                tags=_projection_trace_tags(self.pipeline_name, task, execution_id, action=action),
+            ):
+                resumed = await self.deployment.resume(
+                    execution_id,
+                    {"messages": [message.to_dict() for message in build_haystack_resume_messages(context)]},
+                    owner_id=owner_id,
+                    enforce_owner=True,
+                )
+                if not resumed:
+                    msg = f"Task '{task.id}' is no longer accepting follow-up messages"
+                    raise InvalidParamsError(msg)
         elif record is None:
             action = "submit"
-            await self._task_store.save(task, context.call_context)
             try:
-                record = await self._submit(task, owner_id, build_haystack_messages(context))
+                with trace_operation(
+                    SPAN_A2A_DURABLE_PROJECT,
+                    tags=_projection_trace_tags(self.pipeline_name, task, execution_id, action=action),
+                ):
+                    await self._task_store.save(task, context.call_context)
+                    record = await self._submit(task, owner_id, build_haystack_messages(context))
             except ValueError as error:
                 log.bind(
                     pipeline_name=self.pipeline_name,
@@ -299,16 +327,20 @@ class DurableAgentExecutor(AgentExecutor):
         self.task_store._read_through_task_ids.discard(task.id)
         owner_id = self.task_store.owner_id_for_context(context)
         execution_id = execution_id_for(owner_id, task.id)
-        try:
-            accepted = await self.deployment.request_cancel(
-                execution_id,
-                owner_id=owner_id,
-                enforce_owner=True,
-            )
-        except KeyError:
-            return
-        if not accepted:
-            return
+        with trace_operation(
+            SPAN_A2A_DURABLE_PROJECT,
+            tags=_projection_trace_tags(self.pipeline_name, task, execution_id, action="cancel"),
+        ):
+            try:
+                accepted = await self.deployment.request_cancel(
+                    execution_id,
+                    owner_id=owner_id,
+                    enforce_owner=True,
+                )
+            except KeyError:
+                return
+            if not accepted:
+                return
         log.bind(pipeline_name=self.pipeline_name, task_id=task.id, execution_id=execution_id).debug(
             "Accepted durable A2A task cancellation"
         )
