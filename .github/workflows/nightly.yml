@@ -1,0 +1,50 @@
+name: Nightly tests with Haystack main
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+
+permissions:
+  contents: read
+
+env:
+  HATCH_VERSION: "1.16.5"
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+jobs:
+  tests-haystack-main:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Hatch
+        run: pip install hatch==${{ env.HATCH_VERSION }}
+
+      - name: Install Haystack from main into the test env
+        run: |
+          hatch env create test
+          hatch -e test env run -- uv pip install --upgrade git+https://github.com/deepset-ai/haystack.git@main
+          hatch -e test env run -- python -c "import haystack, sys; v = haystack.__version__; print('haystack', v); sys.exit(0 if int(v.split('.')[0]) >= 3 else 'expected Haystack v3+, got ' + v)"
+
+      - name: Run unit and integration tests
+        run: hatch run test:all
+
+      - name: Ty - check types
+        run: hatch run test:types
+
+  notify-slack-on-failure:
+    needs: tests-haystack-main
+    if: failure()
+    runs-on: ubuntu-slim
+    steps:
+      - uses: deepset-ai/notify-slack-action@a65def0c8bf91d6520286ab34280151c76a5a008 # v1.1.0
+        with:
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_NOTIFICATIONS }}
