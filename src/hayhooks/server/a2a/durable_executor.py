@@ -40,7 +40,7 @@ def _projection_trace_tags(
     task: Any,
     execution_id: str,
     *,
-    action: str | None = None,
+    action: str,
 ) -> dict[str, Any]:
     return build_trace_tags(
         {
@@ -287,13 +287,9 @@ class DurableAgentExecutor(AgentExecutor):
                     raise InvalidParamsError(msg)
         elif record is None:
             action = "submit"
+            await self._task_store.save(task, context.call_context)
             try:
-                with trace_operation(
-                    SPAN_A2A_DURABLE_PROJECT,
-                    tags=_projection_trace_tags(self.pipeline_name, task, execution_id, action=action),
-                ):
-                    await self._task_store.save(task, context.call_context)
-                    record = await self._submit(task, owner_id, build_haystack_messages(context))
+                record = await self._submit(task, owner_id, build_haystack_messages(context))
             except ValueError as error:
                 log.bind(
                     pipeline_name=self.pipeline_name,
@@ -389,16 +385,21 @@ class DurableAgentExecutor(AgentExecutor):
             await asyncio.sleep(max(0.1, settings.durable_poll_interval))
 
     async def _submit(self, task: Any, owner_id: str, messages: list[Any]) -> Any:
+        execution_id = execution_id_for(owner_id, task.id)
         payload = {
             "messages": [message.to_dict() for message in messages],
             "a2a_context_id": task.context_id,
         }
-        while not self._closed:
-            try:
-                return (await self.deployment.submit(payload, execution_id=task.id, owner_id=owner_id))[1]
-            except (ExecutionAdmissionError, ExecutionStoreError):
-                await asyncio.sleep(max(0.1, settings.durable_poll_interval))
-        raise asyncio.CancelledError
+        with trace_operation(
+            SPAN_A2A_DURABLE_PROJECT,
+            tags=_projection_trace_tags(self.pipeline_name, task, execution_id, action="submit"),
+        ):
+            while not self._closed:
+                try:
+                    return (await self.deployment.submit(payload, execution_id=task.id, owner_id=owner_id))[1]
+                except (ExecutionAdmissionError, ExecutionStoreError):
+                    await asyncio.sleep(max(0.1, settings.durable_poll_interval))
+            raise asyncio.CancelledError
 
     async def _recover_tasks(self, task_store: RecoverableTaskStore) -> None:  # noqa: C901
         """Repair durable A2A tasks saved before this executor started."""

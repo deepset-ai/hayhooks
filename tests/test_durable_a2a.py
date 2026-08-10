@@ -263,6 +263,21 @@ async def test_durable_a2a_projection_emits_correlated_trace(recording_tracer, h
     assert spans[-1].tags["hayhooks.durable.execution_id"] == execution_id_for("anonymous", task.id)
 
 
+async def test_durable_a2a_task_store_value_errors_propagate(http_store) -> None:
+    http_store.save = AsyncMock(side_effect=ValueError("task store unavailable"))
+    task = _recoverable_task()
+    context = SimpleNamespace(
+        current_task=None,
+        message=task.history[0],
+        call_context=SimpleNamespace(user=SimpleNamespace(is_authenticated=False)),
+    )
+
+    with pytest.raises(ValueError, match="task store unavailable"):
+        await DurableAgentExecutor("durable-agent", http_store, _Deployment()).execute(
+            context, SimpleNamespace(enqueue_event=AsyncMock())
+        )
+
+
 def test_return_immediately_waits_for_durable_submission(monkeypatch, http_store) -> None:
     deployment = _BlockingDeployment()
     app = _http_app(http_store, deployment, monkeypatch)
@@ -388,8 +403,7 @@ async def test_durable_a2a_submission_retries_transient_failures(monkeypatch, ht
     sleep = AsyncMock()
     monkeypatch.setattr(asyncio, "sleep", sleep)
 
-    task = SimpleNamespace(id="task", context_id="context")
-    record = await DurableAgentExecutor("agent", http_store, deployment)._submit(task, "owner", [])
+    record = await DurableAgentExecutor("agent", http_store, deployment)._submit(_recoverable_task(), "owner", [])
 
     assert record is deployment.record
     assert deployment.submit.await_count == 2
@@ -410,7 +424,7 @@ def test_a2a_http_rejected_submission_is_persisted_as_failed(monkeypatch, http_s
     assert http_store.tasks[failed["id"]].status.state == TaskState.TASK_STATE_FAILED
 
 
-async def test_recovery_submits_a_persisted_task_without_an_execution(http_store) -> None:
+async def test_recovery_submits_a_persisted_task_without_an_execution(recording_tracer, http_store) -> None:
     from a2a.types import TaskState
 
     task = _recoverable_task()
@@ -428,6 +442,9 @@ async def test_recovery_submits_a_persisted_task_without_an_execution(http_store
     assert deployment.execution_id is not None
     assert deployment.submitted_payload["messages"][0]["content"] == [{"text": "recover me"}]
     assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_A2A_DURABLE_PROJECT]
+    assert spans[-1].tags["hayhooks.a2a.action"] == "submit"
+    assert spans[-1].tags["hayhooks.a2a.task_id"] == task.id
 
 
 async def test_recovery_rejects_one_invalid_persisted_task_without_aborting(http_store) -> None:
