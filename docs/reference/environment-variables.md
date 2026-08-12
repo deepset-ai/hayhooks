@@ -141,6 +141,146 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 - Default: `true`
 - Description: Accept A2A spec 0.3 requests on the same endpoints. Many clients and tools (e.g. the a2a-inspector) still speak 0.3 during the 1.0 transition
 
+### HAYHOOKS_A2A_TASK_STORE
+
+- Default: `auto`
+- Description: Built-in A2A task-store backend
+- Options:
+  - `auto`: Select Redis for Redis-backed durable A2A Agents, otherwise memory
+  - `memory`: Process-local task records; use only one Hayhooks process, not load-balanced replicas or restart-safe tasks
+  - `redis`: Persistent task records using the configured Redis URL and key prefix
+
+### HAYHOOKS_A2A_REDIS_URL
+
+- Default: `redis://localhost:6379/0`
+- Description: Redis URL used by the built-in A2A task store
+
+### HAYHOOKS_A2A_REDIS_KEY_PREFIX
+
+- Default: `hayhooks:a2a`
+- Description: Prefix applied to built-in Redis A2A task-store keys. Use a distinct prefix when multiple environments share Redis.
+
+### HAYHOOKS_A2A_REDIS_SOCKET_TIMEOUT / HAYHOOKS_A2A_REDIS_SOCKET_CONNECT_TIMEOUT
+
+- Default: `5.0` seconds each
+- Description: Bound established-socket operations and new Redis connections for the built-in A2A task store.
+
+### HAYHOOKS_A2A_REDIS_HEALTH_CHECK_INTERVAL
+
+- Default: `30` seconds
+- Description: Redis-py connection health-check interval for the built-in A2A task store. Set `0` to disable proactive checks.
+
+### HAYHOOKS_A2A_TERMINAL_TASK_TTL_SECONDS
+
+- Default: `604800` (seven days)
+- Description: Retention window for terminal A2A tasks. Cleanup also removes their owner-update and recovery indexes.
+
+### HAYHOOKS_A2A_TASK_SNAPSHOT_CACHE_SIZE
+
+- Default: `1024`
+- Description: Maximum loaded protobuf task snapshots retained per A2A Redis task-store instance for optimistic version checks. The cache is a global LRU across task IDs.
+
+### HAYHOOKS_A2A_LIST_SCAN_BATCH_SIZE
+
+- Default: `500`
+- Description: Maximum task IDs and payloads loaded in one Redis batch while applying filtered A2A task-list queries. Exact filtered counts still require scanning the owner's update index.
+
+## Durable execution
+
+### HAYHOOKS_DURABLE_STORE
+
+- Default: `redis`
+- Description: Built-in durable execution-store backend. Both choices use the same state reducer; Redis is required for restart recovery.
+- Options:
+  - `memory`: Request-detached execution whose records are lost on process exit
+  - `redis`: Redis control records, runnable/lease indexes, checkpoints, cancellation, and restart recovery
+
+### HAYHOOKS_DURABLE_REDIS_URL
+
+- Default: `redis://localhost:6379/0`
+- Description: Redis URL used by durable REST and A2A execution.
+
+### HAYHOOKS_DURABLE_REDIS_KEY_PREFIX
+
+- Default: `hayhooks:durable`
+- Description: Key prefix used by durable execution records and queues.
+
+### HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT / HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT
+
+- Default: `5.0` seconds each
+- Description: Bound established-socket operations and new Redis connections for durable execution. A timeout is reported as a store failure, causing worker backoff and readiness to return `503` rather than waiting indefinitely.
+
+### HAYHOOKS_DURABLE_REDIS_HEALTH_CHECK_INTERVAL
+
+- Default: `30` seconds
+- Description: Redis-py connection health-check interval for durable execution. Set `0` to disable proactive checks.
+
+### HAYHOOKS_DURABLE_LEASE_DURATION_MS
+
+- Default: `30000`
+- Description: Milliseconds for the renewable execution lease. Workers renew it at one-third of this duration.
+
+### HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS
+
+- Default: `1500`
+- Description: Server-clock margin before a lease deadline within which an owned transition is rejected. This prevents a transition that is near expiry from committing after another worker may recover the lease.
+
+### HAYHOOKS_DURABLE_TERMINAL_TTL_SECONDS
+
+- Default: `604800` (seven days)
+- Description: Retention period for terminal execution records.
+
+### HAYHOOKS_DURABLE_MAX_PROGRESS_EVENTS
+
+- Default: `100`
+- Description: Maximum retained client-visible progress events per execution.
+
+### HAYHOOKS_DURABLE_MAX_RECORD_BYTES
+
+- Default: `1000000`
+- Description: Maximum JSON payload size for validated input, a checkpoint, wait data, a result, or an error. The engine reserves space for each payload independently, so retained state remains bounded even while a run has input, a checkpoint, and progress history.
+
+### HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS
+
+- Default: `0` (disabled)
+- Description: Maximum queued, running, or waiting executions for one logical deployment. New work is rejected atomically with `503` and `Retry-After` when the bound is full; idempotent replay remains available.
+
+### HAYHOOKS_DURABLE_SHUTDOWN_GRACE_PERIOD
+
+- Default: `5.0`
+- Description: Seconds to wait for workers during shutdown. Synchronous work that exceeds the window retains its claim and heartbeat until the underlying thread exits.
+
+### HAYHOOKS_DURABLE_MAX_ATTEMPTS
+
+- Default: `3`
+- Description: Maximum application attempts, including the first attempt and recovered abandoned claims, before retry exhaustion becomes terminal failure.
+
+### HAYHOOKS_DURABLE_RETRY_BASE_DELAY
+
+- Default: `1.0`
+- Description: Base seconds for bounded exponential retry delay when application code does not provide a delay.
+
+### HAYHOOKS_DURABLE_RETRY_MAX_DELAY
+
+- Default: `60.0`
+- Description: Maximum seconds for the next retry delay, including explicit application overrides.
+
+### HAYHOOKS_DURABLE_TRUSTED_OWNER_HEADER
+
+- Default: `""` (bearer execution-ID mode)
+- Description: Trusted reverse-proxy header containing the authenticated owner. When set, submit, inspect, cancel, and resume enforce owner equality.
+- Security: The proxy must remove client-supplied copies and inject this header over a trusted hop.
+
+### HAYHOOKS_DURABLE_EXECUTION_CONCURRENCY
+
+- Default: `1`
+- Description: Maximum concurrent durable executions per deployment. Increase it only when the Pipeline or Agent and its shared dependencies are concurrency-safe.
+
+### HAYHOOKS_DURABLE_POLL_INTERVAL
+
+- Default: `1.0`
+- Description: Shared worker and lease-maintenance polling interval in seconds. At concurrency 1, `0.25` uses about 16 idle Redis commands per second with 125 ms average pickup latency, `0.5` uses about 8 with 250 ms latency, and `1.0` uses about 4 with 500 ms latency. Counts are per durable deployment and replica.
+
 ## Chainlit UI
 
 ### HAYHOOKS_CHAINLIT_ENABLED

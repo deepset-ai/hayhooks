@@ -22,6 +22,8 @@ This directory contains various examples demonstrating different use cases and f
 | [responses_with_file_upload](./pipeline_wrappers/responses_with_file_upload/) | Agent-based Responses API with file reading | • Haystack Agent with `read_file` tool<br/>• `run_response_async` with streaming<br/>• `run_file_upload` with in-memory store<br/>• `_strip_tool_calls` for agentic clients<br/>• Codex CLI compatible | Building an agent that reads local files and uploaded files via the Responses API, compatible with Codex CLI and the OpenAI Python client |
 | [chat_completion_with_file_upload](./pipeline_wrappers/chat_completion_with_file_upload/) | Chat Completions API with `/v1/files` upload | • `run_chat_completion_async` with streaming<br/>• `run_file_upload` with in-memory store<br/>• Resolves `{"type": "file"}` content parts<br/>• OpenAI file input format | Using the Chat Completions API with files uploaded via `/v1/files` and referenced using OpenAI's multi-part content format |
 | [a2a_multi_agent](./a2a_multi_agent/) | Two agents with their own MCP tools, communicating over A2A | • `hayhooks a2a run` hosting two agents<br/>• Per-agent A2A agent cards<br/>• Agent-to-agent delegation via A2A client tool<br/>• One MCP tool server per agent (FastMCP)<br/>• Streaming A2A client | Building multi-agent systems where Haystack Agents expose themselves over A2A and delegate tasks to each other while using MCP for their own tools |
+| [a2a_long_running](./a2a_long_running/) | Recoverable OpenAI agent over A2A | • `OpenAIChatGenerator`-based Haystack Agent<br/>• Redis-backed fenced execution checkpoints<br/>• Hayhooks and client restart recovery<br/>• `input-required` continuation<br/>• Polling and durable cancellation | Building tool-using A2A agents whose accepted work resumes after process restarts |
+| [durable_execution](./durable_execution/) | First-class durable Pipeline | • Typed `/run-durable` REST endpoint<br/>• Built-in Redis store and fenced claims<br/>• Restart recovery, inspection, cancellation, and resume | Running recoverable background jobs through an ordinary wrapper without A2A |
 | [rag_indexing_query](./rag_indexing_query/) | Complete RAG system with Elasticsearch | • Document indexing pipeline<br/>• Query pipeline<br/>• Elasticsearch integration<br/>• Multiple file format support (PDF, Markdown, Text)<br/>• Sentence transformers embeddings | Implementing production-ready RAG systems for document search and knowledge retrieval |
 | [shared_code_between_wrappers](./shared_code_between_wrappers/) | Code sharing between pipeline wrappers | • Shared library imports<br/>• HAYHOOKS_ADDITIONAL_PYTHON_PATH<br/>• Multiple deployment strategies<br/>• Code reusability | Organizing complex projects with multiple pipelines that share common functionality |
 
@@ -33,12 +35,27 @@ This directory contains various examples demonstrating different use cases and f
 
 ## Getting Started
 
-Each example includes:
+Examples intentionally stay lightweight. Every runnable example includes its
+source files; examples that need non-default setup or dependencies also include
+a dedicated README and/or `requirements.txt`.
 
 - **Pipeline wrapper implementation** (`pipeline_wrapper.py`)
 - **Pipeline configuration** (`.yml` files where applicable)
-- **Dependencies** (`requirements.txt` where applicable)
-- **Documentation** (individual README files with setup instructions)
+- **Dependencies** (`requirements.txt` where a demo needs them)
+- **Documentation** (individual README files where a demo needs dedicated setup instructions)
+
+For the durable examples, use this presentation order:
+
+1. [`durable_execution`](./durable_execution/) — the deterministic reference
+   for typed submission, retry, approval, checkpoints, crash recovery, and
+   cancellation.
+2. [`a2a_long_running`](./a2a_long_running/) — durable Agent execution exposed
+   through standard A2A task lifecycle and continuation messages.
+
+Each durable example's Compose file publishes Redis on `localhost:6379`.
+Run these examples one at a time, or change the host port and corresponding
+`HAYHOOKS_DURABLE_REDIS_URL`. Each stack has its own named volume; `compose
+down` retains it and `compose down -v` resets it.
 
 ## Common Prerequisites
 
@@ -54,7 +71,7 @@ Most examples require:
 1. Navigate to the `/examples` directory
 2. Create and activate a virtual environment (recommended)
 3. Install dependencies: `pip install -r requirements.txt` (if present)
-4. Follow the specific example's README for deployment and testing
+4. Follow the example-specific README when present; otherwise deploy its wrapper using the standard Hayhooks command
 
 ## Support
 

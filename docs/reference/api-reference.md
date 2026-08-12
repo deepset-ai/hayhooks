@@ -129,6 +129,24 @@ Execute a deployed pipeline.
 }
 ```
 
+#### Durable execution
+
+Wrappers that implement exactly one of `run_durable()` or
+`run_durable_async()` expose these typed resources:
+
+| Endpoint | Description |
+|---|---|
+| `POST /{pipeline_name}/run-durable` | Validate and persist a detached execution; accepts an optional `Idempotency-Key` header |
+| `GET /{pipeline_name}/executions/{execution_id}` | Inspect safe status, progress, waiting state, error, or result |
+| `POST /{pipeline_name}/executions/{execution_id}/cancel` | Request cooperative cancellation |
+| `POST /{pipeline_name}/executions/{execution_id}/resume` | Resume an execution waiting for input |
+
+Submission normally returns `202 Accepted` and a `Location` header. An
+idempotent replay of a retained terminal execution returns `200 OK`. Validated
+input, checkpoints, application state, ownership, and fence details remain
+server-side. See [Pipeline wrapper durable execution](../concepts/pipeline-wrapper.md#durable-execution)
+and the [durable engine contract](../advanced/durable-engine.md).
+
 ### OpenAI Compatibility
 
 #### Chat Completion
@@ -252,10 +270,7 @@ Currently, Hayhooks does not include built-in rate limiting. Consider implementi
     ```python
     import requests
 
-    response = requests.post(
-        "http://localhost:1416/chat_pipeline/run",
-        json={"query": "Hello!"}
-    )
+    response = requests.post("http://localhost:1416/chat_pipeline/run", json={"query": "Hello!"})
     print(response.json())
     ```
 
@@ -287,12 +302,7 @@ Currently, Hayhooks does not include built-in rate limiting. Consider implementi
 
     response = requests.post(
         "http://localhost:1416/v1/chat/completions",
-        json={
-            "model": "chat_pipeline",
-            "messages": [
-                {"role": "user", "content": "Hello!"}
-            ]
-        }
+        json={"model": "chat_pipeline", "messages": [{"role": "user", "content": "Hello!"}]},
     )
     print(response.json())
     ```
@@ -304,15 +314,10 @@ Currently, Hayhooks does not include built-in rate limiting. Consider implementi
 
     client = OpenAI(
         base_url="http://localhost:1416/v1",
-        api_key="not-needed"  # Hayhooks doesn't require auth by default
+        api_key="not-needed",  # Hayhooks doesn't require auth by default
     )
 
-    response = client.chat.completions.create(
-        model="chat_pipeline",
-        messages=[
-            {"role": "user", "content": "Hello!"}
-        ]
-    )
+    response = client.chat.completions.create(model="chat_pipeline", messages=[{"role": "user", "content": "Hello!"}])
     print(response.choices[0].message.content)
     ```
 

@@ -23,6 +23,8 @@ This page lists all maintained Hayhooks examples with detailed descriptions and 
 
 | Example | Docs | Code | Description |
 |---|---|---|---|
+| Durable Pipeline | [Pipeline wrapper](../concepts/pipeline-wrapper.md#durable-execution) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_execution) | Typed REST wrapper with Redis-backed restart recovery, inspection, cancellation, and resume |
+| Durable A2A Agent | [A2A Support](../features/a2a-support.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/a2a_long_running) | Haystack 3 Agent checkpoints, detached A2A tasks, progress, and restart recovery |
 | RAG: Indexing and Query with Elasticsearch | [rag-system.md](rag-system.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/rag_indexing_query) | Full indexing/query pipelines with Elasticsearch |
 | API Key Authentication | [advanced-configuration.md](../advanced/advanced-configuration.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/programmatic/api_key_auth) | Middleware-based API key auth with multi-key support and Swagger Authorize |
 
