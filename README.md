@@ -7,6 +7,7 @@ With Hayhooks, you can:
 - 📦 **Deploy your Haystack pipelines and agents as REST APIs** with maximum flexibility and minimal boilerplate code.
 - 🛠️ **Expose your Haystack pipelines and agents over the MCP protocol**, making them available as tools in AI dev environments like [Cursor](https://cursor.com) or [Claude Desktop](https://claude.ai/download). Under the hood, Hayhooks runs as an [MCP Server](https://modelcontextprotocol.io/docs/concepts/architecture), exposing each pipeline and agent as an [MCP Tool](https://modelcontextprotocol.io/docs/concepts/tools).
 - 🤝 **Expose your Haystack pipelines and agents over the [A2A protocol](https://a2a-protocol.org)** (`pip install "hayhooks[a2a]"`), so other agents can discover them through auto-generated agent cards and delegate tasks to them via `hayhooks a2a run`.
+- ♻️ **Run Haystack 3 pipelines and agents as durable background work** (`pip install "hayhooks[durable]"`) with Redis-backed checkpoints, retries, cancellation, wait/resume, progress, and process recovery.
 - 💬 **Integrate your Haystack pipelines and agents with [Open WebUI](https://openwebui.com)** as OpenAI-compatible chat completion backends with streaming support.
 - 🖥️ **Embed a [Chainlit](https://chainlit.io/) chat UI** directly in Hayhooks with `pip install "hayhooks[chainlit]"` and `hayhooks run --with-chainlit` -- zero-configuration frontend with streaming, pipeline selection, and custom UI widgets.
 - 🕹️ **Control Hayhooks core API endpoints through chat** - deploy, undeploy, list, or run Haystack pipelines and agents by chatting with [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com), or any other MCP client.
@@ -53,6 +54,7 @@ from hayhooks import BasePipelineWrapper, async_streaming_generator
 def weather_function(location):
     return f"The weather in {location} is sunny."
 
+
 weather_tool = Tool(
     name="weather_tool",
     description="Provides weather information for a given location.",
@@ -64,6 +66,7 @@ weather_tool = Tool(
     function=weather_function,
 )
 
+
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.agent = Agent(
@@ -73,7 +76,7 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 
     # This will create a POST /my_agent/run endpoint
-    # `question` will be the input argument and will be auto-validated by a Pydantic model
+    # `question` will be the input argument and will be auto-validated by a Pydantic model
     async def run_api_async(self, question: str) -> str:
         result = await self.agent.run_async(messages=[ChatMessage.from_user(question)])
         return result["last_message"].text
@@ -82,9 +85,7 @@ class PipelineWrapper(BasePipelineWrapper):
     async def run_chat_completion_async(
         self, model: str, messages: list[dict], body: dict
     ) -> AsyncGenerator[str, None]:
-        chat_messages = [
-            ChatMessage.from_openai_dict_format(message) for message in messages
-        ]
+        chat_messages = [ChatMessage.from_openai_dict_format(message) for message in messages]
 
         return async_streaming_generator(
             pipeline=self.agent,
@@ -154,11 +155,22 @@ Or chat with it in the [embedded Chainlit UI](docs/features/chainlit-integration
 - Built-in support for handling file uploads in pipelines
 - Perfect for RAG systems and document processing
 
+### ♻️ Durable Execution
+
+- Run typed Pipeline and Agent work outside the request and recover it after a process restart
+- Preserve checkpoints, bounded retries, progress, cancellation, wait/resume, idempotency, and owner isolation
+- Project managed durable Agents over A2A and retain terminal results with Redis TTL
+
+Durable execution is intentionally an at-least-once engine for low-to-moderate workloads with one to three replicas.
+It uses fixed polling and cooperative cancellation; it is not a DAG orchestrator, high-scale fair queue, live migration
+system, or exactly-once boundary for external side effects. See the [supported scope and tradeoffs](docs/advanced/durable-engine.md#supported-scope-and-tradeoffs).
+
 ## Next Steps
 
 - [Quick Start Guide](docs/getting-started/quick-start.md) - Get started with Hayhooks
 - [Installation](docs/getting-started/installation.md) - Install Hayhooks and dependencies
 - [Configuration](docs/getting-started/configuration.md) - Configure Hayhooks for your needs
+- [Durable Engine](docs/advanced/durable-engine.md) - Understand restart-safe execution and its boundaries
 - [Tracing Dashboard Frontend](dashboard/README.md) - Local dashboard setup and frontend development commands
 - [Examples](docs/examples/overview.md) - Explore example implementations
 

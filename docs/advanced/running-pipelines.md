@@ -23,10 +23,7 @@ Execute deployed pipelines via CLI, HTTP API, or programmatically.
     ```python
     import requests
 
-    resp = requests.post(
-        "http://localhost:1416/my_pipeline/run",
-        json={"query": "What is Haystack?"}
-    )
+    resp = requests.post("http://localhost:1416/my_pipeline/run", json={"query": "What is Haystack?"})
     print(resp.json())
     ```
 
@@ -36,13 +33,12 @@ Execute deployed pipelines via CLI, HTTP API, or programmatically.
     import httpx
     import asyncio
 
+
     async def main():
         async with httpx.AsyncClient() as client:
-            r = await client.post(
-                "http://localhost:1416/my_pipeline/run",
-                json={"query": "What is Haystack?"}
-            )
+            r = await client.post("http://localhost:1416/my_pipeline/run", json={"query": "What is Haystack?"})
             print(r.json())
+
 
     asyncio.run(main())
     ```
@@ -95,10 +91,7 @@ See [File Upload Support](../features/file-upload-support.md) for implementation
 ```python
 import requests
 
-resp = requests.post(
-    "http://localhost:1416/my_pipeline/run",
-    json={"query": "What is Haystack?"}
-)
+resp = requests.post("http://localhost:1416/my_pipeline/run", json={"query": "What is Haystack?"})
 print(resp.json())
 ```
 
@@ -110,13 +103,12 @@ print(resp.json())
 import httpx
 import asyncio
 
+
 async def main():
     async with httpx.AsyncClient() as client:
-        r = await client.post(
-            "http://localhost:1416/my_pipeline/run",
-            json={"query": "What is Haystack?"}
-        )
+        r = await client.post("http://localhost:1416/my_pipeline/run", json={"query": "What is Haystack?"})
         print(r.json())
+
 
 asyncio.run(main())
 ```
@@ -132,6 +124,7 @@ import requests
 from requests.exceptions import RequestException
 import time
 
+
 def run_with_retry(pipeline_name, params, max_retries=3):
     url = f"http://localhost:1416/{pipeline_name}/run"
 
@@ -143,7 +136,7 @@ def run_with_retry(pipeline_name, params, max_retries=3):
         except RequestException as e:
             if attempt == max_retries - 1:
                 raise
-            time.sleep(2 ** attempt)  # Exponential backoff
+            time.sleep(2**attempt)  # Exponential backoff
 ```
 
 ## Logging
@@ -152,6 +145,7 @@ Add logging to your pipeline wrappers:
 
 ```python
 from hayhooks import log
+
 
 class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, query: str) -> str:

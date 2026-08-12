@@ -100,6 +100,7 @@ Pipelines that spend most of their time waiting on external services -- LLM API 
 ```python
 from hayhooks import BasePipelineWrapper, Pipeline
 
+
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.pipeline = Pipeline()
@@ -157,16 +158,30 @@ healthcheck:
   start_period: 40s
 ```
 
-For Kubernetes, use a liveness probe on the same endpoint:
+For Kubernetes, use a readiness probe on the same endpoint:
 
 ```yaml
-livenessProbe:
+readinessProbe:
   httpGet:
     path: /status
     port: 1416
   initialDelaySeconds: 40
   periodSeconds: 30
 ```
+
+## Treat Durable Execution as a Controlled Beta
+
+Durable Pipelines and managed durable A2A Agents have stricter requirements
+than ordinary request/response pipelines. Before using them with production
+traffic, follow the authoritative
+[controlled beta deployment profile](../advanced/durable-execution-operations.md#controlled-beta-deployment-profile).
+It covers the supported Redis topology, immutable revisions, drained upgrades,
+concurrency, ingress limits, operation timeouts, idempotent effects,
+observability, and incident recovery.
+
+Do not use rolling mixed-version upgrades for the durable engine, and do not
+assume Pipeline or Agent checkpoints remain compatible across Haystack,
+Hayhooks, or application upgrades.
 
 ## Docker and Container Tips
 

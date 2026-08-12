@@ -20,6 +20,7 @@ from haystack import Pipeline
 
 from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator, streaming_generator
 
+
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
@@ -67,7 +68,7 @@ def setup(self) -> None:
         {% endfor %}
         Answer the given question: {{query}}
         {% endmessage %}""",
-        required_variables="*"
+        required_variables="*",
     )
     llm = OpenAIChatGenerator(model="gpt-4o-mini")
 
@@ -165,6 +166,7 @@ Hayhooks can stream results from `run_api()` or `run_api_async()` when you retur
 from collections.abc import Generator
 from hayhooks import streaming_generator
 
+
 def run_api(self, query: str) -> Generator:
     return streaming_generator(
         pipeline=self.pipeline,
@@ -177,6 +179,7 @@ For async pipelines:
 ```python
 from collections.abc import AsyncGenerator
 from hayhooks import async_streaming_generator
+
 
 async def run_api_async(self, query: str) -> AsyncGenerator:
     return async_streaming_generator(
@@ -198,6 +201,7 @@ If you need SSE (for browsers, [EventSource](https://developer.mozilla.org/en-US
 ```python
 from hayhooks import SSEStream, streaming_generator
 
+
 def run_api(self, query: str):
     return SSEStream(
         streaming_generator(
@@ -211,6 +215,7 @@ For async pipelines:
 
 ```python
 from hayhooks import SSEStream, async_streaming_generator
+
 
 async def run_api_async(self, query: str):
     return SSEStream(
@@ -228,6 +233,7 @@ Hayhooks can return binary files (images, PDFs, audio, etc.) directly from `run_
 ```python
 import tempfile
 from fastapi.responses import FileResponse
+
 
 def run_api(self, prompt: str) -> FileResponse:
     image = self.generate_image(prompt)
@@ -249,6 +255,56 @@ Any `Response` subclass works — `FileResponse` for files on disk, `Response` f
 For a full working example, see the [Image Generation example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/image_generation) and the [File Response Support](../features/file-response-support.md) feature documentation.
 
 ## Optional Methods
+
+### Durable execution
+
+Implement `run_durable()` or `run_durable_async()` on an ordinary `BasePipelineWrapper` to submit restart-safe work.
+The method receives a `DurableContext` and one Pydantic request model; it returns a Pydantic result model. Hayhooks
+owns records, worker lifecycle, Redis, cancellation, and resume.
+
+Ordinary exceptions from a durable wrapper are terminal failures. For a
+transient dependency failure (for example an LLM timeout or rate limit), call
+`await context.retry(...)` so Hayhooks persists the checkpoint and schedules a
+bounded retry; do not simply re-raise the transient error.
+
+```python
+from haystack import Pipeline
+from pydantic import BaseModel
+
+from hayhooks import BasePipelineWrapper, DurableContext
+
+
+class JobRequest(BaseModel):
+    source: str
+
+
+class JobResult(BaseModel):
+    processed: int
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    durable_revision = "my-image-digest-or-git-sha"
+
+    def setup(self) -> None:
+        self.pipeline = Pipeline()
+        # Add and connect components.
+
+    async def run_durable_async(self, context: DurableContext, request: JobRequest) -> JobResult:
+        outputs = await context.run_pipeline_async({"source": {"value": request.source}}, checkpoint_at=["process"])
+        return JobResult(processed=outputs["process"]["count"])
+```
+
+Hayhooks exposes `POST /{pipeline}/run-durable`, `GET /{pipeline}/executions/{execution_id}`, and cancel/resume
+endpoints. The submit response and status endpoint expose only a safe result view; validated inputs and checkpoint
+state remain server-side. The built-in Redis store is the default. Set `HAYHOOKS_DURABLE_STORE=memory` only for
+volatile local development. `run_pipeline_async()` uses a worker thread around
+Haystack's synchronous snapshot API; it does not call `Pipeline.run_async()`.
+See the [durable engine](../advanced/durable-engine.md) for checkpoint,
+recovery, and side-effect boundaries.
+Every durable wrapper must set a non-empty `durable_revision` class attribute
+from the immutable build identifier; Hayhooks does not fingerprint source or
+configuration automatically. See also the
+[complete durable example](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_execution).
 
 ### run_api_async()
 
@@ -348,7 +404,7 @@ async def run_chat_completion_async(self, model: str, messages: list[dict], body
     return async_streaming_generator(
         pipeline=self.pipeline,
         pipeline_run_args={"prompt": {"query": question}},
-        allow_sync_streaming_callbacks=True  # ✅ Auto-detect and enable hybrid mode
+        allow_sync_streaming_callbacks=True,  # ✅ Auto-detect and enable hybrid mode
     )
 ```
 
@@ -371,12 +427,12 @@ When you set `allow_sync_streaming_callbacks=True`, the system enables **intelli
 
 ```python
 # Option 1: Strict mode (Default - Recommended)
-allow_sync_streaming_callbacks=False
+allow_sync_streaming_callbacks = False
 # → Raises error if sync-only components found
 # → Best for: New code, ensuring proper async components, best performance
 
 # Option 2: Auto-detection (Compatibility mode)
-allow_sync_streaming_callbacks=True
+allow_sync_streaming_callbacks = True
 # → Automatically detects and enables hybrid mode only when needed
 # → Best for: Legacy pipelines, components without async support, gradual migration
 ```
@@ -412,16 +468,14 @@ class SyncOnlyWrapper(BasePipelineWrapper):
         self.pipeline = Pipeline()
         self.pipeline.add_component("llm", SyncOnlyGenerator())
 
-    async def run_chat_completion_async(
-        self, model: str, messages: list[dict], body: dict
-    ) -> AsyncGenerator:
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
         question = get_last_user_message(messages)
 
         # Enable hybrid mode so the sync-only component can stream in an async pipeline
         return async_streaming_generator(
             pipeline=self.pipeline,
             pipeline_run_args={"llm": {"prompt": question}},
-            allow_sync_streaming_callbacks=True  # ✅ Handles sync component
+            allow_sync_streaming_callbacks=True,  # ✅ Handles sync component
         )
 ```
 
@@ -478,11 +532,8 @@ class MultiLLMWrapper(BasePipelineWrapper):
         self.pipeline.add_component(
             "prompt_1",
             ChatPromptBuilder(
-                template=[
-                    ChatMessage.from_system("You are a helpful assistant."),
-                    ChatMessage.from_user("{{query}}")
-                ]
-            )
+                template=[ChatMessage.from_system("You are a helpful assistant."), ChatMessage.from_user("{{query}}")]
+            ),
         )
         self.pipeline.add_component("llm_1", OpenAIChatGenerator(model="gpt-4o-mini"))
 
@@ -492,11 +543,9 @@ class MultiLLMWrapper(BasePipelineWrapper):
             ChatPromptBuilder(
                 template=[
                     ChatMessage.from_system("You are a helpful assistant that refines responses."),
-                    ChatMessage.from_user(
-                        "Previous response: {{previous_response[0].text}}\n\nRefine this."
-                    )
+                    ChatMessage.from_user("Previous response: {{previous_response[0].text}}\n\nRefine this."),
                 ]
-            )
+            ),
         )
         self.pipeline.add_component("llm_2", OpenAIChatGenerator(model="gpt-4o-mini"))
 
@@ -509,10 +558,7 @@ class MultiLLMWrapper(BasePipelineWrapper):
         question = get_last_user_message(messages)
 
         # By default, only llm_2 (the last streaming component) will stream
-        return streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={"prompt_1": {"query": question}}
-        )
+        return streaming_generator(pipeline=self.pipeline, pipeline_run_args={"prompt_1": {"query": question}})
 ```
 
 **What happens:** Only `llm_2` (the last streaming-capable component) streams its responses token by token. The first LLM (`llm_1`) executes normally without streaming, and only the final refined output streams to the user.
@@ -529,7 +575,7 @@ def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> G
     return streaming_generator(
         pipeline=self.pipeline,
         pipeline_run_args={"prompt_1": {"query": question}},
-        streaming_components=["llm_1", "llm_2"]  # Stream both components
+        streaming_components=["llm_1", "llm_2"],  # Stream both components
     )
 ```
 
@@ -539,16 +585,16 @@ You can also selectively enable streaming for specific components:
 
 ```python
 # Stream only the first LLM
-streaming_components=["llm_1"]
+streaming_components = ["llm_1"]
 
 # Stream only the second LLM (same as default)
-streaming_components=["llm_2"]
+streaming_components = ["llm_2"]
 
 # Stream ALL capable components (shorthand)
-streaming_components="all"
+streaming_components = "all"
 
-# Stream ALL capable components (specific list)
-streaming_components=["llm_1", "llm_2"]
+# Stream ALL capable components (specific list)
+streaming_components = ["llm_1", "llm_2"]
 ```
 
 ### Using the "all" Keyword
@@ -559,7 +605,7 @@ The `"all"` keyword is a convenient shorthand to enable streaming for all capabl
 return streaming_generator(
     pipeline=self.pipeline,
     pipeline_run_args={...},
-    streaming_components="all"  # Enable all streaming components
+    streaming_components="all",  # Enable all streaming components
 )
 ```
 
@@ -667,27 +713,24 @@ See the [Multi-LLM Streaming Example](https://github.com/deepset-ai/hayhooks/tre
 For streaming responses, pass `include_outputs_from` to `streaming_generator()` or `async_streaming_generator()`, and use the `on_pipeline_end` callback to access intermediate outputs. For example:
 
 ```python
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
-        question = get_last_user_message(messages)
+def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+    question = get_last_user_message(messages)
 
-        # Store retrieved documents for citations
-        self.retrieved_docs = []
+    # Store retrieved documents for citations
+    self.retrieved_docs = []
 
-        def on_pipeline_end(result: dict[str, Any]) -> None:
-            # Access intermediate outputs here
-            if "retriever" in result:
-                self.retrieved_docs = result["retriever"]["documents"]
-                # Use for citations, logging, analytics, etc.
+    def on_pipeline_end(result: dict[str, Any]) -> None:
+        # Access intermediate outputs here
+        if "retriever" in result:
+            self.retrieved_docs = result["retriever"]["documents"]
+            # Use for citations, logging, analytics, etc.
 
-        return streaming_generator(
-            pipeline=self.pipeline,
-            pipeline_run_args={
-                "retriever": {"query": question},
-                "prompt_builder": {"query": question}
-            },
-            include_outputs_from={"retriever"},  # Make retriever outputs available
-            on_pipeline_end=on_pipeline_end
-        )
+    return streaming_generator(
+        pipeline=self.pipeline,
+        pipeline_run_args={"retriever": {"query": question}, "prompt_builder": {"query": question}},
+        include_outputs_from={"retriever"},  # Make retriever outputs available
+        on_pipeline_end=on_pipeline_end,
+    )
 ```
 
 **What happens:** The `on_pipeline_end` callback receives both `llm` and `retriever` outputs in the `result` dict, allowing you to access retrieved documents alongside the generated response.
@@ -704,12 +747,9 @@ async def run_chat_completion_async(self, model: str, messages: List[dict], body
 
     return async_streaming_generator(
         pipeline=self.async_pipeline,
-        pipeline_run_args={
-            "retriever": {"query": question},
-            "prompt_builder": {"query": question}
-        },
+        pipeline_run_args={"retriever": {"query": question}, "prompt_builder": {"query": question}},
         include_outputs_from={"retriever"},
-        on_pipeline_end=on_pipeline_end
+        on_pipeline_end=on_pipeline_end,
     )
 ```
 
@@ -719,10 +759,7 @@ For non-streaming `run_api` or `run_api_async` endpoints, pass `include_outputs_
 
 ```python
 def run_api(self, query: str) -> dict:
-    result = self.pipeline.run(
-        data={"retriever": {"query": query}},
-        include_outputs_from={"retriever"}
-    )
+    result = self.pipeline.run(data={"retriever": {"query": query}}, include_outputs_from={"retriever"})
     # Build custom response with both answer and sources
     return {"answer": result["llm"]["replies"][0], "sources": result["retriever"]["documents"]}
 ```
@@ -732,8 +769,7 @@ Same pattern for async:
 ```python
 async def run_api_async(self, query: str) -> dict:
     result = await self.async_pipeline.run_async(
-        data={"retriever": {"query": query}},
-        include_outputs_from={"retriever"}
+        data={"retriever": {"query": query}}, include_outputs_from={"retriever"}
     )
     return {"answer": result["llm"]["replies"][0], "sources": result["retriever"]["documents"]}
 ```
@@ -768,6 +804,7 @@ def on_reasoning(
     """
     return text
 
+
 def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
     return streaming_generator(
         pipeline=self.pipeline,
@@ -792,6 +829,7 @@ Hayhooks can handle file uploads by adding a `files` parameter:
 
 ```python
 from fastapi import UploadFile
+
 
 def run_api(self, files: list[UploadFile] | None = None, query: str = "") -> str:
     if files:
@@ -841,6 +879,7 @@ Your pipeline wrapper may require additional dependencies:
 # pipeline_wrapper.py
 import trafilatura  # Additional dependency
 
+
 def run_api(self, urls: list[str], question: str) -> str:
     # Use additional library
     content = trafilatura.fetch(urls[0])
@@ -866,6 +905,7 @@ Implement proper error handling in production:
 ```python
 from hayhooks import log
 from fastapi import HTTPException
+
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:

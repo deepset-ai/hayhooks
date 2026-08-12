@@ -30,6 +30,9 @@ nav:
   - Advanced Usage:
     - Running Pipelines: advanced/running-pipelines.md
     - Advanced Configuration: advanced/advanced-configuration.md
+    - Durable Engine: advanced/durable-engine.md
+    - Durable Engine vs Temporal: advanced/durable-engine-vs-temporal.md
+    - Durable Execution Operations: advanced/durable-execution-operations.md
     - Code Sharing: advanced/code-sharing.md
   - Guides:
     - Development Best Practices: guides/development-best-practices.md
@@ -118,6 +121,9 @@ plugins:
         Advanced Usage:
           - advanced/running-pipelines.md: Execute Haystack Pipelines and manage runs programmatically.
           - advanced/advanced-configuration.md: Fine-tune advanced configuration settings.
+          - advanced/durable-engine.md: Current contract, state model, and architectural boundaries for durable Pipeline and Agent execution.
+          - advanced/durable-engine-vs-temporal.md: Compare Hayhooks durable execution with Temporal and understand when each fits.
+          - advanced/durable-execution-operations.md: Operate durable execution with explicit Redis, recovery, security, and scaling contracts.
           - advanced/code-sharing.md: Share Python code securely across deployments.
         Guides:
           - guides/development-best-practices.md: Development workflow tips for Hayhooks pipelines.
