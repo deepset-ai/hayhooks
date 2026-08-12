@@ -22,6 +22,10 @@ def set_default_settings():
     settings.dashboard_enabled = False
     settings.dashboard_path = "/dashboard"
     settings.dashboard_dist_dir = "dashboard/dist"
+    settings.durable_execution_concurrency = 1
+    settings.a2a_task_store = "memory"
+    settings.a2a_redis_url = "redis://localhost:6379/0"
+    settings.a2a_redis_key_prefix = "hayhooks:a2a"
 
 
 def test_run_command_with_reload(monkeypatch):
@@ -139,7 +143,8 @@ def test_run_command_with_tracing_dashboard_flag(monkeypatch, tmp_path):
 def test_a2a_run_debug_enables_tracebacks(monkeypatch):
     import uvicorn
 
-    from hayhooks.server.utils import a2a_utils, deploy_utils
+    from hayhooks.server.a2a import app as a2a_app
+    from hayhooks.server.utils import deploy_utils
     from hayhooks.settings import settings
 
     calls = []
@@ -155,17 +160,96 @@ def test_a2a_run_debug_enables_tracebacks(monkeypatch):
 
     monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
     monkeypatch.setattr(deploy_utils, "deploy_pipelines", fake_deploy_pipelines)
-    monkeypatch.setattr(a2a_utils, "create_a2a_app", fake_create_a2a_app)
-    # Neutralize the optional-dependency guard so this CLI-plumbing test runs
-    # even when the optional 'a2a' package isn't installed.
-    monkeypatch.setattr(a2a_utils.a2a_import, "check", lambda: None)
-
+    monkeypatch.setattr(a2a_app, "create_a2a_app", fake_create_a2a_app)
     settings.show_tracebacks = False
     result = runner.invoke(hayhooks_cli, ["a2a", "run", "--debug", "--pipelines-dir", "dummy_pipelines"])
 
     assert result.exit_code == 0, result.output
     assert settings.show_tracebacks is True
     assert calls, "uvicorn.run was not called"
+
+
+def test_a2a_run_sets_builtin_redis_task_store(monkeypatch):
+    import uvicorn
+
+    from hayhooks.server.a2a import app as a2a_app
+    from hayhooks.server.utils import deploy_utils
+
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(a2a_app, "create_a2a_app", lambda **_kwargs: object())
+
+    result = runner.invoke(
+        hayhooks_cli,
+        [
+            "a2a",
+            "run",
+            "--task-store",
+            "redis",
+            "--a2a-redis-url",
+            "redis://localhost:6379/4",
+            "--a2a-redis-key-prefix",
+            "demo:a2a",
+            "--pipelines-dir",
+            "dummy_pipelines",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert settings.a2a_task_store == "redis"
+    assert settings.a2a_redis_url == "redis://localhost:6379/4"
+    assert settings.a2a_redis_key_prefix == "demo:a2a"
+
+
+def test_a2a_run_sets_durable_execution_concurrency(monkeypatch):
+    import uvicorn
+
+    from hayhooks.server.a2a import app as a2a_app
+    from hayhooks.server.utils import deploy_utils
+
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(a2a_app, "create_a2a_app", lambda **_kwargs: object())
+
+    result = runner.invoke(
+        hayhooks_cli,
+        ["a2a", "run", "--durable-execution-concurrency", "3", "--pipelines-dir", "dummy_pipelines"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert settings.durable_execution_concurrency == 3
+
+
+def test_a2a_run_sets_durable_execution_store_configuration(monkeypatch):
+    import uvicorn
+
+    from hayhooks.server.a2a import app as a2a_app
+    from hayhooks.server.utils import deploy_utils
+
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(a2a_app, "create_a2a_app", lambda **_kwargs: object())
+
+    result = runner.invoke(
+        hayhooks_cli,
+        [
+            "a2a",
+            "run",
+            "--execution-store",
+            "redis",
+            "--execution-redis-url",
+            "redis://localhost:6379/5",
+            "--execution-redis-key-prefix",
+            "demo:durable",
+            "--pipelines-dir",
+            "dummy_pipelines",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert settings.durable_store == "redis"
+    assert settings.durable_redis_url == "redis://localhost:6379/5"
+    assert settings.durable_redis_key_prefix == "demo:durable"
 
 
 def test_status_command(monkeypatch):

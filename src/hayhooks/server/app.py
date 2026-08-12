@@ -20,6 +20,7 @@ from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from hayhooks.durable.runtime import durable_runtime
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
 from hayhooks.server.routers import (
     dashboard_router,
@@ -241,17 +242,20 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    if settings.pipelines_dir:
-        deploy_pipelines(app, settings.pipelines_dir)
-
     # Capture the running loop so synchronous span recording can wake SSE
     # subscribers via call_soon_threadsafe.
     broadcaster = get_trace_stream_broadcaster()
-    broadcaster.set_loop(asyncio.get_running_loop())
     try:
+        if settings.pipelines_dir:
+            deploy_pipelines(app, settings.pipelines_dir)
+        await durable_runtime.start()
+        broadcaster.set_loop(asyncio.get_running_loop())
         yield
     finally:
-        broadcaster.clear_loop()
+        try:
+            await durable_runtime.close()
+        finally:
+            broadcaster.clear_loop()
 
 
 @lru_cache(maxsize=1)

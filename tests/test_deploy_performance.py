@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -104,30 +106,21 @@ async def test_undeploy_pipeline_async(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_serialized_policy_wraps_with_lock(monkeypatch):
-    monkeypatch.setattr(settings, "deploy_concurrency", DeployConcurrencyPolicy.SERIALIZED)
+async def test_parallel_policy_prepares_different_pipelines_concurrently(monkeypatch):
+    monkeypatch.setattr(settings, "deploy_concurrency", DeployConcurrencyPolicy.PARALLEL)
+    original_prepare = prepare_pipeline_yaml
+    both_preparing = threading.Barrier(2)
 
-    lock_calls = []
-    original_with_lock = __import__(
-        "hayhooks.server.utils.deploy_utils", fromlist=["_with_deploy_lock"]
-    )._with_deploy_lock
+    def synchronized_prepare(*args, **kwargs):
+        both_preparing.wait(timeout=2)
+        return original_prepare(*args, **kwargs)
 
-    def tracking_with_lock(func):
-        lock_calls.append(func.__name__)
-        return original_with_lock(func)
+    monkeypatch.setattr("hayhooks.server.utils.deploy_utils.prepare_pipeline_yaml", synchronized_prepare)
 
-    monkeypatch.setattr(
-        "hayhooks.server.utils.deploy_utils._with_deploy_lock",
-        tracking_with_lock,
+    await asyncio.gather(
+        deploy_pipeline_yaml_async("parallel_a", SAMPLE_YAML, options={"save_file": False}),
+        deploy_pipeline_yaml_async("parallel_b", SAMPLE_YAML, options={"save_file": False}),
     )
-
-    await deploy_pipeline_yaml_async(
-        pipeline_name="lock_test",
-        source_code=SAMPLE_YAML,
-        options={"save_file": False},
-    )
-
-    assert lock_calls == ["deploy_pipeline_yaml"]
 
 
 def test_defer_openapi_rebuild_skips_setup():
@@ -156,7 +149,7 @@ def test_no_defer_calls_setup():
         options={"save_file": False},
     )
 
-    mock_app.setup.assert_called()
+    mock_app.setup.assert_called_once()
 
 
 def test_rebuild_openapi():

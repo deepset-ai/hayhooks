@@ -12,6 +12,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import NoReturn
 
+from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
 from hayhooks.server.exceptions import PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.logger import log
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
@@ -249,6 +250,8 @@ def _set_method_implementation_flags(pipeline_wrapper: BasePipelineWrapper) -> N
     methods_to_check = [
         ("_is_run_api_implemented", "run_api"),
         ("_is_run_api_async_implemented", "run_api_async"),
+        ("_is_run_durable_implemented", "run_durable"),
+        ("_is_run_durable_async_implemented", "run_durable_async"),
         ("_is_run_chat_completion_implemented", "run_chat_completion"),
         ("_is_run_chat_completion_async_implemented", "run_chat_completion_async"),
         ("_is_run_response_implemented", "run_response"),
@@ -296,10 +299,16 @@ def _validate_run_methods(pipeline_wrapper: BasePipelineWrapper) -> None:
     Raises:
         PipelineWrapperError: If no run methods are implemented.
     """
-    has_run_method = any(
+    if pipeline_wrapper._is_run_durable_implemented and pipeline_wrapper._is_run_durable_async_implemented:
+        msg = "Implement at most one of run_durable and run_durable_async"
+        raise PipelineWrapperError(msg)
+
+    has_run_method = durable_authoring_mode(pipeline_wrapper) is DurableAuthoringMode.MANAGED_AGENT or any(
         [
             pipeline_wrapper._is_run_api_implemented,
             pipeline_wrapper._is_run_api_async_implemented,
+            pipeline_wrapper._is_run_durable_implemented,
+            pipeline_wrapper._is_run_durable_async_implemented,
             pipeline_wrapper._is_run_chat_completion_implemented,
             pipeline_wrapper._is_run_chat_completion_async_implemented,
             pipeline_wrapper._is_run_response_implemented,
