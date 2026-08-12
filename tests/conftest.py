@@ -1,4 +1,6 @@
+import os
 import shutil
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -10,12 +12,30 @@ from _pytest.logging import LogCaptureFixture
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from haystack.tracing import Span, Tracer, disable_tracing, enable_tracing
+from redis.asyncio import Redis
 
 from hayhooks.server.app import create_app
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
 from hayhooks.settings import settings
+
+
+@pytest.fixture
+async def isolated_redis():
+    redis_url = os.getenv("HAYHOOKS_TEST_REDIS_URL")
+    if not redis_url:
+        pytest.skip("set HAYHOOKS_TEST_REDIS_URL to run the real-Redis suite")
+    redis = Redis.from_url(redis_url, decode_responses=False)
+    await redis.ping()
+    prefix = f"hayhooks:test:{uuid.uuid4().hex}"
+    try:
+        yield redis, prefix
+    finally:
+        keys = [key async for key in redis.scan_iter(match=f"{prefix}:*")]
+        if keys:
+            await redis.delete(*keys)
+        await redis.aclose()
 
 
 class _RecordedSpan(Span):
