@@ -40,6 +40,18 @@ jobs:
 
   tests-haystack-v3:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:6.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      HAYHOOKS_TEST_REDIS_URL: redis://127.0.0.1:6379/15
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
@@ -55,15 +67,21 @@ jobs:
 
       - name: Install Haystack v3 into the test env
         run: |
-          hatch env create test
-          hatch -e test env run -- uv pip install --upgrade "haystack-ai>=3"
-          hatch -e test env run -- python -c "import haystack, sys; v = haystack.__version__; print('haystack', v); sys.exit(0 if int(v.split('.')[0]) >= 3 else 'expected Haystack v3+, got ' + v)"
+          hatch env create test-v3
+          hatch -e test-v3 env run -- uv pip install --upgrade "haystack-ai>=3"
+          hatch -e test-v3 env run -- python -c "import haystack, sys; v = haystack.__version__; print('haystack', v); sys.exit(0 if int(v.split('.')[0]) >= 3 else 'expected Haystack v3+, got ' + v)"
 
-      - name: Run unit tests
-        run: hatch run test:unit
+      - name: Run tests
+        run: hatch run test-v3:all
+
+      - name: Run durable process-recovery smoke test
+        if: matrix.python-version == '3.12'
+        env:
+          HAYHOOKS_TEST_PROCESS_RECOVERY: "1"
+        run: hatch run test-v3:all tests/test_durable_process_recovery.py
 
       - name: Ty - check types (Haystack v3)
-        run: hatch run test:types
+        run: hatch run test-v3:types
 
   linting:
     runs-on: ubuntu-slim
@@ -82,6 +100,9 @@ jobs:
 
       - name: Ty - check types
         run: hatch run test:types
+
+      - name: Build documentation in strict mode
+        run: hatch run docs:build --strict
 
   dashboard-tests:
     runs-on: ubuntu-latest
