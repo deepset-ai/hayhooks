@@ -6,18 +6,12 @@ import pytest
 from haystack.dataclasses import StreamingChunk
 
 from hayhooks.events import PipelineEvent
+from hayhooks.server.a2a.cards import create_agent_card, get_a2a_base_url, is_a2a_exposable
+from hayhooks.server.a2a.executor import RESPONSE_ARTIFACT_NAME, _stream_item_to_text, create_agent_executor
+from hayhooks.server.a2a.messages import build_openai_messages
+from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.tracing import SPAN_A2A_RUN_AGENT
-from hayhooks.server.utils.a2a_utils import (
-    RESPONSE_ARTIFACT_NAME,
-    _build_openai_messages,
-    _execute_agent_task,
-    _stream_item_to_text,
-    create_agent_card,
-    create_agent_executor,
-    get_a2a_base_url,
-    is_a2a_exposable,
-)
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.module_loader import _set_method_implementation_flags
 
@@ -44,6 +38,12 @@ class RecordingQueue:
 
     async def enqueue_event(self, event):
         self.events.append(event)
+
+
+async def execute_agent_task(pipeline_name, context, event_queue):
+    wrapper = registry.get(pipeline_name)
+    assert wrapper is not None
+    await create_agent_executor(wrapper, pipeline_name).execute(context, event_queue)
 
 
 class AsyncChatWrapper(BasePipelineWrapper):
@@ -116,44 +116,33 @@ def get_artifact_events(events) -> list:
 # --- Exposure rules ---
 
 
-def test_is_a2a_exposable_unknown_pipeline():
-    assert not is_a2a_exposable("non_existent_pipeline")
-
-
-def test_is_a2a_exposable_chat_async():
-    register_wrapper("chat_agent", AsyncChatWrapper)
-    assert is_a2a_exposable("chat_agent")
-
-
-def test_is_a2a_exposable_chat_sync():
-    register_wrapper("sync_agent", SyncChatWrapper)
-    assert is_a2a_exposable("sync_agent")
-
-
-def test_is_a2a_exposable_api_only():
-    register_wrapper("api_only", ApiOnlyWrapper)
-    assert not is_a2a_exposable("api_only")
-
-
-def test_is_a2a_exposable_skip_a2a():
-    register_wrapper("chat_agent", AsyncChatWrapper, metadata={"skip_a2a": True})
-    assert not is_a2a_exposable("chat_agent")
+@pytest.mark.parametrize(
+    ("name", "wrapper", "metadata", "expected"),
+    [
+        ("non_existent_pipeline", None, None, False),
+        ("chat_agent", AsyncChatWrapper, None, True),
+        ("sync_agent", SyncChatWrapper, None, True),
+        ("api_only", ApiOnlyWrapper, None, False),
+        ("skipped_agent", AsyncChatWrapper, {"skip_a2a": True}, False),
+    ],
+)
+def test_is_a2a_exposable(name, wrapper, metadata, expected):
+    if wrapper is not None:
+        register_wrapper(name, wrapper, metadata=metadata)
+    assert is_a2a_exposable(name) is expected
 
 
 # --- Base URL ---
 
 
-def test_get_a2a_base_url_default(test_settings):
-    test_settings.a2a_external_url = ""
-    assert get_a2a_base_url() == f"http://{test_settings.a2a_host}:{test_settings.a2a_port}"
-
-
-def test_get_a2a_base_url_external(test_settings):
-    test_settings.a2a_external_url = "https://agents.example.com/"
-    try:
-        assert get_a2a_base_url() == "https://agents.example.com"
-    finally:
-        test_settings.a2a_external_url = ""
+@pytest.mark.parametrize(
+    ("external_url", "expected"),
+    [("", None), ("https://agents.example.com/", "https://agents.example.com")],
+)
+def test_get_a2a_base_url(test_settings, external_url, expected):
+    test_settings.a2a_external_url = external_url
+    expected = expected or f"http://{test_settings.a2a_host}:{test_settings.a2a_port}"
+    assert get_a2a_base_url() == expected
 
 
 # --- Agent card ---
@@ -230,7 +219,7 @@ def test_stream_item_to_text():
 
 def test_build_openai_messages_from_message_only():
     context = make_context("what is the weather?")
-    assert _build_openai_messages(context) == [{"role": "user", "content": "what is the weather?"}]
+    assert build_openai_messages(context) == [{"role": "user", "content": "what is the weather?"}]
 
 
 def test_build_openai_messages_with_task_history():
@@ -242,7 +231,7 @@ def test_build_openai_messages_with_task_history():
     task.history.append(new_text_message("first answer", role=Role.ROLE_AGENT))
 
     context = make_context("second question", current_task=task)
-    assert _build_openai_messages(context) == [
+    assert build_openai_messages(context) == [
         {"role": "user", "content": "first question"},
         {"role": "assistant", "content": "first answer"},
         {"role": "user", "content": "second question"},
@@ -257,7 +246,7 @@ def test_build_openai_messages_deduplicates_current_message():
     task = new_task_from_user_message(message)  # history already contains the message
 
     context = SimpleNamespace(message=message, current_task=task)
-    assert _build_openai_messages(context) == [{"role": "user", "content": "hello"}]
+    assert build_openai_messages(context) == [{"role": "user", "content": "hello"}]
 
 
 def test_build_openai_messages_keeps_new_message_matching_history_text():
@@ -270,7 +259,7 @@ def test_build_openai_messages_keeps_new_message_matching_history_text():
     task.history.append(new_text_message("yes", role=Role.ROLE_AGENT))
 
     context = make_context("yes", current_task=task)
-    assert _build_openai_messages(context) == [
+    assert build_openai_messages(context) == [
         {"role": "user", "content": "continue?"},
         {"role": "assistant", "content": "yes"},
         {"role": "user", "content": "yes"},
@@ -287,7 +276,7 @@ async def test_execute_agent_task_string_result():
     register_wrapper("sync_agent", SyncChatWrapper)
     queue = RecordingQueue()
 
-    await _execute_agent_task("sync_agent", make_context(), queue)
+    await execute_agent_task("sync_agent", make_context(), queue)
 
     assert isinstance(queue.events[0], Task)
     assert get_status_states(queue.events) == [TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_COMPLETED]
@@ -306,18 +295,18 @@ async def test_execute_agent_task_streaming_result():
     register_wrapper("chat_agent", AsyncChatWrapper)
     queue = RecordingQueue()
 
-    await _execute_agent_task("chat_agent", make_context("hi"), queue)
+    await execute_agent_task("chat_agent", make_context("hi"), queue)
 
     assert get_status_states(queue.events)[-1] == TaskState.TASK_STATE_COMPLETED
 
     artifact_events = get_artifact_events(queue.events)
     # PipelineEvent items are skipped, text chunks are streamed incrementally
-    assert len(artifact_events) == 3
+    assert len(artifact_events) == 4
     texts = [event.artifact.parts[0].text for event in artifact_events]
-    assert texts == ["Hello, ", "world", " (question: hi)"]
-    # All chunks belong to the same artifact; only the last one is marked last_chunk
+    assert texts == ["Hello, ", "world", " (question: hi)", ""]
+    # All chunks belong to the same artifact; an empty marker finalizes iterator output
     assert len({event.artifact.artifact_id for event in artifact_events}) == 1
-    assert [event.last_chunk for event in artifact_events] == [False, False, True]
+    assert [event.last_chunk for event in artifact_events] == [False, False, False, True]
     assert artifact_events[0].append is False
     assert artifact_events[1].append is True
 
@@ -329,7 +318,7 @@ async def test_execute_agent_task_error_sets_failed_state():
     register_wrapper("failing_agent", FailingChatWrapper)
     queue = RecordingQueue()
 
-    await _execute_agent_task("failing_agent", make_context(), queue)
+    await execute_agent_task("failing_agent", make_context(), queue)
 
     states = get_status_states(queue.events)
     assert states[-1] == TaskState.TASK_STATE_FAILED
@@ -351,33 +340,126 @@ async def test_execute_agent_task_none_result_fails():
     register_wrapper("none_agent", NoneResultWrapper)
     queue = RecordingQueue()
 
-    await _execute_agent_task("none_agent", make_context(), queue)
+    await execute_agent_task("none_agent", make_context(), queue)
 
     assert get_status_states(queue.events)[-1] == TaskState.TASK_STATE_FAILED
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_task_unknown_pipeline_fails():
-    from a2a.types import TaskState
-
-    queue = RecordingQueue()
-    await _execute_agent_task("non_existent", make_context(), queue)
-    assert get_status_states(queue.events)[-1] == TaskState.TASK_STATE_FAILED
-
-
-@pytest.mark.asyncio
-async def test_execute_agent_task_emits_trace_span(recording_tracer):
+async def test_execute_agent_task_emits_trace_and_safe_lifecycle_logs(recording_tracer):
     register_wrapper("sync_agent", SyncChatWrapper)
-    await _execute_agent_task("sync_agent", make_context(), RecordingQueue())
+    records = []
+    sink = log.add(lambda message: records.append(message.record), level="DEBUG")
+    try:
+        await execute_agent_task("sync_agent", make_context("private message"), RecordingQueue())
+    finally:
+        log.remove(sink)
 
     spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_A2A_RUN_AGENT]
     assert spans
     assert spans[-1].tags["hayhooks.pipeline.name"] == "sync_agent"
     assert spans[-1].tags["hayhooks.transport"] == "a2a"
+    lifecycle = [record for record in records if record["message"] in {"Started A2A task", "Completed A2A task"}]
+    assert [record["message"] for record in lifecycle] == ["Started A2A task", "Completed A2A task"]
+    assert all(record["extra"]["pipeline_name"] == "sync_agent" for record in lifecycle)
+    assert all(record["extra"]["task_id"] for record in lifecycle)
+    assert "private message" not in str(lifecycle)
 
 
-def test_create_agent_executor():
-    executor = create_agent_executor("some_pipeline")
-    assert executor.pipeline_name == "some_pipeline"
-    assert hasattr(executor, "execute")
-    assert hasattr(executor, "cancel")
+def test_runtime_passes_agent_name_to_task_store_provider():
+    from a2a.server.tasks import InMemoryTaskStore
+
+    from hayhooks.a2a import TaskStoreProvider
+    from hayhooks.server.a2a.runtime import A2ARuntime
+
+    class RecordingTaskStoreProvider(TaskStoreProvider):
+        def __init__(self):
+            self.agent_names = []
+
+        def create_task_store(self, agent_name):
+            self.agent_names.append(agent_name)
+            return InMemoryTaskStore()
+
+    provider = RecordingTaskStoreProvider()
+    runtime = A2ARuntime(task_store_provider=provider)
+
+    first_store = runtime.create_task_store("first_agent")
+    second_store = runtime.create_task_store("second_agent")
+
+    assert isinstance(first_store, InMemoryTaskStore)
+    assert isinstance(second_store, InMemoryTaskStore)
+    assert first_store is not second_store
+    assert provider.agent_names == ["first_agent", "second_agent"]
+
+
+def test_runtime_rejects_invalid_task_store_from_provider():
+    from hayhooks.a2a import TaskStoreProvider
+    from hayhooks.server.a2a.runtime import A2ARuntime
+
+    class InvalidTaskStoreProvider(TaskStoreProvider):
+        def create_task_store(self, _agent_name):
+            return object()
+
+    runtime = A2ARuntime(task_store_provider=InvalidTaskStoreProvider())
+
+    with pytest.raises(TypeError, match=r"InvalidTaskStoreProvider.*invalid_agent"):
+        runtime.create_task_store("invalid_agent")
+
+
+async def test_runtime_closes_task_store_provider():
+    from a2a.server.tasks import InMemoryTaskStore
+
+    from hayhooks.a2a import TaskStoreProvider
+    from hayhooks.server.a2a.runtime import A2ARuntime
+
+    class CloseableTaskStoreProvider(TaskStoreProvider):
+        def __init__(self):
+            self.closed = False
+
+        def create_task_store(self, _agent_name):
+            return InMemoryTaskStore()
+
+        async def close(self):
+            self.closed = True
+
+    provider = CloseableTaskStoreProvider()
+
+    await A2ARuntime(task_store_provider=provider).close()
+
+    assert provider.closed
+
+
+@pytest.mark.parametrize(
+    ("health", "expected_error"),
+    [
+        ({"healthy": False, "provider": "TestProvider", "error": "ConnectionError"}, "ConnectionError"),
+        (True, "InvalidHealthPayload"),
+    ],
+)
+def test_a2a_status_returns_503_for_unhealthy_task_store(health, expected_error):
+    from a2a.server.tasks import InMemoryTaskStore
+    from starlette.testclient import TestClient
+
+    from hayhooks.a2a import TaskStoreProvider
+    from hayhooks.server.a2a.app import create_a2a_app
+    from hayhooks.server.a2a.runtime import A2ARuntime
+
+    class TestProvider(TaskStoreProvider):
+        def create_task_store(self, _agent_name):
+            return InMemoryTaskStore()
+
+        async def health(self):
+            return health
+
+    register_wrapper("chat_agent", AsyncChatWrapper)
+    app = create_a2a_app(
+        base_url="http://test:1418",
+        runtime=A2ARuntime(task_store_provider=TestProvider()),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/status")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["components"]["task_store"]["error"] == expected_error

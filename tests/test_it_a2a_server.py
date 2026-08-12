@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 
@@ -5,9 +6,11 @@ import httpx
 import pytest
 from anyio import Path
 
+from hayhooks.server.a2a.app import create_a2a_app
 from hayhooks.server.pipelines import registry
-from hayhooks.server.utils.a2a_utils import create_a2a_app
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_files
+from hayhooks.server.utils.module_loader import _set_method_implementation_flags
 
 A2A_AVAILABLE = importlib.util.find_spec("a2a") is not None
 
@@ -42,7 +45,14 @@ async def a2a_client():
 
     app = create_a2a_app(base_url=BASE_URL)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL, headers={"A2A-Version": "1.0"}) as client:
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=transport,
+            base_url=BASE_URL,
+            headers={"A2A-Version": "1.0"},
+        ) as client,
+    ):
         yield client
 
 
@@ -53,6 +63,23 @@ def send_message_payload(text: str, method: str = "SendMessage") -> dict:
         "method": method,
         "params": {"message": {"messageId": "test-message", "role": "ROLE_USER", "parts": [{"text": text}]}},
     }
+
+
+def get_task_payload(task_id: str, method: str = "GetTask") -> dict:
+    return {"jsonrpc": "2.0", "id": "get-task", "method": method, "params": {"id": task_id}}
+
+
+def cancel_task_payload(task_id: str) -> dict:
+    return {"jsonrpc": "2.0", "id": "cancel-task", "method": "CancelTask", "params": {"id": task_id}}
+
+
+def extract_task(response_payload: dict) -> dict:
+    result = response_payload["result"]
+    return result.get("task", result)
+
+
+def artifact_text(task: dict) -> str:
+    return "".join(part["text"] for artifact in task.get("artifacts", []) for part in artifact["parts"])
 
 
 def send_message_v0_3_payload(text: str, method: str = "message/send") -> dict:
@@ -70,12 +97,53 @@ def send_message_v0_3_payload(text: str, method: str = "message/send") -> dict:
     }
 
 
+class ControlledLongRunningWrapper(BasePipelineWrapper):
+    emit_progress_chunk = True
+
+    def setup(self):
+        self.pipeline = object()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict):
+        async def generator():
+            self.entered.set()
+            if self.emit_progress_chunk:
+                yield "progress "
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+            yield "done"
+
+        return generator()
+
+
+def register_test_wrapper(name: str, wrapper_cls: type[BasePipelineWrapper]) -> BasePipelineWrapper:
+    wrapper = wrapper_cls()
+    wrapper.setup()
+    _set_method_implementation_flags(wrapper)
+    registry.add(
+        name,
+        wrapper,
+        metadata={"description": f"{name} description", "skip_a2a": wrapper.skip_a2a, "a2a_card": wrapper.a2a_card},
+    )
+    return wrapper
+
+
 @pytest.mark.asyncio
 async def test_status_lists_exposed_agents(a2a_client):
     response = await a2a_client.get("/status")
     assert response.status_code == 200
     # api_only has no chat completion method, so it must not be listed
-    assert response.json() == {"status": "ok", "agents": ["chat_agent", "async_chat_agent"]}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["agents"] == ["chat_agent", "async_chat_agent"]
+    assert body["components"]["task_store"]["healthy"]
+    assert body["components"]["maintenance"]["healthy"]
+    assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.asyncio
@@ -96,12 +164,6 @@ async def test_non_chat_pipeline_is_not_exposed(a2a_client):
     assert response.status_code == 404
 
     response = await a2a_client.post("/api_only/", json=send_message_payload("hi"))
-    assert response.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_unknown_agent_returns_404(a2a_client):
-    response = await a2a_client.get("/non_existent/.well-known/agent-card.json")
     assert response.status_code == 404
 
 
@@ -177,3 +239,154 @@ async def test_a2a_v1_method_with_v0_3_header_is_rejected(a2a_client):
     response = await a2a_client.post("/chat_agent/", json=send_message_payload("hi"), headers={"A2A-Version": "0.3"})
     assert response.status_code == 200
     assert response.json()["error"]["code"] == -32009
+
+
+@pytest.fixture
+async def long_running_client():
+    wrapper = register_test_wrapper("long_agent", ControlledLongRunningWrapper)
+    app = create_a2a_app(base_url=BASE_URL)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL, headers={"A2A-Version": "1.0"}) as client:
+        yield client, wrapper
+
+
+async def poll_task_until_state(client: httpx.AsyncClient, task_id: str, expected_state: str) -> dict:
+    last_task = None
+    for _ in range(50):
+        response = await client.post("/long_agent/", json=get_task_payload(task_id))
+        assert response.status_code == 200
+        last_task = extract_task(response.json())
+        if last_task["status"]["state"] == expected_state:
+            return last_task
+        await asyncio.sleep(0.01)
+    msg = f"Task {task_id} did not reach {expected_state}. Last task: {last_task}"
+    raise AssertionError(msg)
+
+
+async def poll_task_until_artifact_text(client: httpx.AsyncClient, task_id: str, expected_text: str) -> dict:
+    last_task = None
+    for _ in range(50):
+        response = await client.post("/long_agent/", json=get_task_payload(task_id))
+        assert response.status_code == 200
+        last_task = extract_task(response.json())
+        if artifact_text(last_task) == expected_text:
+            return last_task
+        await asyncio.sleep(0.01)
+    msg = f"Task {task_id} did not expose artifact text {expected_text!r}. Last task: {last_task}"
+    raise AssertionError(msg)
+
+
+async def test_detached_send_returns_non_terminal_task(long_running_client):
+    client, wrapper = long_running_client
+    payload = send_message_payload("start")
+    payload["params"]["configuration"] = {"returnImmediately": True}
+
+    response = await client.post("/long_agent/", json=payload)
+
+    assert response.status_code == 200
+    task = extract_task(response.json())
+    assert task["id"]
+    assert task["contextId"]
+    assert task["status"]["state"] in {"TASK_STATE_SUBMITTED", "TASK_STATE_WORKING"}
+    assert wrapper.entered.is_set()
+    assert not wrapper.release.is_set()
+
+    progress_task = await poll_task_until_artifact_text(client, task["id"], "progress ")
+    assert progress_task["status"]["state"] == "TASK_STATE_WORKING"
+
+    wrapper.release.set()
+    last_task = None
+    for _ in range(50):
+        poll_response = await client.post(
+            "/long_agent/",
+            json=get_task_payload(task["id"], method="tasks/get"),
+            headers={"A2A-Version": "0.3"},
+        )
+        assert poll_response.status_code == 200
+        last_task = extract_task(poll_response.json())
+        if last_task["status"]["state"] == "completed":
+            break
+        await asyncio.sleep(0.01)
+    assert last_task is not None
+    assert last_task["status"]["state"] == "completed"
+    assert artifact_text(last_task) == "progress done"
+
+
+async def test_default_send_remains_blocking(long_running_client):
+    client, wrapper = long_running_client
+
+    request_task = asyncio.create_task(client.post("/long_agent/", json=send_message_payload("start")))
+    await asyncio.wait_for(wrapper.entered.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert not request_task.done()
+
+    wrapper.release.set()
+    response = await asyncio.wait_for(request_task, timeout=1)
+    task = extract_task(response.json())
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert artifact_text(task) == "progress done"
+
+
+async def test_a2a_v0_3_blocking_false_returns_active_task(long_running_client):
+    client, wrapper = long_running_client
+    payload = send_message_v0_3_payload("start")
+    payload["params"]["configuration"] = {"blocking": False}
+
+    response = await client.post("/long_agent/", json=payload, headers={"A2A-Version": "0.3"})
+    assert response.status_code == 200
+    task = extract_task(response.json())
+    assert task["status"]["state"] in {"submitted", "working"}
+
+    wrapper.release.set()
+    completed_task = await poll_task_until_state(client, task["id"], "TASK_STATE_COMPLETED")
+    assert artifact_text(completed_task) == "progress done"
+
+
+async def test_subscribe_to_active_task(long_running_client):
+    client, wrapper = long_running_client
+    payload = send_message_payload("start")
+    payload["params"]["configuration"] = {"returnImmediately": True}
+    send_response = await client.post("/long_agent/", json=payload)
+    task = extract_task(send_response.json())
+
+    subscribe_payload = get_task_payload(task["id"], method="SubscribeToTask")
+
+    async def read_subscription_events() -> list[dict]:
+        events = []
+        async with client.stream("POST", "/long_agent/", json=subscribe_payload) as response:
+            assert response.status_code == 200
+            async for line in response.aiter_lines():
+                if line.startswith("data:"):
+                    events.append(json.loads(line[len("data:") :]))
+                    if (
+                        events[-1]["result"].get("statusUpdate", {}).get("status", {}).get("state")
+                        == "TASK_STATE_COMPLETED"
+                    ):
+                        break
+        return events
+
+    subscription_task = asyncio.create_task(read_subscription_events())
+    await asyncio.sleep(0.01)
+    wrapper.release.set()
+    events = await asyncio.wait_for(subscription_task, timeout=1)
+
+    assert next(iter(events[0]["result"].keys())) == "task"
+    assert "artifactUpdate" in [next(iter(event["result"].keys())) for event in events]
+    assert events[-1]["result"]["statusUpdate"]["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
+async def test_cooperative_async_cancellation(long_running_client):
+    client, wrapper = long_running_client
+    payload = send_message_payload("start")
+    payload["params"]["configuration"] = {"returnImmediately": True}
+    send_response = await client.post("/long_agent/", json=payload)
+    task = extract_task(send_response.json())
+
+    await asyncio.wait_for(wrapper.entered.wait(), timeout=1)
+    cancel_response = await client.post("/long_agent/", json=cancel_task_payload(task["id"]))
+
+    assert cancel_response.status_code == 200
+    canceled_task = extract_task(cancel_response.json())
+    assert canceled_task["status"]["state"] == "TASK_STATE_CANCELED"
+    assert artifact_text(canceled_task) == "progress "
+    assert wrapper.cancelled.is_set()
