@@ -156,7 +156,8 @@ The runtime owns provider shutdown. Built-in providers snapshot their settings,
 and the runtime adopts that snapshot when a provider is supplied. Pass custom
 settings once—either to a built-in provider as above, or to `DurableRuntime`
 when it selects the default provider. Conflicting runtime and provider settings
-are rejected before a deployment is created.
+are rejected before a deployment is created. The selected provider is fixed for
+the runtime's lifetime; create a new runtime to change storage backends.
 
 ## Redis layout
 
@@ -171,7 +172,9 @@ sorted-set indexes:
 
 The namespace also contains a `capacity` hash with only `nonterminal` and one
 idempotency binding per execution. Terminal execution and idempotency keys use
-native Redis TTL. The in-memory backend schedules equivalent cleanup.
+native Redis TTL. The in-memory backend schedules equivalent cleanup. The store
+assigns progress sequence numbers when it commits each transition, preserving
+checkpoint and cancellation progress when they race.
 
 Workers poll `runnable` every configured poll interval, one second by default.
 They use Redis `TIME` and read one due member without removing it. Multiple
@@ -195,8 +198,11 @@ and resumes verify that persisted work matches the active revision.
 ## Operations
 
 `DurableExecutionManager.health_snapshot()` reports `nonterminal`, `runnable`,
-and `lease_expiry`. Alert on sustained runnable growth, repeated lease recovery,
-worker/store health failures, and runs that exceed their expected duration.
+`lease_expiry`, and the current worker store-error streak. Repeated claim or
+transition failures make readiness unhealthy until a worker completes a store
+operation successfully. Alert on sustained runnable growth, repeated lease
+recovery, worker/store health failures, and runs that exceed their expected
+duration.
 
 See [Durable execution operations](durable-execution-operations.md) for
 deployment, retention, and incident guidance.

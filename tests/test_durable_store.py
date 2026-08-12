@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -140,6 +141,20 @@ def test_runtime_rejects_conflicting_builtin_provider_settings() -> None:
         DurableRuntime(provider, app_settings=AppSettings(durable_lease_duration_ms=60_000))
 
 
+async def test_runtime_provider_cannot_be_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = InMemoryExecutionStoreProvider()
+    close = AsyncMock()
+    monkeypatch.setattr(provider, "close", close)
+    runtime = DurableRuntime(provider)
+
+    with pytest.raises(AttributeError):
+        setattr(runtime, "provider", InMemoryExecutionStoreProvider())
+
+    assert runtime.provider is provider
+    await runtime.close()
+    close.assert_awaited_once()
+
+
 async def test_store_preserves_public_checkpoint_progress_wait_resume_and_result_contract() -> None:
     store = _store(
         lease_duration_ms=10_000,
@@ -219,6 +234,27 @@ async def test_cancel_and_checkpoint_assign_distinct_persisted_progress_sequence
     record = await store.get("run_1")
     assert record is not None
     assert [event.sequence for event in record.progress] == [1, 2]
+
+
+async def test_checkpoint_keeps_progress_added_after_a_concurrent_cancellation() -> None:
+    store = _store()
+    await store.submit(_record())
+    claim = await store.claim_next("worker")
+    assert claim is not None
+
+    async with claim:
+        claim.record.append_progress("before cancellation")
+        assert await store.request_cancel("run_1")
+        await claim.checkpoint()
+        claim.record.append_progress("after cancellation")
+        await claim.checkpoint()
+
+    record = await store.get("run_1")
+    assert record is not None
+    assert [(event.sequence, event.message) for event in record.progress] == [
+        (2, "before cancellation"),
+        (3, "after cancellation"),
+    ]
 
 
 async def test_losing_resume_race_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,6 +345,30 @@ async def test_store_runs_through_the_existing_durable_manager_contract() -> Non
         assert [event.message for event in record.progress] == ["started"]
     finally:
         await manager.close()
+
+
+async def test_manager_health_reports_worker_store_failures() -> None:
+    store = SimpleNamespace(
+        initialize=AsyncMock(),
+        claim_next=AsyncMock(side_effect=ExecutionStoreError("claim failed")),
+        maintain=AsyncMock(),
+        operational_counts=AsyncMock(return_value={"nonterminal": 1, "runnable": 1, "lease_expiry": 0}),
+    )
+    manager = DurableExecutionManager(
+        "deployment", store, AsyncMock(), adapter=object(), poll_interval=0.001, shutdown_grace_period=0.01
+    )
+    await manager.start()
+    try:
+        for _ in range(100):
+            if store.claim_next.await_count:
+                break
+            await asyncio.sleep(0.001)
+        health = await manager.health_snapshot()
+    finally:
+        await manager.close()
+
+    assert not health["healthy"]
+    assert health["worker_store_error_streak"] >= 1
 
 
 async def test_canceled_runner_restarts_its_worker_slot() -> None:

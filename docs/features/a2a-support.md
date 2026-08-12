@@ -223,7 +223,7 @@ waiting for input. A follow-up sent while it is running is rejected rather than
 being treated as an idempotent redelivery; clients should wait for
 `INPUT_REQUIRED` before continuing a task.
 
-Terminal tasks use `HAYHOOKS_A2A_TERMINAL_TASK_TTL_SECONDS`. Runtime maintenance performs cleanup even when no later A2A request arrives and removes the protobuf payload and task indexes. Execution-record retention remains independent.
+Terminal tasks use `HAYHOOKS_A2A_TERMINAL_TASK_TTL_SECONDS`. Runtime maintenance performs cleanup even when no later A2A request arrives and removes the protobuf payload and task indexes. Execution-record retention remains independent. If a task projection expires first, `GetTask` with the original task ID reconstructs its current state from the retained execution; the expired history and list entry remain gone.
 
 Applications constructing the server directly can use a configured provider:
 

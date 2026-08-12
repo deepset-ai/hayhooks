@@ -341,6 +341,7 @@ class _DurableAgentRequest(BaseModel):
     """Private A2A input mapping; REST wrappers always provide their own model."""
 
     messages: list[dict[str, Any]] = Field(min_length=1)
+    a2a_context_id: str | None = Field(default=None, min_length=1)
 
 
 class DurableRuntime:
@@ -352,7 +353,7 @@ class DurableRuntime:
         *,
         app_settings: AppSettings | None = None,
     ) -> None:
-        self.provider = provider
+        self._store_provider = provider
         self._app_settings = _runtime_settings(provider, app_settings)
         self._deployments: dict[str, DurableDeployment] = {}
         self._started = False
@@ -365,6 +366,11 @@ class DurableRuntime:
     @property
     def started(self) -> bool:
         return self._started
+
+    @property
+    def provider(self) -> ExecutionStoreProvider | None:
+        """Return the runtime-owned provider selected at construction or first use."""
+        return self._store_provider
 
     @property
     def app_settings(self) -> AppSettings:
@@ -445,7 +451,7 @@ class DurableRuntime:
         self._deployments.clear()
         if self.provider is not None:
             provider = self.provider
-            self.provider = None
+            self._store_provider = None
             draining = [deployment.manager for deployment in deployments if deployment.manager.draining]
             if draining:
 
@@ -477,13 +483,15 @@ class DurableRuntime:
         }
 
     def _provider(self) -> ExecutionStoreProvider:
-        if self.provider is None:
+        provider = self._store_provider
+        if provider is None:
             if self.app_settings.durable_store == "memory":
                 log.warning("Durable execution uses volatile in-memory storage; queued work is lost on process exit")
-                self.provider = InMemoryExecutionStoreProvider(app_settings=self.app_settings)
+                provider = InMemoryExecutionStoreProvider(app_settings=self.app_settings)
             else:
-                self.provider = RedisExecutionStoreProvider(app_settings=self.app_settings)
-        return self.provider
+                provider = RedisExecutionStoreProvider(app_settings=self.app_settings)
+            self._store_provider = provider
+        return provider
 
 
 class IdempotencyConflictError(RuntimeError):

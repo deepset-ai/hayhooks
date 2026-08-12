@@ -102,6 +102,7 @@ class DurableExecutionManager:
         self._draining_runs: set[asyncio.Future[JsonValue]] = set()
         self._maintenance_task: asyncio.Task[None] | None = None
         self._maintenance_error_streak = 0
+        self._worker_store_error_streaks: dict[str, int] = {}
         self._prepared = False
         self._started = False
         self._accepting_claims = False
@@ -136,6 +137,7 @@ class DurableExecutionManager:
         self._accepting_claims = True
         self._submission_gate.activate()
         self._worker_generation += 1
+        self._worker_store_error_streaks.clear()
         generation = self._worker_generation
         identity = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
         self._workers = [self._start_worker(identity, slot, generation) for slot in range(self.concurrency)]
@@ -168,14 +170,22 @@ class DurableExecutionManager:
         maintenance_healthy = self._maintenance_task is None or (
             maintenance_running and self._maintenance_error_streak == 0
         )
+        worker_store_error_streak = max(self._worker_store_error_streaks.values(), default=0)
         return {
             "healthy": not self._prepared
-            or (self._started and self._accepting_claims and running == self.concurrency and maintenance_healthy),
+            or (
+                self._started
+                and self._accepting_claims
+                and running == self.concurrency
+                and maintenance_healthy
+                and worker_store_error_streak == 0
+            ),
             "configured_slots": self.concurrency,
             "running_slots": running,
             "draining_slots": sum(not worker.done() for worker in self._draining_workers),
             "draining_runs": sum(not runner.done() for runner in self._draining_runs),
             "maintenance_running": maintenance_running,
+            "worker_store_error_streak": worker_store_error_streak,
             "accepting": self.accepting,
         }
 
@@ -308,16 +318,17 @@ class DurableExecutionManager:
                 )
 
     async def _worker(self, worker_name: str, generation: int) -> None:
-        consecutive_store_errors = 0
+        self._worker_store_error_streaks[worker_name] = 0
         while self._accepting_claims and generation == self._worker_generation:
             try:
                 claim = await self.store.claim_next(worker_name)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                consecutive_store_errors += 1
-                await self._backoff_store_error(error, consecutive_store_errors, operation="claim")
+                self._worker_store_error_streaks[worker_name] += 1
+                await self._backoff_store_error(error, self._worker_store_error_streaks[worker_name], operation="claim")
                 continue
+            self._worker_store_error_streaks[worker_name] = 0
             if claim is None:
                 await asyncio.sleep(self.poll_interval)
                 continue
@@ -331,16 +342,18 @@ class DurableExecutionManager:
             attempt_log.debug("Claimed durable execution")
             try:
                 await self._process_claim(claim)
-                consecutive_store_errors = 0
+                self._worker_store_error_streaks[worker_name] = 0
                 attempt_log.bind(status=claim.record.status.value).debug("Finished durable execution attempt")
             except ExecutionLeaseLostError:
-                consecutive_store_errors = 0
+                self._worker_store_error_streaks[worker_name] = 0
                 log.warning("{} | lost durable execution claim {}", self.name, claim.record.execution_id)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                consecutive_store_errors += 1
-                await self._backoff_store_error(error, consecutive_store_errors, operation="transition")
+                self._worker_store_error_streaks[worker_name] += 1
+                await self._backoff_store_error(
+                    error, self._worker_store_error_streaks[worker_name], operation="transition"
+                )
 
     async def _process_claim(self, claim: ExecutionClaim) -> None:  # noqa: C901, PLR0912 - explicit attempt outcomes
         """Run one fenced claim and leave every terminal decision to the store."""

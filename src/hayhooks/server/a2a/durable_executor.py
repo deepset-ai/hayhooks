@@ -66,8 +66,31 @@ class DurableTaskStore(TaskStore):
         await self._task_store.save(task, context)
 
     async def get(self, task_id: str, context: Any) -> Any | None:
+        owner_id = self.owner_id_for_context(context)
         task = await self._task_store.get(task_id, context)
-        return await self._project(task, self.owner_id_for_context(context), context)
+        record = None
+        if task is None:
+            try:
+                record = await self._deployment.get(
+                    execution_id_for(owner_id, task_id),
+                    owner_id=owner_id,
+                    enforce_owner=True,
+                    allow_revision_mismatch=True,
+                )
+            except KeyError:
+                return None
+            context_id = record.validated_input.get("a2a_context_id")
+            if not isinstance(context_id, str) or not context_id:
+                return None
+            from a2a.types import Task, TaskState
+
+            task = Task(id=task_id, context_id=context_id)
+            task.status.state = (
+                TaskState.TASK_STATE_WORKING
+                if record.status is ExecutionStatus.RUNNING
+                else TaskState.TASK_STATE_SUBMITTED
+            )
+        return await self._project(task, owner_id, context, record=record)
 
     async def list(self, params: Any, context: Any) -> Any:
         from a2a.types import ListTasksResponse
@@ -132,7 +155,9 @@ class DurableTaskStore(TaskStore):
                 return tasks
             request.page_token = page.next_page_token
 
-    async def _project(self, task: Any | None, owner_id: str, context: Any) -> Any | None:  # noqa: C901
+    async def _project(  # noqa: C901
+        self, task: Any | None, owner_id: str, context: Any, *, record: Any | None = None
+    ) -> Any | None:
         if task is None:
             return None
         projected = type(task)()
@@ -142,12 +167,13 @@ class DurableTaskStore(TaskStore):
             copy_version(task, projected)
         settled = False
         try:
-            record = await self._deployment.get(
-                execution_id_for(owner_id, task.id),
-                owner_id=owner_id,
-                enforce_owner=True,
-                allow_revision_mismatch=True,
-            )
+            if record is None:
+                record = await self._deployment.get(
+                    execution_id_for(owner_id, task.id),
+                    owner_id=owner_id,
+                    enforce_owner=True,
+                    allow_revision_mismatch=True,
+                )
         except KeyError:
             if task_is_terminal(task):
                 return projected
@@ -239,7 +265,7 @@ class DurableAgentExecutor(AgentExecutor):
             action = "submit"
             await self._task_store.save(task, context.call_context)
             try:
-                record = await self._submit(task.id, owner_id, build_haystack_messages(context))
+                record = await self._submit(task, owner_id, build_haystack_messages(context))
             except ValueError as error:
                 log.bind(
                     pipeline_name=self.pipeline_name,
@@ -330,11 +356,14 @@ class DurableAgentExecutor(AgentExecutor):
                     return
             await asyncio.sleep(max(0.1, settings.durable_poll_interval))
 
-    async def _submit(self, task_id: str, owner_id: str, messages: list[Any]) -> Any:
-        payload = {"messages": [message.to_dict() for message in messages]}
+    async def _submit(self, task: Any, owner_id: str, messages: list[Any]) -> Any:
+        payload = {
+            "messages": [message.to_dict() for message in messages],
+            "a2a_context_id": task.context_id,
+        }
         while not self._closed:
             try:
-                return (await self.deployment.submit(payload, execution_id=task_id, owner_id=owner_id))[1]
+                return (await self.deployment.submit(payload, execution_id=task.id, owner_id=owner_id))[1]
             except (ExecutionAdmissionError, ExecutionStoreError):
                 await asyncio.sleep(max(0.1, settings.durable_poll_interval))
         raise asyncio.CancelledError
@@ -360,7 +389,7 @@ class DurableAgentExecutor(AgentExecutor):
                     if task.status.state != TaskState.TASK_STATE_SUBMITTED:
                         continue
                     try:
-                        record = await self._submit(task.id, owner_id, build_haystack_task_messages(task))
+                        record = await self._submit(task, owner_id, build_haystack_task_messages(task))
                     except ValueError as error:
                         record = None
                         log.bind(

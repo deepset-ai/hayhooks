@@ -33,6 +33,7 @@ class _Deployment:
             result={"last_message": {"content": "recovered"}},
             error=None,
             sequence=0,
+            validated_input={},
         )
         self.execution_id = None
         self.submitted_payload = None
@@ -44,6 +45,7 @@ class _Deployment:
 
     async def submit(self, payload, *, execution_id=None, owner_id=None):
         self.submitted_payload = payload
+        self.record.validated_input = payload
         self.execution_id = execution_id_for(owner_id, execution_id) if owner_id else execution_id
         self.record.execution_id = self.execution_id
         return True, self.record
@@ -189,6 +191,23 @@ def test_a2a_http_reads_completion_from_durable_execution(monkeypatch, http_stor
 
     assert completed["status"]["state"] == "TASK_STATE_COMPLETED"
     assert completed["artifacts"][-1]["name"] == "durable-result"
+
+
+def test_expired_task_projection_uses_the_retained_execution(monkeypatch, http_store) -> None:
+    deployment = _Deployment()
+    app = _http_app(http_store, deployment, monkeypatch)
+
+    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+        completed = _response_task(client.post("/durable-agent/", json=_send_payload("initial")))
+        http_store.tasks.clear()
+        deployment.submit = AsyncMock(side_effect=AssertionError("retained execution must not be resubmitted"))
+        replayed = _response_task(client.post("/durable-agent/", json=_get_payload(completed["id"])))
+
+    assert replayed["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert replayed["contextId"] == completed["contextId"]
+    assert replayed["artifacts"][-1]["name"] == "durable-result"
+    deployment.submit.assert_not_awaited()
+    assert not http_store.tasks
 
 
 def test_a2a_http_waiting_task_resumes_with_only_the_follow_up(monkeypatch, http_store) -> None:
@@ -345,7 +364,8 @@ async def test_durable_a2a_submission_retries_transient_failures(monkeypatch, ht
     sleep = AsyncMock()
     monkeypatch.setattr(asyncio, "sleep", sleep)
 
-    record = await DurableAgentExecutor("agent", http_store, deployment)._submit("task", "owner", [])
+    task = SimpleNamespace(id="task", context_id="context")
+    record = await DurableAgentExecutor("agent", http_store, deployment)._submit(task, "owner", [])
 
     assert record is deployment.record
     assert deployment.submit.await_count == 2

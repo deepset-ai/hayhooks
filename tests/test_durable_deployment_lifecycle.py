@@ -338,7 +338,7 @@ class _FailingProvider:
 
 
 def test_store_initialization_failure_never_publishes_candidate(monkeypatch) -> None:
-    monkeypatch.setattr(durable_runtime, "provider", _FailingProvider())
+    monkeypatch.setattr(durable_runtime, "_store_provider", _FailingProvider())
     app = create_app()
     with TestClient(app) as client:
         failed = _deploy(client, _durable_source(field="value", increment=1, revision="first"))

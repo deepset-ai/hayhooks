@@ -32,10 +32,12 @@ from hayhooks.durable.engine import (
     normalize_cancellation_reason,
 )
 from hayhooks.durable.engine import ExecutionStatus as EngineStatus
+from hayhooks.durable.engine import ProgressEvent as EngineProgressEvent
 from hayhooks.durable.models import (
     DEFAULT_MAX_PROGRESS_BYTES,
     ExecutionError,
     ExecutionKind,
+    ExecutionProgressEvent,
     ExecutionRecord,
     ExecutionRecordSizeError,
     ExecutionStatus,
@@ -120,7 +122,7 @@ class ExecutionClaim:
         self._lost = False
         self._lost_event = asyncio.Event()
         self._confirmed_until = confirmed_at + self.store.lease_safe_duration
-        self._persisted_progress_sequence = control.progress_sequence
+        self._last_persisted_progress = record.progress[-1] if record.progress else None
 
     @property
     def record(self) -> ExecutionRecord:
@@ -138,7 +140,7 @@ class ExecutionClaim:
         )
         return self
 
-    async def __aexit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+    async def __aexit__(self, _exc_type: Any, _exc: Any, _traceback: Any) -> None:
         if self._heartbeat is not None:
             self._heartbeat.cancel()
             with suppress(asyncio.CancelledError):
@@ -244,7 +246,7 @@ class ExecutionClaim:
         except ExecutionLeaseLostError:
             self._mark_lost()
             raise
-        self._sync(plan.next_control, confirmed_at=confirmed_at)
+        self._sync(plan.next_control, confirmed_at=confirmed_at, progress_events=plan.progress_events)
         return plan
 
     async def _heartbeat_loop(self) -> None:
@@ -261,18 +263,36 @@ class ExecutionClaim:
                 continue
 
     def _new_progress(self) -> tuple[bytes, ...]:
-        events = tuple(event for event in self.record.progress if event.sequence > self._persisted_progress_sequence)
+        events = self._new_progress_events()
         return tuple(
             _encode(event.to_dict(), limit=self.store.config.max_progress_event_bytes, label="progress")
             for event in events
         )
 
-    def _sync(self, control: Any, *, confirmed_at: float | None = None) -> None:
+    def _new_progress_events(self) -> tuple[ExecutionProgressEvent, ...]:
+        if self._last_persisted_progress is None:
+            return tuple(self.record.progress)
+        for index, event in enumerate(self.record.progress):
+            if event is self._last_persisted_progress:
+                return tuple(self.record.progress[index + 1 :])
+        return tuple(self.record.progress)
+
+    def _sync(
+        self,
+        control: Any,
+        *,
+        confirmed_at: float | None = None,
+        progress_events: tuple[EngineProgressEvent, ...] = (),
+    ) -> None:
+        if progress_events:
+            pending = self._new_progress_events()
+            for event, persisted in zip(pending, progress_events, strict=True):
+                event.sequence = persisted.sequence
+            self._last_persisted_progress = self.record.progress[-1]
         self.control = control
         self.record.attempt = control.run_attempt
         self.record.sequence = control.version
         self.record.status = control.status
-        self._persisted_progress_sequence = control.progress_sequence
         if confirmed_at is not None:
             self._confirmed_until = confirmed_at + self.store.lease_safe_duration
 
