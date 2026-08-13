@@ -60,6 +60,7 @@ _TAG_ELAPSED_MS = "hayhooks.elapsed_ms"
 _TAG_HTTP_STATUS = "hayhooks.http.status_code"
 _TAG_RESPONSE_STREAMING = "hayhooks.response.streaming"
 _TAG_RESPONSE_STREAM_TYPE = "hayhooks.response.stream_type"
+_TAG_CHECKPOINT = "hayhooks.checkpoint"
 
 _FASTAPI_STATE_FLAG = "_hayhooks_fastapi_instrumented"
 _STARLETTE_STATE_FLAG = "_hayhooks_starlette_instrumented"
@@ -126,6 +127,10 @@ def _span_correlation_data(span: Span | None) -> dict[str, str]:
     return normalize_trace_correlation_data(correlation_data) if correlation_data else {}
 
 
+def _is_haystack_breakpoint(exc: BaseException) -> bool:
+    return type(exc).__name__ == "BreakpointException" and type(exc).__module__.startswith("haystack.")
+
+
 def _record_live_span_outcome(
     *,
     trace_id: str,
@@ -135,8 +140,10 @@ def _record_live_span_outcome(
 ) -> None:
     elapsed_ms = int((monotonic() - started) * 1000)
     tags: dict[str, Any] = {_TAG_ELAPSED_MS: elapsed_ms}
-    if exc is None:
+    if exc is None or _is_haystack_breakpoint(exc):
         tags[_TAG_SUCCESS] = True
+        if exc is not None:
+            tags[_TAG_CHECKPOINT] = True
     else:
         tags[_TAG_SUCCESS] = False
         tags[_TAG_ERROR_TYPE] = type(exc).__name__

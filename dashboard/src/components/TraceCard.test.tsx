@@ -113,6 +113,19 @@ describe("TraceCard", () => {
     expect(freshCard).not.toHaveClass("trace-card-fresh-run")
   })
 
+  it("shows a checkpoint as a neutral summary tag", () => {
+    const trace = makeTrace({
+      tags: [
+        { key: "hayhooks.checkpoint", value: "true" },
+        { key: "hayhooks.success", value: "true" },
+      ],
+    })
+    render(<TraceCard trace={trace} isFresh={false} isLatest />)
+
+    expect(screen.getByText("checkpoint")).toBeInTheDocument()
+    expect(screen.queryByText("failed")).not.toBeInTheDocument()
+  })
+
   it("shows related tags for the selected span", () => {
     const childSpan = makeSpan({
       span_id: "span-child",

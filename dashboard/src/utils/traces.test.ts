@@ -100,6 +100,16 @@ describe("isFailed", () => {
     expect(isFailed(trace)).toBe(false)
   })
 
+  it("returns false for checkpointed traces", () => {
+    const trace = makeTrace({
+      tags: [
+        { key: "hayhooks.checkpoint", value: "true" },
+        { key: "hayhooks.success", value: "true" },
+      ],
+    })
+    expect(isFailed(trace)).toBe(false)
+  })
+
   it("returns false when tags are undefined", () => {
     const trace = makeTrace({ tags: undefined })
     expect(isFailed(trace)).toBe(false)

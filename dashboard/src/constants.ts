@@ -25,6 +25,7 @@ export const TAG_PRIORITY = [
   "hayhooks.durable.execution_id",
   "hayhooks.payload.values",
   "hayhooks.payload.has_files",
+  "hayhooks.checkpoint",
   "hayhooks.success",
   "hayhooks.error.type",
   "hayhooks.http.status_code",
@@ -48,6 +49,7 @@ export const TAG_LABELS: Record<string, string> = {
   "hayhooks.a2a.task_id": "A2A task",
   "hayhooks.a2a.context_id": "A2A context",
   "hayhooks.durable.execution_id": "execution",
+  "hayhooks.checkpoint": "checkpoint",
   "hayhooks.success": "success",
   "hayhooks.error.type": "error",
   "hayhooks.http.status_code": "http",
@@ -67,6 +69,7 @@ export const SUMMARY_TAG_KEYS = new Set([
   "hayhooks.a2a.action",
   "hayhooks.a2a.task_id",
   "hayhooks.durable.execution_id",
+  "hayhooks.checkpoint",
   "hayhooks.success",
   "hayhooks.error.type",
 ])
