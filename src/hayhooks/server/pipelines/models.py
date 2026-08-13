@@ -11,15 +11,7 @@ from hayhooks.server.utils.yaml_utils import InputResolution, OutputResolution
 
 
 def _create_schema_model(model_name: str, **fields: Any) -> type[BaseModel]:
-    """Create a dynamic API model that Pydantic can resolve during OpenAPI generation."""
-    model = create_model(model_name, __module__=__name__, **fields)
-
-    # FastAPI may rebuild a route's TypeAdapter long after the route is
-    # registered.  Pydantic resolves the dynamically-created model by name in
-    # this module's namespace at that point, so keep it available there.
-    globals()[model_name] = model
-    model.model_rebuild()
-    return model
+    return create_model(model_name, **fields)
 
 
 def _resolved_annotations(func: Callable) -> dict[str, Any]:

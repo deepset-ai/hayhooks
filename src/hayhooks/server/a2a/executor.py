@@ -77,7 +77,6 @@ async def _stream_result_as_artifact(result: Any, updater: TaskUpdater) -> None:
         return
     async for text in _iter_text_chunks(result):
         await emit(text, last=False)
-    await emit("", last=True)
 
 
 class ChatCompletionAgentExecutor(AgentExecutor):

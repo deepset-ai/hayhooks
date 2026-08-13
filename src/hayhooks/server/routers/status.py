@@ -35,8 +35,6 @@ class PipelineStatusResponse(BaseModel):
 async def status_all() -> StatusResponse:
     pipelines = registry.get_names()
     durable_health = await durable_runtime.health()
-    if not durable_health["healthy"]:
-        raise HTTPException(status_code=503, detail={"status": "Degraded", "durable": durable_health})
     return StatusResponse(status="Up!", pipelines=pipelines, durable=durable_health)
 
 

@@ -17,6 +17,7 @@ from hayhooks.durable.engine import (
     Fail,
     Heartbeat,
     PayloadKind,
+    ReleaseClaim,
     RequestCancellation,
     Resume,
     ScheduleRetry,
@@ -135,7 +136,7 @@ def parse_lease_member(value: str) -> tuple[str, int]:
 
 def bind_command(command: ExecutionCommand, *, now_ms: int, lease_commit_safety_ms: int) -> ExecutionCommand:
     """Apply the backend clock and lease safety policy before reduction."""
-    if isinstance(command, (Heartbeat, Checkpoint, ScheduleRetry, Suspend, Complete, Fail)):
+    if isinstance(command, (ReleaseClaim, Heartbeat, Checkpoint, ScheduleRetry, Suspend, Complete, Fail)):
         return replace(command, now_ms=now_ms, lease_commit_safety_ms=lease_commit_safety_ms)
     return replace(command, now_ms=now_ms)
 

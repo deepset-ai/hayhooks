@@ -4,10 +4,11 @@ import json
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import traceback
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from functools import wraps
 from pathlib import Path
 from typing import Any, cast
@@ -54,14 +55,24 @@ from hayhooks.server.utils.streaming_response_utils import _streaming_response_f
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 from hayhooks.settings import DeployConcurrencyPolicy, settings
 
-_deployment_serial_lock = asyncio.Lock()
-_deployment_publication_lock = asyncio.Lock()
+# These APIs can be called from multiple event loops, so the locks must be process-wide.
+_deployment_serial_lock = threading.Lock()
+_deployment_publication_lock = threading.Lock()
 _deployments_in_progress: set[str] = set()
 
 
 async def _offload(func: Callable, **kwargs: Any) -> Any:
     """Run blocking pipeline preparation outside the event loop."""
     return await asyncio.to_thread(func, **kwargs)
+
+
+@asynccontextmanager
+async def _deployment_lock(lock: threading.Lock):
+    await run_in_threadpool(lock.acquire)
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 class _DeploymentSnapshot:
@@ -154,7 +165,9 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
     )
     dlog.debug("Starting pipeline deployment transaction")
     policy_lock = (
-        _deployment_serial_lock if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED else nullcontext()
+        _deployment_lock(_deployment_serial_lock)
+        if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED
+        else nullcontext()
     )
     snapshot: _DeploymentSnapshot | None = None
     candidate: DurableDeployment | None = None
@@ -163,7 +176,7 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
     publication_started = False
     async with policy_lock:
         try:
-            async with _deployment_publication_lock:
+            async with _deployment_lock(_deployment_publication_lock):
                 if pipeline_name in _deployments_in_progress:
                     msg = f"Pipeline '{pipeline_name}' is already being deployed"
                     raise PipelineAlreadyExistsError(msg)
@@ -198,7 +211,7 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
                 await candidate.prepare()
             dlog.bind(durable=candidate is not None).debug("Prepared pipeline deployment candidate")
 
-            async with _deployment_publication_lock:
+            async with _deployment_lock(_deployment_publication_lock):
                 snapshot.refresh_publication()
                 publication_started = True
                 result = commit_prepared_pipeline(
@@ -216,7 +229,7 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
         except BaseException as error:
             dlog.bind(error_type=type(error).__name__).debug("Pipeline deployment transaction failed")
             if snapshot is not None and (registered or old_quiesced):
-                async with _deployment_publication_lock:
+                async with _deployment_lock(_deployment_publication_lock):
                     try:
                         if registered:
                             if candidate is not None:
@@ -231,7 +244,7 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
             raise
         finally:
             if registered:
-                async with _deployment_publication_lock:
+                async with _deployment_lock(_deployment_publication_lock):
                     _deployments_in_progress.discard(pipeline_name)
             if snapshot is not None:
                 snapshot.cleanup()
@@ -295,9 +308,11 @@ async def undeploy_pipeline_async(
 ) -> None:
     """Atomically unpublish a pipeline before stopping its owned resources."""
     policy_lock = (
-        _deployment_serial_lock if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED else nullcontext()
+        _deployment_lock(_deployment_serial_lock)
+        if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED
+        else nullcontext()
     )
-    async with policy_lock, _deployment_publication_lock:
+    async with policy_lock, _deployment_lock(_deployment_publication_lock):
         if pipeline_name in _deployments_in_progress:
             raise HTTPException(status_code=409, detail=f"Pipeline '{pipeline_name}' is being deployed")
         if registry.get(pipeline_name) is None:
@@ -320,7 +335,7 @@ async def undeploy_pipeline_async(
                     await deployment.start()
                 raise
 
-        undeploy_pipeline(pipeline_name=pipeline_name, app=app)
+        await _offload(undeploy_pipeline, pipeline_name=pipeline_name, app=app)
         durable_runtime.install_deployment(pipeline_name, None)
 
 

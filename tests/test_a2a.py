@@ -301,12 +301,12 @@ async def test_execute_agent_task_streaming_result():
 
     artifact_events = get_artifact_events(queue.events)
     # PipelineEvent items are skipped, text chunks are streamed incrementally
-    assert len(artifact_events) == 4
+    assert len(artifact_events) == 3
     texts = [event.artifact.parts[0].text for event in artifact_events]
-    assert texts == ["Hello, ", "world", " (question: hi)", ""]
-    # All chunks belong to the same artifact; an empty marker finalizes iterator output
+    assert texts == ["Hello, ", "world", " (question: hi)"]
+    # All chunks belong to the same artifact; terminal task status closes iterator output.
     assert len({event.artifact.artifact_id for event in artifact_events}) == 1
-    assert [event.last_chunk for event in artifact_events] == [False, False, False, True]
+    assert [event.last_chunk for event in artifact_events] == [False, False, False]
     assert artifact_events[0].append is False
     assert artifact_events[1].append is True
 

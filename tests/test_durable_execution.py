@@ -46,7 +46,7 @@ from hayhooks.server.utils.module_loader import (
     load_pipeline_module,
     unload_pipeline_modules,
 )
-from hayhooks.settings import settings
+from hayhooks.settings import AppSettings, settings
 
 pytestmark = pytest.mark.skipif(
     not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
@@ -613,15 +613,18 @@ def test_durable_waiting_resume_is_typed_private_and_revision_safe(monkeypatch) 
         }
         deployment = durable_runtime.current_deployment("approval")
         assert deployment is not None
-        revision = deployment.revision
-        deployment.revision = "replacement"
         missing = client.post(f"{url}/resume")
         assert missing.status_code == 422
         invalid = client.post(f"{url}/resume", json={"approved": "not-a-bool"})
         assert invalid.status_code == 422
+        revision = deployment.revision
+        deployment.revision = "replacement"
+        conflict = client.post(f"{url}/resume", json={"approved": True})
+        assert conflict.status_code == 409
+        assert client.get(url).json()["status"] == "waiting"
+        deployment.revision = revision
         resumed = client.post(f"{url}/resume", json={"approved": True})
         assert resumed.status_code == 202
-        deployment.revision = revision
         completed = _wait_for_status(client, url, "completed", "resumed execution did not complete")
 
     assert completed.json()["result"] == {"value": 7}
@@ -654,6 +657,28 @@ def test_durable_rest_enforces_configured_trusted_owner_header(monkeypatch) -> N
         )
         assert oversized.status_code == 400
         assert "exceeds 512 characters" in oversized.json()["detail"]
+
+
+def test_durable_rest_uses_the_deployments_owner_header_setting(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "durable_trusted_owner_header", "")
+    app_settings = AppSettings(durable_store="memory", durable_trusted_owner_header="X-Embedded-Owner")
+    provider = InMemoryExecutionStoreProvider(app_settings=app_settings)
+    wrapper = Wrapper()
+    wrapper.setup()
+    _set_method_implementation_flags(wrapper)
+    deployment = DurableDeployment("embedded", wrapper, provider, app_settings=app_settings)
+    registry.add("embedded", wrapper)
+    app = create_app()
+    add_pipeline_api_route(app, "embedded", wrapper, _durable_deployment=deployment)
+
+    with TestClient(app) as client:
+        assert client.get("/embedded/executions/missing").status_code == 401
+        authenticated = client.get(
+            "/embedded/executions/missing",
+            headers={"X-Embedded-Owner": "alice"},
+        )
+
+    assert authenticated.status_code == 404
 
 
 def test_durable_deployment_requires_an_explicit_revision() -> None:

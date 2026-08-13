@@ -14,6 +14,7 @@ from hayhooks.durable.engine import (
     Complete,
     ExecutionLeaseLostError,
     ExecutionPayloadSizeError,
+    Heartbeat,
     RecoverExpiredLease,
     RequestCancellation,
     ScheduleRetry,
@@ -100,6 +101,23 @@ async def test_delayed_work_is_invisible_until_the_redis_deadline(store) -> None
     assert await durable.read_candidate() is None
     await asyncio.sleep(0.3)
     assert await durable.read_candidate() == run_id
+
+
+async def test_heartbeat_updates_only_the_lease_path(store, monkeypatch) -> None:
+    _, durable = store
+    await durable.submit(control(), b"{}", binding_digest="b" * 64)
+    run_id, claimed = await _claim(durable)
+    before = claimed.next_control.lease_expires_at_ms
+    monkeypatch.setattr(
+        durable,
+        "_apply_plan",
+        lambda *_args, **_kwargs: pytest.fail("heartbeat rewrote the full execution control"),
+    )
+
+    heartbeat = await durable.transition(run_id, Heartbeat(1, "worker", 0, 2_000))
+
+    assert heartbeat.next_control.lease_expires_at_ms is not None
+    assert heartbeat.next_control.lease_expires_at_ms > before
 
 
 async def test_hundred_concurrent_submissions_succeed_when_admission_is_disabled(store) -> None:

@@ -9,7 +9,7 @@ from typing import Any, cast
 
 from hayhooks.a2a import RecoverableTaskStore, default_a2a_owner
 from hayhooks.durable.models import ExecutionAdmissionError, ExecutionStatus, ExecutionStoreError
-from hayhooks.durable.runtime import DurableDeployment, execution_id_for
+from hayhooks.durable.runtime import DefinitionRevisionConflictError, DurableDeployment, execution_id_for
 from hayhooks.server.a2a.imports import (
     AgentExecutor,
     EventQueue,
@@ -244,20 +244,30 @@ class DurableAgentExecutor(AgentExecutor):
                     allow_revision_mismatch=True,
                 )
             except KeyError:
-                await updater.failed(
-                    message=updater.new_agent_message(
-                        [new_text_part("The durable Agent execution record is missing (durable_execution_missing).")]
+                from a2a.types import TaskState
+
+                if task.status.state != TaskState.TASK_STATE_SUBMITTED:
+                    await updater.failed(
+                        message=updater.new_agent_message(
+                            [
+                                new_text_part(
+                                    "The durable Agent execution record is missing (durable_execution_missing)."
+                                )
+                            ]
+                        )
                     )
-                )
-                return
+                    return
         if record is not None and record.status is ExecutionStatus.WAITING:
             action = "resume"
-            resumed = await self.deployment.resume(
-                execution_id,
-                {"messages": [message.to_dict() for message in build_haystack_resume_messages(context)]},
-                owner_id=owner_id,
-                enforce_owner=True,
-            )
+            try:
+                resumed = await self.deployment.resume(
+                    execution_id,
+                    {"messages": [message.to_dict() for message in build_haystack_resume_messages(context)]},
+                    owner_id=owner_id,
+                    enforce_owner=True,
+                )
+            except DefinitionRevisionConflictError as error:
+                raise InvalidParamsError(str(error)) from error
             if not resumed:
                 msg = f"Task '{task.id}' is no longer accepting follow-up messages"
                 raise InvalidParamsError(msg)

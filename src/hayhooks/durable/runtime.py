@@ -251,7 +251,6 @@ class DurableDeployment:
             execution_id,
             owner_id=owner_id,
             enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
         )
         if self.resume_type is not None and update is None:
             msg = f"Execution '{execution_id}' requires a resume request body"

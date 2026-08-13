@@ -23,7 +23,6 @@ from hayhooks.durable.runtime import (
 )
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.settings import settings
 
 DURABLE_ROUTE_SUFFIXES = (
     "/run-durable",
@@ -61,8 +60,8 @@ def _durable_response_model(deployment: DurableDeployment) -> type[ExecutionResu
     )
 
 
-def _durable_owner(request: Request) -> tuple[str | None, bool]:
-    header = settings.durable_trusted_owner_header.strip()
+def _durable_owner(request: Request, deployment: DurableDeployment) -> tuple[str | None, bool]:
+    header = deployment.app_settings.durable_trusted_owner_header.strip()
     if not header:
         return None, False
     owner = request.headers.get(header)
@@ -125,7 +124,7 @@ def add_durable_api_routes(  # noqa: C901, PLR0915 - route-local handlers share 
         request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> ExecutionResult:
-        owner_id, owner_scoped = _durable_owner(request)
+        owner_id, owner_scoped = _durable_owner(request, deployment)
         if idempotency_key is not None and _IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key) is None:
             raise HTTPException(
                 status_code=422,
@@ -172,7 +171,7 @@ def add_durable_api_routes(  # noqa: C901, PLR0915 - route-local handlers share 
 
     async def inspect_execution(execution_id: ExecutionId, request: Request) -> ExecutionResult:
         try:
-            owner_id, enforce_owner = _durable_owner(request)
+            owner_id, enforce_owner = _durable_owner(request, deployment)
             record = await get_execution(execution_id, owner_id, enforce_owner)
             return _execution_result(deployment, record)
         except KeyError as error:
@@ -182,7 +181,7 @@ def add_durable_api_routes(  # noqa: C901, PLR0915 - route-local handlers share 
 
     async def cancel_execution(execution_id: ExecutionId, response: Response, request: Request) -> ExecutionResult:
         try:
-            owner_id, enforce_owner = _durable_owner(request)
+            owner_id, enforce_owner = _durable_owner(request, deployment)
             accepted = await deployment.request_cancel(
                 execution_id,
                 owner_id=owner_id,
@@ -203,7 +202,7 @@ def add_durable_api_routes(  # noqa: C901, PLR0915 - route-local handlers share 
         update: Any = Body(default=None),  # noqa: B008
     ) -> ExecutionResult:
         try:
-            owner_id, enforce_owner = _durable_owner(request)
+            owner_id, enforce_owner = _durable_owner(request, deployment)
             resumed = await deployment.resume(
                 execution_id,
                 update,
@@ -215,6 +214,8 @@ def add_durable_api_routes(  # noqa: C901, PLR0915 - route-local handlers share 
             record = await get_execution(execution_id, owner_id, enforce_owner)
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Execution not found") from error
+        except DefinitionRevisionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except (ValidationError, ValueError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ExecutionStoreError as error:

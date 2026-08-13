@@ -12,7 +12,7 @@ import pytest
 
 from hayhooks.durable.backend import ExecutionStoreConfig
 from hayhooks.durable.context import RESUME_INPUT_KEY
-from hayhooks.durable.engine import Claim, Heartbeat, RequestCancellation, Resume
+from hayhooks.durable.engine import Checkpoint, Claim, Heartbeat, RequestCancellation, Resume
 from hayhooks.durable.manager import DurableExecutionManager
 from hayhooks.durable.models import (
     ExecutionCheckpoint,
@@ -148,7 +148,7 @@ async def test_runtime_provider_cannot_be_replaced(monkeypatch: pytest.MonkeyPat
     runtime = DurableRuntime(provider)
 
     with pytest.raises(AttributeError):
-        setattr(runtime, "provider", InMemoryExecutionStoreProvider())
+        setattr(runtime, "provider", InMemoryExecutionStoreProvider())  # noqa: B010 - immutable property check
 
     assert runtime.provider is provider
     await runtime.close()
@@ -257,6 +257,42 @@ async def test_checkpoint_keeps_progress_added_after_a_concurrent_cancellation()
     ]
 
 
+async def test_concurrent_checkpoints_persist_each_progress_event_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    core = InMemoryExecutionStore(deployment="deployment", config=_config())
+    store = ExecutionStore(core, definition_revision="rev-1")
+    await store.submit(_record())
+    claim = await store.claim_next("worker")
+    assert claim is not None
+    persisted = asyncio.Event()
+    release = asyncio.Event()
+    original_transition = core.transition
+    first = True
+
+    async def gated_transition(run_id, command, *, candidate=False):
+        nonlocal first
+        plan = await original_transition(run_id, command, candidate=candidate)
+        if isinstance(command, Checkpoint) and first:
+            first = False
+            persisted.set()
+            await release.wait()
+        return plan
+
+    monkeypatch.setattr(core, "transition", gated_transition)
+    claim.record.append_progress("first")
+    first_checkpoint = asyncio.create_task(claim.checkpoint())
+    await persisted.wait()
+    claim.record.append_progress("second")
+    claim.record.append_progress("third")
+    second_checkpoint = asyncio.create_task(claim.checkpoint())
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first_checkpoint, second_checkpoint)
+
+    record = await store.get("run_1")
+    assert record is not None
+    assert [(event.sequence, event.message) for event in record.progress] == [(2, "second"), (3, "third")]
+
+
 async def test_losing_resume_race_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
     core = InMemoryExecutionStore(deployment="deployment", config=_config())
     store = ExecutionStore(core, definition_revision="rev-1")
@@ -287,6 +323,111 @@ async def test_losing_resume_race_returns_false(monkeypatch: pytest.MonkeyPatch)
     assert not await resumed
     record = await store.get("run_1")
     assert record is not None and record.status is ExecutionStatus.CANCELED
+
+
+async def test_delayed_resume_cannot_overwrite_a_newer_waiting_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core = InMemoryExecutionStore(deployment="deployment", config=_config())
+    store = ExecutionStore(core, definition_revision="rev-1")
+    await store.submit(_record())
+    claim = await store.claim_next("worker")
+    assert claim is not None
+    claim.record.status = ExecutionStatus.WAITING
+    claim.record.wait = {"kind": "approval"}
+    await claim.suspend()
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_transition = core.transition
+    first = True
+
+    async def gated_transition(run_id, command, *, candidate=False):
+        nonlocal first
+        if isinstance(command, Resume) and first:
+            first = False
+            entered.set()
+            await release.wait()
+        return await original_transition(run_id, command, candidate=candidate)
+
+    monkeypatch.setattr(core, "transition", gated_transition)
+    stale_resume = asyncio.create_task(store.resume("run_1", {"generation": 1}))
+    await entered.wait()
+    assert await store.resume("run_1", {"generation": 2})
+    newer = await store.claim_next("worker")
+    assert newer is not None
+    newer.record.application_state["generation"] = 2
+    newer.record.checkpoint = ExecutionCheckpoint(ExecutionKind.PIPELINE, {"generation": 2})
+    newer.record.status = ExecutionStatus.WAITING
+    newer.record.wait = {"kind": "approval"}
+    await newer.suspend()
+    release.set()
+
+    assert not await stale_resume
+    record = await store.get("run_1")
+    assert record is not None
+    assert record.status is ExecutionStatus.WAITING
+    assert record.checkpoint == ExecutionCheckpoint(ExecutionKind.PIPELINE, {"generation": 2})
+    assert record.application_state[RESUME_INPUT_KEY] == {"generation": 2}
+
+
+async def test_revision_mismatched_resume_leaves_the_execution_waiting() -> None:
+    store = _store()
+    await store.submit(_record())
+    claim = await store.claim_next("worker")
+    assert claim is not None
+    claim.record.status = ExecutionStatus.WAITING
+    claim.record.wait = {"kind": "approval"}
+    await claim.suspend()
+
+    store.set_definition_revision("rev-2")
+    assert not await store.resume("run_1", {"approved": True})
+
+    record = await store.get("run_1")
+    assert record is not None
+    assert record.status is ExecutionStatus.WAITING
+    assert record.error is None
+
+
+async def test_failed_post_claim_read_releases_the_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    core = InMemoryExecutionStore(deployment="deployment", config=_config())
+    store = ExecutionStore(core, definition_revision="rev-1")
+    await store.submit(_record())
+
+    async def failed_read(_execution_id):
+        msg = "read failed"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(store, "_read_view", failed_read)
+    with pytest.raises(RuntimeError, match="read failed"):
+        await store.claim_next("worker")
+
+    control = await core.get("run_1")
+    assert control is not None
+    assert control.status.value == "queued"
+    assert control.run_attempt == 0
+    assert control.lease_owner is None
+    assert (await core.operational_counts())["lease_expiry"] == 0
+
+
+async def test_worker_finishes_a_claim_acquired_during_deactivation(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _store()
+    manager = DurableExecutionManager("deployment", store, AsyncMock(), adapter=object())
+    claim = SimpleNamespace(record=SimpleNamespace(execution_id="run_1", attempt=1, status=ExecutionStatus.COMPLETED))
+
+    async def claim_while_deactivating(_worker_name):
+        manager._accepting_claims = False
+        return claim
+
+    process_claim = AsyncMock()
+    monkeypatch.setattr(store, "claim_next", claim_while_deactivating)
+    monkeypatch.setattr(manager, "_process_claim", process_claim)
+    manager._accepting_claims = True
+    manager._worker_generation = 1
+
+    await manager._worker("worker", 1)
+
+    process_claim.assert_awaited_once_with(claim)
 
 
 async def test_retry_exhaustion_persists_its_progress_event() -> None:

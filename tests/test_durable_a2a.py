@@ -300,6 +300,33 @@ async def test_missing_execution_preserves_a_task_awaiting_submission(http_store
     assert projected.status.state == TaskState.TASK_STATE_SUBMITTED
 
 
+async def test_submitted_task_with_a_missing_execution_is_resubmitted(http_store) -> None:
+    task = _recoverable_task()
+    deployment = _Deployment()
+
+    async def missing_until_submitted(execution_id, **kwargs):
+        if deployment.execution_id is None:
+            raise KeyError(execution_id)
+        return await _Deployment.get(deployment, execution_id, **kwargs)
+
+    class Queue:
+        def __init__(self):
+            self.events = []
+
+        async def enqueue_event(self, event):
+            self.events.append(event)
+
+    deployment.get = missing_until_submitted
+    executor = DurableAgentExecutor("agent", http_store, deployment)
+    executor.task_store.owner_id_for_context = lambda _context: "owner"
+    context = SimpleNamespace(current_task=task, message=None, call_context=SimpleNamespace())
+
+    await executor.execute(context, Queue())
+
+    assert deployment.execution_id == execution_id_for("owner", task.id)
+    assert deployment.submitted_payload["messages"][0]["content"] == [{"text": "recover me"}]
+
+
 @pytest.mark.parametrize(("configured", "expected"), [(0.05, 0.1), (5.0, 5.0)])
 async def test_durable_a2a_polling_honors_its_configured_floor(monkeypatch, http_store, configured, expected) -> None:
     executor = DurableAgentExecutor("agent", http_store, _Deployment(status=ExecutionStatus.RUNNING))

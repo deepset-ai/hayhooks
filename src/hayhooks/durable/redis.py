@@ -34,6 +34,7 @@ from hayhooks.durable.engine import (
     ExecutionNotFoundError,
     ExecutionPayloadSizeError,
     ExecutionStatus,
+    Heartbeat,
     InvalidExecutionTransitionError,
     PayloadKind,
     TransitionPlan,
@@ -271,7 +272,9 @@ class RedisExecutionStore:
     async def read_progress(self, run_id: str) -> list[bytes]:
         return [bytes(value) for value in await self.redis.lrange(self.keys.progress(run_id), 0, -1)]
 
-    async def transition(self, run_id: str, command: ExecutionCommand, *, candidate: bool = False) -> TransitionPlan:
+    async def transition(  # noqa: C901
+        self, run_id: str, command: ExecutionCommand, *, candidate: bool = False
+    ) -> TransitionPlan:
         validate_command_payloads(command, self.config)
         control_key = self.keys.control(run_id)
         for attempt in range(self.config.transaction_max_retries):
@@ -311,7 +314,17 @@ class RedisExecutionStore:
                         await pipe.execute()
                         return TransitionPlan(current)
                     pipe.multi()
-                    self._apply_plan(pipe, current, plan)
+                    if isinstance(command, Heartbeat):
+                        lease = plan.lease_index_update
+                        if lease is None or lease.deadline_ms is None:
+                            raise AssertionError("heartbeat must extend its lease")
+                        pipe.hset(control_key, "lease_expires_at_ms", lease.deadline_ms)
+                        pipe.zadd(
+                            self.keys.lease_expiry,
+                            {RedisKeys.lease_member(run_id, lease.fence): lease.deadline_ms},
+                        )
+                    else:
+                        self._apply_plan(pipe, current, plan)
                     await pipe.execute()
                     return plan
                 except redis_watch_error():

@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import (
+    _deployment_publication_lock,
+    _deployment_serial_lock,
     commit_prepared_pipeline,
     deploy_pipeline_files_async,
     deploy_pipeline_yaml,
@@ -101,8 +103,26 @@ async def test_undeploy_pipeline_async(monkeypatch):
     )
     assert registry.get("undeploy_async_test") is not None
 
+    caller_thread = threading.get_ident()
+    undeploy_threads = []
+    from hayhooks.server.utils import deploy_utils
+
+    original_undeploy = deploy_utils.undeploy_pipeline
+
+    def tracked_undeploy(*args, **kwargs):
+        undeploy_threads.append(threading.get_ident())
+        return original_undeploy(*args, **kwargs)
+
+    monkeypatch.setattr(deploy_utils, "undeploy_pipeline", tracked_undeploy)
     await undeploy_pipeline_async(pipeline_name="undeploy_async_test")
     assert registry.get("undeploy_async_test") is None
+    assert undeploy_threads and undeploy_threads[0] != caller_thread
+
+
+def test_deploy_locks_are_safe_across_event_loops():
+    lock_type = type(threading.Lock())
+    assert isinstance(_deployment_serial_lock, lock_type)
+    assert isinstance(_deployment_publication_lock, lock_type)
 
 
 @pytest.mark.asyncio

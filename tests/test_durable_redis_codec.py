@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from hayhooks.durable.backend import MAINTENANCE_BATCH_SIZE, ExecutionStoreCorruptionError
-from hayhooks.durable.engine import MAX_CONTROL_SCALAR_BYTES, initial_control
+from hayhooks.durable.engine import MAX_CONTROL_SCALAR_BYTES, Claim, Heartbeat, decide, initial_control
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys, decode_control, digest, encode_control
 
 
@@ -111,3 +111,23 @@ async def test_maintenance_reads_a_fixed_batch_of_due_leases() -> None:
         num=MAINTENANCE_BATCH_SIZE,
         withscores=True,
     )
+
+
+async def test_heartbeat_writes_only_lease_fields() -> None:
+    current = decide(control(), Claim("worker", 100, 10_000, 3, "rev-1")).next_control
+    pipe = MagicMock()
+    pipe.__aenter__ = AsyncMock(return_value=pipe)
+    pipe.__aexit__ = AsyncMock(return_value=None)
+    pipe.watch = AsyncMock()
+    pipe.hgetall = AsyncMock(return_value=encode_control(current))
+    pipe.time = AsyncMock(return_value=(1, 0))
+    pipe.execute = AsyncMock(return_value=[])
+    redis = Mock()
+    redis.pipeline.return_value = pipe
+    store = RedisExecutionStore(redis, deployment="deployment")
+
+    await store.transition("run-1", Heartbeat(1, "worker", 0, 2_000))
+
+    pipe.hset.assert_called_once_with(store.keys.control("run-1"), "lease_expires_at_ms", 3_000)
+    pipe.zadd.assert_called_once_with(store.keys.lease_expiry, {RedisKeys.lease_member("run-1", 1): 3_000})
+    pipe.zrem.assert_not_called()

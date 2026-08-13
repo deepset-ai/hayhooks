@@ -1,8 +1,11 @@
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
+from hayhooks.durable.runtime import durable_runtime
 from hayhooks.server.pipelines import registry
+from hayhooks.server.routers.status import status_all
 
 
 @pytest.fixture(autouse=True)
@@ -39,3 +42,13 @@ def test_status_no_pipelines(client, status_pipeline):
     assert status_response.status_code == 200
     assert "pipelines" in status_response.json()
     assert len(status_response.json()["pipelines"]) == 0
+
+
+async def test_global_status_remains_a_liveness_probe_when_durable_is_unhealthy(monkeypatch):
+    health = {"healthy": False, "deployments": {"job": {"healthy": False}}}
+    monkeypatch.setattr(durable_runtime, "health", AsyncMock(return_value=health))
+
+    response = await status_all()
+
+    assert response.status == "Up!"
+    assert response.durable == health

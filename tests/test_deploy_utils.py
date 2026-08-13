@@ -13,6 +13,7 @@ from fastapi.routing import APIRoute
 from haystack import Pipeline
 
 from hayhooks.server.exceptions import PipelineFilesError, PipelineModuleLoadError, PipelineWrapperError
+from hayhooks.server.pipelines import models as pipeline_models
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
@@ -365,6 +366,16 @@ def test_create_request_model_from_callable():
     assert schema["properties"]["optional"]["default"] == ""
     assert schema["properties"]["optional"]["description"] == "An optional string."
     assert "optional" not in schema.get("required", [])
+
+
+def test_dynamic_schema_models_are_not_retained_in_module_globals():
+    def sample_func(value: str):
+        pass
+
+    model = create_request_model_from_callable(sample_func, "Ephemeral", docstring_parser.parse(""))
+
+    assert model.__name__ == "EphemeralRequest"
+    assert "EphemeralRequest" not in vars(pipeline_models)
 
 
 def test_create_request_model_no_docstring():

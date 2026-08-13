@@ -175,6 +175,14 @@ class Claim:
 
 
 @dataclass(frozen=True, slots=True)
+class ReleaseClaim:
+    fence: int
+    worker_id: str
+    now_ms: int = 0
+    lease_commit_safety_ms: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class Heartbeat:
     fence: int
     worker_id: str
@@ -229,6 +237,7 @@ class Resume:
     worker_revision: str
     checkpoint: bytes | None = None
     progress_events: tuple[bytes, ...] = ()
+    expected_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +271,7 @@ class RecoverExpiredLease:
 
 ExecutionCommand = (
     Claim
+    | ReleaseClaim
     | Heartbeat
     | Checkpoint
     | RequestCancellation
@@ -316,6 +326,8 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
     """
     if isinstance(command, Claim):
         return _claim(control, command)
+    if isinstance(command, ReleaseClaim):
+        return _release_claim(control, command)
     if isinstance(command, Heartbeat):
         _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         return TransitionPlan(
@@ -389,6 +401,19 @@ def _claim(control: ExecutionControl, command: Claim) -> TransitionPlan:
         lease_expires_at_ms=deadline,
     )
     return TransitionPlan(next_control, lease_index_update=LeaseIndexUpdate(deadline, next_control.fence))
+
+
+def _release_claim(control: ExecutionControl, command: ReleaseClaim) -> TransitionPlan:
+    _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+    next_control = _business(
+        control,
+        command.now_ms,
+        status=ExecutionStatus.QUEUED,
+        run_attempt=control.run_attempt - 1,
+        lease_owner=None,
+        lease_expires_at_ms=None,
+    )
+    return TransitionPlan(next_control, lease_index_update=LeaseIndexUpdate(None, control.fence))
 
 
 def _cancel(control: ExecutionControl, command: RequestCancellation) -> TransitionPlan:
@@ -476,12 +501,12 @@ def _suspend(control: ExecutionControl, command: Suspend) -> TransitionPlan:
 
 
 def _resume(control: ExecutionControl, command: Resume) -> TransitionPlan:
+    if command.expected_version is not None and control.version != command.expected_version:
+        raise InvalidExecutionTransitionError("execution changed before it could resume")
     if control.status is not ExecutionStatus.WAITING:
         raise InvalidExecutionTransitionError("only waiting executions can resume")
     if control.definition_revision != command.worker_revision:
-        return _terminal(
-            control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, b"definition revision is incompatible"
-        )
+        raise InvalidExecutionTransitionError("definition revision is incompatible")
     if control.cancel_requested_at_ms is not None:
         return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
     writes = (PayloadWrite(PayloadKind.CHECKPOINT, command.checkpoint),) if command.checkpoint is not None else ()

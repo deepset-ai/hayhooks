@@ -24,6 +24,7 @@ from hayhooks.durable.engine import (
     InvalidExecutionTransitionError,
     PayloadKind,
     RecoverExpiredLease,
+    ReleaseClaim,
     RequestCancellation,
     Resume,
     ScheduleRetry,
@@ -118,6 +119,7 @@ class ExecutionClaim:
         self._record = record
         self.worker_id = worker_id
         self._heartbeat: asyncio.Task[None] | None = None
+        self._transition_lock = asyncio.Lock()
         self._finished = False
         self._lost = False
         self._lost_event = asyncio.Event()
@@ -133,7 +135,8 @@ class ExecutionClaim:
         return self._lost_event
 
     async def __aenter__(self) -> ExecutionClaim:
-        await self._transition(Heartbeat(self.control.fence, self.worker_id, 0, self.store.lease_duration_ms))
+        async with self._transition_lock:
+            await self._transition(Heartbeat(self.control.fence, self.worker_id, 0, self.store.lease_duration_ms))
         self._heartbeat = asyncio.create_task(
             self._heartbeat_loop(),
             name=f"durable-heartbeat:{self.record.execution_id}",
@@ -147,17 +150,20 @@ class ExecutionClaim:
                 await self._heartbeat
 
     async def checkpoint(self) -> None:
-        self._ensure_owned()
-        await self._transition(
-            Checkpoint(
-                self.control.fence,
-                self.worker_id,
-                0,
-                self.store.lease_duration_ms,
-                self.store._snapshot(self.record),
-                self._new_progress(),
+        async with self._transition_lock:
+            self._ensure_owned()
+            progress, progress_payloads = self._new_progress()
+            await self._transition(
+                Checkpoint(
+                    self.control.fence,
+                    self.worker_id,
+                    0,
+                    self.store.lease_duration_ms,
+                    self.store._snapshot(self.record),
+                    progress_payloads,
+                ),
+                record_progress=progress,
             )
-        )
 
     async def cancellation_requested(self) -> bool:
         control = await self.store._core_call(
@@ -175,68 +181,76 @@ class ExecutionClaim:
         return False
 
     async def complete(self) -> None:
-        self._ensure_owned()
-        if self.record.status is ExecutionStatus.CANCELED and self.control.cancel_requested_at_ms is None:
-            cancellation = await self.store._core_call(
-                "request cancellation",
-                self.store.core.transition(
-                    self.record.execution_id,
-                    RequestCancellation(0, self.record.cancel_reason),
-                ),
-            )
-            self._sync(cancellation.next_control)
-        if self.record.status is ExecutionStatus.FAILED:
-            error = self.record.error or ExecutionError(type="ExecutionError", message="Execution failed")
-            await self._transition(
-                Fail(
-                    self.control.fence,
-                    self.worker_id,
-                    0,
-                    _encode(error.to_dict(), limit=self.store.config.max_error_bytes, label="error"),
-                    self._new_progress(),
+        async with self._transition_lock:
+            self._ensure_owned()
+            if self.record.status is ExecutionStatus.CANCELED and self.control.cancel_requested_at_ms is None:
+                cancellation = await self.store._core_call(
+                    "request cancellation",
+                    self.store.core.transition(
+                        self.record.execution_id,
+                        RequestCancellation(0, self.record.cancel_reason),
+                    ),
                 )
-            )
-        else:
-            await self._transition(
-                Complete(
-                    self.control.fence,
-                    self.worker_id,
-                    0,
-                    _encode(self.record.result, limit=self.store.config.max_result_bytes, label="result"),
-                    self._new_progress(),
+                self._sync(cancellation.next_control)
+            progress, progress_payloads = self._new_progress()
+            if self.record.status is ExecutionStatus.FAILED:
+                error = self.record.error or ExecutionError(type="ExecutionError", message="Execution failed")
+                await self._transition(
+                    Fail(
+                        self.control.fence,
+                        self.worker_id,
+                        0,
+                        _encode(error.to_dict(), limit=self.store.config.max_error_bytes, label="error"),
+                        progress_payloads,
+                    ),
+                    record_progress=progress,
                 )
-            )
-        self._finished = True
+            else:
+                await self._transition(
+                    Complete(
+                        self.control.fence,
+                        self.worker_id,
+                        0,
+                        _encode(self.record.result, limit=self.store.config.max_result_bytes, label="result"),
+                        progress_payloads,
+                    ),
+                    record_progress=progress,
+                )
+            self._finished = True
 
     async def suspend(self) -> None:
-        self._ensure_owned()
-        await self._transition(
-            Suspend(
-                self.control.fence,
-                self.worker_id,
-                0,
-                self.store._snapshot(self.record),
-                _encode(self.record.wait, limit=self.store.config.max_wait_bytes, label="wait"),
-                self._new_progress(),
+        async with self._transition_lock:
+            self._ensure_owned()
+            progress, progress_payloads = self._new_progress()
+            await self._transition(
+                Suspend(
+                    self.control.fence,
+                    self.worker_id,
+                    0,
+                    self.store._snapshot(self.record),
+                    _encode(self.record.wait, limit=self.store.config.max_wait_bytes, label="wait"),
+                    progress_payloads,
+                ),
+                record_progress=progress,
             )
-        )
-        self._finished = True
+            self._finished = True
 
     async def retry(self, error: ExecutionError, *, delay: float) -> None:
-        self._ensure_owned()
-        await self._transition(
-            ScheduleRetry(
-                self.control.fence,
-                self.worker_id,
-                0,
-                max(0, round(delay * 1_000)),
-                self.store.max_application_retries,
-                _encode(error.to_dict(), limit=self.store.config.max_error_bytes, label="retry error"),
+        async with self._transition_lock:
+            self._ensure_owned()
+            await self._transition(
+                ScheduleRetry(
+                    self.control.fence,
+                    self.worker_id,
+                    0,
+                    max(0, round(delay * 1_000)),
+                    self.store.max_application_retries,
+                    _encode(error.to_dict(), limit=self.store.config.max_error_bytes, label="retry error"),
+                )
             )
-        )
-        self._finished = True
+            self._finished = True
 
-    async def _transition(self, command: Any) -> Any:
+    async def _transition(self, command: Any, *, record_progress: tuple[ExecutionProgressEvent, ...] = ()) -> Any:
         confirmed_at = time.monotonic()
         try:
             plan = await self.store._core_call(
@@ -246,14 +260,24 @@ class ExecutionClaim:
         except ExecutionLeaseLostError:
             self._mark_lost()
             raise
-        self._sync(plan.next_control, confirmed_at=confirmed_at, progress_events=plan.progress_events)
+        self._sync(
+            plan.next_control,
+            confirmed_at=confirmed_at,
+            record_progress=record_progress,
+            progress_events=plan.progress_events,
+        )
         return plan
 
     async def _heartbeat_loop(self) -> None:
         while not self._finished and not self._lost:
             await asyncio.sleep(self.store.heartbeat_interval)
             try:
-                await self._transition(Heartbeat(self.control.fence, self.worker_id, 0, self.store.lease_duration_ms))
+                async with self._transition_lock:
+                    if self._finished or self._lost:
+                        return
+                    await self._transition(
+                        Heartbeat(self.control.fence, self.worker_id, 0, self.store.lease_duration_ms)
+                    )
             except ExecutionLeaseLostError:
                 return
             except Exception:
@@ -262,11 +286,14 @@ class ExecutionClaim:
                     return
                 continue
 
-    def _new_progress(self) -> tuple[bytes, ...]:
+    def _new_progress(self) -> tuple[tuple[ExecutionProgressEvent, ...], tuple[bytes, ...]]:
         events = self._new_progress_events()
-        return tuple(
-            _encode(event.to_dict(), limit=self.store.config.max_progress_event_bytes, label="progress")
-            for event in events
+        return (
+            events,
+            tuple(
+                _encode(event.to_dict(), limit=self.store.config.max_progress_event_bytes, label="progress")
+                for event in events
+            ),
         )
 
     def _new_progress_events(self) -> tuple[ExecutionProgressEvent, ...]:
@@ -282,13 +309,13 @@ class ExecutionClaim:
         control: Any,
         *,
         confirmed_at: float | None = None,
+        record_progress: tuple[ExecutionProgressEvent, ...] = (),
         progress_events: tuple[EngineProgressEvent, ...] = (),
     ) -> None:
         if progress_events:
-            pending = self._new_progress_events()
-            for event, persisted in zip(pending, progress_events, strict=True):
+            for event, persisted in zip(record_progress, progress_events, strict=True):
                 event.sequence = persisted.sequence
-            self._last_persisted_progress = self.record.progress[-1]
+            self._last_persisted_progress = record_progress[-1]
         self.control = control
         self.record.attempt = control.run_attempt
         self.record.sequence = control.version
@@ -397,8 +424,14 @@ class ExecutionStore:
             return None
         if plan.next_control.status is not EngineStatus.RUNNING:
             return None
-        view = await self._read_view(run_id)
+        try:
+            view = await self._read_view(run_id)
+        except BaseException:
+            with suppress(Exception):
+                await self._release_claim(plan.next_control, worker_name)
+            raise
         if view is None:
+            await self._release_claim(plan.next_control, worker_name)
             return None
         current, record = view
         if (
@@ -406,8 +439,16 @@ class ExecutionStore:
             or current.fence != plan.next_control.fence
             or current.lease_owner != worker_name
         ):
+            await self._release_claim(plan.next_control, worker_name)
             return None
         return ExecutionClaim(self, current, record, worker_name, confirmed_at)
+
+    async def _release_claim(self, control: ExecutionControl, worker_name: str) -> None:
+        with suppress(ExecutionLeaseLostError, ExecutionNotFoundError, InvalidExecutionTransitionError):
+            await self._core_call(
+                "release undelivered execution claim",
+                self.core.transition(control.run_id, ReleaseClaim(control.fence, worker_name)),
+            )
 
     async def request_cancel(self, execution_id: str, reason: str | None = None) -> bool:
         """Persist a cancellation request, returning whether it was accepted."""
@@ -458,6 +499,7 @@ class ExecutionStore:
                         self.definition_revision or control.definition_revision,
                         self._snapshot(record),
                         (_encode(event.to_dict(), limit=self.config.max_progress_event_bytes, label="progress"),),
+                        expected_version=control.version,
                     ),
                 ),
             )

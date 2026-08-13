@@ -332,8 +332,6 @@ class DurableExecutionManager:
             if claim is None:
                 await asyncio.sleep(self.poll_interval)
                 continue
-            if not self._accepting_claims or generation != self._worker_generation:
-                return
             attempt_log = log.bind(
                 deployment=self.name,
                 execution_id=claim.record.execution_id,
