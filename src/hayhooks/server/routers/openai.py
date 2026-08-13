@@ -115,7 +115,11 @@ def _method_accepts_kwarg(method: Any, name: str) -> bool:
 
 
 def _build_call_kwargs(
-    wrapper: BasePipelineWrapper, method_name: str, base_kwargs: dict[str, Any], body: dict[str, Any], headers: dict[str, str] | None
+    wrapper: BasePipelineWrapper,
+    method_name: str,
+    base_kwargs: dict[str, Any],
+    body: dict[str, Any],
+    headers: dict[str, str] | None,
 ) -> dict[str, Any]:
     """Assemble the wrapper-call kwargs, forwarding `headers` only if the wrapper method opts in."""
     call_kwargs = {**base_kwargs, "body": body}

@@ -88,6 +88,9 @@ class BasePipelineWrapper(ABC):
     async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> str | AsyncGenerator:
         """
         Asynchronous version of run_chat_completion.
+
+        Accepts an optional ``headers: dict[str, str]`` parameter on the same opt-in basis as
+        run_chat_completion.
         """
         msg = "run_chat_completion_async not implemented"
         raise NotImplementedError(msg)
@@ -103,6 +106,10 @@ class BasePipelineWrapper(ABC):
             model: The `name` of the deployed Haystack pipeline to run
             input_items: Normalized input items in OpenAI Responses API format
             body: Additional parameters and configuration options (e.g. temperature, tools, instructions)
+
+        Optionally, override this method with an extra ``headers: dict[str, str]`` parameter to
+        receive the incoming request headers (e.g. ``Authorization``). Headers are only passed when
+        the overriding method declares the parameter, so existing implementations are unaffected.
         """
         msg = "run_response not implemented"
         raise NotImplementedError(msg)
@@ -110,6 +117,9 @@ class BasePipelineWrapper(ABC):
     async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> str | AsyncGenerator:
         """
         Asynchronous version of run_response.
+
+        Accepts an optional ``headers: dict[str, str]`` parameter on the same opt-in basis as
+        run_response.
         """
         msg = "run_response_async not implemented"
         raise NotImplementedError(msg)
