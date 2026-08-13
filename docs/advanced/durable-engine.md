@@ -23,7 +23,7 @@ its next checkpoint.
 
 ## Supported scope and tradeoffs
 
-- durable input before submission succeeds;
+- validated durable input before submission succeeds;
 - at-least-once execution with one fenced worker owner at a time;
 - checkpoints, progress, retries, cancellation, wait/resume, and terminal
   results; and

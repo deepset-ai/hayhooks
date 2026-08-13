@@ -156,8 +156,9 @@ def publish_indexing_receipt(
 
 
 class PipelineWrapper(A2APipelineWrapper):
-    durable_revision = "a2a-long-running-agent"
     """Let Hayhooks map this real tool-using Agent to durable A2A executions."""
+
+    durable_revision = "a2a-long-running-agent"
 
     def setup(self) -> None:
         self.pipeline = Agent(
