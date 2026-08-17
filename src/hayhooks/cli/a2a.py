@@ -60,6 +60,7 @@ def run(  # noqa: PLR0913
     # Lazy imports of settings, logger and uvicorn
     import uvicorn
 
+    from hayhooks.durable.runtime import DurableRuntime
     from hayhooks.server.a2a.app import create_a2a_app
     from hayhooks.server.logger import intercept_stdlib_logging, log
     from hayhooks.server.utils.deploy_utils import deploy_pipelines
@@ -104,8 +105,10 @@ def run(  # noqa: PLR0913
         sys.path.append(additional_python_path)
         log.trace("Added '{}' to sys.path", additional_python_path)
 
+    durable_runtime = DurableRuntime(app_settings=settings)
+
     # Deploy the pipelines
-    deploy_pipelines()
+    deploy_pipelines(durable_runtime=durable_runtime)
 
     # Setup the Starlette app exposing pipelines as A2A agents
     log.debug(
@@ -120,7 +123,7 @@ def run(  # noqa: PLR0913
         settings.durable_store,
         settings.durable_execution_concurrency,
     )
-    app = create_a2a_app(debug=debug)
+    app = create_a2a_app(debug=debug, durable_runtime=durable_runtime)
 
     # Run the A2A server
     # NOTE: reload and workers options are not supported in this context

@@ -20,7 +20,7 @@ from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from hayhooks.durable.runtime import durable_runtime
+from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
 from hayhooks.server.routers import (
     dashboard_router,
@@ -248,12 +248,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         if settings.pipelines_dir:
             deploy_pipelines(app, settings.pipelines_dir)
-        await durable_runtime.start()
+        await app.state.durable_runtime.start()
         broadcaster.set_loop(asyncio.get_running_loop())
         yield
     finally:
         try:
-            await durable_runtime.close()
+            await app.state.durable_runtime.close()
         finally:
             broadcaster.clear_loop()
 
@@ -280,7 +280,7 @@ def get_package_version() -> str:
     return "0.0.0"
 
 
-def create_app() -> FastAPI:
+def create_app(*, durable_runtime: DurableRuntime | None = None) -> FastAPI:
     """
     Create and configure a FastAPI application.
 
@@ -311,6 +311,7 @@ def create_app() -> FastAPI:
         app_params["root_path"] = root_path
 
     app = FastAPI(**app_params)
+    app.state.durable_runtime = durable_runtime or DurableRuntime(app_settings=settings)
 
     configure_tracing()
     app.add_middleware(RequestIdMiddleware)

@@ -147,6 +147,11 @@ input, checkpoints, application state, ownership, and fence details remain
 server-side. See [Pipeline wrapper durable execution](../concepts/pipeline-wrapper.md#durable-execution)
 and the [durable engine contract](../advanced/durable-engine.md).
 
+Existing FastAPI applications can expose the same routes with the public
+`hayhooks.durable.create_durable_router()` factory. The application owns a
+`DurableRuntime` in its lifespan and may provide a normal FastAPI dependency
+that returns a stable owner ID. See [Embedding the runtime](../advanced/durable-engine.md#embedding-the-runtime).
+
 ### OpenAI Compatibility
 
 #### Chat Completion

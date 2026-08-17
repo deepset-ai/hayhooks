@@ -33,6 +33,7 @@ def run(  # noqa: PLR0913
     # Lazy imports of settings, logger and uvicorn
     import uvicorn
 
+    from hayhooks.durable.runtime import DurableRuntime
     from hayhooks.server.logger import intercept_stdlib_logging, log
     from hayhooks.server.utils.deploy_utils import deploy_pipelines
     from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
@@ -54,14 +55,21 @@ def run(  # noqa: PLR0913
         sys.path.append(additional_python_path)
         log.trace("Added '{}' to sys.path", additional_python_path)
 
+    durable_runtime = DurableRuntime(app_settings=settings)
+
     # Deploy the pipelines
-    deploy_pipelines()
+    deploy_pipelines(durable_runtime=durable_runtime)
 
     # Setup the MCP server
-    server: Server = create_mcp_server()
+    server: Server = create_mcp_server(durable_runtime=durable_runtime)
 
     # Setup the Starlette app
-    app = create_starlette_app(server, debug=debug, json_response=json_response)
+    app = create_starlette_app(
+        server,
+        debug=debug,
+        json_response=json_response,
+        durable_runtime=durable_runtime,
+    )
 
     # Run the MCP server
     # NOTE: reload and workers options are not supported in this context

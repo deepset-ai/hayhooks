@@ -12,7 +12,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
-from hayhooks.durable.runtime import durable_runtime
+from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.routers.deploy import PipelineFilesRequest
@@ -158,7 +158,9 @@ async def notify_client(server: "Server") -> None:
     await server.request_context.session.send_tool_list_changed()
 
 
-async def _handle_deploy_pipeline(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+async def _handle_deploy_pipeline(
+    arguments: dict[str, Any], span: Any, durable_runtime: DurableRuntime
+) -> list["TextContent"]:
     span.set_tag("hayhooks.pipeline.name", arguments.get("name"))
     result = await deploy_pipeline_files_async(
         pipeline_name=arguments["name"],
@@ -166,34 +168,41 @@ async def _handle_deploy_pipeline(arguments: dict[str, Any], span: Any) -> list[
         app=None,
         save_files=arguments["save_files"],
         overwrite=arguments["overwrite"],
+        durable_runtime=durable_runtime,
     )
     return [TextContent(type="text", text=f"Pipeline '{result['name']}' deployed successfully")]
 
 
-async def _handle_get_all_pipeline_statuses(_arguments: dict[str, Any], _span: Any) -> list["TextContent"]:
+async def _handle_get_all_pipeline_statuses(
+    _arguments: dict[str, Any], _span: Any, _durable_runtime: DurableRuntime
+) -> list["TextContent"]:
     pipelines_str = "\n".join(registry.get_names())
     return [TextContent(type="text", text=f"Available pipelines:\n{pipelines_str}")]
 
 
-async def _handle_get_pipeline_status(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+async def _handle_get_pipeline_status(
+    arguments: dict[str, Any], span: Any, _durable_runtime: DurableRuntime
+) -> list["TextContent"]:
     pipeline_name = arguments["pipeline_name"]
     span.set_tag("hayhooks.pipeline.name", pipeline_name)
     is_deployed = pipeline_name in registry.get_names()
     return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' is deployed: {is_deployed}")]
 
 
-async def _handle_undeploy_pipeline(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+async def _handle_undeploy_pipeline(
+    arguments: dict[str, Any], span: Any, durable_runtime: DurableRuntime
+) -> list["TextContent"]:
     pipeline_name = arguments["pipeline_name"]
     span.set_tag("hayhooks.pipeline.name", pipeline_name)
     # app=None: the MCP server doesn't own FastAPI routes
-    await undeploy_pipeline_async(pipeline_name=pipeline_name)
+    await undeploy_pipeline_async(pipeline_name=pipeline_name, durable_runtime=durable_runtime)
     return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' undeployed")]
 
 
 # Core tools that trigger a ``tools/list_changed`` notification after execution.
 _MUTATING_CORE_TOOLS: frozenset[str] = frozenset({CoreTools.DEPLOY_PIPELINE.value, CoreTools.UNDEPLOY_PIPELINE.value})
 
-_CoreToolHandler = Callable[[dict[str, Any], Any], Awaitable[list["TextContent"]]]
+_CoreToolHandler = Callable[[dict[str, Any], Any, DurableRuntime], Awaitable[list["TextContent"]]]
 
 _CORE_TOOL_HANDLERS: dict[str, _CoreToolHandler] = {
     CoreTools.DEPLOY_PIPELINE.value: _handle_deploy_pipeline,
@@ -215,10 +224,16 @@ async def _run_pipeline_tool(name: str, arguments: dict[str, Any], span: Any) ->
         raise Exception(msg) from exc
 
 
-def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
+def create_mcp_server(
+    name: str = "hayhooks-mcp-server",
+    *,
+    durable_runtime: DurableRuntime | None = None,
+) -> "Server":
     mcp_import.check()
 
+    durable_runtime = durable_runtime or DurableRuntime(app_settings=settings)
     server: Server = Server(name)
+    server._hayhooks_durable_runtime = durable_runtime  # ty: ignore[unresolved-attribute]
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -261,7 +276,7 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
         ) as span:
             try:
                 if handler is not None:
-                    return await handler(arguments, span)
+                    return await handler(arguments, span, durable_runtime)
                 return await _run_pipeline_tool(name, arguments, span)
             except Exception as exc:
                 msg = f"General unhandled error in call_tool for tool '{name}': {exc}"
@@ -277,11 +292,23 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
     return server
 
 
-def create_starlette_app(server: "Server", *, debug: bool = False, json_response: bool = False) -> "Starlette":
+def create_starlette_app(
+    server: "Server",
+    *,
+    debug: bool = False,
+    json_response: bool = False,
+    durable_runtime: DurableRuntime | None = None,
+) -> "Starlette":
     """
     Create a Starlette app for the MCP server.
     """
     mcp_import.check()
+    server_runtime = getattr(server, "_hayhooks_durable_runtime", None)
+    if durable_runtime is None:
+        durable_runtime = server_runtime or DurableRuntime(app_settings=settings)
+    elif server_runtime is not None and server_runtime is not durable_runtime:
+        msg = "MCP server and application must reference the same DurableRuntime"
+        raise ValueError(msg)
 
     # Setup the Streamable HTTP session manager
     session_manager = StreamableHTTPSessionManager(
@@ -299,16 +326,16 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:  # noqa: ARG001
-        async with session_manager.run():
-            try:
+        try:
+            async with session_manager.run():
                 await durable_runtime.start()
                 log.info("Hayhooks MCP server started")
                 yield
+        finally:
+            try:
+                await durable_runtime.close()
             finally:
-                try:
-                    await durable_runtime.close()
-                finally:
-                    log.info("Hayhooks MCP server shutting down...")
+                log.info("Hayhooks MCP server shutting down...")
 
     async def handle_sse(request):
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
@@ -327,6 +354,7 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
         ],
         lifespan=lifespan,
     )
+    app.state.durable_runtime = durable_runtime
 
     configure_tracing()
     instrument_starlette_app(app)

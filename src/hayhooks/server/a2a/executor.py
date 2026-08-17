@@ -12,7 +12,7 @@ from fastapi.concurrency import iterate_in_threadpool, run_in_threadpool
 from haystack.dataclasses import StreamingChunk
 
 from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
-from hayhooks.durable.runtime import durable_runtime
+from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.server.a2a.durable_executor import DurableAgentExecutor
 from hayhooks.server.a2a.imports import (
     AgentExecutor,
@@ -146,11 +146,15 @@ def create_agent_executor(
     pipeline_name: str,
     *,
     task_store: Any | None = None,
+    durable_runtime: DurableRuntime | None = None,
 ) -> AgentExecutor:
     """Select a managed durable Agent or chat-compatible executor."""
     if durable_authoring_mode(wrapper) is DurableAuthoringMode.MANAGED_AGENT:
         if task_store is None:
             msg = "A durable A2A Agent requires an A2A task store"
+            raise RuntimeError(msg)
+        if durable_runtime is None:
+            msg = "A durable A2A Agent requires an application-owned DurableRuntime"
             raise RuntimeError(msg)
         # Constructing the deployment here validates the Haystack v3 Agent and the
         # durable definition before the Agent Card is exposed.

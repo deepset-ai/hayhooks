@@ -4,6 +4,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,13 +27,8 @@ from hayhooks.durable.adapters import (
 )
 from hayhooks.durable.context import execution_context_scope
 from hayhooks.durable.models import ExecutionCheckpoint, ExecutionKind, ExecutionRecord, ExecutionStatus
-from hayhooks.durable.runtime import (
-    DurableDeployment,
-    DurableRuntime,
-    _canonical_json,
-    _operation_fingerprint,
-    durable_runtime,
-)
+from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, _canonical_json, _operation_fingerprint
+from hayhooks.durable.settings import DurableSettings
 from hayhooks.durable.store import InMemoryExecutionStoreProvider
 from hayhooks.server.a2a.app import create_a2a_app
 from hayhooks.server.app import create_app
@@ -46,7 +42,7 @@ from hayhooks.server.utils.module_loader import (
     load_pipeline_module,
     unload_pipeline_modules,
 )
-from hayhooks.settings import AppSettings, settings
+from hayhooks.settings import settings
 
 pytestmark = pytest.mark.skipif(
     not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
@@ -97,13 +93,75 @@ async def test_portable_runtime_starts_its_own_deployments() -> None:
         await runtime.close()
 
 
-def _create_mcp_app():
-    return create_starlette_app(create_mcp_server())
+async def test_rest_app_runtimes_are_isolated(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "pipelines_dir", "")
+    provider_a = InMemoryExecutionStoreProvider()
+    provider_b = InMemoryExecutionStoreProvider()
+    close_a = AsyncMock(wraps=provider_a.close)
+    close_b = AsyncMock(wraps=provider_b.close)
+    monkeypatch.setattr(provider_a, "close", close_a)
+    monkeypatch.setattr(provider_b, "close", close_b)
+    runtime_a = DurableRuntime(provider_a)
+    runtime_b = DurableRuntime(provider_b)
+    wrapper = Wrapper()
+    wrapper.setup()
+    runtime_a.deployment("only-a", wrapper)
+    app_a = create_app(durable_runtime=runtime_a)
+    app_b = create_app(durable_runtime=runtime_b)
+
+    assert app_a.state.durable_runtime is runtime_a
+    assert app_b.state.durable_runtime is runtime_b
+    assert runtime_b.current_deployment("only-a") is None
+
+    lifespan_a = app_a.router.lifespan_context(app_a)
+    lifespan_b = app_b.router.lifespan_context(app_b)
+    await lifespan_a.__aenter__()
+    await lifespan_b.__aenter__()
+    try:
+        await lifespan_a.__aexit__(None, None, None)
+        assert not runtime_a.started
+        assert runtime_b.started
+        close_a.assert_awaited_once()
+        close_b.assert_not_awaited()
+    finally:
+        await lifespan_b.__aexit__(None, None, None)
+    close_b.assert_awaited_once()
+
+
+def test_app_factories_retain_the_supplied_runtime() -> None:
+    rest_runtime = DurableRuntime(InMemoryExecutionStoreProvider())
+    a2a_runtime = DurableRuntime(InMemoryExecutionStoreProvider())
+    mcp_runtime = DurableRuntime(InMemoryExecutionStoreProvider())
+
+    rest = create_app(durable_runtime=rest_runtime)
+    a2a = create_a2a_app(durable_runtime=a2a_runtime)
+    mcp_server = create_mcp_server(durable_runtime=mcp_runtime)
+    mcp = create_starlette_app(mcp_server, durable_runtime=mcp_runtime)
+
+    assert rest.state.durable_runtime is rest_runtime
+    assert a2a.state.durable_runtime is a2a_runtime
+    assert mcp.state.durable_runtime is mcp_runtime
+    assert create_app().state.durable_runtime is not create_app().state.durable_runtime
+
+
+def _create_rest_app(runtime: DurableRuntime):
+    return create_app(durable_runtime=runtime)
+
+
+def _create_a2a_test_app(runtime: DurableRuntime):
+    return create_a2a_app(durable_runtime=runtime)
+
+
+def _create_mcp_app(runtime: DurableRuntime):
+    return create_starlette_app(
+        create_mcp_server(durable_runtime=runtime),
+        durable_runtime=runtime,
+    )
 
 
 @pytest.mark.parametrize(
     "app_factory",
-    [create_app, create_a2a_app, _create_mcp_app],
+    [_create_rest_app, _create_a2a_test_app, _create_mcp_app],
     ids=["rest", "a2a", "mcp"],
 )
 async def test_app_lifespans_close_durable_runtime_when_start_fails(monkeypatch, app_factory) -> None:
@@ -118,9 +176,10 @@ async def test_app_lifespans_close_durable_runtime_when_start_fails(monkeypatch,
         closed += 1
 
     monkeypatch.setattr(settings, "pipelines_dir", "")
-    monkeypatch.setattr(durable_runtime, "start", fail_start)
-    monkeypatch.setattr(durable_runtime, "close", close)
-    app = app_factory()
+    runtime = DurableRuntime(InMemoryExecutionStoreProvider())
+    monkeypatch.setattr(runtime, "start", fail_start)
+    monkeypatch.setattr(runtime, "close", close)
+    app = app_factory(runtime)
 
     with pytest.raises(Exception) as exc_info:
         async with app.router.lifespan_context(app):
@@ -128,6 +187,25 @@ async def test_app_lifespans_close_durable_runtime_when_start_fails(monkeypatch,
 
     assert "durable startup failed" in repr(exc_info.value)
     assert closed == 1
+
+
+async def test_mcp_lifespan_closes_durable_runtime_when_session_manager_start_fails(monkeypatch) -> None:
+    session_manager = MagicMock()
+    session_manager.run.return_value.__aenter__.side_effect = RuntimeError("MCP session manager startup failed")
+    provider = InMemoryExecutionStoreProvider()
+    close = AsyncMock(wraps=provider.close)
+    monkeypatch.setattr(provider, "close", close)
+    monkeypatch.setattr(
+        "hayhooks.server.utils.mcp_utils.StreamableHTTPSessionManager", lambda **_kwargs: session_manager
+    )
+    runtime = DurableRuntime(provider)
+    app = _create_mcp_app(runtime)
+
+    with pytest.raises(RuntimeError, match="MCP session manager startup failed"):
+        async with app.router.lifespan_context(app):
+            pass
+
+    close.assert_awaited_once()
 
 
 def _checkpoint_test_tool(value: str) -> str:
@@ -506,7 +584,7 @@ def test_durable_rest_can_inspect_and_cancel_an_execution_from_an_old_revision(m
         with TestClient(app) as client:
             submitted = client.post("/rolling/run-durable", json={"value": 1})
             assert wrapper.started.wait(timeout=5)
-            deployment = durable_runtime.current_deployment("rolling")
+            deployment = app.state.durable_runtime.current_deployment("rolling")
             assert deployment is not None
             deployment.revision = "replacement"
 
@@ -589,11 +667,11 @@ def test_durable_rest_bounds_owner_scoped_idempotency_keys(monkeypatch) -> None:
 
 
 def test_durable_rest_maps_oversized_validated_request_to_422(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "durable_max_record_bytes", 5)
+    monkeypatch.setattr(settings, "durable_max_record_bytes", 1_024)
     app = _durable_app(monkeypatch, "job", Wrapper())
 
     with TestClient(app) as client:
-        response = client.post("/job/run-durable", json={"value": 123})
+        response = client.post("/job/run-durable", json={"value": int("1" * 1_100)})
 
     assert response.status_code == 422
     assert "durable execution limit" in response.json()["detail"]
@@ -611,7 +689,7 @@ def test_durable_waiting_resume_is_typed_private_and_revision_safe(monkeypatch) 
             "message": "Approve this job",
             "expected_input_schema": ResumeInput.model_json_schema(),
         }
-        deployment = durable_runtime.current_deployment("approval")
+        deployment = app.state.durable_runtime.current_deployment("approval")
         assert deployment is not None
         missing = client.post(f"{url}/resume")
         assert missing.status_code == 422
@@ -659,14 +737,14 @@ def test_durable_rest_enforces_configured_trusted_owner_header(monkeypatch) -> N
         assert "exceeds 512 characters" in oversized.json()["detail"]
 
 
-def test_durable_rest_uses_the_deployments_owner_header_setting(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "durable_trusted_owner_header", "")
-    app_settings = AppSettings(durable_store="memory", durable_trusted_owner_header="X-Embedded-Owner")
-    provider = InMemoryExecutionStoreProvider(app_settings=app_settings)
+def test_durable_rest_uses_the_server_owner_header_setting(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "durable_trusted_owner_header", "X-Embedded-Owner")
+    durable_settings = DurableSettings(durable_store="memory")
+    provider = InMemoryExecutionStoreProvider(durable_settings=durable_settings)
     wrapper = Wrapper()
     wrapper.setup()
     _set_method_implementation_flags(wrapper)
-    deployment = DurableDeployment("embedded", wrapper, provider, app_settings=app_settings)
+    deployment = DurableDeployment("embedded", wrapper, provider, durable_settings=durable_settings)
     registry.add("embedded", wrapper)
     app = create_app()
     add_pipeline_api_route(app, "embedded", wrapper, _durable_deployment=deployment)
@@ -723,8 +801,8 @@ async def test_sync_work_retains_claim_after_shutdown_grace_until_thread_exits(m
             assert release.wait(timeout=5)
             return Result(value=request.value)
 
-    monkeypatch.setattr(settings, "durable_shutdown_grace_period", 0.001)
-    provider = InMemoryExecutionStoreProvider()
+    durable_settings = DurableSettings(durable_store="memory", durable_shutdown_grace_period=0.001)
+    provider = InMemoryExecutionStoreProvider(durable_settings=durable_settings)
     wrapper = BlockingWrapper()
     wrapper.setup()
     _set_method_implementation_flags(wrapper)

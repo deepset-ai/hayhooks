@@ -26,6 +26,7 @@ from hayhooks.durable.models import (
 )
 from hayhooks.durable.reference import InMemoryExecutionStore
 from hayhooks.durable.runtime import DurableRuntime
+from hayhooks.durable.settings import DurableSettings
 from hayhooks.durable.store import ExecutionStore, InMemoryExecutionStoreProvider, RedisExecutionStoreProvider
 from hayhooks.settings import AppSettings, settings
 
@@ -65,7 +66,7 @@ def _record() -> ExecutionRecord:
 
 
 def test_builtin_providers_snapshot_explicit_durable_settings() -> None:
-    app_settings = AppSettings(
+    durable_settings = DurableSettings(
         durable_redis_key_prefix="portable:durable",
         durable_lease_duration_ms=45_000,
         durable_lease_commit_safety_ms=2_000,
@@ -75,10 +76,10 @@ def test_builtin_providers_snapshot_explicit_durable_settings() -> None:
         durable_max_progress_events=17,
         durable_max_record_bytes=32_768,
     )
-    memory_store = InMemoryExecutionStoreProvider(app_settings=app_settings).create_execution_store("portable")
+    memory_store = InMemoryExecutionStoreProvider(durable_settings=durable_settings).create_execution_store("portable")
     redis_provider = RedisExecutionStoreProvider(
         redis=AsyncMock(),
-        app_settings=app_settings,
+        durable_settings=durable_settings,
         socket_timeout=1.5,
         socket_connect_timeout=2.5,
         health_check_interval=0,
@@ -101,8 +102,8 @@ def test_builtin_providers_snapshot_explicit_durable_settings() -> None:
 
 
 def test_runtime_uses_its_explicit_settings_for_the_default_provider() -> None:
-    app_settings = AppSettings(durable_store="memory", durable_lease_duration_ms=45_000)
-    runtime = DurableRuntime(app_settings=app_settings)
+    durable_settings = DurableSettings(durable_store="memory", durable_lease_duration_ms=45_000)
+    runtime = DurableRuntime(durable_settings=durable_settings)
 
     provider = runtime._provider()
 
@@ -110,22 +111,22 @@ def test_runtime_uses_its_explicit_settings_for_the_default_provider() -> None:
     assert provider.app_settings.durable_lease_duration_ms == 45_000
 
 
-async def test_runtime_uses_implicit_provider_settings_until_close(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_runtime_defaults_are_independent_of_hayhooks_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "durable_store", "memory")
     original_attempts = settings.durable_max_attempts
-    runtime = DurableRuntime()
+    runtime = DurableRuntime(durable_settings=DurableSettings(durable_store="memory"))
     provider = runtime._provider()
 
     monkeypatch.setattr(settings, "durable_max_attempts", original_attempts + 1)
 
     assert runtime.app_settings.durable_max_attempts == provider.app_settings.durable_max_attempts == original_attempts
     await runtime.close()
-    assert runtime.app_settings.durable_max_attempts == original_attempts + 1
+    assert runtime.settings.durable_max_attempts == original_attempts
 
 
 def test_runtime_uses_supplied_builtin_provider_as_its_settings_source() -> None:
-    app_settings = AppSettings(durable_store="memory", durable_lease_duration_ms=45_000, durable_max_attempts=7)
-    provider = InMemoryExecutionStoreProvider(app_settings=app_settings)
+    durable_settings = DurableSettings(durable_store="memory", durable_lease_duration_ms=45_000, durable_max_attempts=7)
+    provider = InMemoryExecutionStoreProvider(durable_settings=durable_settings)
     runtime = DurableRuntime(provider)
 
     store = provider.create_execution_store("portable")
@@ -135,10 +136,17 @@ def test_runtime_uses_supplied_builtin_provider_as_its_settings_source() -> None
 
 
 def test_runtime_rejects_conflicting_builtin_provider_settings() -> None:
-    provider = InMemoryExecutionStoreProvider(app_settings=AppSettings(durable_lease_duration_ms=45_000))
+    provider = InMemoryExecutionStoreProvider(durable_settings=DurableSettings(durable_lease_duration_ms=45_000))
 
     with pytest.raises(ValueError, match="settings must match"):
-        DurableRuntime(provider, app_settings=AppSettings(durable_lease_duration_ms=60_000))
+        DurableRuntime(provider, durable_settings=DurableSettings(durable_lease_duration_ms=60_000))
+
+
+def test_runtime_converts_hayhooks_settings_for_server_compatibility() -> None:
+    runtime = DurableRuntime(app_settings=AppSettings(durable_store="memory", durable_max_attempts=7))
+
+    assert runtime.settings.durable_store == "memory"
+    assert runtime.settings.durable_max_attempts == 7
 
 
 async def test_runtime_provider_cannot_be_replaced(monkeypatch: pytest.MonkeyPatch) -> None:

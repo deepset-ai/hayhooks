@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient
 
 from hayhooks.a2a import A2APipelineWrapper, TaskStoreProvider
 from hayhooks.durable.models import ExecutionAdmissionError, ExecutionStatus, ExecutionStoreError
-from hayhooks.durable.runtime import execution_id_for
+from hayhooks.durable.runtime import DurableRuntime, execution_id_for
+from hayhooks.durable.store import InMemoryExecutionStoreProvider
 from hayhooks.server.a2a.app import create_a2a_app
 from hayhooks.server.a2a.durable_executor import DurableAgentExecutor, DurableTaskStore
 from hayhooks.server.a2a.imports import TaskStore, new_task_from_user_message, new_text_part
@@ -164,10 +165,12 @@ def _http_app(store, deployment, monkeypatch):
     wrapper = _DurableHTTPWrapper()
     wrapper.setup()
     registry.add("durable-agent", wrapper, metadata={"description": "durable agent"})
-    monkeypatch.setattr("hayhooks.durable.runtime.durable_runtime.deployment", lambda *_args: deployment)
+    durable_runtime = DurableRuntime(InMemoryExecutionStoreProvider())
+    monkeypatch.setattr(durable_runtime, "deployment", lambda *_args: deployment)
     return create_a2a_app(
         base_url="http://a2a-test:1418",
         runtime=A2ARuntime(task_store_provider=_HTTPStoreProvider(store)),
+        durable_runtime=durable_runtime,
     )
 
 

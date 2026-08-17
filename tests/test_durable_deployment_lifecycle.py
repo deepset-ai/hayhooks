@@ -4,7 +4,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from hayhooks.durable.runtime import durable_runtime
+from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.settings import settings
@@ -139,7 +139,7 @@ def test_undeploy_removes_entire_durable_route_family() -> None:
         assert client.get("/job/executions/missing").status_code == 404
         assert client.post("/job/executions/missing/cancel").status_code == 404
         assert client.post("/job/executions/missing/resume").status_code == 404
-        assert durable_runtime.current_deployment("job") is None
+        assert app.state.durable_runtime.current_deployment("job") is None
 
 
 def test_undeploy_refuses_to_strand_waiting_execution() -> None:
@@ -207,7 +207,7 @@ def test_failed_durable_preflight_restarts_existing_deployment(monkeypatch, oper
     with TestClient(app) as client:
         source = _durable_source(field="value", increment=1, revision="first")
         assert _deploy(client, source).status_code == 200
-        deployment = durable_runtime.current_deployment("job")
+        deployment = app.state.durable_runtime.current_deployment("job")
         assert deployment is not None
 
         async def fail_counts():
@@ -338,8 +338,7 @@ class _FailingProvider:
 
 
 def test_store_initialization_failure_never_publishes_candidate(monkeypatch) -> None:
-    monkeypatch.setattr(durable_runtime, "_store_provider", _FailingProvider())
-    app = create_app()
+    app = create_app(durable_runtime=DurableRuntime(_FailingProvider(), app_settings=settings))
     with TestClient(app) as client:
         failed = _deploy(client, _durable_source(field="value", increment=1, revision="first"))
 

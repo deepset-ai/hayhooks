@@ -3,7 +3,7 @@ from contextlib import suppress
 from typing import Any
 
 from hayhooks.a2a import TaskStoreProvider
-from hayhooks.durable.runtime import durable_runtime
+from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.server.a2a.durable_executor import DurableAgentExecutor
 from hayhooks.server.a2a.imports import (
     InMemoryTaskStore,
@@ -104,6 +104,8 @@ class A2ARuntime:
     def __init__(
         self,
         task_store_provider: TaskStoreProvider | None = None,
+        *,
+        durable_runtime: DurableRuntime | None = None,
     ) -> None:
         self.task_store_provider = task_store_provider or InMemoryTaskStoreProvider()
         self._executors: list[DurableAgentExecutor] = []
@@ -111,6 +113,7 @@ class A2ARuntime:
         self._task_stores: list[TaskStore] = []
         self._maintenance_task: asyncio.Task[None] | None = None
         self._started = False
+        self.durable_runtime = durable_runtime
 
     def register_agent_executor(self, executor: Any) -> None:
         if isinstance(executor, DurableAgentExecutor):
@@ -204,10 +207,11 @@ class A2ARuntime:
                 "error": type(error).__name__,
             }
 
-    @staticmethod
-    async def _durable_health() -> dict[str, Any]:
+    async def _durable_health(self) -> dict[str, Any]:
         try:
-            return await durable_runtime.health()
+            if self.durable_runtime is None:
+                return {"healthy": False, "error": "DurableRuntimeUnavailable"}
+            return await self.durable_runtime.health()
         except asyncio.CancelledError:
             raise
         except Exception as error:

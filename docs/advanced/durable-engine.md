@@ -45,67 +45,60 @@ queued ── claim ──> running ── complete/fail/cancel ──> terminal
 
 ## Embedding the runtime
 
-Applications can import `DurableRuntime`, `ExecutionStore`,
-`ExecutionStoreProvider`, `InMemoryExecutionStoreProvider`, and
-`RedisExecutionStoreProvider` directly from `hayhooks.durable`. A standalone
-runtime starts only deployments attached to that runtime; it does not inspect
-Hayhooks' process-global pipeline registry.
+Applications can import the runtime, providers, deployment contracts, public
+exceptions, and FastAPI adapter directly from `hayhooks.durable`. A standalone
+runtime starts only deployments attached to that runtime; it never inspects the
+Hayhooks pipeline registry.
 
-This complete `app.py` embeds an in-memory durable worker in FastAPI. Its tool
-simulates an eight-second upstream call so detached execution is easy to see:
+This complete `app.py` adds an authenticated durable API to an existing FastAPI
+application. Authentication middleware is expected to set a stable principal
+on `request.state` before the owner dependency runs:
 
 ```python
-import asyncio
 from contextlib import asynccontextmanager
-from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, status
-from haystack.components.agents import Agent
-from haystack.components.generators.chat import OpenAIChatGenerator
-from haystack.dataclasses import ChatMessage
-from haystack.tools import tool
+from fastapi import FastAPI, Request
+from haystack import Pipeline
 from pydantic import BaseModel
 
 from hayhooks import BasePipelineWrapper, DurableContext
-from hayhooks.durable import DurableRuntime, ExecutionResult, InMemoryExecutionStoreProvider
-from hayhooks.settings import AppSettings
+from hayhooks.durable import DurableRuntime, DurableSettings, create_durable_router
 
 
-class AgentRequest(BaseModel):
-    question: str
+class JobRequest(BaseModel):
+    document_id: str
 
 
-@tool
-async def check_order(order_id: Annotated[str, "The customer's order ID"]) -> str:
-    """Return the current shipping status for an order."""
-    # Intentional demo delay: replace it with a real upstream API call.
-    await asyncio.sleep(8)
-    # Read-only tools are replay-safe; make mutating tools idempotent.
-    return f"Order {order_id} shipped and arrives Friday."
+class JobResult(BaseModel):
+    indexed: bool
 
 
-class SupportAgentWrapper(BasePipelineWrapper):
-    # Bump this when checkpoint-relevant code or prompts change.
-    durable_revision = "support-agent-v1"
+class JobWrapper(BasePipelineWrapper):
+    durable_revision = "job-v1"
 
     def setup(self) -> None:
-        self.pipeline = Agent(
-            chat_generator=OpenAIChatGenerator(),
-            system_prompt="Help customers with their orders. Use the order tool when needed.",
-            tools=[check_order],
-        )
+        self.pipeline = Pipeline()
 
-    async def run_durable_async(self, context: DurableContext, request: AgentRequest) -> dict:
-        return await context.run_agent_async(messages=[ChatMessage.from_user(request.question)])
+    async def run_durable_async(self, context: DurableContext, request: JobRequest) -> JobResult:
+        # Replace this example body with checkpointed Pipeline work.
+        return JobResult(indexed=bool(request.document_id))
 
 
-durable_settings = AppSettings(durable_store="memory", durable_poll_interval=0.05)
-provider = InMemoryExecutionStoreProvider(app_settings=durable_settings)
-runtime = DurableRuntime(provider)
+runtime = DurableRuntime(
+    durable_settings=DurableSettings(
+        durable_store="memory",  # Development only; use Redis in production.
+        durable_poll_interval=0.05,
+    )
+)
 
-wrapper = SupportAgentWrapper()
+wrapper = JobWrapper()
 wrapper.setup()
-deployment = runtime.deployment("support-agent", wrapper)
+deployment = runtime.deployment("jobs", wrapper)
+
+
+def current_owner_id(request: Request) -> str:
+    principal = request.state.principal
+    return f"{principal.tenant_id}:{principal.subject_id}"
 
 
 @asynccontextmanager
@@ -118,46 +111,57 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-
-
-@app.post("/agent-runs", response_model=ExecutionResult, status_code=status.HTTP_202_ACCEPTED)
-async def submit_agent_run(request: AgentRequest) -> ExecutionResult:
-    _, record = await deployment.submit(request.model_dump(mode="json"))
-    return ExecutionResult.model_validate(record.safe_view(links={"self": f"/agent-runs/{record.execution_id}"}))
-
-
-@app.get("/agent-runs/{execution_id}", response_model=ExecutionResult)
-async def get_agent_run(execution_id: str) -> ExecutionResult:
-    try:
-        record = await deployment.get(execution_id)
-    except KeyError as error:
-        raise HTTPException(status_code=404, detail="Agent run not found") from error
-    return ExecutionResult.model_validate(record.safe_view(links={"self": f"/agent-runs/{record.execution_id}"}))
+app.include_router(
+    create_durable_router(deployment, owner_id_dependency=current_owner_id),
+    prefix="/jobs",
+)
 ```
 
-Run it and submit work:
+The adapter exposes typed submit, inspect, cancel, and resume routes. It does
+not start workers or own the runtime. Host middleware and dependencies retain
+control of authentication and authorization; the durable layer persists only
+the stable owner ID returned by the dependency. Durable wrapper code can read
+that value through `context.owner_id` after process recovery.
 
-```bash
-pip install "hayhooks[durable]"
-export OPENAI_API_KEY="your-api-key"
-uvicorn app:app
+Passing `owner_id_dependency=None` is an explicit unscoped security choice:
 
-execution_id="$(
-  curl --fail --silent -X POST http://127.0.0.1:8000/agent-runs \
-    -H 'content-type: application/json' \
-    -d '{"question":"Where is order A-123?"}' | jq -r '.execution_id'
-)"
-
-# The first poll should show `queued` or `running`; repeat until `completed`.
-curl --fail --silent "http://127.0.0.1:8000/agent-runs/${execution_id}" | jq
+```python
+app.include_router(
+    create_durable_router(deployment, owner_id_dependency=None),
+    prefix="/internal-jobs",
+)
 ```
 
-The runtime owns provider shutdown. Built-in providers snapshot their settings,
-and the runtime adopts that snapshot when a provider is supplied. Pass custom
-settings once—either to a built-in provider as above, or to `DurableRuntime`
-when it selects the default provider. Conflicting runtime and provider settings
-are rejected before a deployment is created. The selected provider is fixed for
-the runtime's lifetime; create a new runtime to change storage backends.
+In this mode, possession of the unguessable execution ID grants access. Use it
+only behind one application-wide authorization boundary or for local
+development.
+
+For production Redis, give each application/environment an isolated prefix:
+
+```python
+from hayhooks.durable import DurableRuntime, RedisExecutionStoreProvider
+
+provider = RedisExecutionStoreProvider(
+    redis_url="redis://localhost:6379/0",
+    key_prefix="myapp:production:durable",
+)
+runtime = DurableRuntime(provider)
+```
+
+When the host owns an existing binary Redis client, pass `redis=client` and
+`close_redis=False`, then close the durable runtime before closing the client.
+Do not use `decode_responses=True`.
+
+Every Uvicorn worker owns a runtime, Redis pool, and worker tasks. Redis leases
+and fences coordinate them, so effective concurrency is `processes ×
+durable_execution_concurrency` per deployment. Keep wrapper revisions identical
+across replicas and start with one to three processes and conservative
+concurrency.
+
+Built-in providers snapshot `DurableSettings`, and the runtime adopts that
+snapshot when a provider is supplied. Conflicting runtime and provider settings
+are rejected before deployment creation. The selected provider is fixed for the
+runtime's lifetime; create a new runtime to change storage backends.
 
 ## Redis layout
 

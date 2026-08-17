@@ -67,6 +67,11 @@ class DurableContext:
         return self.record.attempt
 
     @property
+    def owner_id(self) -> str | None:
+        """Return the stable owner identity persisted with this execution."""
+        return self.record.owner_id
+
+    @property
     def state(self) -> dict[str, JsonValue]:
         return self.record.application_state
 

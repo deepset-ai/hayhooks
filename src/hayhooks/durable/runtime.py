@@ -18,13 +18,12 @@ from hayhooks.durable.context import DurableContext
 from hayhooks.durable.manager import DurableExecutionManager
 from hayhooks.durable.mode import DurableAuthoringMode, _durable_method_implementations, durable_authoring_mode
 from hayhooks.durable.models import ExecutionKind, ExecutionRecord, JsonValue, json_safe, validate_json
+from hayhooks.durable.settings import DurableSettings
 from hayhooks.durable.store import ExecutionStore, InMemoryExecutionStoreProvider, RedisExecutionStoreProvider
 from hayhooks.server.exceptions import PipelineWrapperError
 from hayhooks.server.logger import log
-from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.tracing import SPAN_DURABLE_ATTEMPT, SPAN_DURABLE_SUBMIT, build_trace_tags, trace_operation
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.settings import AppSettings, settings
 
 
 class ExecutionStoreProvider(Protocol):
@@ -35,14 +34,24 @@ class ExecutionStoreProvider(Protocol):
     async def close(self) -> None: ...
 
 
-def _runtime_settings(provider: ExecutionStoreProvider | None, app_settings: AppSettings | None) -> AppSettings | None:
-    provider_settings = getattr(provider, "app_settings", None)
-    if isinstance(provider_settings, AppSettings):
-        if app_settings is not None and app_settings != provider_settings:
+def _runtime_settings(
+    provider: ExecutionStoreProvider | None,
+    durable_settings: DurableSettings | None,
+    app_settings: Any | None,
+) -> DurableSettings | None:
+    if durable_settings is not None and app_settings is not None:
+        msg = "Pass durable_settings or app_settings, not both"
+        raise ValueError(msg)
+    requested = durable_settings or (
+        DurableSettings.from_app_settings(app_settings) if app_settings is not None else None
+    )
+    provider_settings = getattr(provider, "settings", None)
+    if isinstance(provider_settings, DurableSettings):
+        if requested is not None and requested != provider_settings:
             msg = "Durable runtime and execution-store provider settings must match"
             raise ValueError(msg)
-        app_settings = provider_settings
-    return app_settings.model_copy(deep=True) if app_settings is not None else None
+        requested = provider_settings
+    return requested.model_copy(deep=True) if requested is not None else None
 
 
 class DurableDeployment:
@@ -54,11 +63,12 @@ class DurableDeployment:
         wrapper: BasePipelineWrapper,
         provider: ExecutionStoreProvider,
         *,
-        app_settings: AppSettings | None = None,
+        durable_settings: DurableSettings | None = None,
+        app_settings: Any | None = None,
     ) -> None:
         self.name = name
         self.wrapper = wrapper
-        self.app_settings = _runtime_settings(provider, app_settings) or settings.model_copy(deep=True)
+        self.settings = _runtime_settings(provider, durable_settings, app_settings) or DurableSettings()
         pipeline = wrapper.pipeline
         try:
             kind = execution_kind(pipeline)
@@ -94,12 +104,12 @@ class DurableDeployment:
             self.store,
             self._run,
             self.adapter,
-            concurrency=self.app_settings.durable_execution_concurrency,
-            poll_interval=self.app_settings.durable_poll_interval,
-            shutdown_grace_period=self.app_settings.durable_shutdown_grace_period,
-            max_attempts=self.app_settings.durable_max_attempts,
-            retry_base_delay=self.app_settings.durable_retry_base_delay,
-            retry_max_delay=self.app_settings.durable_retry_max_delay,
+            concurrency=self.settings.durable_execution_concurrency,
+            poll_interval=self.settings.durable_poll_interval,
+            shutdown_grace_period=self.settings.durable_shutdown_grace_period,
+            max_attempts=self.settings.durable_max_attempts,
+            retry_base_delay=self.settings.durable_retry_base_delay,
+            retry_max_delay=self.settings.durable_retry_max_delay,
         )
 
     async def start(self) -> None:
@@ -144,7 +154,7 @@ class DurableDeployment:
         validated_input = cast(
             dict[str, JsonValue],
             validate_json(
-                request.model_dump(mode="json"), limit=self.app_settings.durable_max_record_bytes, label="request"
+                request.model_dump(mode="json"), limit=self.settings.durable_max_record_bytes, label="request"
             ),
         )
         fingerprint_input = cast(dict[str, JsonValue], _canonical_json(request.model_dump(mode="python")))
@@ -162,8 +172,8 @@ class DurableDeployment:
             validated_input=validated_input,
             operation_fingerprint=operation_fingerprint,
             owner_id=owner_id,
-            max_progress_events=self.app_settings.durable_max_progress_events,
-            max_record_bytes=self.app_settings.durable_max_record_bytes,
+            max_progress_events=self.settings.durable_max_progress_events,
+            max_record_bytes=self.settings.durable_max_record_bytes,
         )
         with trace_operation(
             SPAN_DURABLE_SUBMIT,
@@ -350,14 +360,14 @@ class DurableRuntime:
         self,
         provider: ExecutionStoreProvider | None = None,
         *,
-        app_settings: AppSettings | None = None,
+        durable_settings: DurableSettings | None = None,
+        app_settings: Any | None = None,
     ) -> None:
         self._store_provider = provider
-        self._app_settings = _runtime_settings(provider, app_settings)
+        self._durable_settings = _runtime_settings(provider, durable_settings, app_settings)
         self._deployments: dict[str, DurableDeployment] = {}
         self._started = False
         self._provider_close_task: asyncio.Task[None] | None = None
-        self._registry: Any | None = None
 
     def has_capability(self, wrapper: BasePipelineWrapper) -> bool:
         return durable_authoring_mode(wrapper) is not DurableAuthoringMode.NONE
@@ -372,18 +382,22 @@ class DurableRuntime:
         return self._store_provider
 
     @property
-    def app_settings(self) -> AppSettings:
-        """Return configured or provider settings, falling back to Hayhooks' global settings."""
-        if self._app_settings is not None:
-            return self._app_settings
-        provider_settings = getattr(self.provider, "app_settings", None)
-        return provider_settings if isinstance(provider_settings, AppSettings) else settings
+    def settings(self) -> DurableSettings:
+        """Return the runtime's durable-only configuration."""
+        if self._durable_settings is None:
+            self._durable_settings = DurableSettings()
+        return self._durable_settings
+
+    @property
+    def app_settings(self) -> DurableSettings:
+        """Compatibility alias for :attr:`settings`."""
+        return self.settings
 
     def create_deployment(self, name: str, wrapper: BasePipelineWrapper) -> DurableDeployment | None:
         """Build an uncached candidate so route closures cannot capture an old deployment."""
         if not self.has_capability(wrapper):
             return None
-        return DurableDeployment(name, wrapper, self._provider(), app_settings=self.app_settings)
+        return DurableDeployment(name, wrapper, self._provider(), durable_settings=self.settings)
 
     def current_deployment(self, name: str) -> DurableDeployment | None:
         """Return the currently published durable deployment, if any."""
@@ -401,7 +415,6 @@ class DurableRuntime:
         existing = self._deployments.get(name)
         if existing is not None and (wrapper is None or existing.wrapper is wrapper):
             return existing
-        wrapper = wrapper or (self._registry.get(name) if self._registry is not None else None)
         if wrapper is None or not self.has_capability(wrapper):
             msg = f"Pipeline '{name}' does not expose durable execution"
             raise KeyError(msg)
@@ -411,22 +424,17 @@ class DurableRuntime:
                 "use the async deployment transaction to replace it"
             )
             raise RuntimeError(msg)
-        deployment = DurableDeployment(name, wrapper, self._provider(), app_settings=self.app_settings)
+        deployment = DurableDeployment(name, wrapper, self._provider(), durable_settings=self.settings)
         self._deployments[name] = deployment
         return deployment
 
     async def start(self) -> None:
-        """Start runtime-owned deployments after optional registry discovery."""
+        """Start runtime-owned deployments."""
         if self._started:
             return
         started: list[DurableDeployment] = []
         self._started = True
         try:
-            if self._registry is not None:
-                for name in self._registry.get_names():
-                    wrapper = self._registry.get(name)
-                    if wrapper is not None and self.has_capability(wrapper):
-                        self.deployment(name, wrapper)
             for deployment in list(self._deployments.values()):
                 if deployment.manager.started:
                     continue
@@ -484,11 +492,11 @@ class DurableRuntime:
     def _provider(self) -> ExecutionStoreProvider:
         provider = self._store_provider
         if provider is None:
-            if self.app_settings.durable_store == "memory":
+            if self.settings.durable_store == "memory":
                 log.warning("Durable execution uses volatile in-memory storage; queued work is lost on process exit")
-                provider = InMemoryExecutionStoreProvider(app_settings=self.app_settings)
+                provider = InMemoryExecutionStoreProvider(durable_settings=self.settings)
             else:
-                provider = RedisExecutionStoreProvider(app_settings=self.app_settings)
+                provider = RedisExecutionStoreProvider(durable_settings=self.settings)
             self._store_provider = provider
         return provider
 
@@ -571,7 +579,6 @@ def _canonical_json(value: Any) -> JsonValue:
 
 
 durable_runtime = DurableRuntime()
-durable_runtime._registry = registry
 
 
 __all__ = [

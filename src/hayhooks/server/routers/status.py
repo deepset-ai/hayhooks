@@ -1,7 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hayhooks.durable.runtime import durable_runtime
 from hayhooks.server.pipelines.registry import registry
 
 router = APIRouter()
@@ -32,9 +31,9 @@ class PipelineStatusResponse(BaseModel):
     summary="Get status of all pipelines",
     description="Returns the system status and a list of all available pipelines.",
 )
-async def status_all() -> StatusResponse:
+async def status_all(request: Request) -> StatusResponse:
     pipelines = registry.get_names()
-    durable_health = await durable_runtime.health()
+    durable_health = await request.app.state.durable_runtime.health()
     return StatusResponse(status="Up!", pipelines=pipelines, durable=durable_health)
 
 
@@ -46,10 +45,10 @@ async def status_all() -> StatusResponse:
     summary="Get status of a specific pipeline",
     description="Returns the status of a specific pipeline. Returns 404 if the pipeline doesn't exist.",
 )
-async def status(pipeline_name: str) -> PipelineStatusResponse:
+async def status(request: Request, pipeline_name: str) -> PipelineStatusResponse:
     if pipeline_name not in registry.get_names():
         raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
-    deployment = durable_runtime.current_deployment(pipeline_name)
+    deployment = request.app.state.durable_runtime.current_deployment(pipeline_name)
     if deployment is not None and not deployment.manager.health["healthy"]:
         raise HTTPException(status_code=503, detail=f"Pipeline '{pipeline_name}' has no live durable worker slots")
     return PipelineStatusResponse(status="Up!", pipeline=pipeline_name)

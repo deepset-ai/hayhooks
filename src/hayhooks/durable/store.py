@@ -47,8 +47,8 @@ from hayhooks.durable.models import (
 )
 from hayhooks.durable.redis import RedisExecutionStore, digest
 from hayhooks.durable.reference import InMemoryExecutionStore
+from hayhooks.durable.settings import DurableSettings
 from hayhooks.server.logger import log
-from hayhooks.settings import AppSettings, settings
 
 _RECORD_PAYLOADS = (
     PayloadKind.INPUT,
@@ -655,27 +655,34 @@ class RedisExecutionStoreProvider:
         redis: Any | None = None,
         key_prefix: str | None = None,
         close_redis: bool = True,
-        app_settings: AppSettings | None = None,
+        durable_settings: DurableSettings | None = None,
+        app_settings: Any | None = None,
         socket_timeout: float | None = None,
         socket_connect_timeout: float | None = None,
         health_check_interval: int | None = None,
     ) -> None:
-        source_settings = app_settings if app_settings is not None else settings
-        self.app_settings = source_settings.model_copy(deep=True)
-        self.config = _config(app_settings=self.app_settings, key_prefix=key_prefix)
+        if durable_settings is not None and app_settings is not None:
+            msg = "Pass durable_settings or app_settings, not both"
+            raise ValueError(msg)
+        self.settings = (
+            durable_settings
+            or (DurableSettings.from_app_settings(app_settings) if app_settings is not None else DurableSettings())
+        ).model_copy(deep=True)
+        self.app_settings = self.settings
+        self.config = _config(durable_settings=self.settings, key_prefix=key_prefix)
         self.close_redis = close_redis
         self.socket_timeout = (
-            socket_timeout if socket_timeout is not None else self.app_settings.durable_redis_socket_timeout
+            socket_timeout if socket_timeout is not None else self.settings.durable_redis_socket_timeout
         )
         self.socket_connect_timeout = (
             socket_connect_timeout
             if socket_connect_timeout is not None
-            else self.app_settings.durable_redis_socket_connect_timeout
+            else self.settings.durable_redis_socket_connect_timeout
         )
         self.health_check_interval = (
             health_check_interval
             if health_check_interval is not None
-            else self.app_settings.durable_redis_health_check_interval
+            else self.settings.durable_redis_health_check_interval
         )
         if redis is None:
             try:
@@ -684,7 +691,7 @@ class RedisExecutionStoreProvider:
                 msg = 'Durable Redis storage requires `pip install "hayhooks[durable]`.'
                 raise ImportError(msg) from error
             redis = Redis.from_url(
-                redis_url or self.app_settings.durable_redis_url,
+                redis_url or self.settings.durable_redis_url,
                 decode_responses=False,
                 socket_timeout=self.socket_timeout,
                 socket_connect_timeout=self.socket_connect_timeout,
@@ -700,7 +707,7 @@ class RedisExecutionStoreProvider:
             self.cores[deployment_name] = core
         # A candidate deployment must not mutate the active deployment's accepted
         # definition revision while it is still preparing or rolling back.
-        return _execution_store(core, app_settings=self.app_settings)
+        return _execution_store(core, durable_settings=self.settings)
 
     async def close(self) -> None:
         if self.close_redis:
@@ -710,10 +717,21 @@ class RedisExecutionStoreProvider:
 class InMemoryExecutionStoreProvider:
     """Volatile reference backend for local development and tests."""
 
-    def __init__(self, *, app_settings: AppSettings | None = None) -> None:
-        source_settings = app_settings if app_settings is not None else settings
-        self.app_settings = source_settings.model_copy(deep=True)
-        self.config = _config(app_settings=self.app_settings)
+    def __init__(
+        self,
+        *,
+        durable_settings: DurableSettings | None = None,
+        app_settings: Any | None = None,
+    ) -> None:
+        if durable_settings is not None and app_settings is not None:
+            msg = "Pass durable_settings or app_settings, not both"
+            raise ValueError(msg)
+        self.settings = (
+            durable_settings
+            or (DurableSettings.from_app_settings(app_settings) if app_settings is not None else DurableSettings())
+        ).model_copy(deep=True)
+        self.app_settings = self.settings
+        self.config = _config(durable_settings=self.settings)
         self.cores: dict[str, InMemoryExecutionStore] = {}
 
     def create_execution_store(self, deployment_name: str) -> ExecutionStore:
@@ -721,37 +739,37 @@ class InMemoryExecutionStoreProvider:
         if core is None:
             core = InMemoryExecutionStore(deployment=deployment_name, config=self.config)
             self.cores[deployment_name] = core
-        return _execution_store(core, app_settings=self.app_settings)
+        return _execution_store(core, durable_settings=self.settings)
 
     async def close(self) -> None:
         return None
 
 
-def _execution_store(core: ExecutionBackend, *, app_settings: AppSettings) -> ExecutionStore:
+def _execution_store(core: ExecutionBackend, *, durable_settings: DurableSettings) -> ExecutionStore:
     """Build the same public adapter for both built-in backend implementations."""
     return ExecutionStore(
         core,
-        lease_duration_ms=app_settings.durable_lease_duration_ms,
-        max_run_attempts=app_settings.durable_max_attempts,
-        max_progress_events=app_settings.durable_max_progress_events,
-        max_record_bytes=app_settings.durable_max_record_bytes,
+        lease_duration_ms=durable_settings.durable_lease_duration_ms,
+        max_run_attempts=durable_settings.durable_max_attempts,
+        max_progress_events=durable_settings.durable_max_progress_events,
+        max_record_bytes=durable_settings.durable_max_record_bytes,
     )
 
 
-def _config(*, app_settings: AppSettings, key_prefix: str | None = None) -> ExecutionStoreConfig:
-    max_record = app_settings.durable_max_record_bytes
+def _config(*, durable_settings: DurableSettings, key_prefix: str | None = None) -> ExecutionStoreConfig:
+    max_record = durable_settings.durable_max_record_bytes
     progress_bytes = DEFAULT_MAX_PROGRESS_BYTES
     return ExecutionStoreConfig(
-        key_prefix=key_prefix or app_settings.durable_redis_key_prefix,
-        lease_commit_safety_ms=app_settings.durable_lease_commit_safety_ms,
-        terminal_ttl_seconds=app_settings.durable_terminal_ttl_seconds,
-        max_nonterminal_executions=app_settings.durable_max_nonterminal_executions,
+        key_prefix=key_prefix or durable_settings.durable_redis_key_prefix,
+        lease_commit_safety_ms=durable_settings.durable_lease_commit_safety_ms,
+        terminal_ttl_seconds=durable_settings.durable_terminal_ttl_seconds,
+        max_nonterminal_executions=durable_settings.durable_max_nonterminal_executions,
         max_input_bytes=max_record,
         max_checkpoint_bytes=max_record,
         max_result_bytes=max_record,
         max_error_bytes=max_record,
         max_wait_bytes=max_record,
-        max_progress_events=app_settings.durable_max_progress_events,
+        max_progress_events=durable_settings.durable_max_progress_events,
         max_progress_event_bytes=progress_bytes,
     )
 

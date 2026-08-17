@@ -8,7 +8,7 @@ from starlette.routing import Mount, Route
 
 from hayhooks.a2a import TaskStoreProvider
 from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
-from hayhooks.durable.runtime import durable_runtime
+from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.server.a2a.cards import create_agent_card, get_a2a_base_url, is_a2a_exposable
 from hayhooks.server.a2a.executor import DurableAgentExecutor, create_agent_executor
 from hayhooks.server.a2a.imports import DefaultRequestHandler, create_agent_card_routes, create_jsonrpc_routes
@@ -22,7 +22,12 @@ from hayhooks.settings import settings
 _RESERVED_PATHS = frozenset({"status"})
 
 
-def _create_agent_mount(pipeline_name: str, base_url: str, runtime: A2ARuntime) -> Mount:
+def _create_agent_mount(
+    pipeline_name: str,
+    base_url: str,
+    runtime: A2ARuntime,
+    durable_runtime: DurableRuntime,
+) -> Mount:
     wrapper = registry.get(pipeline_name)
     if wrapper is None:
         msg = f"Pipeline '{pipeline_name}' not found"
@@ -31,7 +36,12 @@ def _create_agent_mount(pipeline_name: str, base_url: str, runtime: A2ARuntime) 
     card = create_agent_card(pipeline_name, base_url)
 
     task_store = runtime.create_task_store(pipeline_name)
-    agent_executor = create_agent_executor(wrapper, pipeline_name, task_store=task_store)
+    agent_executor = create_agent_executor(
+        wrapper,
+        pipeline_name,
+        task_store=task_store,
+        durable_runtime=durable_runtime,
+    )
     if isinstance(agent_executor, DurableAgentExecutor):
         task_store = agent_executor.task_store
     runtime.register_agent_executor(agent_executor)
@@ -73,7 +83,11 @@ def _create_app_task_store_provider(durable_agents_deployed: bool) -> TaskStoreP
     )
 
 
-def _create_agent_mounts(base_url: str, runtime: A2ARuntime) -> tuple[list[str], list[Mount]]:
+def _create_agent_mounts(
+    base_url: str,
+    runtime: A2ARuntime,
+    durable_runtime: DurableRuntime,
+) -> tuple[list[str], list[Mount]]:
     agent_names: list[str] = []
     mounts: list[Mount] = []
     for pipeline_name in registry.get_names():
@@ -83,7 +97,7 @@ def _create_agent_mounts(base_url: str, runtime: A2ARuntime) -> tuple[list[str],
             log.warning("Skipping pipeline '{}': the path is reserved by the A2A server", pipeline_name)
             continue
         try:
-            mounts.append(_create_agent_mount(pipeline_name, base_url, runtime))
+            mounts.append(_create_agent_mount(pipeline_name, base_url, runtime, durable_runtime))
         except Exception as error:
             log.opt(exception=True).warning(
                 "Skipping pipeline '{}': failed to build A2A agent: {}",
@@ -96,7 +110,13 @@ def _create_agent_mounts(base_url: str, runtime: A2ARuntime) -> tuple[list[str],
     return agent_names, mounts
 
 
-def create_a2a_app(*, base_url: str | None = None, debug: bool = False, runtime: A2ARuntime | None = None) -> Starlette:
+def create_a2a_app(
+    *,
+    base_url: str | None = None,
+    debug: bool = False,
+    runtime: A2ARuntime | None = None,
+    durable_runtime: DurableRuntime | None = None,
+) -> Starlette:
     """
     Create a Starlette app exposing deployed pipelines as A2A agents.
 
@@ -110,10 +130,18 @@ def create_a2a_app(*, base_url: str | None = None, debug: bool = False, runtime:
         for name in registry.get_names()
         if (wrapper := registry.get(name)) is not None
     )
+    durable_runtime = durable_runtime or (runtime.durable_runtime if runtime is not None else None)
+    durable_runtime = durable_runtime or DurableRuntime(app_settings=settings)
     if runtime is None:
         runtime = A2ARuntime(
             task_store_provider=_create_app_task_store_provider(durable_agents_deployed),
+            durable_runtime=durable_runtime,
         )
+    elif runtime.durable_runtime is None:
+        runtime.durable_runtime = durable_runtime
+    elif runtime.durable_runtime is not durable_runtime:
+        msg = "A2A and durable runtimes must reference the same DurableRuntime"
+        raise ValueError(msg)
     log.info("Using A2A task store provider '{}'", type(runtime.task_store_provider).__name__)
     base_url = (base_url or get_a2a_base_url()).rstrip("/")
     if "//0.0.0.0" in base_url or "//[::]" in base_url:
@@ -123,7 +151,7 @@ def create_a2a_app(*, base_url: str | None = None, debug: bool = False, runtime:
             base_url,
         )
 
-    agent_names, mounts = _create_agent_mounts(base_url, runtime)
+    agent_names, mounts = _create_agent_mounts(base_url, runtime, durable_runtime)
 
     if not agent_names:
         log.warning(
@@ -158,6 +186,8 @@ def create_a2a_app(*, base_url: str | None = None, debug: bool = False, runtime:
                 await durable_runtime.close()
 
     app = Starlette(debug=debug, routes=[Route("/status", endpoint=handle_status), *mounts], lifespan=lifespan)
+    app.state.durable_runtime = durable_runtime
+    app.state.a2a_runtime = runtime
     log.debug("Created A2A Starlette app with {} mounted agent(s): {}", len(agent_names), agent_names)
 
     configure_tracing()

@@ -148,15 +148,17 @@ def test_a2a_run_debug_enables_tracebacks(monkeypatch):
     from hayhooks.settings import settings
 
     calls = []
+    runtimes = []
 
     def fake_uvicorn_run(*args, **kwargs):
         calls.append((args, kwargs))
 
-    def fake_create_a2a_app(*, debug: bool = False):
+    def fake_create_a2a_app(*, debug: bool = False, durable_runtime=None):
+        runtimes.append(durable_runtime)
         return object()
 
-    def fake_deploy_pipelines() -> None:
-        return None
+    def fake_deploy_pipelines(*, durable_runtime=None) -> None:
+        runtimes.append(durable_runtime)
 
     monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
     monkeypatch.setattr(deploy_utils, "deploy_pipelines", fake_deploy_pipelines)
@@ -167,6 +169,7 @@ def test_a2a_run_debug_enables_tracebacks(monkeypatch):
     assert result.exit_code == 0, result.output
     assert settings.show_tracebacks is True
     assert calls, "uvicorn.run was not called"
+    assert runtimes[0] is runtimes[1]
 
 
 def test_a2a_run_sets_builtin_redis_task_store(monkeypatch):
@@ -176,7 +179,7 @@ def test_a2a_run_sets_builtin_redis_task_store(monkeypatch):
     from hayhooks.server.utils import deploy_utils
 
     monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda **_kwargs: None)
     monkeypatch.setattr(a2a_app, "create_a2a_app", lambda **_kwargs: object())
 
     result = runner.invoke(
@@ -208,7 +211,7 @@ def test_a2a_run_sets_durable_execution_concurrency(monkeypatch):
     from hayhooks.server.utils import deploy_utils
 
     monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda **_kwargs: None)
     monkeypatch.setattr(a2a_app, "create_a2a_app", lambda **_kwargs: object())
 
     result = runner.invoke(
@@ -227,7 +230,7 @@ def test_a2a_run_sets_durable_execution_store_configuration(monkeypatch):
     from hayhooks.server.utils import deploy_utils
 
     monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda: None)
+    monkeypatch.setattr(deploy_utils, "deploy_pipelines", lambda **_kwargs: None)
     monkeypatch.setattr(a2a_app, "create_a2a_app", lambda **_kwargs: object())
 
     result = runner.invoke(

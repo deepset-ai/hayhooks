@@ -12,7 +12,24 @@ from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
 from hayhooks.durable.models import ExecutionStatus
 
 if TYPE_CHECKING:
-    from hayhooks.durable.runtime import DurableRuntime, ExecutionStoreProvider
+    from hayhooks.durable.context import DurableContext
+    from hayhooks.durable.fastapi import create_durable_router
+    from hayhooks.durable.models import (
+        ExecutionAdmissionError,
+        ExecutionCanceledError,
+        ExecutionRecordSizeError,
+        ExecutionStoreError,
+        ExecutionSuspendedError,
+        RetryableExecutionError,
+    )
+    from hayhooks.durable.runtime import (
+        DefinitionRevisionConflictError,
+        DurableDeployment,
+        DurableRuntime,
+        ExecutionStoreProvider,
+        IdempotencyConflictError,
+    )
+    from hayhooks.durable.settings import DurableSettings
     from hayhooks.durable.store import ExecutionStore, InMemoryExecutionStoreProvider, RedisExecutionStoreProvider
 
 
@@ -56,13 +73,67 @@ def current_durable_context() -> Any | None:
 
 def __getattr__(name: str) -> Any:
     """Lazily expose durable infrastructure without eager optional imports."""
-    if name in {"DurableRuntime", "ExecutionStoreProvider", "durable_runtime"}:
-        from hayhooks.durable.runtime import DurableRuntime, ExecutionStoreProvider, durable_runtime
+    if name == "DurableContext":
+        from hayhooks.durable.context import DurableContext
+
+        return DurableContext
+    if name == "create_durable_router":
+        from hayhooks.durable.fastapi import create_durable_router
+
+        return create_durable_router
+    if name == "DurableSettings":
+        from hayhooks.durable.settings import DurableSettings
+
+        return DurableSettings
+    if name in {
+        "DefinitionRevisionConflictError",
+        "DurableDeployment",
+        "DurableRuntime",
+        "ExecutionStoreProvider",
+        "IdempotencyConflictError",
+        "durable_runtime",
+    }:
+        from hayhooks.durable.runtime import (
+            DefinitionRevisionConflictError,
+            DurableDeployment,
+            DurableRuntime,
+            ExecutionStoreProvider,
+            IdempotencyConflictError,
+            durable_runtime,
+        )
 
         return {
+            "DefinitionRevisionConflictError": DefinitionRevisionConflictError,
+            "DurableDeployment": DurableDeployment,
             "DurableRuntime": DurableRuntime,
             "ExecutionStoreProvider": ExecutionStoreProvider,
+            "IdempotencyConflictError": IdempotencyConflictError,
             "durable_runtime": durable_runtime,
+        }[name]
+    if name in {
+        "ExecutionAdmissionError",
+        "ExecutionCanceledError",
+        "ExecutionRecordSizeError",
+        "ExecutionStoreError",
+        "ExecutionSuspendedError",
+        "RetryableExecutionError",
+    }:
+        from hayhooks.durable.models import (
+            ExecutionAdmissionError,
+            ExecutionCanceledError,
+            ExecutionRecordSizeError,
+            ExecutionStoreError,
+            ExecutionSuspendedError,
+            RetryableExecutionError,
+        )
+
+        return {
+            "ExecutionAdmissionError": ExecutionAdmissionError,
+            "ExecutionCanceledError": ExecutionCanceledError,
+            "ExecutionRecordSizeError": ExecutionRecordSizeError,
+            "ExecutionStoreError": ExecutionStoreError,
+            "ExecutionSuspendedError": ExecutionSuspendedError,
+            "RetryableExecutionError": RetryableExecutionError,
         }[name]
     if name in {"ExecutionStore", "InMemoryExecutionStoreProvider", "RedisExecutionStoreProvider"}:
         from hayhooks.durable.store import ExecutionStore, InMemoryExecutionStoreProvider, RedisExecutionStoreProvider
@@ -77,15 +148,27 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "DefinitionRevisionConflictError",
     "DurableAuthoringMode",
+    "DurableContext",
+    "DurableDeployment",
     "DurableRuntime",
+    "DurableSettings",
+    "ExecutionAdmissionError",
+    "ExecutionCanceledError",
     "ExecutionProgress",
+    "ExecutionRecordSizeError",
     "ExecutionResult",
     "ExecutionStatus",
     "ExecutionStore",
+    "ExecutionStoreError",
     "ExecutionStoreProvider",
+    "ExecutionSuspendedError",
+    "IdempotencyConflictError",
     "InMemoryExecutionStoreProvider",
     "RedisExecutionStoreProvider",
+    "RetryableExecutionError",
+    "create_durable_router",
     "current_durable_context",
     "current_execution_id",
     "durable_authoring_mode",
