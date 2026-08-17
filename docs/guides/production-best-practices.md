@@ -158,16 +158,19 @@ healthcheck:
   start_period: 40s
 ```
 
-For Kubernetes, use a readiness probe on the same endpoint:
+For Kubernetes, use the same endpoint as a liveness probe:
 
 ```yaml
-readinessProbe:
+livenessProbe:
   httpGet:
     path: /status
     port: 1416
   initialDelaySeconds: 40
   periodSeconds: 30
 ```
+
+For a durable pipeline, use `/status/{pipeline_name}` as its readiness probe.
+It returns `503` when that deployment has no healthy durable worker slots.
 
 ## Treat Durable Execution as a Controlled Beta
 

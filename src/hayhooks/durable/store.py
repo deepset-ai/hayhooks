@@ -456,7 +456,7 @@ class ExecutionStore:
         if control is None:
             return False
         if control.terminal:
-            return control.status is EngineStatus.CANCELED
+            return False
         event = _encode(
             {
                 "sequence": control.progress_sequence + 1,
@@ -468,14 +468,14 @@ class ExecutionStore:
             limit=self.config.max_progress_event_bytes,
             label="progress",
         )
-        await self._core_call(
+        plan = await self._core_call(
             "request cancellation",
             self.core.transition(
                 execution_id,
                 RequestCancellation(0, normalize_cancellation_reason(reason), (event,)),
             ),
         )
-        return True
+        return bool(plan.progress_events)
 
     async def resume(self, execution_id: str, update: JsonValue | None = None) -> bool:
         """Resume a waiting execution with an optional JSON-safe application update."""

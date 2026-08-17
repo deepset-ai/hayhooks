@@ -99,7 +99,11 @@ Get status of all deployed pipelines.
     "pipeline1",
     "pipeline2"
   ],
-  "status": "Up!"
+  "status": "Up!",
+  "durable": {
+    "healthy": true,
+    "deployments": {}
+  }
 }
 ```
 

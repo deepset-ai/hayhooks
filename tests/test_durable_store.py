@@ -244,6 +244,41 @@ async def test_cancel_and_checkpoint_assign_distinct_persisted_progress_sequence
     assert [event.sequence for event in record.progress] == [1, 2]
 
 
+async def test_cancel_reports_only_a_newly_accepted_request() -> None:
+    store = _store()
+    await store.submit(_record())
+
+    assert await store.request_cancel("run_1")
+    assert not await store.request_cancel("run_1")
+
+
+async def test_cancel_losing_a_terminal_transition_race_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    core = InMemoryExecutionStore(deployment="deployment", config=_config())
+    store = ExecutionStore(core, definition_revision="rev-1")
+    await store.submit(_record())
+    claim = await store.claim_next("worker")
+    assert claim is not None
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_transition = core.transition
+
+    async def gated_transition(run_id, command, *, candidate=False):
+        if isinstance(command, RequestCancellation):
+            entered.set()
+            await release.wait()
+        return await original_transition(run_id, command, candidate=candidate)
+
+    monkeypatch.setattr(core, "transition", gated_transition)
+    async with claim:
+        cancellation = asyncio.create_task(store.request_cancel("run_1"))
+        await entered.wait()
+        claim.record.status = ExecutionStatus.COMPLETED
+        claim.record.result = {"answer": "done"}
+        await claim.complete()
+        release.set()
+        assert not await cancellation
+
+
 async def test_checkpoint_keeps_progress_added_after_a_concurrent_cancellation() -> None:
     store = _store()
     await store.submit(_record())

@@ -317,18 +317,17 @@ class DurableAgentExecutor(AgentExecutor):
             )
         except KeyError:
             return
-        if not accepted:
-            return
-        log.bind(pipeline_name=self.pipeline_name, task_id=task.id, execution_id=execution_id).debug(
-            "Accepted durable A2A task cancellation"
-        )
         updater = TaskUpdater(event_queue, task.id, task.context_id)
-        await updater.add_artifact(
-            [new_text_part("Cancellation requested")],
-            artifact_id=f"{task.id}-{DURABLE_PROGRESS_ARTIFACT_NAME}",
-            name=DURABLE_PROGRESS_ARTIFACT_NAME,
-            append=False,
-        )
+        if accepted:
+            log.bind(pipeline_name=self.pipeline_name, task_id=task.id, execution_id=execution_id).debug(
+                "Accepted durable A2A task cancellation"
+            )
+            await updater.add_artifact(
+                [new_text_part("Cancellation requested")],
+                artifact_id=f"{task.id}-{DURABLE_PROGRESS_ARTIFACT_NAME}",
+                name=DURABLE_PROGRESS_ARTIFACT_NAME,
+                append=False,
+            )
         await self._wait_for_update(execution_id, owner_id, updater, terminal_only=True)
 
     async def _wait_for_update(

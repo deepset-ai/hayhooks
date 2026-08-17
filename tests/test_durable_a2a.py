@@ -40,6 +40,7 @@ class _Deployment:
         self.submitted_payload = None
         self.resume_update = None
         self.cancel_requested = False
+        self.cancel_accepted = True
 
     async def start(self):
         return None
@@ -68,7 +69,7 @@ class _Deployment:
         self.cancel_requested = True
         self.record.status = ExecutionStatus.CANCELED
         self.record.sequence += 1
-        return True
+        return self.cancel_accepted
 
 
 class _BlockingDeployment(_Deployment):
@@ -239,6 +240,18 @@ def test_a2a_http_cancel_reaches_durable_execution(monkeypatch, http_store) -> N
         canceled = _response_task(client.post("/durable-agent/", json=_cancel_payload(active["id"])))
 
     assert deployment.cancel_requested
+    assert canceled["status"]["state"] == "TASK_STATE_CANCELED"
+
+
+def test_a2a_http_cancel_projects_a_terminal_race(monkeypatch, http_store) -> None:
+    deployment = _Deployment(status=ExecutionStatus.RUNNING)
+    deployment.cancel_accepted = False
+    app = _http_app(http_store, deployment, monkeypatch)
+
+    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+        active = _response_task(client.post("/durable-agent/", json=_send_payload("initial", return_immediately=True)))
+        canceled = _response_task(client.post("/durable-agent/", json=_cancel_payload(active["id"])))
+
     assert canceled["status"]["state"] == "TASK_STATE_CANCELED"
 
 

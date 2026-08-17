@@ -208,7 +208,7 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 ### HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT / HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT
 
 - Default: `5.0` seconds each
-- Description: Bound established-socket operations and new Redis connections for durable execution. A timeout is reported as a store failure, causing worker backoff and readiness to return `503` rather than waiting indefinitely.
+- Description: Bound established-socket operations and new Redis connections for durable execution. A timeout is reported as a store failure, causing worker backoff and marking the affected durable deployment unhealthy rather than waiting indefinitely.
 
 ### HAYHOOKS_DURABLE_REDIS_HEALTH_CHECK_INTERVAL
 

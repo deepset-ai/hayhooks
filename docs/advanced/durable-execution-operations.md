@@ -44,11 +44,12 @@ retain its terminal records through the configured Redis TTL.
 ## Health and incidents
 
 Health exposes `nonterminal`, `runnable`, `lease_expiry`, and
-`worker_store_error_streak`. A claim or transition store failure makes readiness
-unhealthy until that worker completes a store operation successfully. Investigate
+`worker_store_error_streak`. A claim or transition store failure marks the
+deployment health snapshot unhealthy until that worker completes a store
+operation successfully; `/status/{pipeline_name}` then returns `503`. Investigate
 a growing runnable count, repeated lease recovery, store failures, or executions
-that remain running/waiting longer than expected. Pause submissions, preserve the
-Redis namespace, and inspect controls and fences before changing code or
+that remain running/waiting longer than expected. Pause submissions, preserve
+the Redis namespace, and inspect controls and fences before changing code or
 restarting workers.
 
 Use Redis 6.2 or later. Monitor the durable counts alongside Redis availability

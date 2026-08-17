@@ -594,6 +594,8 @@ def test_durable_rest_can_inspect_and_cancel_an_execution_from_an_old_revision(m
             assert canceled.status_code == 202
             assert canceled.json()["cancellation_requested_at"] is not None
             wrapper.release.set()
+            _wait_for_status(client, links["self"], "canceled", "durable execution did not cancel")
+            assert client.post(links["cancel"]).status_code == 200
     finally:
         wrapper.release.set()
 

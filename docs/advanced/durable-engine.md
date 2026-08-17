@@ -203,8 +203,9 @@ and resumes verify that persisted work matches the active revision.
 
 `DurableExecutionManager.health_snapshot()` reports `nonterminal`, `runnable`,
 `lease_expiry`, and the current worker store-error streak. Repeated claim or
-transition failures make readiness unhealthy until a worker completes a store
-operation successfully. Alert on sustained runnable growth, repeated lease
+transition failures make the deployment health snapshot unhealthy until a
+worker completes a store operation successfully; `/status/{pipeline_name}`
+then returns `503`. Alert on sustained runnable growth, repeated lease
 recovery, worker/store health failures, and runs that exceed their expected
 duration.
 
