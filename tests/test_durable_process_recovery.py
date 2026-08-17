@@ -126,11 +126,13 @@ def _cleanup_redis(redis_url: str, prefix: str) -> None:
 
 def create_a2a_recovery_app():
     """Build the process-test A2A app after loading its pipeline fixture."""
-    from hayhooks.durable.runtime import DurableDeployment
+    from hayhooks.durable.runtime import DurableDeployment, DurableRuntime
     from hayhooks.server.a2a.app import create_a2a_app
     from hayhooks.server.utils.deploy_utils import deploy_pipelines
+    from hayhooks.settings import settings
 
-    deploy_pipelines()
+    durable_runtime = DurableRuntime(app_settings=settings)
+    deploy_pipelines(durable_runtime=durable_runtime)
     if os.getenv(_CRASH_AFTER_A2A_SUBMIT_ENV) == "1":
         submit = DurableDeployment.submit
 
@@ -140,7 +142,7 @@ def create_a2a_recovery_app():
             return result
 
         DurableDeployment.submit = submit_then_crash
-    return create_a2a_app()
+    return create_a2a_app(durable_runtime=durable_runtime)
 
 
 def _a2a_rpc(base_url: str, method: str, params: dict, request_id: str) -> dict:

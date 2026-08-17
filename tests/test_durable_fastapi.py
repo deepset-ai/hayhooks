@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -21,6 +22,10 @@ from hayhooks.durable import (
     DurableSettings,
     InMemoryExecutionStoreProvider,
     create_durable_router,
+)
+
+pytestmark = pytest.mark.skipif(
+    not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
 )
 
 
