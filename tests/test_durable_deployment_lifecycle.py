@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.utils.deploy_utils import deploy_pipeline_files
 from hayhooks.settings import settings
 
 pytestmark = pytest.mark.skipif(
@@ -268,7 +269,7 @@ def test_undeploy_refuses_to_strand_thread_backed_work(monkeypatch) -> None:
     app = create_app()
     with TestClient(app) as client:
         assert _deploy(client, _blocking_source()).status_code == 200
-        old_wrapper = registry.get("job")
+        old_wrapper = app.state.pipeline_registry.get("job")
         assert old_wrapper is not None
         submitted = client.post("/job/run-durable", json={"value": 2})
         assert old_wrapper.started.wait(timeout=1)
@@ -282,6 +283,42 @@ def test_undeploy_refuses_to_strand_thread_backed_work(monkeypatch) -> None:
         else:
             pytest.fail("durable work did not complete after rejected undeploy")
         assert client.post("/undeploy/job").status_code == 200
+
+
+def test_fastapi_apps_own_pipeline_publication_and_allow_the_same_name() -> None:
+    app_a = create_app()
+    app_b = create_app()
+
+    with TestClient(app_a) as client_a, TestClient(app_b) as client_b:
+        assert _deploy(client_a, _durable_source(field="value", increment=1, revision="app-a")).status_code == 200
+
+        assert client_a.get("/status").json()["pipelines"] == ["job"]
+        assert client_b.get("/status").json()["pipelines"] == []
+        assert client_b.get("/status/job").status_code == 404
+        assert client_b.post("/job/run-durable", json={"value": 1}).status_code == 404
+
+        assert _deploy(client_b, _durable_source(field="value", increment=10, revision="app-b")).status_code == 200
+        submitted_a = client_a.post("/job/run-durable", json={"value": 1})
+        submitted_b = client_b.post("/job/run-durable", json={"value": 1})
+        assert _wait_for_completion(client_a, submitted_a)["result"] == {"value": 2}
+        assert _wait_for_completion(client_b, submitted_b)["result"] == {"value": 11}
+
+
+def test_deploy_rejects_a_runtime_owned_by_another_app() -> None:
+    app = create_app()
+    other_runtime = DurableRuntime(app_settings=settings)
+
+    with pytest.raises(ValueError, match="does not belong"):
+        deploy_pipeline_files(
+            "job",
+            {"pipeline_wrapper.py": _api_source()},
+            app=app,
+            save_files=False,
+            durable_runtime=other_runtime,
+        )
+
+    assert app.state.pipeline_registry.get("job") is None
+    assert all(getattr(route, "path", None) != "/job/run" for route in app.routes)
 
 
 def test_durable_to_non_durable_overwrite_removes_control_routes() -> None:

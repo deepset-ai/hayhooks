@@ -50,9 +50,10 @@ exceptions, and FastAPI adapter directly from `hayhooks.durable`. A standalone
 runtime starts only deployments attached to that runtime; it never inspects the
 Hayhooks pipeline registry.
 
-This complete `app.py` adds an authenticated durable API to an existing FastAPI
-application. Authentication middleware is expected to set a stable principal
-on `request.state` before the owner dependency runs:
+This durable integration fragment assumes the host FastAPI application already
+has authentication middleware that sets a stable principal on `request.state`
+before the owner dependency runs. The authentication middleware itself is
+application-specific and intentionally omitted:
 
 ```python
 from contextlib import asynccontextmanager

@@ -4,14 +4,14 @@ import pytest
 from haystack import Document, Pipeline
 
 from hayhooks.server.exceptions import PipelineNotFoundError
-from hayhooks.server.pipelines.registry import _PipelineRegistry
+from hayhooks.server.pipelines.registry import PipelineRegistry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 
 
 @pytest.fixture
 def pipeline_registry():
-    return _PipelineRegistry()
+    return PipelineRegistry()
 
 
 @pytest.fixture

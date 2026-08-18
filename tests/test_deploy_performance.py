@@ -1,6 +1,7 @@
 import asyncio
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -146,6 +147,7 @@ async def test_parallel_policy_prepares_different_pipelines_concurrently(monkeyp
 def test_defer_openapi_rebuild_skips_setup():
     mock_app = MagicMock(spec=FastAPI)
     mock_app.routes = []
+    mock_app.state = SimpleNamespace(pipeline_registry=registry)
 
     deploy_pipeline_yaml(
         pipeline_name="defer_test",
@@ -161,6 +163,7 @@ def test_defer_openapi_rebuild_skips_setup():
 def test_no_defer_calls_setup():
     mock_app = MagicMock(spec=FastAPI)
     mock_app.routes = []
+    mock_app.state = SimpleNamespace(pipeline_registry=registry)
 
     deploy_pipeline_yaml(
         pipeline_name="no_defer_test",

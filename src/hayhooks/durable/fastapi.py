@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import re
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, cast
 
@@ -15,7 +14,6 @@ from hayhooks.durable.engine import RUN_ID_PATTERN
 from hayhooks.durable.models import ExecutionAdmissionError, ExecutionStoreError
 from hayhooks.durable.runtime import DefinitionRevisionConflictError, DurableDeployment, IdempotencyConflictError
 
-_IDEMPOTENCY_KEY_PATTERN = re.compile(rf"^{RUN_ID_PATTERN}$")
 _MAX_OWNER_LENGTH = 512
 _MAX_OWNER_SCOPED_IDEMPOTENCY_KEY_LENGTH = 63
 ExecutionId = Annotated[str, Path(pattern=rf"^{RUN_ID_PATTERN}$", min_length=1, max_length=128)]
@@ -98,14 +96,13 @@ def create_durable_router(  # noqa: C901, PLR0915 - handlers share one deploymen
         response: Response,
         request: Request,
         owner_id: Any = Depends(owner_dependency),  # noqa: B008
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        idempotency_key: str | None = Header(
+            default=None,
+            alias="Idempotency-Key",
+            pattern=rf"^{RUN_ID_PATTERN}$",
+        ),
     ) -> ExecutionResult:
         owner_id = _validated_owner(owner_id, enforce_owner=enforce_owner)
-        if idempotency_key is not None and _IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key) is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Idempotency-Key must contain 1-128 letters, digits, underscores, or hyphens",
-            )
         if (
             enforce_owner
             and idempotency_key is not None

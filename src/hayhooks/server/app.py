@@ -22,14 +22,9 @@ from fastapi.staticfiles import StaticFiles
 
 from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
-from hayhooks.server.routers import (
-    dashboard_router,
-    deploy_router,
-    draw_router,
-    openai_router,
-    status_router,
-    undeploy_router,
-)
+from hayhooks.server.pipelines.registry import PipelineRegistry
+from hayhooks.server.routers import dashboard_router, deploy_router, draw_router, status_router, undeploy_router
+from hayhooks.server.routers.openai import create_openai_router
 from hayhooks.server.tracing import (
     SPAN_PIPELINE_STARTUP_DEPLOY,
     build_trace_tags,
@@ -280,7 +275,11 @@ def get_package_version() -> str:
     return "0.0.0"
 
 
-def create_app(*, durable_runtime: DurableRuntime | None = None) -> FastAPI:
+def create_app(
+    *,
+    durable_runtime: DurableRuntime | None = None,
+    pipeline_registry: PipelineRegistry | None = None,
+) -> FastAPI:
     """
     Create and configure a FastAPI application.
 
@@ -312,6 +311,7 @@ def create_app(*, durable_runtime: DurableRuntime | None = None) -> FastAPI:
 
     app = FastAPI(**app_params)
     app.state.durable_runtime = durable_runtime or DurableRuntime(app_settings=settings)
+    app.state.pipeline_registry = pipeline_registry or PipelineRegistry()
 
     configure_tracing()
     app.add_middleware(RequestIdMiddleware)
@@ -335,7 +335,7 @@ def create_app(*, durable_runtime: DurableRuntime | None = None) -> FastAPI:
     app.include_router(draw_router)
     app.include_router(deploy_router)
     app.include_router(undeploy_router)
-    app.include_router(openai_router)
+    app.include_router(create_openai_router(app.state.pipeline_registry))
     app.include_router(dashboard_router, prefix=settings.dashboard_path)
 
     _mount_dashboard_ui(app)

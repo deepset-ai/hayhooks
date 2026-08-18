@@ -4,7 +4,7 @@ from hayhooks.server.exceptions import PipelineNotFoundError
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 
-class _PipelineRegistry:
+class PipelineRegistry:
     """
     Registry for pipeline wrappers.
 
@@ -74,4 +74,18 @@ class _PipelineRegistry:
         self._metadata.clear()
 
 
-registry = _PipelineRegistry()
+registry = PipelineRegistry()
+
+
+def get_pipeline_registry(app: Any | None = None) -> PipelineRegistry:
+    """Return the registry owned by *app*, or the process registry for app-less callers."""
+    if app is None:
+        return registry
+
+    app_registry = getattr(app.state, "pipeline_registry", None)
+    if isinstance(app_registry, PipelineRegistry):
+        return app_registry
+
+    app_registry = PipelineRegistry()
+    app.state.pipeline_registry = app_registry
+    return app_registry

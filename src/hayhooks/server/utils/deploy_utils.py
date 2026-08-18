@@ -31,7 +31,7 @@ from hayhooks.server.pipelines.models import (
     create_response_model_from_callable,
     get_response_class_from_callable,
 )
-from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.pipelines.registry import PipelineRegistry, get_pipeline_registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.tracing import (
     SPAN_PIPELINE_DEPLOY,
@@ -59,15 +59,17 @@ from hayhooks.settings import DeployConcurrencyPolicy, settings
 # These APIs can be called from multiple event loops, so the locks must be process-wide.
 _deployment_serial_lock = threading.Lock()
 _deployment_publication_lock = threading.Lock()
-_deployments_in_progress: set[str] = set()
+_deployments_in_progress: set[tuple[PipelineRegistry, str]] = set()
 
 
 def _app_runtime(app: FastAPI | None, runtime: DurableRuntime | None = None) -> DurableRuntime | None:
-    if runtime is not None:
-        return runtime
     state = getattr(app, "state", None) if app is not None else None
     candidate = getattr(state, "durable_runtime", None)
-    return candidate if isinstance(candidate, DurableRuntime) else None
+    app_runtime = candidate if isinstance(candidate, DurableRuntime) else None
+    if runtime is not None and app_runtime is not None and runtime is not app_runtime:
+        msg = "The explicit DurableRuntime does not belong to the supplied FastAPI app"
+        raise ValueError(msg)
+    return runtime or app_runtime
 
 
 def _deployment_candidate(
@@ -100,11 +102,18 @@ async def _deployment_lock(lock: threading.Lock):
 class _DeploymentSnapshot:
     """Rollback state captured before preparation mutates files or loaded modules."""
 
-    def __init__(self, pipeline_name: str, app: FastAPI | None, runtime: DurableRuntime | None) -> None:
+    def __init__(
+        self,
+        pipeline_name: str,
+        app: FastAPI | None,
+        runtime: DurableRuntime | None,
+        pipeline_registry: PipelineRegistry,
+    ) -> None:
         self.pipeline_name = pipeline_name
         self.app = app
-        self.wrapper = registry.get(pipeline_name)
-        metadata = registry.get_metadata(pipeline_name)
+        self.registry = pipeline_registry
+        self.wrapper = pipeline_registry.get(pipeline_name)
+        metadata = pipeline_registry.get_metadata(pipeline_name)
         self.metadata = dict(metadata) if metadata is not None else None
         self.runtime = runtime
         self.deployment = runtime.current_deployment(pipeline_name) if runtime is not None else None
@@ -137,13 +146,14 @@ class _DeploymentSnapshot:
         pipeline_name: str,
         app: FastAPI | None,
         runtime: DurableRuntime | None,
+        pipeline_registry: PipelineRegistry,
     ) -> "_DeploymentSnapshot":
-        return cls(pipeline_name, app, runtime)
+        return cls(pipeline_name, app, runtime, pipeline_registry)
 
     def restore_publication(self) -> None:
-        registry.remove(self.pipeline_name)
+        self.registry.remove(self.pipeline_name)
         if self.wrapper is not None:
-            registry.add(self.pipeline_name, self.wrapper, metadata=dict(self.metadata or {}))
+            self.registry.add(self.pipeline_name, self.wrapper, metadata=dict(self.metadata or {}))
         if self.runtime is not None:
             self.runtime.install_deployment(self.pipeline_name, self.deployment)
         if self.app is not None and self.routes is not None:
@@ -189,6 +199,8 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
 ) -> dict[str, str]:
     """Prepare independently, then atomically publish or restore one pipeline."""
     durable_runtime = _app_runtime(app, durable_runtime)
+    pipeline_registry = get_pipeline_registry(app)
+    deployment_key = (pipeline_registry, pipeline_name)
     dlog = log.bind(
         pipeline_name=pipeline_name,
         overwrite=overwrite,
@@ -208,10 +220,10 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
     async with policy_lock:
         try:
             async with _deployment_lock(_deployment_publication_lock):
-                if pipeline_name in _deployments_in_progress:
+                if deployment_key in _deployments_in_progress:
                     msg = f"Pipeline '{pipeline_name}' is already being deployed"
                     raise PipelineAlreadyExistsError(msg)
-                snapshot = _DeploymentSnapshot.capture(pipeline_name, app, durable_runtime)
+                snapshot = _DeploymentSnapshot.capture(pipeline_name, app, durable_runtime, pipeline_registry)
                 if snapshot.wrapper is not None and not overwrite:
                     msg = f"Pipeline '{pipeline_name}' already exists"
                     raise PipelineAlreadyExistsError(msg)
@@ -231,7 +243,7 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
                             "complete or cancel them before replacing it"
                         )
                         raise PipelineAlreadyExistsError(msg)
-                _deployments_in_progress.add(pipeline_name)
+                _deployments_in_progress.add(deployment_key)
                 registered = True
 
             if remove_files_before_prepare:
@@ -281,7 +293,7 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
         finally:
             if registered:
                 async with _deployment_lock(_deployment_publication_lock):
-                    _deployments_in_progress.discard(pipeline_name)
+                    _deployments_in_progress.discard(deployment_key)
             if snapshot is not None:
                 snapshot.cleanup()
 
@@ -352,15 +364,17 @@ async def undeploy_pipeline_async(
 ) -> None:
     """Atomically unpublish a pipeline before stopping its owned resources."""
     durable_runtime = _app_runtime(app, durable_runtime)
+    pipeline_registry = get_pipeline_registry(app)
+    deployment_key = (pipeline_registry, pipeline_name)
     policy_lock = (
         _deployment_lock(_deployment_serial_lock)
         if settings.deploy_concurrency == DeployConcurrencyPolicy.SERIALIZED
         else nullcontext()
     )
     async with policy_lock, _deployment_lock(_deployment_publication_lock):
-        if pipeline_name in _deployments_in_progress:
+        if deployment_key in _deployments_in_progress:
             raise HTTPException(status_code=409, detail=f"Pipeline '{pipeline_name}' is being deployed")
-        if registry.get(pipeline_name) is None:
+        if pipeline_registry.get(pipeline_name) is None:
             raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
         deployment = durable_runtime.current_deployment(pipeline_name) if durable_runtime is not None else None
         if deployment is not None:
@@ -752,6 +766,7 @@ def add_pipeline_api_route(
         - Updates registry metadata with request/response models and file requirement flag
     """
     clog = log.bind(pipeline_name=pipeline_name)
+    pipeline_registry = get_pipeline_registry(app)
     deployment = _durable_deployment
     if deployment is None:
         runtime = _app_runtime(app)
@@ -830,7 +845,7 @@ def add_pipeline_api_route(
         _defer_openapi_rebuild=True,
     )
 
-    registry.update_metadata(
+    pipeline_registry.update_metadata(
         pipeline_name,
         {
             "request_model": RunRequest,
@@ -880,9 +895,10 @@ def _register_prepared_pipeline(
         PipelineAlreadyExistsError: If the pipeline already exists at commit time.
     """
     clog = log.bind(pipeline_name=pipeline_name)
+    pipeline_registry = get_pipeline_registry(app)
 
     # Commit resolves overwrite semantics before registration.
-    if registry.get(pipeline_name):
+    if pipeline_registry.get(pipeline_name):
         msg = f"Pipeline '{pipeline_name}' already exists"
         raise PipelineAlreadyExistsError(msg)
 
@@ -920,7 +936,7 @@ def _register_prepared_pipeline(
 
     # Add wrapper to registry
     clog.debug("Adding pipeline to registry with metadata: {}", metadata)
-    registry.add(pipeline_name, pipeline_wrapper, metadata=metadata)
+    pipeline_registry.add(pipeline_name, pipeline_wrapper, metadata=metadata)
     clog.success("Pipeline '{}' successfully added to registry", pipeline_name)
 
     # Create API route if app is provided
@@ -1049,6 +1065,7 @@ def commit_prepared_pipeline(
         cleanup_files_on_overwrite: If ``True``, remove persisted files when replacing an existing pipeline.
     """
     durable_runtime = _app_runtime(app, durable_runtime)
+    pipeline_registry = get_pipeline_registry(app)
     candidate = _durable_deployment
     if candidate is None:
         candidate = _deployment_candidate(durable_runtime, prepared.name, prepared.wrapper)
@@ -1064,13 +1081,13 @@ def commit_prepared_pipeline(
             }
         ),
     ):
-        if registry.get(prepared.name) is not None:
+        if pipeline_registry.get(prepared.name) is not None:
             if not overwrite:
                 msg = f"Pipeline '{prepared.name}' already exists"
                 raise PipelineAlreadyExistsError(msg)
 
             log.bind(pipeline_name=prepared.name).debug("Clearing existing pipeline '{}'", prepared.name)
-            registry.remove(prepared.name)
+            pipeline_registry.remove(prepared.name)
             if cleanup_files_on_overwrite:
                 remove_pipeline_files(prepared.name, settings.pipelines_dir)
 
@@ -1120,6 +1137,7 @@ def deploy_pipeline_files(  # noqa: PLR0913 - stable public deployment API
         PipelineModuleLoadError: If loading the pipeline module fails.
         PipelineWrapperError: If wrapper creation or setup fails.
     """
+    durable_runtime = _app_runtime(app, durable_runtime)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY,
         tags=build_trace_tags(
@@ -1183,6 +1201,7 @@ def deploy_pipeline_yaml(  # noqa: PLR0913 - stable public deployment API
         ValueError: If the YAML cannot be parsed into a Pipeline.
         InvalidYamlIOError: If the YAML is missing inputs/outputs declarations.
     """
+    durable_runtime = _app_runtime(app, durable_runtime)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY,
         tags=build_trace_tags(
@@ -1283,6 +1302,7 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
     Raises:
         HTTPException: If the pipeline is not found in the registry (404).
     """
+    pipeline_registry = get_pipeline_registry(app)
     with trace_operation(
         SPAN_PIPELINE_UNDEPLOY,
         tags=build_trace_tags(
@@ -1294,11 +1314,11 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
         ),
     ):
         # Check if pipeline exists in registry
-        if pipeline_name not in registry.get_names():
+        if pipeline_name not in pipeline_registry.get_names():
             raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
 
         # Remove pipeline from registry
-        registry.remove(pipeline_name)
+        pipeline_registry.remove(pipeline_name)
 
         # Clean up sys.modules for wrapper-based pipelines
         unload_pipeline_modules(pipeline_name)

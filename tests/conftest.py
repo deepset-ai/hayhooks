@@ -139,7 +139,7 @@ def test_settings():
 
 @pytest.fixture(scope="session", autouse=True)
 def test_app():
-    return create_app()
+    return create_app(pipeline_registry=registry)
 
 
 @pytest.fixture

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.pipelines.registry import get_pipeline_registry
 from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces
 from hayhooks.server.utils.live_trace_stream import get_trace_stream_broadcaster
 from hayhooks.settings import settings
@@ -79,8 +79,8 @@ class DashboardUiConfigResponse(BaseModel):
     summary="List dashboard entry points",
     description="Returns deployed Hayhooks pipelines used as dashboard entry points.",
 )
-async def entrypoints() -> EntrypointsResponse:
-    return EntrypointsResponse(entrypoints=sorted(registry.get_names()))
+async def entrypoints(request: Request) -> EntrypointsResponse:
+    return EntrypointsResponse(entrypoints=sorted(get_pipeline_registry(request.app).get_names()))
 
 
 @router.get(

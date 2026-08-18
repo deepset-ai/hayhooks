@@ -1,11 +1,11 @@
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 
-from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.pipelines.registry import get_pipeline_registry
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 
 router = APIRouter()
@@ -26,9 +26,10 @@ router = APIRouter()
     },
 )
 async def draw(
+    request: Request,
     pipeline_name: str = PathParam(description="Name of the pipeline to visualize", examples=["my_pipeline"]),
 ) -> FileResponse:
-    pipeline = registry.get(pipeline_name)
+    pipeline = get_pipeline_registry(request.app).get(pipeline_name)
 
     if isinstance(pipeline, BasePipelineWrapper):
         pipeline = pipeline.pipeline

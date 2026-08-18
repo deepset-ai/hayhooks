@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.pipelines.registry import get_pipeline_registry
 
 router = APIRouter()
 
@@ -32,7 +32,7 @@ class PipelineStatusResponse(BaseModel):
     description="Returns the system status and a list of all available pipelines.",
 )
 async def status_all(request: Request) -> StatusResponse:
-    pipelines = registry.get_names()
+    pipelines = get_pipeline_registry(request.app).get_names()
     durable_health = await request.app.state.durable_runtime.health()
     return StatusResponse(status="Up!", pipelines=pipelines, durable=durable_health)
 
@@ -46,7 +46,7 @@ async def status_all(request: Request) -> StatusResponse:
     description="Returns the status of a specific pipeline. Returns 404 if the pipeline doesn't exist.",
 )
 async def status(request: Request, pipeline_name: str) -> PipelineStatusResponse:
-    if pipeline_name not in registry.get_names():
+    if pipeline_name not in get_pipeline_registry(request.app).get_names():
         raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
     deployment = request.app.state.durable_runtime.current_deployment(pipeline_name)
     if deployment is not None and not deployment.manager.health["healthy"]:

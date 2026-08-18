@@ -4,6 +4,7 @@ import shutil
 import sys
 from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import docstring_parser
@@ -708,6 +709,7 @@ def test_deploy_pipeline_files_without_adding_api_route(test_settings, mocker):
 def test_deploy_pipeline_files_skip_mcp(mocker):
     mock_app = mocker.Mock()
     mock_app.routes = []
+    mock_app.state = SimpleNamespace(pipeline_registry=registry)
 
     # This pipeline wrapper has skip_mcp class attribute set to True
     test_file_path = Path("tests/test_files/files/chat_with_website_mcp_skip/pipeline_wrapper.py")
