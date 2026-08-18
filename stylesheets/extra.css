@@ -1,0 +1,14 @@
+/* Text color for light mode */
+[data-md-color-scheme="default"] {
+    --md-primary-fg-color:#1f49d4;
+}
+
+/* Text and accent color for dark mode */
+[data-md-color-scheme="slate"] {
+    --md-primary-fg-color:#05af9d;
+    --md-accent-fg-color: #2be6cf; 
+}
+
+.md-header, .md-tabs {
+    background-color: #2b2f55;
+}
