@@ -185,6 +185,25 @@ async def run_api_async(self, query: str) -> AsyncGenerator:
     )
 ```
 
+##### Client disconnects
+
+By default, closing the response stream or cancelling its consumer also cancels the pipeline task. Cancellation still
+propagates to the request handler so HTTP cleanup can finish normally.
+
+Set `shield_pipeline_task=True` when the request should stop but the pipeline must continue running:
+
+```python
+return async_streaming_generator(
+    pipeline=self.pipeline,
+    pipeline_run_args={"prompt": {"query": query}},
+    shield_pipeline_task=True,
+)
+```
+
+Shielding only changes cleanup of the pipeline task: it does not suppress cancellation in the request handler, and no
+more chunks can be delivered to a disconnected client. Hayhooks keeps the detached task alive until it finishes and
+logs any eventual exception.
+
 When a generator is detected, Hayhooks automatically wraps it in a FastAPI `StreamingResponse` using the `text/plain` media type. The behaviour is identical for both `run_api()` and `run_api_async()`—the only difference is whether the underlying generator is sync or async.
 
 | Method            | What you return                        | Response media type | Notes                                                     |
