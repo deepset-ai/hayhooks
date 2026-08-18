@@ -1,3 +1,4 @@
+import asyncio
 import contextvars
 import os
 import time
@@ -176,6 +177,28 @@ def create_mock_agent(mocker):  # noqa: C901
         return mock_agent
 
     return _factory
+
+
+@pytest.fixture
+def blocking_mock_agent(mocker):
+    release = asyncio.Event()
+    cancelled = asyncio.Event()
+    completed = asyncio.Event()
+    mock_agent = mocker.Mock(spec=Agent)
+    assert isinstance(mock_agent, Agent)
+
+    async def mock_run_async(messages=None, streaming_callback=None, **kwargs):
+        await streaming_callback(StreamingChunk(content="First chunk", index=0))
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        completed.set()
+        return {"messages": ["Done"]}
+
+    mock_agent.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+    return mock_agent, release, cancelled, completed
 
 
 def test_streaming_generator_with_sync_only_generator(pipeline_with_sync_only_generator):
@@ -413,6 +436,62 @@ async def test_async_streaming_cancellation(async_pipeline_with_async_capable_ge
 
     chunks = await consume_with_cancel()
     assert len(chunks) >= 1
+
+
+@pytest.mark.parametrize("shield_pipeline_task", [False, True], ids=["cancel", "shield"])
+async def test_async_streaming_generator_close_pipeline_task(blocking_mock_agent, shield_pipeline_task):
+    mock_agent, release, cancelled, completed = blocking_mock_agent
+    gen = async_streaming_generator(
+        mock_agent,
+        pipeline_run_args={"messages": []},
+        shield_pipeline_task=shield_pipeline_task,
+    )
+
+    assert (await anext(gen)).content == "First chunk"
+    await gen.aclose()
+
+    if shield_pipeline_task:
+        assert not cancelled.is_set()
+        release.set()
+        await asyncio.wait_for(completed.wait(), timeout=1.0)
+    else:
+        assert cancelled.is_set()
+        assert not completed.is_set()
+
+    mock_agent.run_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize("shield_pipeline_task", [False, True], ids=["cancel", "shield"])
+async def test_async_streaming_consumer_cancellation_pipeline_task(blocking_mock_agent, shield_pipeline_task):
+    mock_agent, release, cancelled, completed = blocking_mock_agent
+    gen = async_streaming_generator(
+        mock_agent,
+        pipeline_run_args={"messages": []},
+        shield_pipeline_task=shield_pipeline_task,
+    )
+    first_chunk_received = asyncio.Event()
+
+    async def consume():
+        assert (await anext(gen)).content == "First chunk"
+        first_chunk_received.set()
+        await anext(gen)
+
+    consumer_task = asyncio.create_task(consume())
+    await first_chunk_received.wait()
+    consumer_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await consumer_task
+
+    if shield_pipeline_task:
+        assert not cancelled.is_set()
+        release.set()
+        await asyncio.wait_for(completed.wait(), timeout=1.0)
+    else:
+        assert cancelled.is_set()
+        assert not completed.is_set()
+
+    mock_agent.run_async.assert_awaited_once()
 
 
 # ContextVar used to verify context propagation into the streaming thread
