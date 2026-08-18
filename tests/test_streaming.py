@@ -185,6 +185,7 @@ def blocking_mock_agent(mocker):
     cancelled = asyncio.Event()
     completed = asyncio.Event()
     mock_agent = mocker.Mock(spec=Agent)
+    assert isinstance(mock_agent, Agent)
 
     async def mock_run_async(messages=None, streaming_callback=None, **kwargs):
         await streaming_callback(StreamingChunk(content="First chunk", index=0))
@@ -457,6 +458,8 @@ async def test_async_streaming_generator_close_pipeline_task(blocking_mock_agent
         assert cancelled.is_set()
         assert not completed.is_set()
 
+    mock_agent.run_async.assert_awaited_once()
+
 
 @pytest.mark.parametrize("shield_pipeline_task", [False, True], ids=["cancel", "shield"])
 async def test_async_streaming_consumer_cancellation_pipeline_task(blocking_mock_agent, shield_pipeline_task):
@@ -487,6 +490,8 @@ async def test_async_streaming_consumer_cancellation_pipeline_task(blocking_mock
     else:
         assert cancelled.is_set()
         assert not completed.is_set()
+
+    mock_agent.run_async.assert_awaited_once()
 
 
 # ContextVar used to verify context propagation into the streaming thread

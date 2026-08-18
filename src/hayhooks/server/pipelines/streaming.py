@@ -793,12 +793,20 @@ def _check_pipeline_task_exception(pipeline_task: asyncio.Task) -> None:
 def _handle_shielded_pipeline_task_done(pipeline_task: asyncio.Task) -> None:
     """Keep shielded tasks alive until completion and retrieve detached exceptions."""
     _SHIELDED_PIPELINE_TASKS.discard(pipeline_task)
-    if pipeline_task.cancelled():
+    with contextlib.suppress(asyncio.CancelledError):
+        if error := pipeline_task.exception():
+            log.opt(exception=error).error("Error in shielded pipeline task")
+
+
+def _detach_pipeline_task(pipeline_task: asyncio.Task) -> None:
+    """Keep an unfinished pipeline task alive after its stream closes."""
+    if pipeline_task.done():
+        with contextlib.suppress(asyncio.CancelledError):
+            pipeline_task.exception()
         return
-    try:
-        pipeline_task.result()
-    except Exception as e:
-        log.opt(exception=True).error("Error in shielded pipeline task: {}", e)
+
+    _SHIELDED_PIPELINE_TASKS.add(pipeline_task)
+    pipeline_task.add_done_callback(_handle_shielded_pipeline_task_done)
 
 
 async def _stream_chunks_from_queue(
@@ -838,9 +846,6 @@ async def _stream_chunks_from_queue(
             if queue.empty():
                 _check_pipeline_task_exception(pipeline_task)
             continue
-        except asyncio.CancelledError:
-            log.warning("Async streaming generator was cancelled")
-            raise
         except Exception as e:
             log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
             raise
@@ -858,23 +863,20 @@ async def _cleanup_pipeline_async(pipeline_task: asyncio.Task, *, shield_pipelin
         shield_pipeline_task: Keep the task running after the stream closes instead of cancelling it
     """
     if shield_pipeline_task:
-        if pipeline_task.done():
-            if not pipeline_task.cancelled():
-                pipeline_task.exception()
-        else:
-            _SHIELDED_PIPELINE_TASKS.add(pipeline_task)
-            pipeline_task.add_done_callback(_handle_shielded_pipeline_task_done)
+        _detach_pipeline_task(pipeline_task)
         return
 
-    if not pipeline_task.done():
-        pipeline_task.cancel()
-        try:
-            await asyncio.wait_for(pipeline_task, timeout=1.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            pass
-        except Exception as e:
-            # Don't re-raise - this runs in finally block, so we don't want to mask original errors
-            log.opt(exception=True).warning("Error during pipeline task cleanup: {}", e)
+    if pipeline_task.done():
+        return
+
+    pipeline_task.cancel()
+    try:
+        await asyncio.wait_for(pipeline_task, timeout=1.0)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        pass
+    except Exception as e:
+        # Don't re-raise - this runs in finally block, so we don't want to mask original errors
+        log.opt(exception=True).warning("Error during pipeline task cleanup: {}", e)
 
 
 def async_streaming_generator(  # noqa: PLR0913, C901
@@ -991,10 +993,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
                     yield result
                 yield chunk
 
-            if shield_pipeline_task:
-                await asyncio.shield(pipeline_task)
-            else:
-                await pipeline_task
+            await (asyncio.shield(pipeline_task) if shield_pipeline_task else pipeline_task)
             final_chunk = _process_pipeline_end(pipeline_task.result(), on_pipeline_end)
             if final_chunk:
                 yield final_chunk
