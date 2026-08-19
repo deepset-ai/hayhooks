@@ -24,6 +24,7 @@ This directory contains various examples demonstrating different use cases and f
 | [a2a_multi_agent](./a2a_multi_agent/) | Two agents with their own MCP tools, communicating over A2A | • `hayhooks a2a run` hosting two agents<br/>• Per-agent A2A agent cards<br/>• Agent-to-agent delegation via A2A client tool<br/>• One MCP tool server per agent (FastMCP)<br/>• Streaming A2A client | Building multi-agent systems where Haystack Agents expose themselves over A2A and delegate tasks to each other while using MCP for their own tools |
 | [a2a_long_running](./a2a_long_running/) | Recoverable OpenAI agent over A2A | • `OpenAIChatGenerator`-based Haystack Agent<br/>• Redis-backed fenced execution checkpoints<br/>• Hayhooks and client restart recovery<br/>• `input-required` continuation<br/>• Polling and durable cancellation | Building tool-using A2A agents whose accepted work resumes after process restarts |
 | [durable_execution](./durable_execution/) | First-class durable Pipeline | • Typed `/run-durable` REST endpoint<br/>• Built-in Redis store and fenced claims<br/>• Restart recovery, inspection, cancellation, and resume | Running recoverable background jobs through an ordinary wrapper without A2A |
+| [durable_chat_with_website](./durable_chat_with_website/) | Durable Pipeline that streams its answer | • SSE token streaming over `/executions/{id}/stream`<br/>• Detach and reattach with `Last-Event-ID`<br/>• Checkpointed page fetch, streamed generation<br/>• Bounded chunk log outside the durable fence | Giving a recoverable job a live UI without making display chunks part of durable state |
 | [rag_indexing_query](./rag_indexing_query/) | Complete RAG system with Elasticsearch | • Document indexing pipeline<br/>• Query pipeline<br/>• Elasticsearch integration<br/>• Multiple file format support (PDF, Markdown, Text)<br/>• Sentence transformers embeddings | Implementing production-ready RAG systems for document search and knowledge retrieval |
 | [shared_code_between_wrappers](./shared_code_between_wrappers/) | Code sharing between pipeline wrappers | • Shared library imports<br/>• HAYHOOKS_ADDITIONAL_PYTHON_PATH<br/>• Multiple deployment strategies<br/>• Code reusability | Organizing complex projects with multiple pipelines that share common functionality |
 
@@ -49,7 +50,10 @@ For the durable examples, use this presentation order:
 1. [`durable_execution`](./durable_execution/) — the deterministic reference
    for typed submission, retry, approval, checkpoints, crash recovery, and
    cancellation.
-2. [`a2a_long_running`](./a2a_long_running/) — durable Agent execution exposed
+2. [`durable_chat_with_website`](./durable_chat_with_website/) — the same
+   engine with a live SSE token stream, showing where display chunks sit
+   relative to the durable fence.
+3. [`a2a_long_running`](./a2a_long_running/) — durable Agent execution exposed
    through standard A2A task lifecycle and continuation messages.
 
 Each durable example's Compose file publishes Redis on `localhost:6379`.

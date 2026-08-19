@@ -75,6 +75,9 @@ class RedisKeys:
     def progress(self, run_id: str) -> str:
         return f"{self._execution_base(run_id)}:progress"
 
+    def chunks(self, run_id: str) -> str:
+        return f"{self._execution_base(run_id)}:chunks"
+
     def payload(self, run_id: str, kind: PayloadKind) -> str:
         return f"{self._execution_base(run_id)}:{kind.value}"
 
@@ -261,6 +264,39 @@ class RedisExecutionStore:
     async def read_progress(self, run_id: str) -> list[bytes]:
         return [bytes(value) for value in await self.redis.lrange(self.keys.progress(run_id), 0, -1)]
 
+    async def append_chunk(self, run_id: str, attempt: int, chunk: bytes) -> None:
+        # Chunks are unfenced best-effort display data, so a worker that lost its
+        # lease can still append; each entry carries `attempt` and clients reset on
+        # increase. The terminal transaction expires only keys that exist at that
+        # moment, so a stale append that creates the chunks key after the run went
+        # terminal would leak it forever. Reading the control status and the key
+        # TTL in the same pipeline as the XADD covers every interleaving with the
+        # terminal transaction: if it ran first, the status here is terminal and
+        # the missing TTL gets set; if it runs after, its own EXPIRE sees the key.
+        # Only a worker that outlives the whole retention window can still leak a
+        # key; that is accepted rather than fencing the chunk log and making every
+        # token contend with the lease heartbeat.
+        pipe = self.redis.pipeline()
+        pipe.xadd(
+            self.keys.chunks(run_id),
+            {"attempt": attempt, "data": chunk},
+            maxlen=self.config.max_stream_chunks,
+            approximate=False,
+        )
+        pipe.hget(self.keys.control(run_id), "status")
+        pipe.pttl(self.keys.chunks(run_id))
+        _, status, ttl = await pipe.execute()
+        if ttl == -1 and status is not None and ExecutionStatus(_text(status)).terminal:
+            await self.redis.expire(self.keys.chunks(run_id), self.config.terminal_ttl_seconds)
+
+    async def read_chunks(self, run_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]:
+        streams = await self.redis.xread({self.keys.chunks(run_id): after}, block=block_ms or None) or []
+        return [
+            (_text(entry_id), int(_text(fields[b"attempt"])), bytes(fields[b"data"]))
+            for _, entries in streams
+            for entry_id, fields in entries
+        ]
+
     async def transition(  # noqa: C901
         self, run_id: str, command: ExecutionCommand, *, candidate: bool = False
     ) -> TransitionPlan:
@@ -408,6 +444,7 @@ class RedisExecutionStore:
         return (
             self.keys.control(run_id),
             self.keys.progress(run_id),
+            self.keys.chunks(run_id),
             *(self.keys.payload(run_id, kind) for kind in PayloadKind),
         )
 

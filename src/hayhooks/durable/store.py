@@ -10,7 +10,13 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from hayhooks.durable.backend import ExecutionBackend, ExecutionContentionError, ExecutionStoreConfig, SubmissionResult
+from hayhooks.durable.backend import (
+    ExecutionBackend,
+    ExecutionContentionError,
+    ExecutionStoreConfig,
+    SubmissionResult,
+    parse_chunk_cursor,
+)
 from hayhooks.durable.context import RESUME_INPUT_KEY
 from hayhooks.durable.engine import (
     Checkpoint,
@@ -156,6 +162,16 @@ class ExecutionClaim:
                 ),
                 record_progress=progress,
             )
+
+    async def stream_chunk(self, payload: Any) -> None:
+        """Append one display chunk outside the durable fence, dropping any failure."""
+        try:
+            chunk = _encode(payload, limit=self.store.config.max_stream_chunk_bytes, label="chunk")
+            await self.store.append_chunk(self.record.execution_id, self.record.attempt, chunk)
+        except Exception:
+            # Chunks are display data, not durable state. An oversized payload or a
+            # backend blip must lose the chunk, never fail or replay the execution.
+            log.bind(execution_id=self.record.execution_id).opt(exception=True).debug("dropped a display chunk")
 
     async def cancellation_requested(self) -> bool:
         control = await self.store._core_call(
@@ -390,6 +406,19 @@ class ExecutionStore:
             msg = f"Submitted execution '{result.control.run_id}' is not available"
             raise ExecutionStoreError(msg)
         return result.created, view[1]
+
+    async def append_chunk(self, execution_id: str, attempt: int, chunk: bytes) -> None:
+        """Append one unfenced display chunk; a zero chunk bound disables the log."""
+        if not self.config.max_stream_chunks:
+            return
+        await self._core_call("append execution chunk", self.core.append_chunk(execution_id, attempt, chunk))
+
+    async def read_chunks(self, execution_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]:
+        """Read display chunks after *after*, blocking up to *block_ms* for the first."""
+        parse_chunk_cursor(after)
+        return await self._core_call(
+            "read execution chunks", self.core.read_chunks(execution_id, after, block_ms=block_ms)
+        )
 
     async def get(self, execution_id: str) -> ExecutionRecord | None:
         view = await self._read_view(execution_id)
@@ -734,6 +763,8 @@ def _config(*, durable_settings: DurableSettings, key_prefix: str | None = None)
         max_wait_bytes=max_record,
         max_progress_events=durable_settings.durable_max_progress_events,
         max_progress_event_bytes=progress_bytes,
+        max_stream_chunks=durable_settings.durable_max_stream_chunks,
+        max_stream_chunk_bytes=durable_settings.durable_max_stream_chunk_bytes,
     )
 
 

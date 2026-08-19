@@ -15,6 +15,7 @@ its next checkpoint.
 - Pipeline snapshots and Agent state checkpoints with bounded retries,
   progress, cancellation, and typed wait/resume.
 - Redis-backed fenced claims and lease recovery across process restarts.
+- Live SSE chunk streaming that clients can detach from and reattach to.
 - Idempotent submission, optional owner-isolated REST access, and managed A2A
   task projection.
 - Native Redis TTL for terminal records, plus an equivalent volatile
@@ -167,13 +168,14 @@ runtime's lifetime; create a new runtime to change storage backends.
 ## Redis layout
 
 Each deployment has an isolated namespace with controls and opaque input,
-checkpoint, result, error, wait, and progress payload keys. It has exactly two
-sorted-set indexes:
+checkpoint, result, error, wait, and progress payload keys, plus one `chunks`
+stream per execution. It has exactly two sorted-set indexes:
 
 | Key | Purpose |
 |---|---|
 | `runnable` | All queued work, scored by its retry deadline or immediate transition time. |
 | `lease-expiry` | Running fences, scored by their Redis-server lease deadline. |
+| `exec:<id>:chunks` | Bounded append-only display chunks, read by the execution SSE stream. |
 
 The namespace also contains a `capacity` hash with only `nonterminal` and one
 idempotency binding per execution. Terminal execution and idempotency keys use
@@ -192,6 +194,86 @@ The controlled beta deployment profile uses one logical deployment with one to
 three replicas and low-to-moderate load. Its two indexes, native TTL, and
 single reducer keep the worker model observable during normal operation and
 recovery.
+
+## Streaming chunks
+
+`GET /{pipeline}/executions/{execution_id}/stream` is a Server-Sent Events
+stream of one execution's display chunks, followed by a terminal `completed`,
+`failed`, or `canceled` event carrying the same public projection the inspect
+route returns. The submit response advertises it as the `stream` link.
+
+Chunks are best-effort display data, deliberately outside the durable fence: a
+chunk append is a single `XADD` with no transaction, so token-rate streaming
+cannot contend with the heartbeat. Nothing about a chunk can fail a run
+either: an oversized payload (chunks are capped at 64 KB) or a backend blip
+drops that chunk and logs it, because replaying a pipeline to recover a display
+token is never the right trade. Progress events remain the coarse durable audit
+trail.
+
+```python
+class StreamingWrapper(BasePipelineWrapper):
+    durable_revision = "streaming-v1"
+
+    async def run_durable_async(self, context: DurableContext, request: Question) -> Answer:
+        result = await context.run_agent_async(
+            messages=[ChatMessage.from_user(request.query)],
+            streaming_callback=context.stream_chunk,
+        )
+        return Answer(reply=result["messages"][-1].text)
+```
+
+Bind the callback to the component when the work is a Pipeline rather than an
+Agent. `async_streaming_generator` passes it per run in `pipeline_run_args`, and
+that does not survive here: `run_pipeline_async` data is serialized into the
+`PipelineSnapshot`, Haystack drops the callable it cannot serialize, and
+`Pipeline.run` rebuilds its `data` from the snapshot when resuming, so a callback
+passed as run data disappears at the first checkpoint.
+
+Binding one callback to a shared component is safe for the same reason
+`async_streaming_generator` can hand the same module-level
+`_async_streaming_callback` to every concurrent run: the callback carries no
+per-run state and resolves its destination on each call from a `ContextVar`.
+Hayhooks routes on `_ASYNC_STREAMING_QUEUE`; the durable path routes on the
+execution context, which the engine sets per execution task and `asyncio.to_thread`
+copies into the Pipeline's worker thread:
+
+```python
+def stream_to_execution(chunk: StreamingChunk) -> None:
+    if context := current_durable_context():
+        context.stream_chunk_sync(chunk)
+
+
+class StreamingPipelineWrapper(BasePipelineWrapper):
+    durable_revision = "streaming-pipeline-v1"
+
+    def setup(self) -> None:
+        self.pipeline = Pipeline.loads(...)
+        self.pipeline.get_component("llm").streaming_callback = stream_to_execution
+```
+
+`run_pipeline_async` drives the Pipeline on a worker thread, which is why that
+path uses `context.stream_chunk_sync` rather than the awaitable form. What
+`pipeline_run_args` injection actually buys `async_streaming_generator` is
+control over *which* components stream without permanently mutating a shared
+Pipeline; here the callback simply does nothing outside a durable execution. A
+run-time `streaming_callback` still takes precedence over a bound one, so an
+ordinary streaming endpoint on the same wrapper is unaffected. See
+`examples/durable_chat_with_website` for the whole wrapper. Each SSE event
+carries the entry ID as `id:` and the producing `attempt` in its payload; a
+client resets its buffer when `attempt` increases, because a retried attempt
+re-streams from its checkpoint. Reconnecting clients resend `Last-Event-ID`
+automatically and resume from that cursor.
+
+`durable_max_stream_chunks` bounds the log per execution (10 000 by default);
+`0` disables chunk production entirely while leaving the endpoint working.
+`durable_max_stream_chunk_bytes` caps a single chunk at 64 KB by default; an
+oversized chunk is dropped, never failed.
+The log expires with its execution under `durable_terminal_ttl_seconds`.
+
+A stream that breaks after its headers were sent has no status code left to
+report with, so it ends in an `error` event instead. Treat it the way a client
+treats a dropped connection: reattach with `Last-Event-ID`, or read the
+execution's terminal state from the inspect route.
 
 ## Revisions and rollout
 

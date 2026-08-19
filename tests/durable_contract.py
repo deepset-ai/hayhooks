@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from hayhooks.durable.backend import ExecutionStoreConfig
+from hayhooks.durable.backend import CHUNK_CURSOR_START, ExecutionStoreConfig
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -30,6 +30,7 @@ def contract_config(**changes: Any) -> ExecutionStoreConfig:
         "max_wait_bytes": 64,
         "max_progress_events": 2,
         "max_progress_event_bytes": 32,
+        "max_stream_chunks": 3,
     }
     return ExecutionStoreConfig(**{**limits, **changes})
 
@@ -64,6 +65,7 @@ async def assert_store_contract(store: Any) -> None:
         candidate=True,
     )
     assert claimed.next_control.status is ExecutionStatus.RUNNING
+    await assert_chunk_log_contract(store, run_id)
     checkpointed = await store.transition(run_id, Checkpoint(1, "worker", 0, 1_000, b"checkpoint"))
     suspended = await store.transition(
         run_id,
@@ -86,3 +88,22 @@ async def assert_store_contract(store: Any) -> None:
         Complete(claimed_again.next_control.fence, "worker", 0, b"ignored-result"),
     )
     assert terminal.next_control.status is ExecutionStatus.CANCELED
+
+
+async def assert_chunk_log_contract(store: Any, run_id: str) -> None:
+    """Append-only chunk log: bounded, cursor-readable, and outside the fence."""
+    before = await store.get(run_id)
+    for index in range(4):
+        await store.append_chunk(run_id, 1, b'{"i":%d}' % index)
+    after = await store.get(run_id)
+    assert before is not None and after is not None
+    # The load-bearing invariant: a chunk is not a lifecycle decision. If chunks
+    # are ever routed through transition(), this fails.
+    assert after.version == before.version
+
+    entries = await store.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=0)
+    assert len(entries) == 3, "the configured chunk bound must truncate the oldest entries"
+    assert [data for _, _, data in entries] == [b'{"i":1}', b'{"i":2}', b'{"i":3}']
+    assert {attempt for _, attempt, _ in entries} == {1}
+    assert await store.read_chunks(run_id, entries[0][0], block_ms=0) == entries[1:]
+    assert await store.read_chunks(run_id, entries[-1][0], block_ms=0) == []

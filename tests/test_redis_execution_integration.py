@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+from hayhooks.durable.backend import CHUNK_CURSOR_START
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -165,6 +166,7 @@ async def test_terminal_ttl_retains_data_and_rejects_stale_fences(store) -> None
     await durable.submit(control(), b"{}", binding_digest="b" * 64)
     run_id, _ = await _claim(durable)
     checkpointed = await durable.transition(run_id, Checkpoint(1, "worker", 0, 1_000, b"checkpoint"))
+    await durable.append_chunk(run_id, 1, b'{"c":1}')
     with pytest.raises(ExecutionLeaseLostError):
         await durable.transition(run_id, Complete(0, "worker", 0, b"result"))
     terminal = await durable.transition(run_id, Complete(checkpointed.next_control.fence, "worker", 0, b"result"))
@@ -175,6 +177,32 @@ async def test_terminal_ttl_retains_data_and_rejects_stale_fences(store) -> None
         ttls = await pipe.execute()
     assert all(ttl == -2 or ttl > 0 for ttl in ttls)
     assert await redis.pttl(durable.keys.idempotency("a" * 64)) > 0
+    assert await redis.pttl(durable.keys.chunks(run_id)) > 0
+
+
+async def test_stale_append_after_terminal_gets_a_ttl(store) -> None:
+    """A zombie worker's first chunk after terminal completion must not leak the key."""
+    redis, durable = store
+    await durable.submit(control(), b"{}", binding_digest="b" * 64)
+    run_id, _ = await _claim(durable)
+    claimed = await durable.transition(run_id, Checkpoint(1, "worker", 0, 1_000, b"checkpoint"))
+    terminal = await durable.transition(run_id, Complete(claimed.next_control.fence, "worker", 0, b"result"))
+    assert terminal.next_control.terminal
+    # The run never streamed, so the terminal transaction had no chunks key to
+    # expire; the stale append below creates it and must set the TTL itself.
+    await durable.append_chunk(run_id, 1, b'{"late":true}')
+    assert await redis.pttl(durable.keys.chunks(run_id)) > 0
+
+
+async def test_blocking_chunk_read_wakes_on_append_and_times_out_empty(store) -> None:
+    _, durable = store
+    await durable.submit(control(), b"{}", binding_digest="b" * 64)
+    run_id, _ = await _claim(durable)
+    assert await durable.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=20) == []
+    reader = asyncio.create_task(durable.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=5_000))
+    await asyncio.sleep(0.05)
+    await durable.append_chunk(run_id, 1, b'{"live":true}')
+    assert [data for _, _, data in await reader] == [b'{"live":true}']
 
 
 async def test_redis_rejects_oversized_payload_without_partial_write(store) -> None:

@@ -22,6 +22,10 @@ class DurableSettings(BaseModel):
     durable_terminal_ttl_seconds: int = Field(default=604_800, ge=1)
     durable_max_progress_events: int = Field(default=100, ge=1, le=10_000)
     durable_max_record_bytes: int = Field(default=1_000_000, ge=1_024)
+    # Zero disables the display chunk log used by the execution SSE stream.
+    durable_max_stream_chunks: int = Field(default=10_000, ge=0, le=1_000_000)
+    # One SSE display chunk may never exceed this many bytes.
+    durable_max_stream_chunk_bytes: int = Field(default=64_000, ge=1_024, le=1_000_000)
     # Zero disables the deployment-wide queued/running/waiting admission cap.
     durable_max_nonterminal_executions: int = Field(default=0, ge=0)
     durable_shutdown_grace_period: float = Field(default=5.0, ge=0.0)

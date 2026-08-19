@@ -27,6 +27,7 @@ ExecutionLeaseLostError = _ExecutionLeaseLostError
 DEFAULT_MAX_RECORD_BYTES = 1_000_000
 DEFAULT_MAX_PROGRESS_EVENTS = 100
 DEFAULT_MAX_PROGRESS_BYTES = 8_192
+DEFAULT_MAX_STREAM_CHUNK_BYTES = 64_000
 _SENSITIVE_NAME = r"(?:api[_ -]?key|access[_ -]?token|authorization|bearer|password|secret)"
 
 

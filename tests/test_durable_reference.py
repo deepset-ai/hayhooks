@@ -7,6 +7,7 @@ import pytest
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
+    Complete,
     ExecutionPayloadSizeError,
     RecoverExpiredLease,
     RequestCancellation,
@@ -68,3 +69,18 @@ async def test_candidate_read_is_non_destructive_and_cancel_removes_runnable() -
     await store.transition("run_b", RequestCancellation(0, "cancel"))
     assert await store.read_candidate() is None
     assert await store.operational_counts() == {"nonterminal": 0, "runnable": 0, "lease_expiry": 0}
+
+
+async def test_terminal_cleanup_removes_the_chunk_log() -> None:
+    """Chunks share the terminal TTL even though they sit outside the durable fence."""
+    store = InMemoryExecutionStore(deployment="integration", config=contract_config(terminal_ttl_seconds=60))
+    await store.submit(control(), b"{}", binding_digest="b" * 64)
+    run_id = await store.read_candidate()
+    assert run_id is not None
+    claim = await store.transition(run_id, Claim("worker", 0, 1_000, 3, "rev-1"), candidate=True)
+    await store.append_chunk(run_id, 1, b'{"c":1}')
+    await store.transition(run_id, Complete(claim.next_control.fence, "worker", 0, b"result"))
+    assert run_id in store._chunks
+
+    store._cleanup_terminal(store._terminal_cleanup[run_id][0])
+    assert run_id not in store._chunks

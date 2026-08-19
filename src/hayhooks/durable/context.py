@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Coroutine, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 
@@ -105,6 +105,21 @@ class DurableContext:
         event = self.record.append_progress(message, kind=kind, metadata=metadata)
         await self.claim.checkpoint()
         return event
+
+    async def stream_chunk(self, payload: Any) -> None:
+        """Append one best-effort display chunk outside the durable fence."""
+        await self.claim.stream_chunk(payload.to_dict() if hasattr(payload, "to_dict") else payload)
+
+    def stream_chunk_sync(self, payload: Any) -> None:
+        """Synchronous counterpart for sync wrappers running in a worker thread."""
+        # ponytail: this blocks the pipeline thread on one Redis round trip per chunk
+        # via _sync_await. Batch through an asyncio.Queue drained by a single task if
+        # sync-wrapper generation latency shows up in practice.
+        with suppress(Exception):
+            # The bridge itself fails once the manager loop is gone, which a wrapper
+            # still generating past the shutdown grace period can reach. A display
+            # chunk is never worth failing the run it describes.
+            self._sync_await(self.stream_chunk(payload))
 
     def report_progress_sync(
         self, message: str, *, kind: str = "progress", metadata: Mapping[str, Any] | None = None

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import subprocess
+import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
+import requests
 
 _ATTEMPTS = 200
 _DELAY = 0.01
@@ -37,6 +41,27 @@ async def wait_until_async(
     pytest.fail(message)
 
 
+def read_sse_events(client: Any, url: str, *, headers: dict | None = None, limit: int | None = None) -> list[dict]:
+    """Collect SSE events from a durable execution stream, skipping heartbeats."""
+    events: list[dict] = []
+    current: dict[str, str] = {}
+    with client.stream("GET", url, headers=headers) as response:
+        assert response.status_code == 200, response.read()
+        assert response.headers["content-type"].startswith("text/event-stream")
+        for line in response.iter_lines():
+            if line.startswith(":"):
+                continue
+            if line:
+                field, _, value = line.partition(": ")
+                current[field] = value
+            elif current:
+                events.append(current)
+                current = {}
+                if limit is not None and len(events) >= limit:
+                    break
+    return events
+
+
 def wait_for_status(client: Any, url: str, status: str, **kwargs: Any) -> dict:
     """Poll a durable execution resource until it reports *status*."""
 
@@ -62,3 +87,69 @@ async def wait_for_record(
         return record if record is not None and predicate(record) else None
 
     return await wait_until_async(ready, message, **kwargs)
+
+
+def start_server(port: int, environment: dict[str, str], factory: str = "hayhooks.cli.base:get_app") -> Any:
+    """Start one real Hayhooks process; the caller owns stopping it."""
+    return subprocess.Popen(  # noqa: S603
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            factory,
+            "--factory",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+            "--no-access-log",
+        ],
+        cwd=Path.cwd(),
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
+def stop_server(server: Any) -> None:
+    if server.poll() is None:
+        server.terminate()
+        try:
+            server.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait(timeout=3)
+
+
+def server_error(server: Any) -> str:
+    output = server.stdout.read() if server.stdout is not None else ""
+    return f"durable test server exited with {server.returncode}:\n{output}"
+
+
+def wait_for_server(server: Any, base_url: str, **kwargs: Any) -> None:
+    """Poll ``/status`` until the process serves, failing fast if it died."""
+
+    def ready() -> bool:
+        if server.poll() is not None:
+            pytest.fail(server_error(server))
+        try:
+            return requests.get(f"{base_url}/status", timeout=0.25).status_code == 200
+        except requests.RequestException:
+            return False
+
+    wait_until(ready, "durable test server did not become ready", **kwargs)
+
+
+def cleanup_redis(redis_url: str, prefix: str) -> None:
+    """Delete only the keys one test created under its own prefix."""
+    from redis import Redis
+
+    redis = Redis.from_url(redis_url)
+    try:
+        if keys := list(redis.scan_iter(match=f"{prefix}:*")):
+            redis.delete(*keys)
+    finally:
+        redis.close()

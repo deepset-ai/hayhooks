@@ -14,6 +14,7 @@ DURABLE_ROUTE_SUFFIXES = (
     "/executions/{execution_id}",
     "/executions/{execution_id}/cancel",
     "/executions/{execution_id}/resume",
+    "/executions/{execution_id}/stream",
 )
 _MAX_OWNER_LENGTH = 512
 

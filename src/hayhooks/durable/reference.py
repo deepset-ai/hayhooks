@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections import deque
 from collections.abc import Callable
 
 from hayhooks.durable.backend import (
@@ -14,6 +16,7 @@ from hayhooks.durable.backend import (
     bind_command,
     bind_progress_sequences,
     check_admission,
+    parse_chunk_cursor,
     parse_idempotency_binding,
     parse_lease_member,
     runnable_score,
@@ -41,6 +44,8 @@ class InMemoryExecutionStore:
         self._controls: dict[str, ExecutionControl] = {}
         self._payloads: dict[str, dict[PayloadKind, bytes]] = {}
         self._progress: dict[str, list[bytes]] = {}
+        self._chunks: dict[str, deque[tuple[int, int, bytes]]] = {}
+        self._chunk_sequence = 0
         self._runnable: dict[str, int] = {}
         self._lease_expiry: dict[str, int] = {}
         self._capacity = {"nonterminal": 0}
@@ -81,6 +86,30 @@ class InMemoryExecutionStore:
 
     async def read_progress(self, run_id: str) -> list[bytes]:
         return list(self._progress.get(run_id, ()))
+
+    async def append_chunk(self, run_id: str, attempt: int, chunk: bytes) -> None:
+        self._chunk_sequence += 1
+        entries = self._chunks.setdefault(run_id, deque(maxlen=self.config.max_stream_chunks))
+        # Sequences only have to be orderable, not Redis-shaped; a counter cannot
+        # regress the way a wall clock can. Entry IDs are formatted on the way out.
+        entries.append((self._chunk_sequence, attempt, chunk))
+        # A stale append from a worker that lost its lease can recreate the log;
+        # the terminal cleanup entry already registered for the run removes it at
+        # the terminal TTL, mirroring the Redis backend's EXPIRE. A worker that
+        # outlives the cleanup itself can still leak an entry, which is accepted
+        # for the same reason the Redis backend accepts it.
+
+    async def read_chunks(self, run_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]:
+        # ponytail: a 20 ms poll instead of an asyncio.Condition, so a dev-mode SSE
+        # client sees up to 20 ms of extra per-token latency. Swap in a Condition if
+        # that ever shows; the Redis backend already blocks natively.
+        deadline = time.monotonic() + block_ms / 1_000
+        _, cursor = parse_chunk_cursor(after)
+        while True:
+            fresh = [entry for entry in self._chunks.get(run_id, ()) if entry[0] > cursor]
+            if fresh or time.monotonic() >= deadline:
+                return [(f"0-{sequence}", attempt, chunk) for sequence, attempt, chunk in fresh]
+            await asyncio.sleep(0.02)
 
     async def transition(self, run_id: str, command: ExecutionCommand, *, candidate: bool = False) -> TransitionPlan:
         current = self._controls.get(run_id)
@@ -142,6 +171,7 @@ class InMemoryExecutionStore:
             self._controls.pop(run_id, None)
             self._payloads.pop(run_id, None)
             self._progress.pop(run_id, None)
+            self._chunks.pop(run_id, None)
 
     def _apply_plan(self, current: ExecutionControl, plan: TransitionPlan) -> None:
         next_control = plan.next_control

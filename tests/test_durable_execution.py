@@ -12,7 +12,7 @@ from haystack import Pipeline, component
 from haystack.components.agents import Agent
 from haystack.components.agents.state import State
 from haystack.core.errors import PipelineRuntimeError
-from haystack.dataclasses import ChatMessage, ToolCall
+from haystack.dataclasses import ByteStream, ChatMessage, StreamingChunk, ToolCall
 from haystack.dataclasses.breakpoints import PipelineSnapshot
 from haystack.tools import Tool
 from pydantic import BaseModel
@@ -25,6 +25,7 @@ from hayhooks.durable.adapters import (
     _checkpoint_data,
     _restore_agent_state,
 )
+from hayhooks.durable.backend import CHUNK_CURSOR_START
 from hayhooks.durable.context import execution_context_scope
 from hayhooks.durable.models import ExecutionCheckpoint, ExecutionKind, ExecutionRecord, ExecutionStatus
 from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, _canonical_json, _operation_fingerprint
@@ -43,7 +44,7 @@ from hayhooks.server.utils.module_loader import (
     unload_pipeline_modules,
 )
 from hayhooks.settings import settings
-from tests.durable_helpers import wait_for_record, wait_for_status, wait_until_async
+from tests.durable_helpers import read_sse_events, wait_for_record, wait_for_status, wait_until_async
 
 pytestmark = pytest.mark.skipif(
     not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
@@ -51,6 +52,8 @@ pytestmark = pytest.mark.skipif(
 
 _DURABLE_EXECUTION_EXAMPLE = Path("examples/durable_execution/pipelines/durable_job")
 _DURABLE_A2A_EXAMPLE = Path("examples/a2a_long_running/pipelines/long_running_agent")
+_DURABLE_STREAMING_EXAMPLE = Path("examples/durable_chat_with_website/pipelines/chat_with_website")
+_WEBSITE_HTML = b"<html><body><p>Haystack builds AI pipelines.</p></body></html>"
 
 
 class Request(BaseModel):
@@ -260,6 +263,7 @@ class SyncWrapper(BasePipelineWrapper):
 
     def run_durable(self, context: DurableContext, request: Request) -> Result:
         context.report_progress_sync("working in a worker thread")
+        context.stream_chunk_sync(StreamingChunk(content="tick"))
         context.check_cancelled_sync()
         return Result(value=request.value + 2)
 
@@ -759,11 +763,16 @@ def test_sync_durable_wrapper_uses_context_sync_controls(monkeypatch) -> None:
 
     with TestClient(app) as client:
         submitted = client.post("/sync-job/run-durable", json={"value": 4})
-        url = submitted.json()["links"]["self"]
-        inspected = wait_for_status(client, url, "completed")
+        links = submitted.json()["links"]
+        inspected = wait_for_status(client, links["self"], "completed")
+        # The sync bridge must reach the chunk log from the worker thread, and a
+        # Haystack dataclass has to survive the JSON round trip.
+        streamed = read_sse_events(client, links["stream"])
 
     assert inspected["result"] == {"value": 6}
     assert inspected["progress"][0]["message"] == "working in a worker thread"
+    assert json.loads(streamed[0]["data"])["payload"]["content"] == "tick"
+    assert [event["event"] for event in streamed] == ["chunk", "completed"]
 
 
 async def test_sync_work_retains_claim_after_shutdown_grace_until_thread_exits(monkeypatch) -> None:
@@ -1113,6 +1122,7 @@ def test_durable_agent_uses_native_run_and_public_hooks(monkeypatch) -> None:
     [
         ("durable_execution_example", _DURABLE_EXECUTION_EXAMPLE, ExecutionKind.PIPELINE),
         ("durable_a2a_example", _DURABLE_A2A_EXAMPLE, ExecutionKind.AGENT),
+        ("durable_streaming_example", _DURABLE_STREAMING_EXAMPLE, ExecutionKind.PIPELINE),
     ],
 )
 def test_durable_examples_load(monkeypatch, module_name, source, kind) -> None:
@@ -1194,3 +1204,131 @@ async def test_durable_a2a_example_tool_replays_its_external_effect_idempotently
         assert json.loads(replay)["side_effect_applied"] is False
         assert claim.checkpoints == 2
         assert [event.kind for event in record.progress] == ["side_effect_committed", "side_effect_committed"]
+
+
+async def test_durable_chat_with_website_example_streams_tokens_across_its_checkpoint(monkeypatch) -> None:
+    """The streaming example must checkpoint the fetch and still reach the chunk log."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    tokens = ("Hay", "stack", " builds", " AI", " pipelines.")
+
+    with _example_module("durable_streaming_end_to_end", _DURABLE_STREAMING_EXAMPLE) as module:
+        wrapper = create_pipeline_wrapper_instance(module)
+
+        def fetch(urls):
+            return {"streams": [ByteStream(data=_WEBSITE_HTML, mime_type="text/html")]}
+
+        def generate(messages, streaming_callback=None, **kwargs):
+            # The wrapper binds the callback to the component, so the Pipeline never
+            # has to carry a callable through a JSON checkpoint.
+            callback = streaming_callback or wrapper.pipeline.get_component("llm").streaming_callback
+            for token in tokens:
+                callback(StreamingChunk(content=token))
+            return {"replies": [ChatMessage.from_assistant("".join(tokens))]}
+
+        wrapper.pipeline.get_component("fetcher").run = fetch
+        wrapper.pipeline.get_component("llm").run = generate
+
+        deployment = DurableDeployment("durable-streaming-example", wrapper, InMemoryExecutionStoreProvider())
+        async with _started(deployment):
+            _, submitted = await deployment.submit({"question": "What is Haystack?", "urls": ["https://example.com"]})
+            record = await wait_for_record(
+                deployment, submitted.execution_id, message="the streaming example did not complete"
+            )
+            chunks = await deployment.store.read_chunks(submitted.execution_id, CHUNK_CURSOR_START, block_ms=0)
+
+    assert record.status is ExecutionStatus.COMPLETED
+    assert record.result["reply"] == "".join(tokens)
+    assert record.checkpoint is not None, "the fetch has to be checkpointed before generation starts"
+    assert [json.loads(data)["content"] for _, _, data in chunks] == list(tokens)
+
+
+async def test_durable_streaming_example_keeps_concurrent_executions_apart() -> None:
+    """One shared Pipeline binds one callback, so the context alone routes every chunk."""
+    tags = ("alpha", "beta", "gamma")
+    tokens = 6
+    # Every token is a rendezvous: no run reaches token N+1 until all three have
+    # emitted token N, so the executions genuinely overlap instead of merely queueing.
+    barrier = threading.Barrier(len(tags), timeout=15)
+
+    with _example_module("durable_streaming_concurrency", _DURABLE_STREAMING_EXAMPLE) as module:
+        wrapper = create_pipeline_wrapper_instance(module)
+
+        def fetch(urls):
+            return {"streams": [ByteStream(data=_WEBSITE_HTML, mime_type="text/html")]}
+
+        def generate(messages, streaming_callback=None, **kwargs):
+            callback = streaming_callback or wrapper.pipeline.get_component("llm").streaming_callback
+            tag = messages[-1].text.strip().split()[-1]
+            for index in range(tokens):
+                barrier.wait()
+                callback(StreamingChunk(content=f"{tag}-{index}"))
+            return {"replies": [ChatMessage.from_assistant(tag)]}
+
+        wrapper.pipeline.get_component("fetcher").run = fetch
+        wrapper.pipeline.get_component("llm").run = generate
+
+        durable_settings = DurableSettings(durable_store="memory", durable_execution_concurrency=len(tags))
+        deployment = DurableDeployment(
+            "durable-streaming-concurrency",
+            wrapper,
+            InMemoryExecutionStoreProvider(durable_settings=durable_settings),
+            durable_settings=durable_settings,
+        )
+        async with _started(deployment):
+            submitted = await asyncio.gather(
+                *(deployment.submit({"question": f"Who is {tag}", "urls": ["https://example.com"]}) for tag in tags)
+            )
+            streams = {}
+            for _, execution in submitted:
+                record = await wait_for_record(
+                    deployment, execution.execution_id, message="a concurrent streaming execution did not complete"
+                )
+                assert record.status is ExecutionStatus.COMPLETED, record.error
+                chunks = await deployment.store.read_chunks(execution.execution_id, CHUNK_CURSOR_START, block_ms=0)
+                streams[record.result["reply"]] = [json.loads(data)["content"] for _, _, data in chunks]
+
+    assert streams == {tag: [f"{tag}-{index}" for index in range(tokens)] for tag in tags}
+
+
+async def test_durable_streaming_example_retries_into_generation_without_refetching(monkeypatch) -> None:
+    """The checkpoint only pays off if a second attempt skips the fetch it already did."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "durable_retry_base_delay", 0)
+    monkeypatch.setattr(settings, "durable_retry_max_delay", 0)
+    fetches = []
+
+    with _example_module("durable_streaming_retry", _DURABLE_STREAMING_EXAMPLE) as module:
+        wrapper = create_pipeline_wrapper_instance(module)
+
+        def fetch(urls):
+            fetches.append(tuple(urls))
+            return {"streams": [ByteStream(data=_WEBSITE_HTML, mime_type="text/html")]}
+
+        def generate(messages, streaming_callback=None, **kwargs):
+            callback = streaming_callback or wrapper.pipeline.get_component("llm").streaming_callback
+            if len(fetches) == 1 and not generate.succeeded:
+                generate.succeeded = True
+                msg = "transient generator failure"
+                raise RuntimeError(msg)
+            callback(StreamingChunk(content="recovered"))
+            return {"replies": [ChatMessage.from_assistant("recovered")]}
+
+        generate.succeeded = False
+        wrapper.pipeline.get_component("fetcher").run = fetch
+        wrapper.pipeline.get_component("llm").run = generate
+
+        deployment = DurableDeployment("durable-streaming-retry", wrapper, InMemoryExecutionStoreProvider())
+        async with _started(deployment):
+            _, submitted = await deployment.submit({"question": "What is Haystack?", "urls": ["https://example.com"]})
+            record = await wait_for_record(
+                deployment, submitted.execution_id, message="the streaming example did not survive its retry"
+            )
+            chunks = await deployment.store.read_chunks(submitted.execution_id, CHUNK_CURSOR_START, block_ms=0)
+
+    assert record.status is ExecutionStatus.COMPLETED
+    assert record.attempt == 2
+    # The whole point of checkpointing before `prompt`: the network was hit once.
+    assert fetches == [("https://example.com",)]
+    # The recovered attempt reports what it actually did instead of claiming a fetch.
+    assert [event.kind for event in record.progress if event.kind in {"fetch", "resume"}] == ["fetch", "resume"]
+    assert [json.loads(data)["content"] for _, _, data in chunks] == ["recovered"]

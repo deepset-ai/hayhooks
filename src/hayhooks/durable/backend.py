@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
@@ -19,6 +20,9 @@ from hayhooks.durable.engine import (
 from hayhooks.durable.models import ExecutionAdmissionError, ExecutionStoreError
 
 MAINTENANCE_BATCH_SIZE = 100
+CHUNK_CURSOR_START = "0-0"
+_CHUNK_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
+_MAX_STREAM_ID_PART = 2**64 - 1
 DEFAULT_TRANSACTION_MAX_RETRIES = 8
 DEFAULT_TRANSACTION_BACKOFF_MAX_MS = 25
 
@@ -56,6 +60,9 @@ class ExecutionStoreConfig:
     max_wait_bytes: int = 64_000
     max_progress_events: int = 100
     max_progress_event_bytes: int = 8_192
+    # Zero disables the append-only display chunk log; see append_chunk.
+    max_stream_chunks: int = 10_000
+    max_stream_chunk_bytes: int = 64_000
 
     def __post_init__(self) -> None:
         for name in (
@@ -68,10 +75,19 @@ class ExecutionStoreConfig:
             "max_wait_bytes",
             "max_progress_events",
             "max_progress_event_bytes",
+            "max_stream_chunk_bytes",
         ):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be positive")
-        if min(self.transaction_backoff_max_ms, self.lease_commit_safety_ms, self.max_nonterminal_executions) < 0:
+        if (
+            min(
+                self.transaction_backoff_max_ms,
+                self.lease_commit_safety_ms,
+                self.max_nonterminal_executions,
+                self.max_stream_chunks,
+            )
+            < 0
+        ):
             raise ValueError("durable limits cannot be negative")
 
 
@@ -93,6 +109,10 @@ class ExecutionBackend(Protocol):
 
     async def read_progress(self, run_id: str) -> list[bytes]: ...
 
+    async def append_chunk(self, run_id: str, attempt: int, chunk: bytes) -> None: ...
+
+    async def read_chunks(self, run_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]: ...
+
     async def transition(
         self, run_id: str, command: ExecutionCommand, *, candidate: bool = False
     ) -> TransitionPlan: ...
@@ -102,6 +122,19 @@ class ExecutionBackend(Protocol):
     async def maintain(self, command_factory: Callable[[int, int], ExecutionCommand]) -> int: ...
 
     async def operational_counts(self) -> dict[str, int]: ...
+
+
+def parse_chunk_cursor(value: str) -> tuple[int, int]:
+    """Decode a chunk-log entry ID; the cursor arrives from an untrusted SSE client."""
+    if not _CHUNK_CURSOR.match(value):
+        raise ValueError("chunk cursor must be a '<time>-<sequence>' stream entry ID")
+    left, _, right = value.partition("-")
+    cursor = (int(left), int(right))
+    # Both halves of a Redis stream ID are 64-bit; rejecting here keeps an oversized
+    # cursor a 422 instead of a backend error raised after the response has begun.
+    if max(cursor) > _MAX_STREAM_ID_PART:
+        raise ValueError("chunk cursor parts must be 64-bit unsigned integers")
+    return cursor
 
 
 def runnable_score(control: ExecutionControl) -> int:

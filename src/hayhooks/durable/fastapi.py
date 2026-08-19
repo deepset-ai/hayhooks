@@ -3,18 +3,28 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Request, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError, create_model
 
+from hayhooks.durable.backend import CHUNK_CURSOR_START, parse_chunk_cursor
 from hayhooks.durable.engine import RUN_ID_PATTERN
 from hayhooks.durable.models import ExecutionAdmissionError, ExecutionResult, ExecutionStoreError
 from hayhooks.durable.runtime import DefinitionRevisionConflictError, DurableDeployment, IdempotencyConflictError
+from hayhooks.server.logger import log
 
 _MAX_OWNER_LENGTH = 512
+# The chunk read blocks server-side, so this also bounds how long a terminal state
+# waits to be noticed. Keep it well under ``durable_redis_socket_timeout``.
+_STREAM_BLOCK_MS = 500
+# An SSE comment line: keeps the connection warm while an execution is quiet.
+_SSE_HEARTBEAT = ":\n\n"
+# Proxies buffer ``text/event-stream`` by default, which stalls the whole stream.
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 _MAX_OWNER_SCOPED_IDEMPOTENCY_KEY_LENGTH = 63
 ExecutionId = Annotated[str, Path(pattern=rf"^{RUN_ID_PATTERN}$", min_length=1, max_length=128)]
 OwnerIdDependency = Callable[..., str | Awaitable[str]]
@@ -63,6 +73,12 @@ def _translate_errors(handler: Callable[..., Awaitable[Any]]) -> Callable[..., A
     return wrapper
 
 
+def _sse(event: str, data: str, *, entry_id: str | None = None) -> str:
+    """Frame one SSE event around data that is already serialized JSON."""
+    prefix = f"id: {entry_id}\n" if entry_id else ""
+    return f"{prefix}event: {event}\ndata: {data}\n\n"
+
+
 def _durable_response_model(deployment: DurableDeployment) -> type[ExecutionResult]:
     if deployment.result_type is Any:
         return ExecutionResult
@@ -73,7 +89,7 @@ def _durable_response_model(deployment: DurableDeployment) -> type[ExecutionResu
     )
 
 
-def create_durable_router(  # noqa: C901 - one factory owns every generated route for a deployment
+def create_durable_router(  # noqa: C901, PLR0915 - one factory owns every generated route for a deployment
     deployment: DurableDeployment,
     *,
     owner_id_dependency: OwnerIdDependency | None,
@@ -93,6 +109,7 @@ def create_durable_router(  # noqa: C901 - one factory owns every generated rout
         "inspect": f"hayhooks.durable.{deployment.name}.inspect",
         "cancel": f"hayhooks.durable.{deployment.name}.cancel",
         "resume": f"hayhooks.durable.{deployment.name}.resume",
+        "stream": f"hayhooks.durable.{deployment.name}.stream",
     }
 
     def execution_links(request: Request, execution_id: str) -> dict[str, str]:
@@ -101,6 +118,7 @@ def create_durable_router(  # noqa: C901 - one factory owns every generated rout
             "self": root,
             "cancel": request.url_for(route_names["cancel"], execution_id=execution_id).path,
             "resume": request.url_for(route_names["resume"], execution_id=execution_id).path,
+            "stream": request.url_for(route_names["stream"], execution_id=execution_id).path,
         }
 
     def execution_result(
@@ -197,6 +215,53 @@ def create_durable_router(  # noqa: C901 - one factory owns every generated rout
         response.status_code = status.HTTP_202_ACCEPTED
         return execution_result(request, await get_execution(execution_id, owner_id))
 
+    async def stream_execution(
+        execution_id: ExecutionId,
+        request: Request,
+        owner_id: Any = Depends(owner_dependency),  # noqa: B008
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ) -> Response:
+        owner_id = _validated_owner(owner_id, enforce_owner=enforce_owner)
+        cursor = last_event_id or CHUNK_CURSOR_START
+        # Validate the client cursor and resolve ownership before the response
+        # starts, while HTTP status codes are still available.
+        parse_chunk_cursor(cursor)
+        record = await get_execution(execution_id, owner_id)
+        return StreamingResponse(
+            _chunk_events(request, record, execution_id, owner_id, cursor),
+            media_type="text/event-stream",
+            headers=_SSE_HEADERS,
+        )
+
+    async def _chunk_events(
+        request: Request, record: Any, execution_id: str, owner_id: str | None, cursor: str
+    ) -> AsyncIterator[str]:
+        try:
+            while True:
+                terminal = record.terminal
+                # Draining after the terminal read, never before, is what keeps the
+                # last chunks of an execution from being lost.
+                entries = await deployment.store.read_chunks(
+                    execution_id, cursor, block_ms=0 if terminal else _STREAM_BLOCK_MS
+                )
+                for entry_id, attempt, data in entries:
+                    cursor = entry_id
+                    yield _sse("chunk", f'{{"attempt":{attempt},"payload":{data.decode()}}}', entry_id=entry_id)
+                if terminal:
+                    yield _sse(record.status.value, execution_result(request, record).model_dump_json())
+                    return
+                if not entries:
+                    # A read that blocked without producing anything is the cheap
+                    # moment to recheck the lifecycle: flowing chunks mean running,
+                    # so the record only has to be reread once the stream goes quiet.
+                    yield _SSE_HEARTBEAT
+                    record = await get_execution(execution_id, owner_id)
+        except Exception:
+            # The response has already begun, so no status code is left to raise
+            # with. Name the break and let the client reattach with Last-Event-ID.
+            log.bind(execution_id=execution_id).opt(exception=True).warning("Durable execution stream failed")
+            yield _sse("error", '{"detail":"Execution stream interrupted"}')
+
     if deployment.resume_type is not None:
         resume_execution.__annotations__["update"] = deployment.resume_type
         signature = inspect.signature(resume_execution)
@@ -208,18 +273,19 @@ def create_durable_router(  # noqa: C901 - one factory owns every generated rout
             ]
         )
 
-    for path, endpoint, methods, name in (
-        ("/run-durable", submit, ["POST"], route_names["submit"]),
-        ("/executions/{execution_id}", inspect_execution, ["GET"], route_names["inspect"]),
-        ("/executions/{execution_id}/cancel", cancel_execution, ["POST"], route_names["cancel"]),
-        ("/executions/{execution_id}/resume", resume_execution, ["POST"], route_names["resume"]),
+    for path, endpoint, methods, name, model in (
+        ("/run-durable", submit, ["POST"], route_names["submit"], response_model),
+        ("/executions/{execution_id}", inspect_execution, ["GET"], route_names["inspect"], ExecutionResult),
+        ("/executions/{execution_id}/cancel", cancel_execution, ["POST"], route_names["cancel"], ExecutionResult),
+        ("/executions/{execution_id}/resume", resume_execution, ["POST"], route_names["resume"], ExecutionResult),
+        ("/executions/{execution_id}/stream", stream_execution, ["GET"], route_names["stream"], None),
     ):
         router.add_api_route(
             path,
             _translate_errors(endpoint),
             methods=methods,
             name=name,
-            response_model=response_model if endpoint is submit else ExecutionResult,
+            response_model=model,
             tags=["durable executions"],
             status_code=status.HTTP_202_ACCEPTED if methods == ["POST"] else status.HTTP_200_OK,
         )

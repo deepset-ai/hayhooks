@@ -20,10 +20,10 @@ external write so recovered work remains safe to replay.
 
 ## Execution and recovery
 
-The namespace holds a control record, opaque payloads, one `runnable`
-ZSET, one `lease-expiry` ZSET, a `nonterminal` capacity field, and idempotency
-bindings. The control is authoritative; the indexes are derived atomically
-with it.
+The namespace holds a control record, opaque payloads, one bounded `chunks`
+stream per execution, one `runnable` ZSET, one `lease-expiry` ZSET, a
+`nonterminal` capacity field, and idempotency bindings. The control is
+authoritative; the indexes are derived atomically with it.
 
 Workers poll due runnable work at the configured interval using Redis `TIME`.
 Candidate reads are non-destructive. A watched control hash and monotonically
@@ -34,12 +34,28 @@ until due.
 
 ## Retention and rollout
 
-Terminal control/payload keys and their idempotency binding receive the
-configured Redis TTL when a run first becomes terminal. Memory uses equivalent
-internal cleanup. Do not delete records manually while they are nonterminal.
+Terminal control, payload, and chunk keys and their idempotency binding
+receive the configured Redis TTL when a run first becomes terminal.
+`HAYHOOKS_DURABLE_MAX_STREAM_CHUNKS` bounds each execution's SSE chunk log and
+`0` disables it, which is the kill switch if streaming misbehaves.
+`HAYHOOKS_DURABLE_MAX_STREAM_CHUNK_BYTES` caps one chunk (64 KB by default);
+oversized chunks are dropped, never failed. A stale append from a worker that
+lost its lease after the run went terminal sets the TTL on the recreated
+chunk key itself, so the log still expires with its execution. Memory uses
+equivalent internal cleanup. Do not delete records manually while they are
+nonterminal.
 
 Begin a new controlled-beta deployment with an empty durable namespace, then
 retain its terminal records through the configured Redis TTL.
+
+## Streaming load
+
+Every attached stream holds one Redis connection blocked in `XREAD` for up to
+500 ms per poll cycle, so the number of concurrent viewers counts directly
+against Redis client capacity. A terminal event arrives within about 500 ms of
+the last chunk once the stream goes quiet; a run that keeps generating after a
+cancellation request reports terminal only after it stops producing chunks.
+Chunks are display data and are never a reason to replay a run.
 
 ## Health and incidents
 

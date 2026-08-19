@@ -9,7 +9,6 @@ import shutil
 import signal
 import sqlite3
 import subprocess
-import sys
 import uuid
 from pathlib import Path
 
@@ -18,7 +17,7 @@ import requests
 from redis import Redis
 
 from hayhooks.server.a2a.redis_task_store import RedisTaskStore
-from tests.durable_helpers import wait_until
+from tests.durable_helpers import cleanup_redis, server_error, start_server, stop_server, wait_for_server, wait_until
 
 pytestmark = [
     pytest.mark.integration,
@@ -34,64 +33,9 @@ _A2A_FIXTURE_DIR = Path(__file__).parent / "test_files/durable_a2a_process_recov
 _CRASH_AFTER_A2A_SUBMIT_ENV = "HAYHOOKS_TEST_CRASH_AFTER_A2A_SUBMIT"
 
 
-def _start_server(
-    port: int,
-    environment: dict[str, str],
-    factory: str = "hayhooks.cli.base:get_app",
-) -> subprocess.Popen[str]:
-    return subprocess.Popen(  # noqa: S603
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            factory,
-            "--factory",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--log-level",
-            "warning",
-            "--no-access-log",
-        ],
-        cwd=Path.cwd(),
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-
-
-def _stop_server(server: subprocess.Popen[str]) -> None:
-    if server.poll() is None:
-        server.terminate()
-        try:
-            server.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            server.kill()
-            server.wait(timeout=3)
-
-
 def _wait(predicate, message: str):
     """Poll for up to ten seconds; every wait in this module shares that budget."""
     return wait_until(predicate, message, attempts=200, delay=0.05)
-
-
-def _server_error(server: subprocess.Popen[str]) -> str:
-    output = server.stdout.read() if server.stdout is not None else ""
-    return f"durable test server exited with {server.returncode}:\n{output}"
-
-
-def _wait_for_server(server: subprocess.Popen[str], base_url: str) -> None:
-    def ready() -> bool:
-        if server.poll() is not None:
-            pytest.fail(_server_error(server))
-        try:
-            return requests.get(f"{base_url}/status", timeout=0.25).status_code == 200
-        except requests.RequestException:
-            return False
-
-    _wait(ready, "durable test server did not become ready")
 
 
 def _wait_for_file(path: Path) -> None:
@@ -108,16 +52,6 @@ def _wait_for_completion(execution_url: str) -> dict:
         return execution if execution["status"] == "completed" else None
 
     return _wait(completed, "durable execution did not recover to completion")
-
-
-def _cleanup_redis(redis_url: str, prefix: str) -> None:
-    redis = Redis.from_url(redis_url)
-    try:
-        keys = list(redis.scan_iter(match=f"{prefix}:*"))
-        if keys:
-            redis.delete(*keys)
-    finally:
-        redis.close()
 
 
 def create_a2a_recovery_app():
@@ -193,9 +127,9 @@ def test_redis_durable_execution_survives_a_process_kill_and_restart(tmp_path: P
     servers: list[subprocess.Popen[str]] = []
 
     try:
-        server = _start_server(unused_tcp_port, environment)
+        server = start_server(unused_tcp_port, environment)
         servers.append(server)
-        _wait_for_server(server, base_url)
+        wait_for_server(server, base_url)
 
         submitted = requests.post(f"{base_url}/recovery_job/run-durable", json=request_body, headers=headers, timeout=1)
         assert submitted.status_code == 202, submitted.text
@@ -206,9 +140,9 @@ def test_redis_durable_execution_survives_a_process_kill_and_restart(tmp_path: P
         server.kill()
         server.wait(timeout=3)
 
-        server = _start_server(unused_tcp_port, environment)
+        server = start_server(unused_tcp_port, environment)
         servers.append(server)
-        _wait_for_server(server, base_url)
+        wait_for_server(server, base_url)
         completed = _wait_for_completion(execution_url)
 
         assert completed["attempt"] == 2
@@ -223,8 +157,8 @@ def test_redis_durable_execution_survives_a_process_kill_and_restart(tmp_path: P
         assert replay.json()["execution_id"] == execution["execution_id"]
     finally:
         for server in servers:
-            _stop_server(server)
-        _cleanup_redis(redis_url, prefix)
+            stop_server(server)
+        cleanup_redis(redis_url, prefix)
 
 
 def test_redis_durable_a2a_tasks_read_through_after_restart(tmp_path: Path, unused_tcp_port: int) -> None:
@@ -268,13 +202,13 @@ def test_redis_durable_a2a_tasks_read_through_after_restart(tmp_path: Path, unus
         return _a2a_task(result)["id"]
 
     try:
-        server = _start_server(
+        server = start_server(
             unused_tcp_port,
             environment | {_CRASH_AFTER_A2A_SUBMIT_ENV: "1"},
             factory,
         )
         servers.append(server)
-        _wait_for_server(server, base_url)
+        wait_for_server(server, base_url)
         with pytest.raises(requests.RequestException):
             submit("resume")
         server.wait(timeout=3)
@@ -287,9 +221,9 @@ def test_redis_durable_a2a_tasks_read_through_after_restart(tmp_path: Path, unus
         assert len(task_ids) == 1
         resumable_id = task_ids[0].decode() if isinstance(task_ids[0], bytes) else task_ids[0]
 
-        server = _start_server(unused_tcp_port, environment, factory)
+        server = start_server(unused_tcp_port, environment, factory)
         servers.append(server)
-        _wait_for_server(server, base_url)
+        wait_for_server(server, base_url)
 
         assert _wait_for_task_state(base_url, resumable_id, "TASK_STATE_INPUT_REQUIRED")
         cancelable_id = submit("cancel")
@@ -311,13 +245,13 @@ def test_redis_durable_a2a_tasks_read_through_after_restart(tmp_path: Path, unus
             "resume",
         )
         if _a2a_task(resumed)["status"]["state"] != "TASK_STATE_COMPLETED":
-            _stop_server(server)
-            pytest.fail(f"{json.dumps(resumed)}\n{_server_error(server)}")
+            stop_server(server)
+            pytest.fail(f"{json.dumps(resumed)}\n{server_error(server)}")
 
         canceled = _a2a_rpc(base_url, "CancelTask", {"id": cancelable_id}, "cancel")
         if _a2a_task(canceled)["status"]["state"] != "TASK_STATE_CANCELED":
             _wait_for_task_state(base_url, cancelable_id, "TASK_STATE_CANCELED")
     finally:
         for server in servers:
-            _stop_server(server)
-        _cleanup_redis(redis_url, prefix)
+            stop_server(server)
+        cleanup_redis(redis_url, prefix)
