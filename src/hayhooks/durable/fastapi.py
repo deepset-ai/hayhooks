@@ -11,7 +11,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Reque
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError, create_model
 
-from hayhooks.durable.backend import CHUNK_CURSOR_START, parse_chunk_cursor
+from hayhooks.durable.backend import CHUNK_CURSOR_START, CHUNK_READ_COUNT, parse_chunk_cursor
 from hayhooks.durable.engine import RUN_ID_PATTERN
 from hayhooks.durable.models import ExecutionAdmissionError, ExecutionResult, ExecutionStoreError
 from hayhooks.durable.runtime import DefinitionRevisionConflictError, DurableDeployment, IdempotencyConflictError
@@ -251,7 +251,10 @@ def create_durable_router(  # noqa: C901, PLR0915 - one factory owns every gener
                 for entry_id, attempt, data in entries:
                     cursor = entry_id
                     yield _sse("chunk", f'{{"attempt":{attempt},"payload":{data.decode()}}}', entry_id=entry_id)
-                if terminal:
+                # One read is capped at CHUNK_READ_COUNT, so a full page means the
+                # terminal drain is not finished; stopping here would silently
+                # truncate a client reattaching to an already-finished execution.
+                if terminal and len(entries) < CHUNK_READ_COUNT:
                     yield _sse(record.status.value, execution_result(request, record).model_dump_json())
                     return
                 if not entries:

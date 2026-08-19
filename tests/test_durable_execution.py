@@ -25,7 +25,7 @@ from hayhooks.durable.adapters import (
     _checkpoint_data,
     _restore_agent_state,
 )
-from hayhooks.durable.backend import CHUNK_CURSOR_START
+from hayhooks.durable.backend import CHUNK_CURSOR_START, CHUNK_READ_COUNT
 from hayhooks.durable.context import execution_context_scope
 from hayhooks.durable.models import ExecutionCheckpoint, ExecutionKind, ExecutionRecord, ExecutionStatus
 from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, _canonical_json, _operation_fingerprint
@@ -268,6 +268,20 @@ class SyncWrapper(BasePipelineWrapper):
         return Result(value=request.value + 2)
 
 
+class ChunkBacklogWrapper(BasePipelineWrapper):
+    """Emit more display chunks than a single capped chunk-log read can return."""
+
+    durable_revision = "chunk-backlog"
+
+    def setup(self) -> None:
+        self.pipeline = Pipeline()
+
+    async def run_durable_async(self, context: DurableContext, request: Request) -> Result:
+        for index in range(request.value):
+            await context.stream_chunk({"index": index})
+        return Result(value=request.value)
+
+
 class BlockingAdmissionWrapper(BasePipelineWrapper):
     durable_revision = "blocking-admission"
 
@@ -289,7 +303,7 @@ async def test_durable_lifecycle_logs_identifiers_without_payload(monkeypatch) -
     sink = log.add(lambda message: records.append(message.record), level="DEBUG")
     try:
         await deployment.start()
-        await deployment.submit({"value": 8675309}, execution_id="logged-execution")
+        _, submitted = await deployment.submit({"value": 8675309}, execution_id="logged-execution")
         expected = {
             "Accepted durable execution submission",
             "Claimed durable execution",
@@ -305,7 +319,7 @@ async def test_durable_lifecycle_logs_identifiers_without_payload(monkeypatch) -
 
     lifecycle = [record for record in records if record["message"] in expected]
     assert all(record["extra"]["deployment"] == "logged-job" for record in lifecycle)
-    assert all(record["extra"]["execution_id"] == "logged-execution" for record in lifecycle)
+    assert all(record["extra"]["execution_id"] == submitted.execution_id for record in lifecycle)
     assert "8675309" not in str(lifecycle)
 
 
@@ -675,6 +689,24 @@ def test_durable_rest_bounds_owner_scoped_idempotency_keys(monkeypatch) -> None:
     assert "63" in rejected.json()["detail"]
 
 
+def test_durable_rest_never_adopts_an_idempotency_key_as_the_execution_id(monkeypatch) -> None:
+    """Unscoped access is bearer-by-execution-ID, so the ID must stay unguessable."""
+    app = _durable_app(monkeypatch, "job", Wrapper())
+
+    with TestClient(app) as client:
+        submitted = client.post("/job/run-durable", json={"value": 4}, headers={"Idempotency-Key": "order-42"})
+        execution_id = submitted.json()["execution_id"]
+        guessed = [
+            client.get("/job/executions/order-42"),
+            client.post("/job/executions/order-42/cancel"),
+            client.post("/job/executions/order-42/resume"),
+        ]
+
+    assert submitted.status_code == 202
+    assert execution_id != "order-42"
+    assert [response.status_code for response in guessed] == [404, 404, 404]
+
+
 def test_durable_rest_maps_oversized_validated_request_to_422(monkeypatch) -> None:
     monkeypatch.setattr(settings, "durable_max_record_bytes", 1_024)
     app = _durable_app(monkeypatch, "job", Wrapper())
@@ -773,6 +805,23 @@ def test_sync_durable_wrapper_uses_context_sync_controls(monkeypatch) -> None:
     assert inspected["progress"][0]["message"] == "working in a worker thread"
     assert json.loads(streamed[0]["data"])["payload"]["content"] == "tick"
     assert [event["event"] for event in streamed] == ["chunk", "completed"]
+
+
+def test_durable_stream_drains_a_full_backlog_before_its_terminal_event(monkeypatch) -> None:
+    """Reattaching to a finished execution must replay every chunk, not one page."""
+    backlog = CHUNK_READ_COUNT + 100
+    app = _durable_app(monkeypatch, "backlog", ChunkBacklogWrapper())
+
+    with TestClient(app) as client:
+        submitted = client.post("/backlog/run-durable", json={"value": backlog})
+        links = submitted.json()["links"]
+        wait_for_status(client, links["self"], "completed")
+        # Attach only after the execution is terminal, from the start of the log.
+        streamed = read_sse_events(client, links["stream"])
+
+    assert [event["event"] for event in streamed[-1:]] == ["completed"]
+    assert [event["event"] for event in streamed[:-1]] == ["chunk"] * backlog
+    assert [json.loads(event["data"])["payload"]["index"] for event in streamed[:-1]] == list(range(backlog))
 
 
 async def test_sync_work_retains_claim_after_shutdown_grace_until_thread_exits(monkeypatch) -> None:

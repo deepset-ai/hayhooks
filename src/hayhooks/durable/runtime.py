@@ -144,8 +144,11 @@ class DurableDeployment:
             msg = f"Durable deployment '{self.name}' is not accepting submissions"
             raise RuntimeError(msg)
         request = self.request_type.model_validate(dict(payload))
-        if execution_id is not None and owner_id is not None:
-            execution_id = execution_id_for(owner_id, execution_id)
+        # Always derive, never adopt: an unscoped deployment authorizes by
+        # possession of the execution ID, so a client-supplied idempotency key
+        # must not become a guessable one.
+        if execution_id is not None:
+            execution_id = execution_id_for(owner_id or "", execution_id)
         execution_id = execution_id or uuid.uuid4().hex
         validated_input = cast(
             dict[str, JsonValue],
@@ -496,7 +499,7 @@ class DefinitionRevisionConflictError(RuntimeError):
 
 
 def execution_id_for(owner_id: str, external_task_id: str) -> str:
-    """Return the internal fixed-size durable ID for one A2A task."""
+    """Derive the internal, unguessable execution ID for a caller-supplied key."""
     return hashlib.sha256(owner_id.encode("utf-8") + b"\0" + external_task_id.encode("utf-8")).hexdigest()
 
 

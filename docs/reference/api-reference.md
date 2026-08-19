@@ -146,7 +146,10 @@ Wrappers that implement exactly one of `run_durable()` or
 | `POST /{pipeline_name}/executions/{execution_id}/cancel` | Request cooperative cancellation |
 | `POST /{pipeline_name}/executions/{execution_id}/resume` | Resume an execution waiting for input |
 
-Submission normally returns `202 Accepted` and a `Location` header. An
+Submission normally returns `202 Accepted` and a `Location` header. The
+`Idempotency-Key` is never used as the execution ID directly: the server derives
+an unguessable ID from it, so follow the `Location` header or the returned
+`execution_id`. An
 idempotent replay of a retained terminal execution returns `200 OK`. Validated
 input, checkpoints, application state, ownership, and fence details remain
 server-side. See [Pipeline wrapper durable execution](../concepts/pipeline-wrapper.md#durable-execution)
