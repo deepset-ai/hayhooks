@@ -11,12 +11,21 @@ from hayhooks.a2a import RecoverableTaskStore, default_a2a_owner
 from hayhooks.durable.models import ExecutionAdmissionError, ExecutionStatus, ExecutionStoreError
 from hayhooks.durable.runtime import DefinitionRevisionConflictError, DurableDeployment, execution_id_for
 from hayhooks.server.a2a.imports import (
+    DEFAULT_LIST_TASKS_PAGE_SIZE,
     AgentExecutor,
     EventQueue,
     InvalidParamsError,
+    ListTasksResponse,
     RequestContext,
+    Task,
+    TaskArtifactUpdateEvent,
+    TaskState,
+    TaskStatusUpdateEvent,
     TaskStore,
     TaskUpdater,
+    append_artifact_to_task,
+    decode_page_token,
+    encode_page_token,
     new_task_from_user_message,
     new_text_part,
 )
@@ -32,6 +41,28 @@ from hayhooks.settings import settings
 
 DURABLE_PROGRESS_ARTIFACT_NAME = "durable-progress"
 DURABLE_RESULT_ARTIFACT_NAME = "durable-result"
+_MISSING_RECORD = "The durable Agent execution record is missing (durable_execution_missing)."
+_REJECTED_SUBMISSION = "The durable Agent submission was rejected (durable_submission_rejected)."
+
+
+def _clone(task: Any) -> Any:
+    copy = type(task)()
+    copy.CopyFrom(task)
+    return copy
+
+
+def _projection_updater(projected: Any) -> TaskUpdater:
+    """Build an updater that mutates a detached task snapshot instead of a queue."""
+    return TaskUpdater(cast(EventQueue, _TaskProjectionQueue(projected)), projected.id, projected.context_id)
+
+
+async def _fail(updater: TaskUpdater, text: str) -> None:
+    await updater.failed(message=updater.new_agent_message([new_text_part(text)]))
+
+
+async def _record(deployment: DurableDeployment, execution_id: str, owner_id: str) -> Any:
+    """Read one owner-scoped record, tolerating a superseded definition revision."""
+    return await deployment.get(execution_id, owner_id=owner_id, enforce_owner=True, allow_revision_mismatch=True)
 
 
 class _TaskProjectionQueue:
@@ -41,9 +72,6 @@ class _TaskProjectionQueue:
         self.task = task
 
     async def enqueue_event(self, event: Any) -> None:
-        from a2a.server.tasks.task_manager import append_artifact_to_task
-        from a2a.types import TaskArtifactUpdateEvent, TaskStatusUpdateEvent
-
         if isinstance(event, TaskStatusUpdateEvent):
             if self.task.status.HasField("message"):
                 self.task.history.append(self.task.status.message)
@@ -71,19 +99,12 @@ class DurableTaskStore(TaskStore):
         record = None
         if task is None:
             try:
-                record = await self._deployment.get(
-                    execution_id_for(owner_id, task_id),
-                    owner_id=owner_id,
-                    enforce_owner=True,
-                    allow_revision_mismatch=True,
-                )
+                record = await _record(self._deployment, execution_id_for(owner_id, task_id), owner_id)
             except KeyError:
                 return None
             context_id = record.validated_input.get("a2a_context_id")
             if not isinstance(context_id, str) or not context_id:
                 return None
-            from a2a.types import Task, TaskState
-
             task = Task(id=task_id, context_id=context_id)
             task.status.state = (
                 TaskState.TASK_STATE_WORKING
@@ -93,10 +114,6 @@ class DurableTaskStore(TaskStore):
         return await self._project(task, owner_id, context, record=record)
 
     async def list(self, params: Any, context: Any) -> Any:
-        from a2a.types import ListTasksResponse
-        from a2a.utils.constants import DEFAULT_LIST_TASKS_PAGE_SIZE
-        from a2a.utils.task import decode_page_token, encode_page_token
-
         tasks = await self._all_tasks(params, context)
         owner_id = self.owner_id_for_context(context)
         projected: builtins.list[Any | None] = []
@@ -155,47 +172,28 @@ class DurableTaskStore(TaskStore):
                 return tasks
             request.page_token = page.next_page_token
 
-    async def _project(  # noqa: C901
-        self, task: Any | None, owner_id: str, context: Any, *, record: Any | None = None
-    ) -> Any | None:
+    async def _project(self, task: Any | None, owner_id: str, context: Any, *, record: Any | None = None) -> Any | None:
         if task is None:
             return None
-        projected = type(task)()
-        projected.CopyFrom(task)
+        projected = _clone(task)
         copy_version = getattr(self._task_store, "copy_task_version", None)
         if callable(copy_version):
             copy_version(task, projected)
-        settled = False
         try:
-            if record is None:
-                record = await self._deployment.get(
-                    execution_id_for(owner_id, task.id),
-                    owner_id=owner_id,
-                    enforce_owner=True,
-                    allow_revision_mismatch=True,
-                )
+            record = record or await _record(self._deployment, execution_id_for(owner_id, task.id), owner_id)
         except KeyError:
-            if task_is_terminal(task):
+            if (
+                task_is_terminal(task)
+                or not task.HasField("status")
+                or task.status.state == TaskState.TASK_STATE_SUBMITTED
+            ):
                 return projected
-            if task.HasField("status"):
-                from a2a.types import TaskState
-
-                if task.status.state == TaskState.TASK_STATE_SUBMITTED:
-                    return projected
-                updater = TaskUpdater(cast(EventQueue, _TaskProjectionQueue(projected)), task.id, task.context_id)
-                await updater.failed(
-                    message=updater.new_agent_message(
-                        [new_text_part("The durable Agent execution record is missing (durable_execution_missing).")]
-                    )
-                )
-                settled = True
+            await _fail(_projection_updater(projected), _MISSING_RECORD)
+            settled = True
         else:
             if _task_matches_record(task, record):
                 return projected
-            settled = await _project_record(
-                record,
-                TaskUpdater(cast(EventQueue, _TaskProjectionQueue(projected)), task.id, task.context_id),
-            )
+            settled = await _project_record(record, _projection_updater(projected))
         if settled and task.id in self._read_through_task_ids:
             try:
                 await self._task_store.save(projected, context)
@@ -237,25 +235,10 @@ class DurableAgentExecutor(AgentExecutor):
         record = None
         if context.current_task is not None:
             try:
-                record = await self.deployment.get(
-                    execution_id,
-                    owner_id=owner_id,
-                    enforce_owner=True,
-                    allow_revision_mismatch=True,
-                )
+                record = await _record(self.deployment, execution_id, owner_id)
             except KeyError:
-                from a2a.types import TaskState
-
                 if task.status.state != TaskState.TASK_STATE_SUBMITTED:
-                    await updater.failed(
-                        message=updater.new_agent_message(
-                            [
-                                new_text_part(
-                                    "The durable Agent execution record is missing (durable_execution_missing)."
-                                )
-                            ]
-                        )
-                    )
+                    await _fail(updater, _MISSING_RECORD)
                     return
         if record is not None and record.status is ExecutionStatus.WAITING:
             action = "resume"
@@ -282,11 +265,7 @@ class DurableAgentExecutor(AgentExecutor):
                     task_id=task.id,
                     error_type=type(error).__name__,
                 ).warning("Rejected durable A2A task submission")
-                await updater.failed(
-                    message=updater.new_agent_message(
-                        [new_text_part("The durable Agent submission was rejected (durable_submission_rejected).")]
-                    )
-                )
+                await _fail(updater, _REJECTED_SUBMISSION)
                 return
             execution_id = record.execution_id
         else:
@@ -336,18 +315,9 @@ class DurableAgentExecutor(AgentExecutor):
         last_sequence = -1
         while not self._closed:
             try:
-                record = await self.deployment.get(
-                    execution_id,
-                    owner_id=owner_id,
-                    enforce_owner=True,
-                    allow_revision_mismatch=True,
-                )
+                record = await _record(self.deployment, execution_id, owner_id)
             except KeyError:
-                await updater.failed(
-                    message=updater.new_agent_message(
-                        [new_text_part("The durable Agent execution record is missing (durable_execution_missing).")]
-                    )
-                )
+                await _fail(updater, _MISSING_RECORD)
                 return
             except ExecutionStoreError:
                 await asyncio.sleep(max(0.1, settings.durable_poll_interval))
@@ -377,54 +347,14 @@ class DurableAgentExecutor(AgentExecutor):
                 await asyncio.sleep(max(0.1, settings.durable_poll_interval))
         raise asyncio.CancelledError
 
-    async def _recover_tasks(self, task_store: RecoverableTaskStore) -> None:  # noqa: C901
+    async def _recover_tasks(self, task_store: RecoverableTaskStore) -> None:
         """Repair durable A2A tasks saved before this executor started."""
         cursor = 0
         recovered = 0
         while not self._closed:
             tasks, next_cursor = await task_store.recoverable_task_batch(cursor, settings.a2a_list_scan_batch_size)
             for task, owner_id, version in tasks:
-                execution_id = execution_id_for(owner_id, task.id)
-                try:
-                    record = await self.deployment.get(
-                        execution_id,
-                        owner_id=owner_id,
-                        enforce_owner=True,
-                        allow_revision_mismatch=True,
-                    )
-                except KeyError:
-                    from a2a.types import TaskState
-
-                    if task.status.state != TaskState.TASK_STATE_SUBMITTED:
-                        continue
-                    try:
-                        record = await self._submit(task, owner_id, build_haystack_task_messages(task))
-                    except ValueError as error:
-                        record = None
-                        log.bind(
-                            pipeline_name=self.pipeline_name,
-                            task_id=task.id,
-                            error_type=type(error).__name__,
-                        ).warning("Rejected recovered durable A2A task submission")
-                if record is not None and record.status in {ExecutionStatus.QUEUED, ExecutionStatus.RUNNING}:
-                    self.task_store._read_through_task_ids.add(task.id)
-                if record is not None and _task_matches_record(task, record):
-                    continue
-                projected = type(task)()
-                projected.CopyFrom(task)
-                updater = TaskUpdater(cast(EventQueue, _TaskProjectionQueue(projected)), task.id, task.context_id)
-                if record is None:
-                    await updater.failed(
-                        message=updater.new_agent_message(
-                            [new_text_part("The durable Agent submission was rejected (durable_submission_rejected).")]
-                        )
-                    )
-                else:
-                    await _project_record(record, updater)
-                if not await task_store.save_projection(projected, owner_id, version):
-                    continue
-                task.CopyFrom(projected)
-                recovered += 1
+                recovered += await self._recover_task(task_store, task, owner_id, version)
             if next_cursor is None:
                 if recovered:
                     log.bind(pipeline_name=self.pipeline_name, recovered=recovered).debug(
@@ -432,6 +362,38 @@ class DurableAgentExecutor(AgentExecutor):
                     )
                 return
             cursor = next_cursor
+
+    async def _recover_task(self, task_store: RecoverableTaskStore, task: Any, owner_id: str, version: int) -> bool:
+        """Reconcile one saved task with its durable record, resubmitting when it never started."""
+        try:
+            record = await _record(self.deployment, execution_id_for(owner_id, task.id), owner_id)
+        except KeyError:
+            if task.status.state != TaskState.TASK_STATE_SUBMITTED:
+                return False
+            try:
+                record = await self._submit(task, owner_id, build_haystack_task_messages(task))
+            except ValueError as error:
+                record = None
+                log.bind(
+                    pipeline_name=self.pipeline_name,
+                    task_id=task.id,
+                    error_type=type(error).__name__,
+                ).warning("Rejected recovered durable A2A task submission")
+        if record is not None:
+            if record.status in {ExecutionStatus.QUEUED, ExecutionStatus.RUNNING}:
+                self.task_store._read_through_task_ids.add(task.id)
+            if _task_matches_record(task, record):
+                return False
+        projected = _clone(task)
+        updater = _projection_updater(projected)
+        if record is None:
+            await _fail(updater, _REJECTED_SUBMISSION)
+        else:
+            await _project_record(record, updater)
+        if not await task_store.save_projection(projected, owner_id, version):
+            return False
+        task.CopyFrom(projected)
+        return True
 
 
 def _task(context: RequestContext) -> Any:
@@ -478,8 +440,6 @@ async def _project_record(record: Any, updater: TaskUpdater) -> bool:
 
 
 def _task_matches_record(task: Any, record: Any) -> bool:
-    from a2a.types import TaskState
-
     states = {
         ExecutionStatus.WAITING: TaskState.TASK_STATE_INPUT_REQUIRED,
         ExecutionStatus.COMPLETED: TaskState.TASK_STATE_COMPLETED,

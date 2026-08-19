@@ -48,7 +48,6 @@ SPAN_MCP_LIST_TOOLS = "hayhooks.mcp.list_tools"
 SPAN_MCP_CALL_TOOL = "hayhooks.mcp.call_tool"
 SPAN_MCP_RUN_PIPELINE_TOOL = "hayhooks.mcp.run_pipeline_tool"
 SPAN_A2A_RUN_AGENT = "hayhooks.a2a.run_agent"
-SPAN_A2A_DURABLE_PROJECT = "hayhooks.a2a.durable.project"
 SPAN_DURABLE_SUBMIT = "hayhooks.durable.submit"
 SPAN_DURABLE_ATTEMPT = "hayhooks.durable.attempt"
 

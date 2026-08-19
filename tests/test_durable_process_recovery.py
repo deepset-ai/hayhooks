@@ -10,7 +10,6 @@ import signal
 import sqlite3
 import subprocess
 import sys
-import time
 import uuid
 from pathlib import Path
 
@@ -19,6 +18,7 @@ import requests
 from redis import Redis
 
 from hayhooks.server.a2a.redis_task_store import RedisTaskStore
+from tests.durable_helpers import wait_until
 
 pytestmark = [
     pytest.mark.integration,
@@ -72,46 +72,42 @@ def _stop_server(server: subprocess.Popen[str]) -> None:
             server.wait(timeout=3)
 
 
+def _wait(predicate, message: str):
+    """Poll for up to ten seconds; every wait in this module shares that budget."""
+    return wait_until(predicate, message, attempts=200, delay=0.05)
+
+
 def _server_error(server: subprocess.Popen[str]) -> str:
     output = server.stdout.read() if server.stdout is not None else ""
     return f"durable test server exited with {server.returncode}:\n{output}"
 
 
 def _wait_for_server(server: subprocess.Popen[str], base_url: str) -> None:
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
+    def ready() -> bool:
         if server.poll() is not None:
             pytest.fail(_server_error(server))
         try:
-            if requests.get(f"{base_url}/status", timeout=0.25).status_code == 200:
-                return
+            return requests.get(f"{base_url}/status", timeout=0.25).status_code == 200
         except requests.RequestException:
-            pass
-        time.sleep(0.05)
-    pytest.fail("durable test server did not become ready")
+            return False
+
+    _wait(ready, "durable test server did not become ready")
 
 
 def _wait_for_file(path: Path) -> None:
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if path.exists():
-            return
-        time.sleep(0.05)
-    pytest.fail("durable test wrapper did not reach its crash window")
+    _wait(path.exists, "durable test wrapper did not reach its crash window")
 
 
 def _wait_for_completion(execution_url: str) -> dict:
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
+    def completed() -> dict | None:
         response = requests.get(execution_url, timeout=0.5)
         response.raise_for_status()
         execution = response.json()
-        if execution["status"] == "completed":
-            return execution
         if execution["status"] in {"failed", "canceled"}:
             pytest.fail(f"durable execution ended as {execution['status']}: {execution}")
-        time.sleep(0.05)
-    pytest.fail("durable execution did not recover to completion")
+        return execution if execution["status"] == "completed" else None
+
+    return _wait(completed, "durable execution did not recover to completion")
 
 
 def _cleanup_redis(redis_url: str, prefix: str) -> None:
@@ -159,13 +155,11 @@ def _a2a_rpc(base_url: str, method: str, params: dict, request_id: str) -> dict:
 
 
 def _wait_for_task_state(base_url: str, task_id: str, state: str) -> dict:
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
+    def ready() -> dict | None:
         task = _a2a_rpc(base_url, "GetTask", {"id": task_id}, f"get-{task_id}")
-        if task["status"]["state"] == state:
-            return task
-        time.sleep(0.05)
-    pytest.fail(f"A2A task '{task_id}' did not reach {state}")
+        return task if task["status"]["state"] == state else None
+
+    return _wait(ready, f"A2A task '{task_id}' did not reach {state}")
 
 
 def _a2a_task(result: dict) -> dict:

@@ -16,6 +16,7 @@ from hayhooks.durable.backend import (
     check_admission,
     parse_idempotency_binding,
     parse_lease_member,
+    runnable_score,
     validate_command_payloads,
 )
 from hayhooks.durable.engine import (
@@ -96,7 +97,7 @@ class InMemoryExecutionStore:
                 raise
             self._runnable.pop(run_id, None)
             if current.status is ExecutionStatus.QUEUED:
-                self._runnable[run_id] = _runnable_score(current)
+                self._runnable[run_id] = runnable_score(current)
             return TransitionPlan(current)
         self._apply_plan(current, plan)
         return plan
@@ -157,7 +158,7 @@ class InMemoryExecutionStore:
 
         self._runnable.pop(next_control.run_id, None)
         if next_control.status is ExecutionStatus.QUEUED:
-            self._runnable[next_control.run_id] = _runnable_score(next_control)
+            self._runnable[next_control.run_id] = runnable_score(next_control)
 
         if plan.lease_index_update is not None:
             member = f"{next_control.run_id}|{plan.lease_index_update.fence}"
@@ -175,7 +176,3 @@ class InMemoryExecutionStore:
                 next_control.idempotency_digest,
                 f"{next_control.run_id}|{next_control.idempotency_binding_digest}",
             )
-
-
-def _runnable_score(control: ExecutionControl) -> int:
-    return control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms

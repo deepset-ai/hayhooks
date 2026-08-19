@@ -16,13 +16,21 @@ from hayhooks.durable.backend import (
     ExecutionStoreCorruptionError,
 )
 from hayhooks.durable.redis import digest, redis_time_ms, redis_transaction_backoff, redis_watch_error
-from hayhooks.server.a2a.imports import InvalidParamsError, TaskStore
+from hayhooks.server.a2a.imports import (
+    DEFAULT_LIST_TASKS_PAGE_SIZE,
+    InvalidParamsError,
+    ListTasksRequest,
+    ListTasksResponse,
+    Task,
+    TaskStore,
+    decode_page_token,
+    encode_page_token,
+)
 from hayhooks.server.a2a.messages import task_is_terminal, task_matches_filters
 from hayhooks.settings import settings
 
 if TYPE_CHECKING:
     from a2a.server.context import ServerCallContext
-    from a2a.types import ListTasksRequest, ListTasksResponse, Task
 
 
 OwnerResolver = Callable[[Any], str]
@@ -96,8 +104,6 @@ class RedisTaskStore(TaskStore):
 
     @staticmethod
     def _deserialize(payload: bytes | str) -> Task:
-        from a2a.types import Task
-
         if isinstance(payload, str):
             payload = payload.encode("utf-8")
         task = Task()
@@ -307,27 +313,10 @@ class RedisTaskStore(TaskStore):
 
     async def list(self, params: ListTasksRequest, context: ServerCallContext) -> ListTasksResponse:
         await self.cleanup_expired_tasks(limit=100)
-        from a2a.types import ListTasksResponse
-        from a2a.utils.constants import DEFAULT_LIST_TASKS_PAGE_SIZE
-        from a2a.utils.task import decode_page_token, encode_page_token
-
         page_size = params.page_size or DEFAULT_LIST_TASKS_PAGE_SIZE
-        if params.context_id or params.status or params.HasField("status_timestamp_after"):
-            page, total_size, next_page_token = await self._list_filtered(
-                params,
-                context,
-                page_size,
-                decode_page_token,
-                encode_page_token,
-            )
-        else:
-            page, total_size, next_page_token = await self._list_by_recent_update(
-                params,
-                context,
-                page_size,
-                decode_page_token,
-                encode_page_token,
-            )
+        filtered = bool(params.context_id or params.status or params.HasField("status_timestamp_after"))
+        lister = self._list_filtered if filtered else self._list_by_recent_update
+        page, total_size, next_page_token = await lister(params, context, page_size)
         return ListTasksResponse(
             tasks=page,
             next_page_token=next_page_token,
@@ -335,25 +324,23 @@ class RedisTaskStore(TaskStore):
             total_size=total_size,
         )
 
+    async def _start_rank(self, page_token: str, updates_key: str) -> int:
+        """Resolve a page token to the next index in the owner update index."""
+        if not page_token:
+            return 0
+        rank = await self.redis.zrevrank(updates_key, decode_page_token(page_token))
+        if rank is None:
+            msg = f"Invalid page token: {page_token}"
+            raise InvalidParamsError(msg)
+        return int(rank) + 1
+
     async def _list_by_recent_update(
-        self,
-        params: ListTasksRequest,
-        context: ServerCallContext,
-        page_size: int,
-        decode_page_token: Callable[[str], str],
-        encode_page_token: Callable[[str], str],
+        self, params: ListTasksRequest, context: ServerCallContext, page_size: int
     ) -> tuple[builtins.list[Task], int, str | None]:
         owner = self.owner_id_for_context(context)
         updates_key = self._updates_key(owner)
         total_size = await self.redis.zcard(updates_key)
-        start_index = 0
-        if params.page_token:
-            start_task_id = decode_page_token(params.page_token)
-            rank = await self.redis.zrevrank(updates_key, start_task_id)
-            if rank is None:
-                msg = f"Invalid page token: {params.page_token}"
-                raise InvalidParamsError(msg)
-            start_index = rank + 1
+        start_index = await self._start_rank(params.page_token, updates_key)
 
         task_ids = await self.redis.zrevrange(updates_key, start_index, start_index + page_size - 1)
         task_ids = [self._decode_value(task_id) for task_id in task_ids]
@@ -364,25 +351,13 @@ class RedisTaskStore(TaskStore):
         return page, total_size, next_page_token
 
     async def _list_filtered(
-        self,
-        params: ListTasksRequest,
-        context: ServerCallContext,
-        page_size: int,
-        decode_page_token: Callable[[str], str],
-        encode_page_token: Callable[[str], str],
+        self, params: ListTasksRequest, context: ServerCallContext, page_size: int
     ) -> tuple[builtins.list[Task], int, str | None]:
         """Apply filters in bounded update-index batches with exact pagination."""
         owner = self.owner_id_for_context(context)
         updates_key = self._updates_key(owner)
         indexed_size = int(await self.redis.zcard(updates_key))
-        start_rank = 0
-        if params.page_token:
-            start_task_id = decode_page_token(params.page_token)
-            rank = await self.redis.zrevrank(updates_key, start_task_id)
-            if rank is None:
-                msg = f"Invalid page token: {params.page_token}"
-                raise InvalidParamsError(msg)
-            start_rank = int(rank) + 1
+        start_rank = await self._start_rank(params.page_token, updates_key)
 
         page: builtins.list[Task] = []
         matching_after_page = False

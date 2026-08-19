@@ -267,6 +267,13 @@ class HaystackDurableAdapter:
         self.pipeline._hayhooks_durable_hooks_installed = True
 
 
+def chat_messages(values: Any) -> list[Any]:
+    """Decode a persisted list of serialized chat messages."""
+    if not isinstance(values, list):
+        return []
+    return [ChatMessage.from_dict(value) for value in values if isinstance(value, dict)]
+
+
 def _current_durable_context() -> DurableContext | None:
     from hayhooks.durable.context import get_current_durable_context
 
@@ -366,10 +373,8 @@ def _restore_agent_state(context: DurableContext, state: Any) -> None:
     if live_hook_context is not None:
         state.data["hook_context"] = live_hook_context
     resume = context.take_resume_input()
-    if isinstance(resume, dict) and isinstance(resume.get("messages"), list):
-        state.data.setdefault("messages", []).extend(
-            ChatMessage.from_dict(message) for message in resume["messages"] if isinstance(message, dict)
-        )
+    if isinstance(resume, dict):
+        state.data.setdefault("messages", []).extend(chat_messages(resume.get("messages")))
 
 
 def execution_kind(pipeline: Any) -> ExecutionKind:
@@ -383,4 +388,4 @@ def execution_kind(pipeline: Any) -> ExecutionKind:
     raise TypeError(msg)
 
 
-__all__ = ["HaystackDurableAdapter", "execution_kind", "require_haystack_v3"]
+__all__ = ["HaystackDurableAdapter", "chat_messages", "execution_kind", "require_haystack_v3"]

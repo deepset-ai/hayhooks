@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from a2a.server.context import ServerCallContext
+from a2a.types import ListTasksRequest, Task, TaskState
 
 from hayhooks.durable.models import ExecutionStatus
 from hayhooks.durable.runtime import execution_id_for
@@ -43,8 +45,6 @@ async def redis_task_store(isolated_redis):
 
 
 def _task(task_id: str, seconds: int = 0):
-    from a2a.types import Task, TaskState
-
     task = Task(id=task_id, context_id=f"context-{task_id}")
     task.status.state = TaskState.TASK_STATE_WORKING
     task.status.timestamp.FromDatetime(datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=seconds))
@@ -56,9 +56,6 @@ def _context(owner: str):
 
 
 async def test_redis_a2a_recovery_uses_atomic_projection_and_owner(redis_task_store) -> None:
-    from a2a.server.context import ServerCallContext
-    from a2a.types import TaskState
-
     redis, store = redis_task_store
     context = ServerCallContext()
     task = _task("client.task/" + "x" * 160)
@@ -86,9 +83,6 @@ async def test_redis_a2a_recovery_uses_atomic_projection_and_owner(redis_task_st
 
 
 async def test_redis_a2a_read_through_persists_late_completion(redis_task_store) -> None:
-    from a2a.server.context import ServerCallContext
-    from a2a.types import TaskState
-
     redis, store = redis_task_store
     context = ServerCallContext()
     task = _task("late-completion")
@@ -110,8 +104,6 @@ async def test_redis_a2a_read_through_persists_late_completion(redis_task_store)
 
 
 async def test_redis_task_store_isolates_agents_and_owners(redis_task_store) -> None:
-    from a2a.types import TaskState
-
     redis, base_store = redis_task_store
     store = RedisTaskStore(redis, "agent/one", key_prefix=base_store.key_prefix)
     other_agent = RedisTaskStore(redis, "agent/two", key_prefix=base_store.key_prefix)
@@ -172,8 +164,6 @@ async def test_all_task_store_writes_reject_a_stale_loaded_version(redis_task_st
 
 
 async def test_same_store_tracks_versions_per_loaded_task_snapshot(redis_task_store) -> None:
-    from a2a.types import TaskState
-
     _, store = redis_task_store
     context = _context("alice@example.com")
     await store.save(_task("task", 1), context)
@@ -217,8 +207,6 @@ async def test_concurrent_projection_writers_use_one_version_fence(redis_task_st
 
 
 async def test_cleanup_preserves_a_task_whose_terminal_ttl_was_extended(monkeypatch, redis_task_store) -> None:
-    from a2a.types import TaskState
-
     redis, base_store = redis_task_store
     cleanup = RedisTaskStore(redis, "cleanup-race", key_prefix=base_store.key_prefix, terminal_ttl_seconds=60)
     writer = RedisTaskStore(redis, "cleanup-race", key_prefix=base_store.key_prefix, terminal_ttl_seconds=60)
@@ -258,8 +246,6 @@ async def test_cleanup_preserves_a_task_whose_terminal_ttl_was_extended(monkeypa
 
 
 async def test_redis_task_store_lists_with_filters_and_page_tokens(redis_task_store) -> None:
-    from a2a.types import ListTasksRequest
-
     _, store = redis_task_store
     context = _context("alice@example.com")
     for index in range(3):
@@ -285,8 +271,6 @@ async def test_redis_task_store_lists_with_filters_and_page_tokens(redis_task_st
 
 
 async def test_redis_task_store_compares_status_timestamps_as_timestamps(redis_task_store) -> None:
-    from a2a.types import ListTasksRequest
-
     _, store = redis_task_store
     context = _context("alice@example.com")
     task = _task("task")
@@ -301,8 +285,6 @@ async def test_redis_task_store_compares_status_timestamps_as_timestamps(redis_t
 
 
 async def test_filtered_task_listing_and_snapshot_cache_are_globally_bounded(monkeypatch, redis_task_store) -> None:
-    from a2a.types import ListTasksRequest
-
     from hayhooks.settings import settings
 
     monkeypatch.setattr(settings, "a2a_list_scan_batch_size", 2)

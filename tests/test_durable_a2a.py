@@ -1,13 +1,14 @@
 import asyncio
 import importlib.metadata
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from a2a.types import ListTasksResponse, Message, Role, Task, TaskState
 from fastapi.testclient import TestClient
 
 from hayhooks.a2a import A2APipelineWrapper, TaskStoreProvider
@@ -20,6 +21,7 @@ from hayhooks.server.a2a.imports import TaskStore, new_task_from_user_message, n
 from hayhooks.server.a2a.runtime import A2ARuntime
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.settings import settings
+from tests.durable_helpers import wait_until
 
 pytestmark = pytest.mark.skipif(
     not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
@@ -102,8 +104,6 @@ class _HTTPStore(TaskStore):
         return self.tasks.get(task_id)
 
     async def list(self, _params, _context):
-        from a2a.types import ListTasksResponse
-
         return ListTasksResponse(tasks=list(self.tasks.values()), page_size=len(self.tasks), total_size=len(self.tasks))
 
     async def delete(self, task_id, _context):
@@ -142,8 +142,6 @@ def _response_task(response):
 
 
 def _recoverable_task():
-    from a2a.types import Message, Role
-
     return new_task_from_user_message(
         Message(
             message_id="message",
@@ -187,21 +185,29 @@ def http_store() -> _HTTPStore:
     return _HTTPStore()
 
 
-def test_a2a_http_reads_completion_from_durable_execution(monkeypatch, http_store) -> None:
-    app = _http_app(http_store, _Deployment(), monkeypatch)
+@pytest.fixture
+def a2a_client(monkeypatch, http_store):
+    """Mount one durable deployment and yield a version-pinned A2A client."""
 
-    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+    @contextmanager
+    def _client(deployment):
+        with TestClient(_http_app(http_store, deployment, monkeypatch), headers={"A2A-Version": "1.0"}) as client:
+            yield client
+
+    return _client
+
+
+def test_a2a_http_reads_completion_from_durable_execution(a2a_client) -> None:
+    with a2a_client(_Deployment()) as client:
         completed = _response_task(client.post("/durable-agent/", json=_send_payload("initial")))
 
     assert completed["status"]["state"] == "TASK_STATE_COMPLETED"
     assert completed["artifacts"][-1]["name"] == "durable-result"
 
 
-def test_expired_task_projection_uses_the_retained_execution(monkeypatch, http_store) -> None:
+def test_expired_task_projection_uses_the_retained_execution(a2a_client, http_store) -> None:
     deployment = _Deployment()
-    app = _http_app(http_store, deployment, monkeypatch)
-
-    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+    with a2a_client(deployment) as client:
         completed = _response_task(client.post("/durable-agent/", json=_send_payload("initial")))
         http_store.tasks.clear()
         deployment.submit = AsyncMock(side_effect=AssertionError("retained execution must not be resubmitted"))
@@ -214,11 +220,9 @@ def test_expired_task_projection_uses_the_retained_execution(monkeypatch, http_s
     assert not http_store.tasks
 
 
-def test_a2a_http_waiting_task_resumes_with_only_the_follow_up(monkeypatch, http_store) -> None:
+def test_a2a_http_waiting_task_resumes_with_only_the_follow_up(a2a_client) -> None:
     deployment = _Deployment(status=ExecutionStatus.WAITING)
-    app = _http_app(http_store, deployment, monkeypatch)
-
-    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+    with a2a_client(deployment) as client:
         waiting = _response_task(client.post("/durable-agent/", json=_send_payload("initial")))
         assert waiting["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
         completed = _response_task(
@@ -231,11 +235,9 @@ def test_a2a_http_waiting_task_resumes_with_only_the_follow_up(monkeypatch, http
     }
 
 
-def test_a2a_http_cancel_reaches_durable_execution(monkeypatch, http_store) -> None:
+def test_a2a_http_cancel_reaches_durable_execution(a2a_client) -> None:
     deployment = _Deployment(status=ExecutionStatus.RUNNING)
-    app = _http_app(http_store, deployment, monkeypatch)
-
-    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+    with a2a_client(deployment) as client:
         active = _response_task(client.post("/durable-agent/", json=_send_payload("initial", return_immediately=True)))
         canceled = _response_task(client.post("/durable-agent/", json=_cancel_payload(active["id"])))
 
@@ -243,23 +245,19 @@ def test_a2a_http_cancel_reaches_durable_execution(monkeypatch, http_store) -> N
     assert canceled["status"]["state"] == "TASK_STATE_CANCELED"
 
 
-def test_a2a_http_cancel_projects_a_terminal_race(monkeypatch, http_store) -> None:
+def test_a2a_http_cancel_projects_a_terminal_race(a2a_client) -> None:
     deployment = _Deployment(status=ExecutionStatus.RUNNING)
     deployment.cancel_accepted = False
-    app = _http_app(http_store, deployment, monkeypatch)
-
-    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+    with a2a_client(deployment) as client:
         active = _response_task(client.post("/durable-agent/", json=_send_payload("initial", return_immediately=True)))
         canceled = _response_task(client.post("/durable-agent/", json=_cancel_payload(active["id"])))
 
     assert canceled["status"]["state"] == "TASK_STATE_CANCELED"
 
 
-def test_return_immediately_waits_for_durable_submission(monkeypatch, http_store) -> None:
+def test_return_immediately_waits_for_durable_submission(a2a_client, http_store) -> None:
     deployment = _BlockingDeployment()
-    app = _http_app(http_store, deployment, monkeypatch)
-
-    with TestClient(app, headers={"A2A-Version": "1.0"}) as client, ThreadPoolExecutor() as pool:
+    with a2a_client(deployment) as client, ThreadPoolExecutor() as pool:
         response = pool.submit(client.post, "/durable-agent/", json=_send_payload("initial", return_immediately=True))
         try:
             assert deployment.submit_started.wait(timeout=1)
@@ -271,20 +269,15 @@ def test_return_immediately_waits_for_durable_submission(monkeypatch, http_store
         assert response.result(timeout=2).status_code == 200
 
 
-def test_returned_task_is_eventually_persisted_as_terminal(monkeypatch, http_store) -> None:
-    from a2a.types import TaskState
-
+def test_returned_task_is_eventually_persisted_as_terminal(a2a_client, http_store) -> None:
     deployment = _Deployment(status=ExecutionStatus.COMPLETED)
-    app = _http_app(http_store, deployment, monkeypatch)
-
-    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+    with a2a_client(deployment) as client:
         active = _response_task(client.post("/durable-agent/", json=_send_payload("initial", return_immediately=True)))
-        deadline = time.monotonic() + 1
-        while (
-            http_store.tasks[active["id"]].status.state != TaskState.TASK_STATE_COMPLETED
-            and time.monotonic() < deadline
-        ):
-            time.sleep(0.01)
+        wait_until(
+            lambda: http_store.tasks[active["id"]].status.state == TaskState.TASK_STATE_COMPLETED,
+            "returned task was never persisted as completed",
+            attempts=100,
+        )
         completed = _response_task(client.post("/durable-agent/", json=_get_payload(active["id"])))
 
     assert completed["status"]["state"] == "TASK_STATE_COMPLETED"
@@ -292,8 +285,6 @@ def test_returned_task_is_eventually_persisted_as_terminal(monkeypatch, http_sto
 
 
 async def test_expired_execution_preserves_retained_terminal_task(http_store) -> None:
-    from a2a.types import Task, TaskState
-
     task = Task(id="retained-terminal", context_id="context")
     task.status.state = TaskState.TASK_STATE_COMPLETED
     deployment = _Deployment()
@@ -305,8 +296,6 @@ async def test_expired_execution_preserves_retained_terminal_task(http_store) ->
 
 
 async def test_missing_execution_preserves_a_task_awaiting_submission(http_store) -> None:
-    from a2a.types import TaskState
-
     task = _recoverable_task()
     deployment = _Deployment()
     deployment.get = AsyncMock(side_effect=KeyError("submission has not committed yet"))
@@ -415,14 +404,10 @@ async def test_durable_a2a_submission_retries_transient_failures(monkeypatch, ht
     sleep.assert_awaited_once()
 
 
-def test_a2a_http_rejected_submission_is_persisted_as_failed(monkeypatch, http_store) -> None:
-    from a2a.types import TaskState
-
+def test_a2a_http_rejected_submission_is_persisted_as_failed(a2a_client, http_store) -> None:
     deployment = _Deployment()
     deployment.submit = AsyncMock(side_effect=ValueError("request is too large"))
-    app = _http_app(http_store, deployment, monkeypatch)
-
-    with TestClient(app, headers={"A2A-Version": "1.0"}) as client:
+    with a2a_client(deployment) as client:
         failed = _response_task(client.post("/durable-agent/", json=_send_payload("initial")))
 
     assert failed["status"]["state"] == "TASK_STATE_FAILED"
@@ -430,8 +415,6 @@ def test_a2a_http_rejected_submission_is_persisted_as_failed(monkeypatch, http_s
 
 
 async def test_recovery_submits_a_persisted_task_without_an_execution(http_store) -> None:
-    from a2a.types import TaskState
-
     task = _recoverable_task()
     recovery_store = _recovery_store(task)
     deployment = _Deployment()
@@ -450,8 +433,6 @@ async def test_recovery_submits_a_persisted_task_without_an_execution(http_store
 
 
 async def test_recovery_rejects_one_invalid_persisted_task_without_aborting(http_store) -> None:
-    from a2a.types import TaskState
-
     task = _recoverable_task()
     recovery_store = _recovery_store(task)
     deployment = _Deployment()
@@ -465,8 +446,6 @@ async def test_recovery_rejects_one_invalid_persisted_task_without_aborting(http
 
 
 async def test_recovery_skips_a_projection_conflict(http_store) -> None:
-    from a2a.types import Task, TaskState
-
     task = Task(id="task", context_id="context")
     task.status.state = TaskState.TASK_STATE_WORKING
     recovery_store = _recovery_store(task, saved=False)

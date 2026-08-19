@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from hayhooks.server.a2a.imports import RequestContext, Role, get_message_text
+from haystack.dataclasses import ChatMessage
+
+from hayhooks.server.a2a.imports import RequestContext, Role, TaskState, get_message_text
 
 
 def build_openai_messages(context: RequestContext) -> list[dict[str, str]]:
@@ -24,8 +26,6 @@ def build_openai_messages(context: RequestContext) -> list[dict[str, str]]:
 
 
 def _haystack_message(role: str, text: str) -> Any:
-    from haystack.dataclasses import ChatMessage
-
     return ChatMessage.from_assistant(text) if role == "assistant" else ChatMessage.from_user(text)
 
 
@@ -56,8 +56,6 @@ def build_haystack_resume_messages(context: RequestContext) -> list[Any]:
 
 
 def task_is_terminal(task: Any) -> bool:
-    from a2a.types import TaskState
-
     return task.HasField("status") and task.status.state in {
         TaskState.TASK_STATE_COMPLETED,
         TaskState.TASK_STATE_CANCELED,

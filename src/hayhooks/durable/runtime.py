@@ -12,13 +12,13 @@ from typing import Any, Protocol, cast, get_type_hints
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-from hayhooks.durable.adapters import HaystackDurableAdapter, _run_fenced_thread, execution_kind
+from hayhooks.durable.adapters import HaystackDurableAdapter, _run_fenced_thread, chat_messages, execution_kind
 from hayhooks.durable.backend import ExecutionIdempotencyConflictError
 from hayhooks.durable.context import DurableContext
 from hayhooks.durable.manager import DurableExecutionManager
 from hayhooks.durable.mode import DurableAuthoringMode, _durable_method_implementations, durable_authoring_mode
 from hayhooks.durable.models import ExecutionKind, ExecutionRecord, JsonValue, json_safe, validate_json
-from hayhooks.durable.settings import DurableSettings
+from hayhooks.durable.settings import DurableSettings, resolve_durable_settings
 from hayhooks.durable.store import ExecutionStore, InMemoryExecutionStoreProvider, RedisExecutionStoreProvider
 from hayhooks.server.exceptions import PipelineWrapperError
 from hayhooks.server.logger import log
@@ -39,19 +39,15 @@ def _runtime_settings(
     durable_settings: DurableSettings | None,
     app_settings: Any | None,
 ) -> DurableSettings | None:
-    if durable_settings is not None and app_settings is not None:
-        msg = "Pass durable_settings or app_settings, not both"
-        raise ValueError(msg)
-    requested = durable_settings or (
-        DurableSettings.from_app_settings(app_settings) if app_settings is not None else None
-    )
+    """Prefer a supplied provider's settings, rejecting a conflicting explicit request."""
+    requested = resolve_durable_settings(durable_settings, app_settings)
     provider_settings = getattr(provider, "settings", None)
-    if isinstance(provider_settings, DurableSettings):
-        if requested is not None and requested != provider_settings:
-            msg = "Durable runtime and execution-store provider settings must match"
-            raise ValueError(msg)
-        requested = provider_settings
-    return requested.model_copy(deep=True) if requested is not None else None
+    if not isinstance(provider_settings, DurableSettings):
+        return requested
+    if requested is not None and requested != provider_settings:
+        msg = "Durable runtime and execution-store provider settings must match"
+        raise ValueError(msg)
+    return provider_settings.model_copy(deep=True)
 
 
 class DurableDeployment:
@@ -317,18 +313,11 @@ class DurableDeployment:
         ):
             if self.builtin_agent:
                 request = _DurableAgentRequest.model_validate(context.record.validated_input)
-                from haystack.dataclasses import ChatMessage
-
-                messages = [ChatMessage.from_dict(message) for message in request.messages]
+                messages = chat_messages(request.messages)
+                # A fresh attempt replays the resume turn; a recovered checkpoint already holds it.
                 resume_input = context.take_resume_input() if context.record.checkpoint is None else None
                 if isinstance(resume_input, dict):
-                    resumed_messages = resume_input.get("messages")
-                    if isinstance(resumed_messages, list):
-                        messages.extend(
-                            ChatMessage.from_dict(cast(dict[str, Any], message))
-                            for message in resumed_messages
-                            if isinstance(message, dict)
-                        )
+                    messages.extend(chat_messages(resume_input.get("messages")))
                 return json_safe(await context.run_agent_async(messages=messages))
             method = cast(Callable[[DurableContext, BaseModel], Any], self.method)
             request = self.request_type.model_validate(context.record.validated_input)
@@ -387,11 +376,6 @@ class DurableRuntime:
         if self._durable_settings is None:
             self._durable_settings = DurableSettings()
         return self._durable_settings
-
-    @property
-    def app_settings(self) -> DurableSettings:
-        """Compatibility alias for :attr:`settings`."""
-        return self.settings
 
     def create_deployment(self, name: str, wrapper: BasePipelineWrapper) -> DurableDeployment | None:
         """Build an uncached candidate so route closures cannot capture an old deployment."""

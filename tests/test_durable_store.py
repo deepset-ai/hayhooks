@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -29,6 +30,7 @@ from hayhooks.durable.runtime import DurableRuntime
 from hayhooks.durable.settings import DurableSettings
 from hayhooks.durable.store import ExecutionStore, InMemoryExecutionStoreProvider, RedisExecutionStoreProvider
 from hayhooks.settings import AppSettings, settings
+from tests.durable_helpers import wait_for_record, wait_until_async
 
 
 def _config() -> ExecutionStoreConfig:
@@ -49,6 +51,17 @@ def _store(*, config: ExecutionStoreConfig | None = None, **options) -> Executio
         definition_revision="rev-1",
         **options,
     )
+
+
+@asynccontextmanager
+async def _running_manager(store, runner, **options):
+    """Run one manager for the body of a test and always shut it down."""
+    manager = DurableExecutionManager("deployment", store, runner, adapter=object(), poll_interval=0.001, **options)
+    await manager.start()
+    try:
+        yield manager
+    finally:
+        await manager.close()
 
 
 def _record() -> ExecutionRecord:
@@ -75,15 +88,12 @@ def test_builtin_providers_snapshot_explicit_durable_settings() -> None:
         durable_max_attempts=7,
         durable_max_progress_events=17,
         durable_max_record_bytes=32_768,
+        durable_redis_socket_timeout=1.5,
+        durable_redis_socket_connect_timeout=2.5,
+        durable_redis_health_check_interval=0,
     )
     memory_store = InMemoryExecutionStoreProvider(durable_settings=durable_settings).create_execution_store("portable")
-    redis_provider = RedisExecutionStoreProvider(
-        redis=AsyncMock(),
-        durable_settings=durable_settings,
-        socket_timeout=1.5,
-        socket_connect_timeout=2.5,
-        health_check_interval=0,
-    )
+    redis_provider = RedisExecutionStoreProvider(redis=AsyncMock(), durable_settings=durable_settings)
     redis_store = redis_provider.create_execution_store("portable")
 
     for store in (memory_store, redis_store):
@@ -108,7 +118,7 @@ def test_runtime_uses_its_explicit_settings_for_the_default_provider() -> None:
     provider = runtime._provider()
 
     assert isinstance(provider, InMemoryExecutionStoreProvider)
-    assert provider.app_settings.durable_lease_duration_ms == 45_000
+    assert provider.settings.durable_lease_duration_ms == 45_000
 
 
 async def test_runtime_defaults_are_independent_of_hayhooks_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +129,7 @@ async def test_runtime_defaults_are_independent_of_hayhooks_settings(monkeypatch
 
     monkeypatch.setattr(settings, "durable_max_attempts", original_attempts + 1)
 
-    assert runtime.app_settings.durable_max_attempts == provider.app_settings.durable_max_attempts == original_attempts
+    assert runtime.settings.durable_max_attempts == provider.settings.durable_max_attempts == original_attempts
     await runtime.close()
     assert runtime.settings.durable_max_attempts == original_attempts
 
@@ -131,8 +141,8 @@ def test_runtime_uses_supplied_builtin_provider_as_its_settings_source() -> None
 
     store = provider.create_execution_store("portable")
 
-    assert runtime.app_settings.durable_lease_duration_ms == store.lease_duration_ms == 45_000
-    assert runtime.app_settings.durable_max_attempts == store.max_run_attempts == 7
+    assert runtime.settings.durable_lease_duration_ms == store.lease_duration_ms == 45_000
+    assert runtime.settings.durable_max_attempts == store.max_run_attempts == 7
 
 
 def test_runtime_rejects_conflicting_builtin_provider_settings() -> None:
@@ -479,23 +489,10 @@ async def test_retry_exhaustion_persists_its_progress_event() -> None:
     async def runner(context):
         await context.retry("again", delay=0)
 
-    manager = DurableExecutionManager(
-        "deployment", store, runner, adapter=object(), poll_interval=0.001, max_attempts=1
-    )
-    await manager.start()
-    try:
+    async with _running_manager(store, runner, max_attempts=1):
         await store.submit(_record())
-        for _ in range(100):
-            record = await store.get("run_1")
-            if record is not None and record.terminal:
-                break
-            await asyncio.sleep(0.001)
-        else:
-            pytest.fail("retry exhaustion did not become terminal")
-    finally:
-        await manager.close()
+        record = await wait_for_record(store, "run_1", message="retry exhaustion did not become terminal")
 
-    assert record is not None
     assert [event.kind for event in record.progress] == ["retry_exhausted"]
 
 
@@ -512,23 +509,14 @@ async def test_store_runs_through_the_existing_durable_manager_contract() -> Non
         await context.report_progress("started")
         return {"answer": "done"}
 
-    manager = DurableExecutionManager("deployment", store, runner, adapter=object(), poll_interval=0.001)
-    await manager.start()
-    try:
+    async with _running_manager(store, runner):
         await store.submit(_record())
-        for _ in range(100):
-            record = await store.get("run_1")
-            if record and record.terminal:
-                break
-            await asyncio.sleep(0.001)
-        else:
-            pytest.fail("manager did not complete the submitted execution")
-        assert record.status is ExecutionStatus.COMPLETED
-        assert record.result == {"answer": "done"}
-        assert record.application_state == {"phase": "running"}
-        assert [event.message for event in record.progress] == ["started"]
-    finally:
-        await manager.close()
+        record = await wait_for_record(store, "run_1", message="manager did not complete the submitted execution")
+
+    assert record.status is ExecutionStatus.COMPLETED
+    assert record.result == {"answer": "done"}
+    assert record.application_state == {"phase": "running"}
+    assert [event.message for event in record.progress] == ["started"]
 
 
 async def test_manager_health_reports_worker_store_failures() -> None:
@@ -538,18 +526,9 @@ async def test_manager_health_reports_worker_store_failures() -> None:
         maintain=AsyncMock(),
         operational_counts=AsyncMock(return_value={"nonterminal": 1, "runnable": 1, "lease_expiry": 0}),
     )
-    manager = DurableExecutionManager(
-        "deployment", store, AsyncMock(), adapter=object(), poll_interval=0.001, shutdown_grace_period=0.01
-    )
-    await manager.start()
-    try:
-        for _ in range(100):
-            if store.claim_next.await_count:
-                break
-            await asyncio.sleep(0.001)
+    async with _running_manager(store, AsyncMock(), shutdown_grace_period=0.01) as manager:
+        await wait_until_async(lambda: store.claim_next.await_count, "worker never attempted a claim")
         health = await manager.health_snapshot()
-    finally:
-        await manager.close()
 
     assert not health["healthy"]
     assert health["worker_store_error_streak"] >= 1
@@ -569,22 +548,11 @@ async def test_canceled_runner_restarts_its_worker_slot() -> None:
             raise asyncio.CancelledError
         return {"answer": "done"}
 
-    manager = DurableExecutionManager("deployment", store, runner, adapter=object(), poll_interval=0.001)
-    await manager.start()
-    try:
+    async with _running_manager(store, runner):
         await store.submit(_record())
-        for _ in range(200):
-            record = await store.get("run_1")
-            if record is not None and record.terminal:
-                break
-            await asyncio.sleep(0.005)
-        else:
-            pytest.fail("canceled runner did not recover")
-    finally:
-        await manager.close()
+        record = await wait_for_record(store, "run_1", message="canceled runner did not recover")
 
     assert calls == 2
-    assert record is not None
     assert record.status is ExecutionStatus.COMPLETED
 
 
@@ -636,19 +604,9 @@ async def test_in_memory_store_uses_real_time_for_delayed_retries() -> None:
             raise RetryableExecutionError(msg, delay=0.01)
         return {"answer": "done"}
 
-    manager = DurableExecutionManager("deployment", store, runner, adapter=object(), poll_interval=0.001)
-    await manager.start()
-    try:
+    async with _running_manager(store, runner):
         await store.submit(_record())
-        for _ in range(100):
-            record = await store.get("run_1")
-            if record is not None and record.terminal:
-                break
-            await asyncio.sleep(0.005)
-        else:
-            pytest.fail("in-memory durable retry did not become due")
-    finally:
-        await manager.close()
+        record = await wait_for_record(store, "run_1", message="in-memory durable retry did not become due")
 
     assert attempts == 2
     assert record.status is ExecutionStatus.COMPLETED

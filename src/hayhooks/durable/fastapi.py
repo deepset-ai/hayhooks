@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
+from functools import wraps
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Request, Response, status
 from pydantic import ValidationError, create_model
 
-from hayhooks.durable import ExecutionResult
 from hayhooks.durable.engine import RUN_ID_PATTERN
-from hayhooks.durable.models import ExecutionAdmissionError, ExecutionStoreError
+from hayhooks.durable.models import ExecutionAdmissionError, ExecutionResult, ExecutionStoreError
 from hayhooks.durable.runtime import DefinitionRevisionConflictError, DurableDeployment, IdempotencyConflictError
 
 _MAX_OWNER_LENGTH = 512
@@ -35,6 +35,34 @@ def _validated_owner(owner_id: Any, *, enforce_owner: bool) -> str | None:
     return owner_id
 
 
+def _translate_errors(handler: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """Map durable domain failures onto the HTTP contract shared by every handler."""
+
+    @wraps(handler)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await handler(*args, **kwargs)
+        except KeyError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found") from error
+        except (IdempotencyConflictError, DefinitionRevisionConflictError) as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        except (ValidationError, ValueError) as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+        except ExecutionAdmissionError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+                headers={"Retry-After": str(error.retry_after_seconds)},
+            ) from error
+        except ExecutionStoreError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Durable execution store is unavailable",
+            ) from error
+
+    return wrapper
+
+
 def _durable_response_model(deployment: DurableDeployment) -> type[ExecutionResult]:
     if deployment.result_type is Any:
         return ExecutionResult
@@ -45,7 +73,7 @@ def _durable_response_model(deployment: DurableDeployment) -> type[ExecutionResu
     )
 
 
-def create_durable_router(  # noqa: C901, PLR0915 - handlers share one deployment and generated models
+def create_durable_router(  # noqa: C901 - one factory owns every generated route for a deployment
     deployment: DurableDeployment,
     *,
     owner_id_dependency: OwnerIdDependency | None,
@@ -118,17 +146,14 @@ def create_durable_router(  # noqa: C901, PLR0915 - handlers share one deploymen
                 execution_id=idempotency_key,
                 owner_id=owner_id,
             )
-        except (IdempotencyConflictError, DefinitionRevisionConflictError) as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        except (ValidationError, ValueError) as error:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
-        except ExecutionAdmissionError as error:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=str(error),
-                headers={"Retry-After": str(error.retry_after_seconds)},
-            ) from error
-        except (ExecutionStoreError, RuntimeError) as error:
+        except (
+            IdempotencyConflictError,
+            DefinitionRevisionConflictError,
+            ExecutionAdmissionError,
+            ExecutionStoreError,
+        ):
+            raise  # the shared translator owns these status codes
+        except RuntimeError as error:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
         response.status_code = status.HTTP_200_OK if not created and record.terminal else status.HTTP_202_ACCEPTED
         result = execution_result(request, record, model=response_model)
@@ -144,16 +169,8 @@ def create_durable_router(  # noqa: C901, PLR0915 - handlers share one deploymen
         request: Request,
         owner_id: Any = Depends(owner_dependency),  # noqa: B008
     ) -> ExecutionResult:
-        try:
-            owner_id = _validated_owner(owner_id, enforce_owner=enforce_owner)
-            return execution_result(request, await get_execution(execution_id, owner_id))
-        except KeyError as error:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found") from error
-        except ExecutionStoreError as error:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Durable execution store is unavailable",
-            ) from error
+        owner_id = _validated_owner(owner_id, enforce_owner=enforce_owner)
+        return execution_result(request, await get_execution(execution_id, owner_id))
 
     async def cancel_execution(
         execution_id: ExecutionId,
@@ -161,21 +178,9 @@ def create_durable_router(  # noqa: C901, PLR0915 - handlers share one deploymen
         request: Request,
         owner_id: Any = Depends(owner_dependency),  # noqa: B008
     ) -> ExecutionResult:
-        try:
-            owner_id = _validated_owner(owner_id, enforce_owner=enforce_owner)
-            accepted = await deployment.request_cancel(
-                execution_id,
-                owner_id=owner_id,
-                enforce_owner=enforce_owner,
-            )
-            record = await get_execution(execution_id, owner_id)
-        except KeyError as error:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found") from error
-        except ExecutionStoreError as error:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Durable execution store is unavailable",
-            ) from error
+        owner_id = _validated_owner(owner_id, enforce_owner=enforce_owner)
+        accepted = await deployment.request_cancel(execution_id, owner_id=owner_id, enforce_owner=enforce_owner)
+        record = await get_execution(execution_id, owner_id)
         response.status_code = status.HTTP_202_ACCEPTED if accepted else status.HTTP_200_OK
         return execution_result(request, record)
 
@@ -186,30 +191,11 @@ def create_durable_router(  # noqa: C901, PLR0915 - handlers share one deploymen
         owner_id: Any = Depends(owner_dependency),  # noqa: B008
         update: Any = Body(default=None),  # noqa: B008
     ) -> ExecutionResult:
-        try:
-            owner_id = _validated_owner(owner_id, enforce_owner=enforce_owner)
-            resumed = await deployment.resume(
-                execution_id,
-                update,
-                owner_id=owner_id,
-                enforce_owner=enforce_owner,
-            )
-            if not resumed:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Execution is not waiting")
-            record = await get_execution(execution_id, owner_id)
-        except KeyError as error:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found") from error
-        except DefinitionRevisionConflictError as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        except (ValidationError, ValueError) as error:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
-        except ExecutionStoreError as error:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Durable execution store is unavailable",
-            ) from error
+        owner_id = _validated_owner(owner_id, enforce_owner=enforce_owner)
+        if not await deployment.resume(execution_id, update, owner_id=owner_id, enforce_owner=enforce_owner):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Execution is not waiting")
         response.status_code = status.HTTP_202_ACCEPTED
-        return execution_result(request, record)
+        return execution_result(request, await get_execution(execution_id, owner_id))
 
     if deployment.resume_type is not None:
         resume_execution.__annotations__["update"] = deployment.resume_type
@@ -230,7 +216,7 @@ def create_durable_router(  # noqa: C901, PLR0915 - handlers share one deploymen
     ):
         router.add_api_route(
             path,
-            endpoint,
+            _translate_errors(endpoint),
             methods=methods,
             name=name,
             response_model=response_model if endpoint is submit else ExecutionResult,

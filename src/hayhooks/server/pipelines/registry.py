@@ -79,13 +79,5 @@ registry = PipelineRegistry()
 
 def get_pipeline_registry(app: Any | None = None) -> PipelineRegistry:
     """Return the registry owned by *app*, or the process registry for app-less callers."""
-    if app is None:
-        return registry
-
-    app_registry = getattr(app.state, "pipeline_registry", None)
-    if isinstance(app_registry, PipelineRegistry):
-        return app_registry
-
-    app_registry = PipelineRegistry()
-    app.state.pipeline_registry = app_registry
-    return app_registry
+    owned = getattr(getattr(app, "state", None), "pipeline_registry", None)
+    return owned if isinstance(owned, PipelineRegistry) else registry

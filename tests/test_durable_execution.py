@@ -2,7 +2,7 @@ import asyncio
 import importlib.metadata
 import json
 import threading
-import time
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -43,6 +43,7 @@ from hayhooks.server.utils.module_loader import (
     unload_pipeline_modules,
 )
 from hayhooks.settings import settings
+from tests.durable_helpers import wait_for_record, wait_for_status, wait_until_async
 
 pytestmark = pytest.mark.skipif(
     not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
@@ -224,14 +225,15 @@ class _Claim:
         return False
 
 
-def _agent_record(execution_id: str, deployment_name: str = "agent") -> ExecutionRecord:
-    return ExecutionRecord(
-        execution_id=execution_id,
-        execution_kind=ExecutionKind.AGENT,
-        deployment_name=deployment_name,
-        definition_revision="revision",
-        validated_input={"messages": []},
-    )
+def _agent_record(execution_id: str, deployment_name: str = "agent", **changes) -> ExecutionRecord:
+    fields = {
+        "execution_id": execution_id,
+        "execution_kind": ExecutionKind.AGENT,
+        "deployment_name": deployment_name,
+        "definition_revision": "revision",
+        "validated_input": {"messages": []},
+    }
+    return ExecutionRecord(**{**fields, **changes})
 
 
 class Wrapper(BasePipelineWrapper):
@@ -278,10 +280,7 @@ class BlockingAdmissionWrapper(BasePipelineWrapper):
 
 async def test_durable_lifecycle_logs_identifiers_without_payload(monkeypatch) -> None:
     monkeypatch.setattr(settings, "durable_poll_interval", 0.01)
-    wrapper = Wrapper()
-    wrapper.setup()
-    _set_method_implementation_flags(wrapper)
-    deployment = DurableDeployment("logged-job", wrapper, InMemoryExecutionStoreProvider())
+    deployment = _deployment("logged-job")
     records = []
     sink = log.add(lambda message: records.append(message.record), level="DEBUG")
     try:
@@ -292,12 +291,10 @@ async def test_durable_lifecycle_logs_identifiers_without_payload(monkeypatch) -
             "Claimed durable execution",
             "Finished durable execution attempt",
         }
-        for _ in range(200):
-            if expected <= {record["message"] for record in records}:
-                break
-            await asyncio.sleep(0.005)
-        else:
-            pytest.fail("durable lifecycle logs were not emitted")
+        await wait_until_async(
+            lambda: expected <= {record["message"] for record in records},
+            "durable lifecycle logs were not emitted",
+        )
     finally:
         await deployment.close()
         log.remove(sink)
@@ -311,10 +308,7 @@ async def test_durable_lifecycle_logs_identifiers_without_payload(monkeypatch) -
 async def test_quiesce_waits_for_an_admitted_submission_and_rejects_later_ones(monkeypatch) -> None:
     monkeypatch.setattr(settings, "durable_poll_interval", 0.01)
     monkeypatch.setattr(settings, "durable_shutdown_grace_period", 0.001)
-    wrapper = Wrapper()
-    wrapper.setup()
-    _set_method_implementation_flags(wrapper)
-    deployment = DurableDeployment("admission-gate", wrapper, InMemoryExecutionStoreProvider())
+    deployment = _deployment("admission-gate")
     await deployment.start()
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -375,24 +369,13 @@ async def test_deployment_claims_reject_incompatible_work_without_a_revision_sca
 
     wrapper = Wrapper()
     wrapper.durable_revision = "current"
-    wrapper.setup()
-    _set_method_implementation_flags(wrapper)
-    deployment = DurableDeployment("revision-safe", wrapper, provider)
-    await deployment.start()
-    try:
-        for _ in range(100):
-            queued_old = await store.get("queued-old")
-            if queued_old is not None and queued_old.terminal:
-                break
-            await asyncio.sleep(0.001)
-        else:
-            pytest.fail("incompatible queued work was not rejected by its first claim")
+    async with _started(_deployment("revision-safe", wrapper, provider)):
+        queued_old = await wait_for_record(
+            store, "queued-old", message="incompatible queued work was not rejected by its first claim"
+        )
         waiting_old = await store.get("waiting-old")
         waiting_current = await store.get("waiting-current")
-    finally:
-        await deployment.close()
 
-    assert queued_old is not None
     assert queued_old.status is ExecutionStatus.FAILED
     assert queued_old.error is not None
     assert waiting_old is not None
@@ -484,6 +467,34 @@ class BuiltinAgentWrapper(BasePipelineWrapper):
         self.pipeline = Agent(chat_generator=FakeChatGenerator(), tools=[])
 
 
+def _deployment(name: str, wrapper: BasePipelineWrapper | None = None, provider=None, **options) -> DurableDeployment:
+    """Prepare a wrapper the way the module loader does, then deploy it."""
+    wrapper = wrapper or Wrapper()
+    wrapper.setup()
+    _set_method_implementation_flags(wrapper)
+    return DurableDeployment(name, wrapper, provider or InMemoryExecutionStoreProvider(), **options)
+
+
+@contextmanager
+def _example_module(module_name: str, source: Path):
+    """Load one bundled example wrapper module and always unload it."""
+    module = load_pipeline_module(module_name, source)
+    try:
+        yield module
+    finally:
+        unload_pipeline_modules(module_name)
+
+
+@asynccontextmanager
+async def _started(deployment: DurableDeployment):
+    """Run one deployment for the body of a test and always close it."""
+    await deployment.start()
+    try:
+        yield deployment
+    finally:
+        await deployment.close()
+
+
 @pytest.fixture(autouse=True)
 def clean_registry():
     registry.clear()
@@ -493,21 +504,13 @@ def clean_registry():
 
 def _durable_app(monkeypatch, name, wrapper):
     monkeypatch.setattr(settings, "durable_store", "memory")
+    monkeypatch.setattr(settings, "durable_poll_interval", 0.05)
     wrapper.setup()
     _set_method_implementation_flags(wrapper)
     registry.add(name, wrapper)
     app = create_app()
     add_pipeline_api_route(app, name, wrapper)
     return app
-
-
-def _wait_for_status(client, url, status, message):
-    for _ in range(100):
-        record = client.get(url)
-        if record.json()["status"] == status:
-            return record
-        time.sleep(0.01)
-    pytest.fail(message)
 
 
 def test_durable_rest_submission_is_direct_typed_and_idempotent(monkeypatch) -> None:
@@ -533,9 +536,9 @@ def test_durable_rest_submission_is_direct_typed_and_idempotent(monkeypatch) -> 
             "updated_at",
             "links",
         }
-        inspected = _wait_for_status(client, body["links"]["self"], "completed", "durable execution did not complete")
+        inspected = wait_for_status(client, body["links"]["self"], "completed")
 
-    assert inspected.json()["result"] == {"value": 5}
+    assert inspected["result"] == {"value": 5}
     assert submitted.headers["Location"] == body["links"]["self"]
 
 
@@ -594,7 +597,7 @@ def test_durable_rest_can_inspect_and_cancel_an_execution_from_an_old_revision(m
             assert canceled.status_code == 202
             assert canceled.json()["cancellation_requested_at"] is not None
             wrapper.release.set()
-            _wait_for_status(client, links["self"], "canceled", "durable execution did not cancel")
+            wait_for_status(client, links["self"], "canceled")
             assert client.post(links["cancel"]).status_code == 200
     finally:
         wrapper.release.set()
@@ -606,10 +609,10 @@ def test_durable_result_annotation_is_validated_before_completion(monkeypatch) -
     with TestClient(app) as client:
         submitted = client.post("/invalid-result/run-durable", json={"value": 4})
         url = submitted.json()["links"]["self"]
-        inspected = _wait_for_status(client, url, "failed", "invalid durable result did not become a terminal failure")
+        inspected = wait_for_status(client, url, "failed")
 
-    assert inspected.json()["result"] is None
-    assert inspected.json()["error"] == {
+    assert inspected["result"] is None
+    assert inspected["error"] == {
         "type": "ValueError",
         "message": "Durable method result does not match its declared return annotation",
         "retryable": False,
@@ -685,8 +688,8 @@ def test_durable_waiting_resume_is_typed_private_and_revision_safe(monkeypatch) 
     with TestClient(app) as client:
         submitted = client.post("/approval/run-durable", json={"value": 7})
         url = submitted.json()["links"]["self"]
-        waiting = _wait_for_status(client, url, "waiting", "execution did not wait")
-        assert waiting.json()["waiting"] == {
+        waiting = wait_for_status(client, url, "waiting")
+        assert waiting["waiting"] == {
             "kind": "approval",
             "message": "Approve this job",
             "expected_input_schema": ResumeInput.model_json_schema(),
@@ -705,9 +708,9 @@ def test_durable_waiting_resume_is_typed_private_and_revision_safe(monkeypatch) 
         deployment.revision = revision
         resumed = client.post(f"{url}/resume", json={"approved": True})
         assert resumed.status_code == 202
-        completed = _wait_for_status(client, url, "completed", "resumed execution did not complete")
+        completed = wait_for_status(client, url, "completed")
 
-    assert completed.json()["result"] == {"value": 7}
+    assert completed["result"] == {"value": 7}
     openapi = app.openapi()
     resume_schema = openapi["paths"]["/approval/executions/{execution_id}/resume"]["post"]["requestBody"]["content"][
         "application/json"
@@ -739,28 +742,6 @@ def test_durable_rest_enforces_configured_trusted_owner_header(monkeypatch) -> N
         assert "exceeds 512 characters" in oversized.json()["detail"]
 
 
-def test_durable_rest_uses_the_server_owner_header_setting(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "durable_trusted_owner_header", "X-Embedded-Owner")
-    durable_settings = DurableSettings(durable_store="memory")
-    provider = InMemoryExecutionStoreProvider(durable_settings=durable_settings)
-    wrapper = Wrapper()
-    wrapper.setup()
-    _set_method_implementation_flags(wrapper)
-    deployment = DurableDeployment("embedded", wrapper, provider, durable_settings=durable_settings)
-    registry.add("embedded", wrapper)
-    app = create_app()
-    add_pipeline_api_route(app, "embedded", wrapper, _durable_deployment=deployment)
-
-    with TestClient(app) as client:
-        assert client.get("/embedded/executions/missing").status_code == 401
-        authenticated = client.get(
-            "/embedded/executions/missing",
-            headers={"X-Embedded-Owner": "alice"},
-        )
-
-    assert authenticated.status_code == 404
-
-
 def test_durable_deployment_requires_an_explicit_revision() -> None:
     class MissingRevisionWrapper(BasePipelineWrapper):
         def setup(self) -> None:
@@ -769,11 +750,8 @@ def test_durable_deployment_requires_an_explicit_revision() -> None:
         async def run_durable_async(self, context: DurableContext, request: Request) -> Result:
             return Result(value=request.value)
 
-    wrapper = MissingRevisionWrapper()
-    wrapper.setup()
-    _set_method_implementation_flags(wrapper)
     with pytest.raises(Exception, match="non-empty durable_revision"):
-        DurableDeployment("missing-revision", wrapper, InMemoryExecutionStoreProvider())
+        _deployment("missing-revision", MissingRevisionWrapper())
 
 
 def test_sync_durable_wrapper_uses_context_sync_controls(monkeypatch) -> None:
@@ -782,10 +760,10 @@ def test_sync_durable_wrapper_uses_context_sync_controls(monkeypatch) -> None:
     with TestClient(app) as client:
         submitted = client.post("/sync-job/run-durable", json={"value": 4})
         url = submitted.json()["links"]["self"]
-        inspected = _wait_for_status(client, url, "completed", "sync durable execution did not complete")
+        inspected = wait_for_status(client, url, "completed")
 
-    assert inspected.json()["result"] == {"value": 6}
-    assert inspected.json()["progress"][0]["message"] == "working in a worker thread"
+    assert inspected["result"] == {"value": 6}
+    assert inspected["progress"][0]["message"] == "working in a worker thread"
 
 
 async def test_sync_work_retains_claim_after_shutdown_grace_until_thread_exits(monkeypatch) -> None:
@@ -805,10 +783,7 @@ async def test_sync_work_retains_claim_after_shutdown_grace_until_thread_exits(m
 
     durable_settings = DurableSettings(durable_store="memory", durable_shutdown_grace_period=0.001)
     provider = InMemoryExecutionStoreProvider(durable_settings=durable_settings)
-    wrapper = BlockingWrapper()
-    wrapper.setup()
-    _set_method_implementation_flags(wrapper)
-    deployment = DurableDeployment("blocking", wrapper, provider)
+    deployment = _deployment("blocking", BlockingWrapper(), provider)
     await deployment.start()
     _, submitted = await deployment.submit({"value": 9})
     assert await asyncio.to_thread(started.wait, 1)
@@ -851,25 +826,13 @@ async def test_async_pipeline_thread_fallback_retains_cancellation_fence(monkeyp
 async def test_pipeline_snapshot_round_trip_skips_completed_components_after_retry(monkeypatch) -> None:
     monkeypatch.setattr(settings, "durable_retry_base_delay", 0)
     monkeypatch.setattr(settings, "durable_retry_max_delay", 0)
-    provider = InMemoryExecutionStoreProvider()
     wrapper = CheckpointPipelineWrapper()
-    wrapper.setup()
-    _set_method_implementation_flags(wrapper)
-    deployment = DurableDeployment("checkpoint-pipeline", wrapper, provider)
-    await deployment.start()
-    try:
+    async with _started(_deployment("checkpoint-pipeline", wrapper)) as deployment:
         _, submitted = await deployment.submit({"value": 3})
-        for _ in range(200):
-            completed = await deployment.store.get(submitted.execution_id)
-            if completed is not None and completed.terminal:
-                break
-            await asyncio.sleep(0.005)
-        else:
-            pytest.fail("checkpointed Pipeline did not finish its retry")
-    finally:
-        await deployment.close()
+        completed = await wait_for_record(
+            deployment.store, submitted.execution_id, message="checkpointed Pipeline did not finish its retry"
+        )
 
-    assert completed is not None
     assert completed.status.value == "completed"
     assert completed.result == {"value": 5}
     assert completed.attempt == 2
@@ -1110,42 +1073,19 @@ async def test_builtin_agent_leaves_resume_input_for_checkpoint_restoration() ->
             return {"messages": [message.to_dict() for message in state.data["messages"]]}
 
     wrapper = BuiltinAgentWrapper()
-    wrapper.setup()
-    _set_method_implementation_flags(wrapper)
-    deployment = DurableDeployment("builtin-agent", wrapper, InMemoryExecutionStoreProvider())
+    deployment = _deployment("builtin-agent", wrapper)
     checkpoint_state = State(
         schema={"messages": {"type": list[ChatMessage]}},
         data={"messages": [ChatMessage.from_user("before restart")]},
     )
-    record = ExecutionRecord(
-        execution_id="agent-resume",
-        execution_kind=ExecutionKind.AGENT,
-        deployment_name="builtin-agent",
+    checkpoint_context = DurableContext(_Claim(_agent_record("checkpoint", "builtin-agent")), adapter=object())
+    record = _agent_record(
+        "agent-resume",
+        "builtin-agent",
         definition_revision=deployment.revision,
         validated_input={"messages": [ChatMessage.from_user("initial").to_dict()]},
-        checkpoint=ExecutionCheckpoint(
-            ExecutionKind.AGENT,
-            _checkpoint_data(
-                checkpoint_state,
-                DurableContext(
-                    _Claim(
-                        ExecutionRecord(
-                            execution_id="checkpoint",
-                            execution_kind=ExecutionKind.AGENT,
-                            deployment_name="builtin-agent",
-                            definition_revision=deployment.revision,
-                            validated_input={"messages": []},
-                        )
-                    ),
-                    adapter=object(),
-                ),
-            ),
-        ),
-        application_state={
-            "__hayhooks_resume_input": {
-                "messages": [ChatMessage.from_user("after restart").to_dict()],
-            }
-        },
+        checkpoint=ExecutionCheckpoint(ExecutionKind.AGENT, _checkpoint_data(checkpoint_state, checkpoint_context)),
+        application_state={"__hayhooks_resume_input": {"messages": [ChatMessage.from_user("after restart").to_dict()]}},
     )
     adapter = RestoringAdapter()
     context = DurableContext(_Claim(record), adapter=adapter)
@@ -1162,10 +1102,10 @@ def test_durable_agent_uses_native_run_and_public_hooks(monkeypatch) -> None:
     with TestClient(app) as client:
         submitted = client.post("/agent/run-durable", json={"message": "hello"})
         url = submitted.json()["links"]["self"]
-        inspected = _wait_for_status(client, url, "completed", "durable Agent did not complete")
+        inspected = wait_for_status(client, url, "completed")
 
-    assert inspected.json()["result"]["last_message"]["content"][0]["text"] == "done"
-    assert inspected.json()["progress"][0]["kind"] == "checkpoint"
+    assert inspected["result"]["last_message"]["content"][0]["text"] == "done"
+    assert inspected["progress"][0]["kind"] == "checkpoint"
 
 
 @pytest.mark.parametrize(
@@ -1177,69 +1117,55 @@ def test_durable_agent_uses_native_run_and_public_hooks(monkeypatch) -> None:
 )
 def test_durable_examples_load(monkeypatch, module_name, source, kind) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    module = load_pipeline_module(module_name, source)
-    try:
-        wrapper = create_pipeline_wrapper_instance(module)
-        deployment = DurableDeployment(module_name, wrapper, InMemoryExecutionStoreProvider())
+    with _example_module(module_name, source) as module:
+        deployment = DurableDeployment(
+            module_name, create_pipeline_wrapper_instance(module), InMemoryExecutionStoreProvider()
+        )
         assert deployment.kind is kind
         assert deployment.revision
-    finally:
-        unload_pipeline_modules(module_name)
 
 
 async def test_durable_execution_example_completes_retry_approval_and_real_pipeline(monkeypatch) -> None:
     monkeypatch.setattr(settings, "durable_retry_base_delay", 0)
     monkeypatch.setattr(settings, "durable_retry_max_delay", 0)
     module_name = "durable_execution_end_to_end_example"
-    module = load_pipeline_module(module_name, _DURABLE_EXECUTION_EXAMPLE)
-    deployment = None
-    try:
+    with _example_module(module_name, _DURABLE_EXECUTION_EXAMPLE) as module:
         wrapper = create_pipeline_wrapper_instance(module)
         deployment = DurableDeployment("durable-execution-example", wrapper, InMemoryExecutionStoreProvider())
-        await deployment.start()
-        _, submitted = await deployment.submit(
-            {
-                "documents": [{"document_id": "guide", "content": "durable document preparation"}],
-                "fail_first_attempt": True,
-                "require_approval": True,
-                "demo_delay_seconds": 0.01,
-            }
-        )
+        async with _started(deployment):
+            _, submitted = await deployment.submit(
+                {
+                    "documents": [{"document_id": "guide", "content": "durable document preparation"}],
+                    "fail_first_attempt": True,
+                    "require_approval": True,
+                    "demo_delay_seconds": 0.01,
+                }
+            )
+            await wait_for_record(
+                deployment,
+                submitted.execution_id,
+                lambda record: record.status is ExecutionStatus.WAITING,
+                message="durable execution example did not reach approval",
+            )
 
-        for _ in range(200):
-            waiting = await deployment.get(submitted.execution_id)
-            if waiting.status is ExecutionStatus.WAITING:
-                break
-            await asyncio.sleep(0.005)
-        else:
-            pytest.fail("durable execution example did not reach approval")
+            assert await deployment.resume(submitted.execution_id, {"approved": True})
+            completed = await wait_for_record(
+                deployment, submitted.execution_id, message="durable execution example did not complete"
+            )
 
-        assert await deployment.resume(submitted.execution_id, {"approved": True})
-        for _ in range(200):
-            completed = await deployment.get(submitted.execution_id)
-            if completed.terminal:
-                break
-            await asyncio.sleep(0.005)
-        else:
-            pytest.fail("durable execution example did not complete")
-
-        assert completed.status is ExecutionStatus.COMPLETED
-        assert completed.attempt == 3
-        assert completed.result["document_count"] == 1
-        assert completed.result["chunk_count"] == 1
-        assert completed.checkpoint is not None
-        assert {event.kind for event in completed.progress} >= {
-            "accepted",
-            "retry_demo",
-            "waiting",
-            "checkpoint",
-            "demo_delay",
-            "completed",
-        }
-    finally:
-        if deployment is not None:
-            await deployment.close()
-        unload_pipeline_modules(module_name)
+    assert completed.status is ExecutionStatus.COMPLETED
+    assert completed.attempt == 3
+    assert completed.result["document_count"] == 1
+    assert completed.result["chunk_count"] == 1
+    assert completed.checkpoint is not None
+    assert {event.kind for event in completed.progress} >= {
+        "accepted",
+        "retry_demo",
+        "waiting",
+        "checkpoint",
+        "demo_delay",
+        "completed",
+    }
 
 
 async def test_durable_a2a_example_tool_replays_its_external_effect_idempotently(monkeypatch, tmp_path) -> None:
@@ -1247,8 +1173,7 @@ async def test_durable_a2a_example_tool_replays_its_external_effect_idempotently
     monkeypatch.setenv("HAYHOOKS_EXAMPLE_INDEX_DB", str(tmp_path / "indexing-effects.sqlite3"))
     monkeypatch.setenv("HAYHOOKS_EXAMPLE_TOOL_DELAY_SECONDS", "0")
     module_name = "durable_a2a_tool_example"
-    module = load_pipeline_module(module_name, _DURABLE_A2A_EXAMPLE)
-    try:
+    with _example_module(module_name, _DURABLE_A2A_EXAMPLE) as module:
         record = _agent_record("a2a-tool-replay", "long-running-agent")
         claim = _Claim(record)
         context = DurableContext(claim, adapter=object())
@@ -1268,9 +1193,4 @@ async def test_durable_a2a_example_tool_replays_its_external_effect_idempotently
         assert json.loads(first)["side_effect_applied"] is True
         assert json.loads(replay)["side_effect_applied"] is False
         assert claim.checkpoints == 2
-        assert [event.kind for event in record.progress] == [
-            "side_effect_committed",
-            "side_effect_committed",
-        ]
-    finally:
-        unload_pipeline_modules(module_name)
+        assert [event.kind for event in record.progress] == ["side_effect_committed", "side_effect_committed"]

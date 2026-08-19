@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from hayhooks.durable.backend import ExecutionStoreConfig
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -14,39 +13,17 @@ from hayhooks.durable.engine import (
     Suspend,
 )
 from hayhooks.durable.reference import InMemoryExecutionStore
-from tests.durable_contract import assert_store_contract, control
+from tests.durable_contract import assert_store_contract, contract_config, control
 
 
 async def test_reference_store_matches_contract() -> None:
-    store = InMemoryExecutionStore(
-        deployment="integration",
-        config=ExecutionStoreConfig(
-            max_input_bytes=64,
-            max_checkpoint_bytes=64,
-            max_result_bytes=64,
-            max_error_bytes=64,
-            max_wait_bytes=64,
-            max_progress_events=2,
-            max_progress_event_bytes=32,
-        ),
-    )
+    store = InMemoryExecutionStore(deployment="integration", config=contract_config())
     await store.initialize()
     await assert_store_contract(store)
 
 
 async def test_reference_rejects_oversized_payload_before_transition() -> None:
-    store = InMemoryExecutionStore(
-        deployment="integration",
-        config=ExecutionStoreConfig(
-            max_input_bytes=64,
-            max_checkpoint_bytes=8,
-            max_result_bytes=64,
-            max_error_bytes=64,
-            max_wait_bytes=64,
-            max_progress_events=2,
-            max_progress_event_bytes=32,
-        ),
-    )
+    store = InMemoryExecutionStore(deployment="integration", config=contract_config(max_checkpoint_bytes=8))
     await store.submit(control(), b"{}", binding_digest="b" * 64)
     run_id = await store.read_candidate()
     assert run_id is not None

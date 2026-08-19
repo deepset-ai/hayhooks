@@ -50,67 +50,45 @@ def test_env_var_prefix(monkeypatch):
     assert settings.port == 5678
 
 
-def test_durable_redis_settings_defaults(monkeypatch):
-    names = (
-        "HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS",
-        "HAYHOOKS_DURABLE_POLL_INTERVAL",
-        "HAYHOOKS_DURABLE_LEASE_DURATION_MS",
-        "HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS",
-        "HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT",
-        "HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT",
-        "HAYHOOKS_DURABLE_REDIS_HEALTH_CHECK_INTERVAL",
-    )
-    for name in names:
-        monkeypatch.delenv(name, raising=False)
-
-    settings = AppSettings()
-
-    assert settings.durable_lease_duration_ms == 30_000
-    assert settings.durable_lease_commit_safety_ms == 1_500
-    assert settings.durable_poll_interval == 1.0
-    assert settings.durable_max_nonterminal_executions == 0
-    assert settings.durable_redis_socket_timeout == 5.0
-    assert settings.durable_redis_socket_connect_timeout == 5.0
-    assert settings.durable_redis_health_check_interval == 30
+# (env var, settings field, default, env value, parsed value)
+_ENV_SETTINGS = [
+    ("HAYHOOKS_DURABLE_LEASE_DURATION_MS", "durable_lease_duration_ms", 30_000, "45000", 45_000),
+    ("HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS", "durable_lease_commit_safety_ms", 1_500, "2000", 2_000),
+    ("HAYHOOKS_DURABLE_POLL_INTERVAL", "durable_poll_interval", 1.0, "0.5", 0.5),
+    ("HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS", "durable_max_nonterminal_executions", 0, "250", 250),
+    ("HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT", "durable_redis_socket_timeout", 5.0, "3.5", 3.5),
+    ("HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT", "durable_redis_socket_connect_timeout", 5.0, "2.5", 2.5),
+    ("HAYHOOKS_DURABLE_REDIS_HEALTH_CHECK_INTERVAL", "durable_redis_health_check_interval", 30, "20", 20),
+    ("HAYHOOKS_A2A_TASK_SNAPSHOT_CACHE_SIZE", "a2a_task_snapshot_cache_size", 1_024, "64", 64),
+    ("HAYHOOKS_A2A_LIST_SCAN_BATCH_SIZE", "a2a_list_scan_batch_size", 500, "25", 25),
+]
 
 
-def test_durable_redis_settings_from_environment(monkeypatch):
-    monkeypatch.setenv("HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS", "250")
-    monkeypatch.setenv("HAYHOOKS_DURABLE_POLL_INTERVAL", "0.5")
-    monkeypatch.setenv("HAYHOOKS_DURABLE_LEASE_DURATION_MS", "45000")
-    monkeypatch.setenv("HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS", "2000")
-    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT", "3.5")
-    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT", "2.5")
-    monkeypatch.setenv("HAYHOOKS_DURABLE_REDIS_HEALTH_CHECK_INTERVAL", "20")
-
-    settings = AppSettings()
-
-    assert settings.durable_lease_duration_ms == 45_000
-    assert settings.durable_lease_commit_safety_ms == 2_000
-    assert settings.durable_poll_interval == 0.5
-    assert settings.durable_max_nonterminal_executions == 250
-    assert settings.durable_redis_socket_timeout == 3.5
-    assert settings.durable_redis_socket_connect_timeout == 2.5
-    assert settings.durable_redis_health_check_interval == 20
-
-
-def test_durable_lease_safety_margin_must_leave_time_for_a_commit() -> None:
-    with pytest.raises(ValueError, match="durable_lease_commit_safety_ms"):
-        AppSettings(durable_lease_duration_ms=1_000, durable_lease_commit_safety_ms=1_000)
-    with pytest.raises(ValueError, match="heartbeat interval"):
-        AppSettings(durable_lease_duration_ms=1, durable_lease_commit_safety_ms=0)
-    with pytest.raises(ValueError, match="heartbeat interval"):
-        AppSettings(durable_lease_duration_ms=1_000, durable_lease_commit_safety_ms=700)
-
-
-def test_a2a_task_store_bounds_from_environment(monkeypatch):
-    monkeypatch.setenv("HAYHOOKS_A2A_TASK_SNAPSHOT_CACHE_SIZE", "64")
-    monkeypatch.setenv("HAYHOOKS_A2A_LIST_SCAN_BATCH_SIZE", "25")
+@pytest.mark.parametrize("from_environment", [False, True], ids=["defaults", "environment"])
+def test_durable_and_a2a_settings_follow_the_environment(monkeypatch, from_environment):
+    for name, _field, _default, value, _expected in _ENV_SETTINGS:
+        if from_environment:
+            monkeypatch.setenv(name, value)
+        else:
+            monkeypatch.delenv(name, raising=False)
 
     configured = AppSettings()
 
-    assert configured.a2a_task_snapshot_cache_size == 64
-    assert configured.a2a_list_scan_batch_size == 25
+    for _name, field, default, _value, expected in _ENV_SETTINGS:
+        assert getattr(configured, field) == (expected if from_environment else default)
+
+
+@pytest.mark.parametrize(
+    ("duration_ms", "safety_ms", "match"),
+    [
+        (1_000, 1_000, "durable_lease_commit_safety_ms"),
+        (1, 0, "heartbeat interval"),
+        (1_000, 700, "heartbeat interval"),
+    ],
+)
+def test_durable_lease_safety_margin_must_leave_time_for_a_commit(duration_ms, safety_ms, match) -> None:
+    with pytest.raises(ValueError, match=match):
+        AppSettings(durable_lease_duration_ms=duration_ms, durable_lease_commit_safety_ms=safety_ms)
 
 
 def test_cors():

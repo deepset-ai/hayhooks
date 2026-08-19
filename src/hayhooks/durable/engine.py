@@ -197,7 +197,7 @@ class Checkpoint:
     worker_id: str
     now_ms: int
     lease_duration_ms: int
-    payload: bytes
+    checkpoint: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
 
@@ -330,9 +330,10 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         return _release_claim(control, command)
     if isinstance(command, Heartbeat):
         _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        deadline = command.now_ms + command.lease_duration_ms
         return TransitionPlan(
-            replace(control, lease_expires_at_ms=command.now_ms + command.lease_duration_ms),
-            lease_index_update=LeaseIndexUpdate(command.now_ms + command.lease_duration_ms, control.fence),
+            replace(control, lease_expires_at_ms=deadline),
+            lease_index_update=LeaseIndexUpdate(deadline, control.fence),
         )
     if isinstance(command, Checkpoint):
         _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
@@ -344,7 +345,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
         return TransitionPlan(
             next_control,
-            payload_writes=(PayloadWrite(PayloadKind.CHECKPOINT, command.payload),),
+            payload_writes=(PayloadWrite(PayloadKind.CHECKPOINT, command.checkpoint),),
             progress_events=_progress_events(control.progress_sequence, command.progress_events),
             lease_index_update=LeaseIndexUpdate(next_control.lease_expires_at_ms, control.fence),
         )
@@ -356,20 +357,16 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         return _suspend(control, command)
     if isinstance(command, Resume):
         return _resume(control, command)
-    if isinstance(command, Complete):
+    if isinstance(command, (Complete, Fail)):
         _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        completed = isinstance(command, Complete)
         return _terminal_or_canceled(
             control,
             command.now_ms,
-            ExecutionStatus.COMPLETED,
-            PayloadKind.RESULT,
-            command.result,
+            ExecutionStatus.COMPLETED if completed else ExecutionStatus.FAILED,
+            PayloadKind.RESULT if completed else PayloadKind.ERROR,
+            command.result if isinstance(command, Complete) else command.error,
             command.progress_events,
-        )
-    if isinstance(command, Fail):
-        _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
-        return _terminal_or_canceled(
-            control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.error, command.progress_events
         )
     if isinstance(command, RecoverExpiredLease):
         return _recover(control, command)

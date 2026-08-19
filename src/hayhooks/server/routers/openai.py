@@ -17,7 +17,7 @@ from fastapi_openai_compat import (
 from haystack.dataclasses import StreamingChunk
 
 from hayhooks.server.logger import log
-from hayhooks.server.pipelines.registry import PipelineRegistry, registry
+from hayhooks.server.pipelines.registry import PipelineRegistry
 from hayhooks.server.tracing import (
     SPAN_OPENAI_FILE_UPLOAD,
     SPAN_OPENAI_RUN,
@@ -61,7 +61,7 @@ _RESPONSE_DISPATCH = _OpenAIDispatch(
 )
 
 
-def _list_models(pipeline_registry: PipelineRegistry = registry) -> list[str]:
+def _list_models(pipeline_registry: PipelineRegistry) -> list[str]:
     return pipeline_registry.get_names()
 
 
@@ -83,7 +83,7 @@ async def _collect_async_generator(gen: AsyncGenerator) -> str:
     return "".join([_chunk_to_text(chunk) async for chunk in gen])
 
 
-def _resolve_pipeline_wrapper(model: str, pipeline_registry: PipelineRegistry = registry) -> BasePipelineWrapper:
+def _resolve_pipeline_wrapper(model: str, pipeline_registry: PipelineRegistry) -> BasePipelineWrapper:
     """Look up *model* in the registry, raising 404 if it isn't a pipeline wrapper."""
     pipeline_wrapper = pipeline_registry.get(model)
     if not isinstance(pipeline_wrapper, BasePipelineWrapper):
@@ -141,7 +141,7 @@ async def _run_pipeline_method(
     model: str,
     kwargs: dict[str, Any],
     body: dict[str, Any],
-    pipeline_registry: PipelineRegistry = registry,
+    pipeline_registry: PipelineRegistry,
 ) -> str | Generator | AsyncGenerator:
     """Shared dispatch logic for chat completions and responses endpoints."""
     stream_requested = bool(body.get("stream", False))
@@ -196,7 +196,7 @@ async def _run_completion(
     messages: list[dict[str, Any]],
     body: dict[str, Any],
     *,
-    pipeline_registry: PipelineRegistry = registry,
+    pipeline_registry: PipelineRegistry,
 ) -> str | Generator | AsyncGenerator:
     return await _run_pipeline_method(
         _CHAT_COMPLETION_DISPATCH,
@@ -212,7 +212,7 @@ async def _run_response(
     input_items: list[dict[str, Any]],
     body: dict[str, Any],
     *,
-    pipeline_registry: PipelineRegistry = registry,
+    pipeline_registry: PipelineRegistry,
 ) -> str | Generator | AsyncGenerator:
     return await _run_pipeline_method(
         _RESPONSE_DISPATCH,
@@ -223,7 +223,7 @@ async def _run_response(
     )
 
 
-def _find_file_upload_wrapper(pipeline_registry: PipelineRegistry = registry) -> BasePipelineWrapper | None:
+def _find_file_upload_wrapper(pipeline_registry: PipelineRegistry) -> BasePipelineWrapper | None:
     """Find the first registered pipeline wrapper that implements ``run_file_upload``."""
     for name in pipeline_registry.get_names():
         wrapper = pipeline_registry.get(name)
@@ -238,7 +238,7 @@ async def _run_file_upload(
     content: bytes,
     purpose: str,
     *,
-    pipeline_registry: PipelineRegistry = registry,
+    pipeline_registry: PipelineRegistry,
 ) -> FileObject:
     with trace_operation(
         SPAN_OPENAI_FILE_UPLOAD,
@@ -283,7 +283,7 @@ async def _run_file_upload(
         )
 
 
-def create_openai_router(pipeline_registry: PipelineRegistry = registry) -> APIRouter:
+def create_openai_router(pipeline_registry: PipelineRegistry) -> APIRouter:
     """Create OpenAI-compatible routes bound to one pipeline registry."""
     list_models = partial(_list_models, pipeline_registry)
     run_completion = partial(_run_completion, pipeline_registry=pipeline_registry)
@@ -312,6 +312,3 @@ def create_openai_router(pipeline_registry: PipelineRegistry = registry) -> APIR
     )
     router.include_router(create_files_router(run_file_upload=run_file_upload, tags=["openai"]))
     return router
-
-
-router = create_openai_router()

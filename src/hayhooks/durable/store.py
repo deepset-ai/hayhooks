@@ -47,7 +47,7 @@ from hayhooks.durable.models import (
 )
 from hayhooks.durable.redis import RedisExecutionStore, digest
 from hayhooks.durable.reference import InMemoryExecutionStore
-from hayhooks.durable.settings import DurableSettings
+from hayhooks.durable.settings import DurableSettings, resolve_durable_settings
 from hayhooks.server.logger import log
 
 _RECORD_PAYLOADS = (
@@ -116,23 +116,15 @@ class ExecutionClaim:
     ) -> None:
         self.store = store
         self.control = control
-        self._record = record
+        self.record = record
         self.worker_id = worker_id
+        self.lost_event = asyncio.Event()
         self._heartbeat: asyncio.Task[None] | None = None
         self._transition_lock = asyncio.Lock()
         self._finished = False
         self._lost = False
-        self._lost_event = asyncio.Event()
         self._confirmed_until = confirmed_at + self.store.lease_safe_duration
         self._last_persisted_progress = record.progress[-1] if record.progress else None
-
-    @property
-    def record(self) -> ExecutionRecord:
-        return self._record
-
-    @property
-    def lost_event(self) -> asyncio.Event:
-        return self._lost_event
 
     async def __aenter__(self) -> ExecutionClaim:
         async with self._transition_lock:
@@ -331,7 +323,7 @@ class ExecutionClaim:
     def _mark_lost(self) -> None:
         if not self._lost:
             self._lost = True
-            self._lost_event.set()
+            self.lost_event.set()
 
 
 class ExecutionStore:
@@ -612,8 +604,6 @@ class ExecutionStore:
             progress=progress,
             result=result if control.status is EngineStatus.COMPLETED else None,
             error=error if control.status is EngineStatus.FAILED else None,
-            last_retry_error=error if not control.terminal else None,
-            retry_at=_datetime(control.available_at_ms) if control.available_at_ms is not None else None,
             cancel_requested_at=(
                 _datetime(control.cancel_requested_at_ms) if control.cancel_requested_at_ms is not None else None
             ),
@@ -648,7 +638,7 @@ class ExecutionStore:
 class RedisExecutionStoreProvider:
     """Application-owned Redis client and deployment stores."""
 
-    def __init__(  # noqa: PLR0913 - mirrors the configurable Redis task-store provider
+    def __init__(  # noqa: PLR0913 - Redis connection and settings sources
         self,
         redis_url: str | None = None,
         *,
@@ -657,33 +647,13 @@ class RedisExecutionStoreProvider:
         close_redis: bool = True,
         durable_settings: DurableSettings | None = None,
         app_settings: Any | None = None,
-        socket_timeout: float | None = None,
-        socket_connect_timeout: float | None = None,
-        health_check_interval: int | None = None,
     ) -> None:
-        if durable_settings is not None and app_settings is not None:
-            msg = "Pass durable_settings or app_settings, not both"
-            raise ValueError(msg)
-        self.settings = (
-            durable_settings
-            or (DurableSettings.from_app_settings(app_settings) if app_settings is not None else DurableSettings())
-        ).model_copy(deep=True)
-        self.app_settings = self.settings
+        self.settings = resolve_durable_settings(durable_settings, app_settings) or DurableSettings()
         self.config = _config(durable_settings=self.settings, key_prefix=key_prefix)
         self.close_redis = close_redis
-        self.socket_timeout = (
-            socket_timeout if socket_timeout is not None else self.settings.durable_redis_socket_timeout
-        )
-        self.socket_connect_timeout = (
-            socket_connect_timeout
-            if socket_connect_timeout is not None
-            else self.settings.durable_redis_socket_connect_timeout
-        )
-        self.health_check_interval = (
-            health_check_interval
-            if health_check_interval is not None
-            else self.settings.durable_redis_health_check_interval
-        )
+        self.socket_timeout = self.settings.durable_redis_socket_timeout
+        self.socket_connect_timeout = self.settings.durable_redis_socket_connect_timeout
+        self.health_check_interval = self.settings.durable_redis_health_check_interval
         if redis is None:
             try:
                 from redis.asyncio import Redis
@@ -723,14 +693,7 @@ class InMemoryExecutionStoreProvider:
         durable_settings: DurableSettings | None = None,
         app_settings: Any | None = None,
     ) -> None:
-        if durable_settings is not None and app_settings is not None:
-            msg = "Pass durable_settings or app_settings, not both"
-            raise ValueError(msg)
-        self.settings = (
-            durable_settings
-            or (DurableSettings.from_app_settings(app_settings) if app_settings is not None else DurableSettings())
-        ).model_copy(deep=True)
-        self.app_settings = self.settings
+        self.settings = resolve_durable_settings(durable_settings, app_settings) or DurableSettings()
         self.config = _config(durable_settings=self.settings)
         self.cores: dict[str, InMemoryExecutionStore] = {}
 

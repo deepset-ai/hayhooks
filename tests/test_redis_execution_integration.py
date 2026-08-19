@@ -7,7 +7,6 @@ from dataclasses import replace
 
 import pytest
 
-from hayhooks.durable.backend import ExecutionStoreConfig
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -29,7 +28,8 @@ from hayhooks.durable.models import (
 )
 from hayhooks.durable.redis import RedisExecutionStore
 from hayhooks.durable.store import ExecutionStore
-from tests.durable_contract import assert_store_contract, control
+from tests.durable_contract import assert_store_contract, contract_config, control
+from tests.durable_helpers import wait_for_record
 
 pytestmark = pytest.mark.integration
 
@@ -37,17 +37,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 async def store(isolated_redis):
     redis, prefix = isolated_redis
-    config = ExecutionStoreConfig(
-        key_prefix=f"{prefix}:durable",
-        max_input_bytes=64,
-        max_checkpoint_bytes=64,
-        max_result_bytes=64,
-        max_error_bytes=64,
-        max_wait_bytes=64,
-        max_progress_events=2,
-        max_progress_event_bytes=32,
-        terminal_ttl_seconds=60,
-    )
+    config = contract_config(key_prefix=f"{prefix}:durable", terminal_ttl_seconds=60)
     durable = RedisExecutionStore(redis, deployment="integration", config=config)
     await durable.initialize()
     yield redis, durable
@@ -239,13 +229,9 @@ async def test_redis_adapter_runs_the_public_manager_contract(store) -> None:
                 max_record_bytes=512,
             )
         )
-        for _ in range(100):
-            record = await adapter_store.get("public-run")
-            if record is not None and record.terminal:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("Redis adapter did not complete the public manager execution")
+        record = await wait_for_record(
+            adapter_store, "public-run", message="Redis adapter did not complete the public manager execution"
+        )
     finally:
         await manager.close()
 

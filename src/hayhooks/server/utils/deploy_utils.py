@@ -126,29 +126,18 @@ class _DeploymentSnapshot:
         }
         pipelines_dir = Path(settings.pipelines_dir)
         source_dir = pipelines_dir / pipeline_name
-        sources = [source_dir] if source_dir.is_dir() else []
-        sources.extend(
+        yaml_sources = [
             source
             for extension in (".yml", ".yaml")
             if (source := pipelines_dir / f"{pipeline_name}{extension}").is_file()
-        )
-        self.backup_dir = Path(tempfile.mkdtemp(prefix="hayhooks-deploy-rollback-")) if sources else None
-        if source_dir.is_dir() and self.backup_dir is not None:
-            shutil.copytree(source_dir, self.backup_dir / "pipeline")
-        for extension in (".yml", ".yaml"):
-            source = pipelines_dir / f"{pipeline_name}{extension}"
-            if source.is_file() and self.backup_dir is not None:
-                shutil.copy2(source, self.backup_dir / f"pipeline{extension}")
-
-    @classmethod
-    def capture(
-        cls,
-        pipeline_name: str,
-        app: FastAPI | None,
-        runtime: DurableRuntime | None,
-        pipeline_registry: PipelineRegistry,
-    ) -> "_DeploymentSnapshot":
-        return cls(pipeline_name, app, runtime, pipeline_registry)
+        ]
+        self.backup_dir = None
+        if source_dir.is_dir() or yaml_sources:
+            self.backup_dir = Path(tempfile.mkdtemp(prefix="hayhooks-deploy-rollback-"))
+            if source_dir.is_dir():
+                shutil.copytree(source_dir, self.backup_dir / "pipeline")
+            for source in yaml_sources:
+                shutil.copy2(source, self.backup_dir / f"pipeline{source.suffix}")
 
     def restore_publication(self) -> None:
         self.registry.remove(self.pipeline_name)
@@ -223,7 +212,7 @@ async def _deploy_prepared_pipeline_async(  # noqa: C901, PLR0912, PLR0913, PLR0
                 if deployment_key in _deployments_in_progress:
                     msg = f"Pipeline '{pipeline_name}' is already being deployed"
                     raise PipelineAlreadyExistsError(msg)
-                snapshot = _DeploymentSnapshot.capture(pipeline_name, app, durable_runtime, pipeline_registry)
+                snapshot = _DeploymentSnapshot(pipeline_name, app, durable_runtime, pipeline_registry)
                 if snapshot.wrapper is not None and not overwrite:
                     msg = f"Pipeline '{pipeline_name}' already exists"
                     raise PipelineAlreadyExistsError(msg)

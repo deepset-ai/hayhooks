@@ -250,65 +250,56 @@ async def long_running_client():
         yield client, wrapper
 
 
-async def poll_task_until_state(client: httpx.AsyncClient, task_id: str, expected_state: str) -> dict:
+async def poll_task(client: httpx.AsyncClient, task_id: str, ready, description: str, *, legacy: bool = False) -> dict:
+    """Poll one task until *ready* accepts its projection; ``legacy`` uses the v0.3 alias."""
+    payload = get_task_payload(task_id, method="tasks/get" if legacy else "GetTask")
+    headers = {"A2A-Version": "0.3"} if legacy else None
     last_task = None
     for _ in range(50):
-        response = await client.post("/long_agent/", json=get_task_payload(task_id))
+        response = await client.post("/long_agent/", json=payload, headers=headers)
         assert response.status_code == 200
         last_task = extract_task(response.json())
-        if last_task["status"]["state"] == expected_state:
+        if ready(last_task):
             return last_task
         await asyncio.sleep(0.01)
-    msg = f"Task {task_id} did not reach {expected_state}. Last task: {last_task}"
+    msg = f"Task {task_id} did not {description}. Last task: {last_task}"
     raise AssertionError(msg)
 
 
-async def poll_task_until_artifact_text(client: httpx.AsyncClient, task_id: str, expected_text: str) -> dict:
-    last_task = None
-    for _ in range(50):
-        response = await client.post("/long_agent/", json=get_task_payload(task_id))
-        assert response.status_code == 200
-        last_task = extract_task(response.json())
-        if artifact_text(last_task) == expected_text:
-            return last_task
-        await asyncio.sleep(0.01)
-    msg = f"Task {task_id} did not expose artifact text {expected_text!r}. Last task: {last_task}"
-    raise AssertionError(msg)
+async def start_detached_task(client: httpx.AsyncClient) -> dict:
+    """Send one message that returns before the agent has finished."""
+    payload = send_message_payload("start")
+    payload["params"]["configuration"] = {"returnImmediately": True}
+    response = await client.post("/long_agent/", json=payload)
+    assert response.status_code == 200
+    return extract_task(response.json())
 
 
 async def test_detached_send_returns_non_terminal_task(long_running_client):
     client, wrapper = long_running_client
-    payload = send_message_payload("start")
-    payload["params"]["configuration"] = {"returnImmediately": True}
 
-    response = await client.post("/long_agent/", json=payload)
+    task = await start_detached_task(client)
 
-    assert response.status_code == 200
-    task = extract_task(response.json())
     assert task["id"]
     assert task["contextId"]
     assert task["status"]["state"] in {"TASK_STATE_SUBMITTED", "TASK_STATE_WORKING"}
     assert wrapper.entered.is_set()
     assert not wrapper.release.is_set()
 
-    progress_task = await poll_task_until_artifact_text(client, task["id"], "progress ")
+    progress_task = await poll_task(
+        client, task["id"], lambda task: artifact_text(task) == "progress ", "expose its progress artifact"
+    )
     assert progress_task["status"]["state"] == "TASK_STATE_WORKING"
 
     wrapper.release.set()
-    last_task = None
-    for _ in range(50):
-        poll_response = await client.post(
-            "/long_agent/",
-            json=get_task_payload(task["id"], method="tasks/get"),
-            headers={"A2A-Version": "0.3"},
-        )
-        assert poll_response.status_code == 200
-        last_task = extract_task(poll_response.json())
-        if last_task["status"]["state"] == "completed":
-            break
-        await asyncio.sleep(0.01)
-    assert last_task is not None
-    assert last_task["status"]["state"] == "completed"
+    # The v0.3 alias must project the same task with lowercase states.
+    last_task = await poll_task(
+        client,
+        task["id"],
+        lambda task: task["status"]["state"] == "completed",
+        "complete",
+        legacy=True,
+    )
     assert artifact_text(last_task) == "progress done"
 
 
@@ -338,16 +329,15 @@ async def test_a2a_v0_3_blocking_false_returns_active_task(long_running_client):
     assert task["status"]["state"] in {"submitted", "working"}
 
     wrapper.release.set()
-    completed_task = await poll_task_until_state(client, task["id"], "TASK_STATE_COMPLETED")
+    completed_task = await poll_task(
+        client, task["id"], lambda task: task["status"]["state"] == "TASK_STATE_COMPLETED", "complete"
+    )
     assert artifact_text(completed_task) == "progress done"
 
 
 async def test_subscribe_to_active_task(long_running_client):
     client, wrapper = long_running_client
-    payload = send_message_payload("start")
-    payload["params"]["configuration"] = {"returnImmediately": True}
-    send_response = await client.post("/long_agent/", json=payload)
-    task = extract_task(send_response.json())
+    task = await start_detached_task(client)
 
     subscribe_payload = get_task_payload(task["id"], method="SubscribeToTask")
 
@@ -377,10 +367,7 @@ async def test_subscribe_to_active_task(long_running_client):
 
 async def test_cooperative_async_cancellation(long_running_client):
     client, wrapper = long_running_client
-    payload = send_message_payload("start")
-    payload["params"]["configuration"] = {"returnImmediately": True}
-    send_response = await client.post("/long_agent/", json=payload)
-    task = extract_task(send_response.json())
+    task = await start_detached_task(client)
 
     await asyncio.wait_for(wrapper.entered.wait(), timeout=1)
     cancel_response = await client.post("/long_agent/", json=cancel_task_payload(task["id"]))

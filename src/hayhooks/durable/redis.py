@@ -25,6 +25,7 @@ from hayhooks.durable.backend import (
     check_admission,
     parse_idempotency_binding,
     parse_lease_member,
+    runnable_score,
     validate_command_payloads,
 )
 from hayhooks.durable.engine import (
@@ -71,23 +72,11 @@ class RedisKeys:
     def control(self, run_id: str) -> str:
         return f"{self._execution_base(run_id)}:control"
 
-    def input(self, run_id: str) -> str:
-        return f"{self._execution_base(run_id)}:input"
-
-    def checkpoint(self, run_id: str) -> str:
-        return f"{self._execution_base(run_id)}:checkpoint"
-
-    def result(self, run_id: str) -> str:
-        return f"{self._execution_base(run_id)}:result"
-
-    def error(self, run_id: str) -> str:
-        return f"{self._execution_base(run_id)}:error"
-
     def progress(self, run_id: str) -> str:
         return f"{self._execution_base(run_id)}:progress"
 
-    def wait(self, run_id: str) -> str:
-        return f"{self._execution_base(run_id)}:wait"
+    def payload(self, run_id: str, kind: PayloadKind) -> str:
+        return f"{self._execution_base(run_id)}:{kind.value}"
 
     def idempotency(self, idempotency_digest: str) -> str:
         if not re.fullmatch(r"[a-f0-9]{64}", idempotency_digest):
@@ -265,7 +254,7 @@ class RedisExecutionStore:
             return {}
         async with self.redis.pipeline(transaction=False) as pipe:
             for kind in kinds:
-                pipe.get(self._payload_key(run_id, kind))
+                pipe.get(self.keys.payload(run_id, kind))
             values = await pipe.execute()
         return {kind: bytes(value) if value is not None else None for kind, value in zip(kinds, values, strict=True)}
 
@@ -310,7 +299,7 @@ class RedisExecutionStore:
                         pipe.multi()
                         pipe.zrem(self.keys.runnable, run_id)
                         if current.status is ExecutionStatus.QUEUED:
-                            pipe.zadd(self.keys.runnable, {run_id: _runnable_score(current)})
+                            pipe.zadd(self.keys.runnable, {run_id: runnable_score(current)})
                         await pipe.execute()
                         return TransitionPlan(current)
                     pipe.multi()
@@ -379,16 +368,16 @@ class RedisExecutionStore:
         if removed_fields:
             pipe.hdel(self.keys.control(next_control.run_id), *removed_fields)
         for write in plan.payload_writes:
-            pipe.set(self._payload_key(next_control.run_id, write.kind), write.data)
+            pipe.set(self.keys.payload(next_control.run_id, write.kind), write.data)
         for kind in plan.payload_deletes:
-            pipe.delete(self._payload_key(next_control.run_id, kind))
+            pipe.delete(self.keys.payload(next_control.run_id, kind))
         for event in plan.progress_events:
             pipe.rpush(self.keys.progress(next_control.run_id), event.data)
             pipe.ltrim(self.keys.progress(next_control.run_id), -self.config.max_progress_events, -1)
 
         pipe.zrem(self.keys.runnable, next_control.run_id)
         if next_control.status is ExecutionStatus.QUEUED:
-            pipe.zadd(self.keys.runnable, {next_control.run_id: _runnable_score(next_control)})
+            pipe.zadd(self.keys.runnable, {next_control.run_id: runnable_score(next_control)})
 
         if plan.lease_index_update is not None:
             member = RedisKeys.lease_member(next_control.run_id, plan.lease_index_update.fence)
@@ -418,26 +407,9 @@ class RedisExecutionStore:
     def _execution_keys(self, run_id: str) -> tuple[str, ...]:
         return (
             self.keys.control(run_id),
-            self.keys.input(run_id),
-            self.keys.checkpoint(run_id),
-            self.keys.result(run_id),
-            self.keys.error(run_id),
             self.keys.progress(run_id),
-            self.keys.wait(run_id),
+            *(self.keys.payload(run_id, kind) for kind in PayloadKind),
         )
-
-    def _payload_key(self, run_id: str, kind: PayloadKind) -> str:
-        return {
-            PayloadKind.INPUT: self.keys.input,
-            PayloadKind.CHECKPOINT: self.keys.checkpoint,
-            PayloadKind.RESULT: self.keys.result,
-            PayloadKind.ERROR: self.keys.error,
-            PayloadKind.WAIT: self.keys.wait,
-        }[kind](run_id)
-
-
-def _runnable_score(control: ExecutionControl) -> int:
-    return control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
 
 
 def _text(value: str | bytes | int) -> str:

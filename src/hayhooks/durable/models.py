@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, TypeAlias, cast
 
+from pydantic import BaseModel, Field
+
 from hayhooks.durable.engine import ExecutionLeaseLostError as _ExecutionLeaseLostError
 from hayhooks.durable.engine import ExecutionStatus, normalize_cancellation_reason
 
@@ -115,6 +117,33 @@ class RetryableExecutionError(RuntimeError):
     def __init__(self, message: str, *, delay: float = 0.0) -> None:
         super().__init__(message)
         self.delay = max(0.0, delay)
+
+
+class ExecutionProgress(BaseModel):
+    """Sanitized client-visible progress event."""
+
+    sequence: int
+    kind: str
+    message: str
+    timestamp: datetime
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionResult(BaseModel):
+    """Safe durable REST/A2A execution projection."""
+
+    execution_id: str
+    status: ExecutionStatus
+    attempt: int
+    sequence: int
+    progress: list[ExecutionProgress]
+    result: Any | None = None
+    error: dict[str, Any] | None = None
+    waiting: dict[str, Any] | None = None
+    cancellation_requested_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    links: dict[str, str] = Field(default_factory=dict)
 
 
 class ExecutionKind(str, Enum):
@@ -239,8 +268,6 @@ class ExecutionRecord:
     progress: list[ExecutionProgressEvent] = field(default_factory=list)
     result: JsonValue | None = None
     error: ExecutionError | None = None
-    last_retry_error: ExecutionError | None = None
-    retry_at: datetime | None = None
     cancel_requested_at: datetime | None = None
     cancel_reason: str | None = None
     created_at: datetime = field(default_factory=utc_now)
@@ -259,29 +286,18 @@ class ExecutionRecord:
         if self.cancel_requested_at is not None:
             self.cancel_requested_at = _as_utc(self.cancel_requested_at)
         self.cancel_reason = normalize_cancellation_reason(self.cancel_reason)
-        self.validated_input = cast(
-            dict[str, JsonValue],
-            validate_json(self.validated_input, limit=self.max_record_bytes, label="validated input"),
-        )
-        self.application_state = cast(
-            dict[str, JsonValue],
-            validate_json(self.application_state, limit=self.max_record_bytes, label="application state"),
-        )
+        self.validated_input = self._bounded_dict(self.validated_input, "validated input")
+        self.application_state = self._bounded_dict(self.application_state, "application state")
         if self.wait is not None:
-            self.wait = cast(dict[str, JsonValue], validate_json(self.wait, limit=self.max_record_bytes, label="wait"))
+            self.wait = self._bounded_dict(self.wait, "wait")
         if self.result is not None:
             self.result = validate_json(self.result, limit=self.max_record_bytes, label="result")
-        if self.checkpoint is not None and not isinstance(self.checkpoint, ExecutionCheckpoint):
-            self.checkpoint = ExecutionCheckpoint.from_dict(cast(Mapping[str, Any], self.checkpoint))
         if self.checkpoint is not None:
-            self.checkpoint.data = cast(
-                dict[str, JsonValue],
-                validate_json(self.checkpoint.data, limit=self.max_record_bytes, label="checkpoint"),
-            )
+            if not isinstance(self.checkpoint, ExecutionCheckpoint):
+                self.checkpoint = ExecutionCheckpoint.from_dict(cast(Mapping[str, Any], self.checkpoint))
+            self.checkpoint.data = self._bounded_dict(self.checkpoint.data, "checkpoint")
         if self.error is not None and not isinstance(self.error, ExecutionError):
             self.error = ExecutionError.from_dict(cast(Mapping[str, Any], self.error))
-        if self.last_retry_error is not None and not isinstance(self.last_retry_error, ExecutionError):
-            self.last_retry_error = ExecutionError.from_dict(cast(Mapping[str, Any], self.last_retry_error))
         self.progress = [
             event
             if isinstance(event, ExecutionProgressEvent)
@@ -293,6 +309,9 @@ class ExecutionRecord:
     @property
     def terminal(self) -> bool:
         return self.status.terminal
+
+    def _bounded_dict(self, value: Any, label: str) -> dict[str, JsonValue]:
+        return cast(dict[str, JsonValue], validate_json(value, limit=self.max_record_bytes, label=label))
 
     def touch(self) -> None:
         self.sequence += 1
@@ -320,7 +339,6 @@ class ExecutionRecord:
             self.status = ExecutionStatus.CANCELED
             self.error = None
             self.result = None
-            self.retry_at = None
             self.wait = None
             self.touch()
 

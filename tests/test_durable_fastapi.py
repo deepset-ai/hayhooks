@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.metadata
-import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Annotated
@@ -23,6 +22,7 @@ from hayhooks.durable import (
     InMemoryExecutionStoreProvider,
     create_durable_router,
 )
+from tests.durable_helpers import wait_for_status
 
 pytestmark = pytest.mark.skipif(
     not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
@@ -106,15 +106,6 @@ def _app(
     return app, runtime
 
 
-def _wait(client: TestClient, url: str, expected: str) -> dict:
-    for _ in range(200):
-        response = client.get(url)
-        if response.json()["status"] == expected:
-            return response.json()
-        time.sleep(0.01)
-    pytest.fail(f"execution did not become {expected}")
-
-
 def test_public_router_is_typed_prefix_safe_and_supports_all_routes() -> None:
     app, _ = _app(owner_dependency=None)
     with TestClient(app) as client:
@@ -123,12 +114,12 @@ def test_public_router_is_typed_prefix_safe_and_supports_all_routes() -> None:
         assert submitted.headers["Location"].startswith("/api/jobs/executions/")
         links = submitted.json()["links"]
         assert set(links) == {"self", "cancel", "resume"}
-        waiting = _wait(client, links["self"], "waiting")
+        waiting = wait_for_status(client, links["self"], "waiting")
         assert waiting["waiting"] == {"kind": "approval"}
         assert client.post(links["resume"], json={"approved": "invalid"}).status_code == 422
         resumed = client.post(links["resume"], json={"approved": True})
         assert resumed.status_code == 202
-        completed = _wait(client, links["self"], "completed")
+        completed = wait_for_status(client, links["self"], "completed")
         assert completed["result"] == {"value": 1, "owner_id": None}
         assert client.post(links["cancel"]).status_code == 200
 

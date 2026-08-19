@@ -1,5 +1,4 @@
 import importlib.metadata
-import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +8,7 @@ from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_files
 from hayhooks.settings import settings
+from tests.durable_helpers import wait_for_status
 
 pytestmark = pytest.mark.skipif(
     not importlib.metadata.version("haystack-ai").startswith("3."), reason="durable execution requires Haystack 3"
@@ -111,14 +111,12 @@ def _deploy(client: TestClient, source: str, *, overwrite: bool = False):
     )
 
 
+def _deploy_ok(client: TestClient, source: str, *, overwrite: bool = False) -> None:
+    assert _deploy(client, source, overwrite=overwrite).status_code == 200
+
+
 def _wait_for_completion(client: TestClient, response) -> dict:
-    body = response.json()
-    for _ in range(200):
-        result = client.get(body["links"]["self"])
-        if result.json()["status"] == "completed":
-            return result.json()
-        time.sleep(0.01)
-    pytest.fail("durable execution did not complete")
+    return wait_for_status(client, response.json()["links"]["self"], "completed")
 
 
 @pytest.fixture(autouse=True)
@@ -134,7 +132,7 @@ def _isolated_runtime(monkeypatch, tmp_path):
 def test_undeploy_removes_entire_durable_route_family() -> None:
     app = create_app()
     with TestClient(app) as client:
-        assert _deploy(client, _durable_source(field="value", increment=1, revision="first")).status_code == 200
+        _deploy_ok(client, _durable_source(field="value", increment=1, revision="first"))
         assert client.post("/undeploy/job").status_code == 200
         assert client.post("/job/run-durable", json={"value": 2}).status_code == 404
         assert client.get("/job/executions/missing").status_code == 404
@@ -146,14 +144,9 @@ def test_undeploy_removes_entire_durable_route_family() -> None:
 def test_undeploy_refuses_to_strand_waiting_execution() -> None:
     app = create_app()
     with TestClient(app) as client:
-        assert _deploy(client, _waiting_source(revision="first")).status_code == 200
+        _deploy_ok(client, _waiting_source(revision="first"))
         submitted = client.post("/job/run-durable", json={"value": 1})
-        for _ in range(100):
-            if client.get(submitted.json()["links"]["self"]).json()["status"] == "waiting":
-                break
-            time.sleep(0.01)
-        else:
-            pytest.fail("execution did not enter waiting before undeploy")
+        wait_for_status(client, submitted.json()["links"]["self"], "waiting")
 
         blocked = client.post("/undeploy/job")
         assert blocked.status_code == 409
@@ -167,33 +160,14 @@ def test_undeploy_refuses_to_strand_waiting_execution() -> None:
 def test_durable_overwrite_routes_bind_new_model_runner_and_revision() -> None:
     app = create_app()
     with TestClient(app) as client:
-        assert (
-            _deploy(
-                client,
-                _durable_source(
-                    field="old_value",
-                    increment=1,
-                    revision="first",
-                    result_field="old_result",
-                ),
-            ).status_code
-            == 200
-        )
+        _deploy_ok(client, _durable_source(field="old_value", increment=1, revision="first", result_field="old_result"))
         first = client.post("/job/run-durable", json={"old_value": 2})
         assert _wait_for_completion(client, first)["result"] == {"old_result": 3}
 
-        assert (
-            _deploy(
-                client,
-                _durable_source(
-                    field="new_value",
-                    increment=20,
-                    revision="second",
-                    result_field="new_result",
-                ),
-                overwrite=True,
-            ).status_code
-            == 200
+        _deploy_ok(
+            client,
+            _durable_source(field="new_value", increment=20, revision="second", result_field="new_result"),
+            overwrite=True,
         )
         assert client.get(first.json()["links"]["self"]).json()["result"] == {"old_result": 3}
         assert client.post("/job/run-durable", json={"old_value": 2}).status_code == 422
@@ -207,7 +181,7 @@ def test_failed_durable_preflight_restarts_existing_deployment(monkeypatch, oper
     app = create_app()
     with TestClient(app) as client:
         source = _durable_source(field="value", increment=1, revision="first")
-        assert _deploy(client, source).status_code == 200
+        _deploy_ok(client, source)
         deployment = app.state.durable_runtime.current_deployment("job")
         assert deployment is not None
 
@@ -228,16 +202,10 @@ def test_failed_durable_preflight_restarts_existing_deployment(monkeypatch, oper
 def test_overwrite_refuses_to_prepare_while_old_execution_is_waiting(tmp_path) -> None:
     app = create_app()
     with TestClient(app) as client:
-        assert _deploy(client, _waiting_source(revision="first")).status_code == 200
+        _deploy_ok(client, _waiting_source(revision="first"))
         submitted = client.post("/job/run-durable", json={"value": 2})
         url = submitted.json()["links"]["self"]
-        for _ in range(100):
-            waiting = client.get(url)
-            if waiting.json()["status"] == "waiting":
-                break
-            time.sleep(0.01)
-        else:
-            pytest.fail("old-revision execution did not enter waiting")
+        wait_for_status(client, url, "waiting")
 
         preparation_marker = tmp_path / "replacement-prepared"
         replacement_source = _durable_source(field="value", increment=20, revision="second").replace(
@@ -254,21 +222,14 @@ def test_overwrite_refuses_to_prepare_while_old_execution_is_waiting(tmp_path) -
         assert not preparation_marker.exists()
         assert client.get(url).json()["status"] == "waiting"
         assert client.post(f"{url}/cancel").status_code == 202
-        assert (
-            _deploy(
-                client,
-                _durable_source(field="value", increment=20, revision="second"),
-                overwrite=True,
-            ).status_code
-            == 200
-        )
+        _deploy_ok(client, _durable_source(field="value", increment=20, revision="second"), overwrite=True)
 
 
 def test_undeploy_refuses_to_strand_thread_backed_work(monkeypatch) -> None:
     monkeypatch.setattr(settings, "durable_shutdown_grace_period", 0.001)
     app = create_app()
     with TestClient(app) as client:
-        assert _deploy(client, _blocking_source()).status_code == 200
+        _deploy_ok(client, _blocking_source())
         old_wrapper = app.state.pipeline_registry.get("job")
         assert old_wrapper is not None
         submitted = client.post("/job/run-durable", json={"value": 2})
@@ -276,12 +237,7 @@ def test_undeploy_refuses_to_strand_thread_backed_work(monkeypatch) -> None:
 
         assert client.post("/undeploy/job").status_code == 409
         old_wrapper.release.set()
-        for _ in range(100):
-            if client.get(submitted.json()["links"]["self"]).json()["status"] == "completed":
-                break
-            time.sleep(0.01)
-        else:
-            pytest.fail("durable work did not complete after rejected undeploy")
+        _wait_for_completion(client, submitted)
         assert client.post("/undeploy/job").status_code == 200
 
 
@@ -290,14 +246,14 @@ def test_fastapi_apps_own_pipeline_publication_and_allow_the_same_name() -> None
     app_b = create_app()
 
     with TestClient(app_a) as client_a, TestClient(app_b) as client_b:
-        assert _deploy(client_a, _durable_source(field="value", increment=1, revision="app-a")).status_code == 200
+        _deploy_ok(client_a, _durable_source(field="value", increment=1, revision="app-a"))
 
         assert client_a.get("/status").json()["pipelines"] == ["job"]
         assert client_b.get("/status").json()["pipelines"] == []
         assert client_b.get("/status/job").status_code == 404
         assert client_b.post("/job/run-durable", json={"value": 1}).status_code == 404
 
-        assert _deploy(client_b, _durable_source(field="value", increment=10, revision="app-b")).status_code == 200
+        _deploy_ok(client_b, _durable_source(field="value", increment=10, revision="app-b"))
         submitted_a = client_a.post("/job/run-durable", json={"value": 1})
         submitted_b = client_b.post("/job/run-durable", json={"value": 1})
         assert _wait_for_completion(client_a, submitted_a)["result"] == {"value": 2}
@@ -324,12 +280,12 @@ def test_deploy_rejects_a_runtime_owned_by_another_app() -> None:
 def test_durable_to_non_durable_overwrite_removes_control_routes() -> None:
     app = create_app()
     with TestClient(app) as client:
-        assert _deploy(client, _durable_source(field="value", increment=1, revision="first")).status_code == 200
+        _deploy_ok(client, _durable_source(field="value", increment=1, revision="first"))
         submitted = client.post("/job/run-durable", json={"value": 1})
         execution_id = submitted.json()["execution_id"]
         _wait_for_completion(client, submitted)
 
-        assert _deploy(client, _api_source(increment=5), overwrite=True).status_code == 200
+        _deploy_ok(client, _api_source(increment=5), overwrite=True)
         assert client.post("/job/run-durable", json={"value": 2}).status_code == 404
         assert client.get(f"/job/executions/{execution_id}").status_code == 404
         assert client.post("/job/run", json={"value": 2}).json() == {"result": 7}
@@ -339,7 +295,7 @@ def test_failed_commit_does_not_irreversibly_retire_old_durable_work(monkeypatch
     app = create_app()
     with TestClient(app) as client:
         source = _durable_source(field="value", increment=1, revision="first")
-        assert _deploy(client, source).status_code == 200
+        _deploy_ok(client, source)
         submitted = client.post("/job/run-durable", json={"value": 1})
         url = submitted.json()["links"]["self"]
         _wait_for_completion(client, submitted)

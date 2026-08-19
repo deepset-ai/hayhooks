@@ -9,19 +9,10 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from hayhooks.durable.engine import (
-    Checkpoint,
-    Complete,
     ExecutionCommand,
     ExecutionControl,
     ExecutionPayloadSizeError,
-    Fail,
-    Heartbeat,
     PayloadKind,
-    ReleaseClaim,
-    RequestCancellation,
-    Resume,
-    ScheduleRetry,
-    Suspend,
     TransitionPlan,
     validate_run_id,
 )
@@ -113,6 +104,11 @@ class ExecutionBackend(Protocol):
     async def operational_counts(self) -> dict[str, int]: ...
 
 
+def runnable_score(control: ExecutionControl) -> int:
+    """Score a queued control in the runnable index; both backends must agree."""
+    return control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
+
+
 def parse_idempotency_binding(value: str) -> tuple[str, str]:
     """Decode the execution ID and request digest stored for an idempotency key."""
     run_id, separator, binding = value.partition("|")
@@ -136,7 +132,7 @@ def parse_lease_member(value: str) -> tuple[str, int]:
 
 def bind_command(command: ExecutionCommand, *, now_ms: int, lease_commit_safety_ms: int) -> ExecutionCommand:
     """Apply the backend clock and lease safety policy before reduction."""
-    if isinstance(command, (ReleaseClaim, Heartbeat, Checkpoint, ScheduleRetry, Suspend, Complete, Fail)):
+    if "lease_commit_safety_ms" in command.__dataclass_fields__:
         return replace(command, now_ms=now_ms, lease_commit_safety_ms=lease_commit_safety_ms)
     return replace(command, now_ms=now_ms)
 
@@ -153,37 +149,13 @@ def check_admission(raw: Mapping[Any, Any], config: ExecutionStoreConfig) -> Non
 
 def validate_command_payloads(command: ExecutionCommand, config: ExecutionStoreConfig) -> None:
     """Reject command payloads before either backend attempts a transition."""
-    checks: tuple[tuple[str, bytes | None, int], ...] = ()
-    if isinstance(command, Checkpoint):
-        checks = (
-            ("checkpoint", command.payload, config.max_checkpoint_bytes),
-            *(("progress", event, config.max_progress_event_bytes) for event in command.progress_events),
-        )
-    elif isinstance(command, Suspend):
-        checks = (
-            ("checkpoint", command.checkpoint, config.max_checkpoint_bytes),
-            ("wait", command.wait, config.max_wait_bytes),
-            *(("progress", event, config.max_progress_event_bytes) for event in command.progress_events),
-        )
-    elif isinstance(command, Resume):
-        checks = (
-            ("checkpoint", command.checkpoint, config.max_checkpoint_bytes),
-            *(("progress", event, config.max_progress_event_bytes) for event in command.progress_events),
-        )
-    elif isinstance(command, RequestCancellation):
-        checks = tuple(("progress", event, config.max_progress_event_bytes) for event in command.progress_events)
-    elif isinstance(command, Complete):
-        checks = (
-            ("result", command.result, config.max_result_bytes),
-            *(("progress", event, config.max_progress_event_bytes) for event in command.progress_events),
-        )
-    elif isinstance(command, Fail):
-        checks = (
-            ("error", command.error, config.max_error_bytes),
-            *(("progress", event, config.max_progress_event_bytes) for event in command.progress_events),
-        )
-    elif isinstance(command, ScheduleRetry):
-        checks = (("error", command.error, config.max_error_bytes),)
+    checks = [
+        (name, getattr(command, name, None), getattr(config, f"max_{name}_bytes"))
+        for name in ("checkpoint", "wait", "result", "error")
+    ]
+    checks += [
+        ("progress", event, config.max_progress_event_bytes) for event in getattr(command, "progress_events", ())
+    ]
     for label, payload, limit in checks:
         if payload is not None and len(payload) > limit:
             raise ExecutionPayloadSizeError(f"{label} payload exceeds its configured byte limit")

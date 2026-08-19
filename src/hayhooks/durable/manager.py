@@ -405,7 +405,6 @@ class DurableExecutionManager:
                         claim.record.error = None
                         claim.record.status = ExecutionStatus.COMPLETED
                         claim.record.wait = None
-                        claim.record.retry_at = None
 
                     claim.record.touch()
                     await claim.complete()
@@ -492,8 +491,6 @@ class DurableExecutionManager:
         record.progress = []
         record.result = None
         record.error = None
-        record.last_retry_error = None
-        record.retry_at = None
         record.mark_failed(
             ExecutionError(
                 type="ExecutionRecordTooLarge",

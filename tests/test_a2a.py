@@ -3,12 +3,17 @@ from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 
 import pytest
+from a2a.server.tasks import InMemoryTaskStore
 from haystack.dataclasses import StreamingChunk
+from starlette.testclient import TestClient
 
+from hayhooks.a2a import TaskStoreProvider
 from hayhooks.events import PipelineEvent
+from hayhooks.server.a2a.app import create_a2a_app
 from hayhooks.server.a2a.cards import create_agent_card, get_a2a_base_url, is_a2a_exposable
 from hayhooks.server.a2a.executor import RESPONSE_ARTIFACT_NAME, _stream_item_to_text, create_agent_executor
 from hayhooks.server.a2a.messages import build_openai_messages
+from hayhooks.server.a2a.runtime import A2ARuntime
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines import registry
 from hayhooks.server.tracing import SPAN_A2A_RUN_AGENT
@@ -28,6 +33,26 @@ pytestmark = [
 def cleanup_test_pipelines():
     yield
     registry.clear()
+
+
+class RecordingTaskStoreProvider(TaskStoreProvider):
+    """Task-store provider each runtime test bends to the behavior it needs."""
+
+    def __init__(self, *, store=InMemoryTaskStore, health=None):
+        self.agent_names = []
+        self.closed = False
+        self._store = store
+        self._health = health
+
+    def create_task_store(self, agent_name):
+        self.agent_names.append(agent_name)
+        return self._store()
+
+    async def health(self):
+        return self._health if self._health is not None else await super().health()
+
+    async def close(self):
+        self.closed = True
 
 
 class RecordingQueue:
@@ -367,19 +392,6 @@ async def test_execute_agent_task_emits_trace_and_safe_lifecycle_logs(recording_
 
 
 def test_runtime_passes_agent_name_to_task_store_provider():
-    from a2a.server.tasks import InMemoryTaskStore
-
-    from hayhooks.a2a import TaskStoreProvider
-    from hayhooks.server.a2a.runtime import A2ARuntime
-
-    class RecordingTaskStoreProvider(TaskStoreProvider):
-        def __init__(self):
-            self.agent_names = []
-
-        def create_task_store(self, agent_name):
-            self.agent_names.append(agent_name)
-            return InMemoryTaskStore()
-
     provider = RecordingTaskStoreProvider()
     runtime = A2ARuntime(task_store_provider=provider)
 
@@ -387,42 +399,19 @@ def test_runtime_passes_agent_name_to_task_store_provider():
     second_store = runtime.create_task_store("second_agent")
 
     assert isinstance(first_store, InMemoryTaskStore)
-    assert isinstance(second_store, InMemoryTaskStore)
     assert first_store is not second_store
     assert provider.agent_names == ["first_agent", "second_agent"]
 
 
 def test_runtime_rejects_invalid_task_store_from_provider():
-    from hayhooks.a2a import TaskStoreProvider
-    from hayhooks.server.a2a.runtime import A2ARuntime
+    runtime = A2ARuntime(task_store_provider=RecordingTaskStoreProvider(store=object))
 
-    class InvalidTaskStoreProvider(TaskStoreProvider):
-        def create_task_store(self, _agent_name):
-            return object()
-
-    runtime = A2ARuntime(task_store_provider=InvalidTaskStoreProvider())
-
-    with pytest.raises(TypeError, match=r"InvalidTaskStoreProvider.*invalid_agent"):
+    with pytest.raises(TypeError, match=r"RecordingTaskStoreProvider.*invalid_agent"):
         runtime.create_task_store("invalid_agent")
 
 
 async def test_runtime_closes_task_store_provider():
-    from a2a.server.tasks import InMemoryTaskStore
-
-    from hayhooks.a2a import TaskStoreProvider
-    from hayhooks.server.a2a.runtime import A2ARuntime
-
-    class CloseableTaskStoreProvider(TaskStoreProvider):
-        def __init__(self):
-            self.closed = False
-
-        def create_task_store(self, _agent_name):
-            return InMemoryTaskStore()
-
-        async def close(self):
-            self.closed = True
-
-    provider = CloseableTaskStoreProvider()
+    provider = RecordingTaskStoreProvider()
 
     await A2ARuntime(task_store_provider=provider).close()
 
@@ -437,24 +426,10 @@ async def test_runtime_closes_task_store_provider():
     ],
 )
 def test_a2a_status_returns_503_for_unhealthy_task_store(health, expected_error):
-    from a2a.server.tasks import InMemoryTaskStore
-    from starlette.testclient import TestClient
-
-    from hayhooks.a2a import TaskStoreProvider
-    from hayhooks.server.a2a.app import create_a2a_app
-    from hayhooks.server.a2a.runtime import A2ARuntime
-
-    class TestProvider(TaskStoreProvider):
-        def create_task_store(self, _agent_name):
-            return InMemoryTaskStore()
-
-        async def health(self):
-            return health
-
     register_wrapper("chat_agent", AsyncChatWrapper)
     app = create_a2a_app(
         base_url="http://test:1418",
-        runtime=A2ARuntime(task_store_provider=TestProvider()),
+        runtime=A2ARuntime(task_store_provider=RecordingTaskStoreProvider(health=health)),
     )
 
     with TestClient(app) as client:

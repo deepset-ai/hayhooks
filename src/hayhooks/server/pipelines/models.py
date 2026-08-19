@@ -10,10 +10,6 @@ from hayhooks.server.exceptions import PipelineWrapperError
 from hayhooks.server.utils.yaml_utils import InputResolution, OutputResolution
 
 
-def _create_schema_model(model_name: str, **fields: Any) -> type[BaseModel]:
-    return create_model(model_name, **fields)
-
-
 def _resolved_annotations(func: Callable) -> dict[str, Any]:
     """Resolve postponed annotations in the wrapper module that declared them."""
     try:
@@ -44,7 +40,7 @@ def get_request_model_from_resolved_io(
         default_value = ... if resolution.required else None
         fields[input_name] = (input_type, default_value)
 
-    return _create_schema_model(f"{pipeline_name.capitalize()}RunRequest", **fields)
+    return create_model(f"{pipeline_name.capitalize()}RunRequest", **fields)
 
 
 def get_response_model_from_resolved_io(
@@ -66,7 +62,7 @@ def get_response_model_from_resolved_io(
         output_type = resolution.type
         fields[output_name] = (output_type, ...)
 
-    return _create_schema_model(
+    return create_model(
         f"{pipeline_name.capitalize()}RunResponse", result=(dict, Field(..., description="Pipeline result"))
     )
 
@@ -94,7 +90,7 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
         field_info = Field(default=default_value, description=description)
         fields[name] = (annotations.get(name, param.annotation), field_info)
 
-    return _create_schema_model(f"{model_name}Request", **fields)
+    return create_model(f"{model_name}Request", **fields)
 
 
 def _is_streaming_type(return_type: type) -> bool:
@@ -149,9 +145,7 @@ def create_response_model_from_callable(
 
     return_description = docstring.returns.description if docstring.returns else None
 
-    return _create_schema_model(
-        f"{model_name}Response", result=(return_type, Field(..., description=return_description))
-    )
+    return create_model(f"{model_name}Response", result=(return_type, Field(..., description=return_description)))
 
 
 def get_response_class_from_callable(func: Callable) -> type[Response] | None:

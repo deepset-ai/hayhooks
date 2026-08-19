@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from hayhooks.durable.backend import ExecutionStoreConfig
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -17,6 +18,20 @@ from hayhooks.durable.engine import (
     initial_control,
 )
 from hayhooks.durable.redis import ExecutionIdempotencyConflictError
+
+
+def contract_config(**changes: Any) -> ExecutionStoreConfig:
+    """Small-limit configuration both backends use for the shared contract."""
+    limits: dict[str, Any] = {
+        "max_input_bytes": 64,
+        "max_checkpoint_bytes": 64,
+        "max_result_bytes": 64,
+        "max_error_bytes": 64,
+        "max_wait_bytes": 64,
+        "max_progress_events": 2,
+        "max_progress_event_bytes": 32,
+    }
+    return ExecutionStoreConfig(**{**limits, **changes})
 
 
 def control(run_id: str = "run_1", *, idempotency_digest: str = "a" * 64, binding_digest: str = "b" * 64):
