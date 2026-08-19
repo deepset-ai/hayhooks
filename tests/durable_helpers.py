@@ -129,8 +129,12 @@ def server_error(server: Any) -> str:
     return f"durable test server exited with {server.returncode}:\n{output}"
 
 
-def wait_for_server(server: Any, base_url: str, **kwargs: Any) -> None:
+def wait_for_server(server: Any, base_url: str, *, attempts: int = 300, delay: float = 0.1) -> None:
     """Poll ``/status`` until the process serves, failing fast if it died."""
+    # Booting a real server imports Haystack and loads a pipeline, measured at 1.9 s
+    # on a developer machine -- the whole of wait_until's in-process default budget,
+    # which is why CI failed here. A dead process fails immediately below rather than
+    # waiting this out, so a generous ceiling only costs time when it is deserved.
 
     def ready() -> bool:
         if server.poll() is not None:
@@ -140,7 +144,7 @@ def wait_for_server(server: Any, base_url: str, **kwargs: Any) -> None:
         except requests.RequestException:
             return False
 
-    wait_until(ready, "durable test server did not become ready", **kwargs)
+    wait_until(ready, "durable test server did not become ready", attempts=attempts, delay=delay)
 
 
 def cleanup_redis(redis_url: str, prefix: str) -> None:
