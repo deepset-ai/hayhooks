@@ -9,6 +9,7 @@ from collections import deque
 from collections.abc import Callable
 
 from hayhooks.durable.backend import (
+    CHUNK_READ_COUNT,
     MAINTENANCE_BATCH_SIZE,
     ExecutionIdempotencyConflictError,
     ExecutionStoreConfig,
@@ -88,16 +89,19 @@ class InMemoryExecutionStore:
         return list(self._progress.get(run_id, ()))
 
     async def append_chunk(self, run_id: str, attempt: int, chunk: bytes) -> None:
+        # A stale append from a worker that lost its lease must not resurrect a log
+        # whose terminal cleanup already ran; the control is dropped by that cleanup,
+        # so its absence is the same signal the Redis backend gets from a missing key.
+        if run_id not in self._controls:
+            return
         self._chunk_sequence += 1
         entries = self._chunks.setdefault(run_id, deque(maxlen=self.config.max_stream_chunks))
         # Sequences only have to be orderable, not Redis-shaped; a counter cannot
         # regress the way a wall clock can. Entry IDs are formatted on the way out.
         entries.append((self._chunk_sequence, attempt, chunk))
-        # A stale append from a worker that lost its lease can recreate the log;
-        # the terminal cleanup entry already registered for the run removes it at
-        # the terminal TTL, mirroring the Redis backend's EXPIRE. A worker that
-        # outlives the cleanup itself can still leak an entry, which is accepted
-        # for the same reason the Redis backend accepts it.
+        # A stale append before that cleanup still lands, and the terminal cleanup
+        # entry already registered for the run removes it at the terminal TTL,
+        # mirroring the Redis backend's EXPIRE.
 
     async def read_chunks(self, run_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]:
         # ponytail: a 20 ms poll instead of an asyncio.Condition, so a dev-mode SSE
@@ -106,7 +110,7 @@ class InMemoryExecutionStore:
         deadline = time.monotonic() + block_ms / 1_000
         _, cursor = parse_chunk_cursor(after)
         while True:
-            fresh = [entry for entry in self._chunks.get(run_id, ()) if entry[0] > cursor]
+            fresh = [entry for entry in self._chunks.get(run_id, ()) if entry[0] > cursor][:CHUNK_READ_COUNT]
             if fresh or time.monotonic() >= deadline:
                 return [(f"0-{sequence}", attempt, chunk) for sequence, attempt, chunk in fresh]
             await asyncio.sleep(0.02)

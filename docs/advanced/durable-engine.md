@@ -266,13 +266,23 @@ ordinary streaming endpoint on the same wrapper is unaffected. See
 carries the entry ID as `id:` and the producing `attempt` in its payload; a
 client resets its buffer when `attempt` increases, because a retried attempt
 re-streams from its checkpoint. Reconnecting clients resend `Last-Event-ID`
-automatically and resume from that cursor.
+automatically and resume from that cursor. A browser `EventSource` reconnects
+whenever the server closes the connection, including after the terminal event,
+so call `close()` once that event arrives.
+
+The stream follows one execution for its whole life, not just one run of it: an
+execution that suspends into `waiting` keeps its stream open and heartbeating
+until it is resumed and reaches a terminal state, which for an approval-gated
+workflow can be a long time. Detach and reattach with `Last-Event-ID` if a
+connection parked that long is not what you want.
 
 `durable_max_stream_chunks` bounds the log per execution (10 000 by default);
 `0` disables chunk production entirely while leaving the endpoint working.
 `durable_max_stream_chunk_bytes` caps a single chunk at 64 KB by default; an
-oversized chunk is dropped, never failed.
-The log expires with its execution under `durable_terminal_ttl_seconds`.
+oversized chunk is dropped, never failed. The two bounds multiply: size Redis
+for `durable_max_stream_chunks * durable_max_stream_chunk_bytes` per streaming
+execution, times the executions running at once. The log expires with its
+execution under `durable_terminal_ttl_seconds`.
 
 A stream that breaks after its headers were sent has no status code left to
 report with, so it ends in an `error` event instead. Treat it the way a client

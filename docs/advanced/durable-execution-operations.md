@@ -41,8 +41,9 @@ receive the configured Redis TTL when a run first becomes terminal.
 `HAYHOOKS_DURABLE_MAX_STREAM_CHUNK_BYTES` caps one chunk (64 KB by default);
 oversized chunks are dropped, never failed. A stale append from a worker that
 lost its lease after the run went terminal sets the TTL on the recreated
-chunk key itself, so the log still expires with its execution. Memory uses
-equivalent internal cleanup. Do not delete records manually while they are
+chunk key itself, so the log still expires with its execution -- including once
+the control itself has expired and there is no status left to consult. Memory
+refuses the append instead, since its cleanup has already run. Do not delete records manually while they are
 nonterminal.
 
 Begin a new controlled-beta deployment with an empty durable namespace, then
@@ -52,10 +53,17 @@ retain its terminal records through the configured Redis TTL.
 
 Every attached stream holds one Redis connection blocked in `XREAD` for up to
 500 ms per poll cycle, so the number of concurrent viewers counts directly
-against Redis client capacity. A terminal event arrives within about 500 ms of
-the last chunk once the stream goes quiet; a run that keeps generating after a
-cancellation request reports terminal only after it stops producing chunks.
-Chunks are display data and are never a reason to replay a run.
+against Redis client capacity. `HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT` has to
+stay comfortably above that block, which is why it is floored at one second.
+
+A quiet stream rereads its execution record every fourth poll, so a terminal
+event arrives within about two seconds of the last chunk; a run that keeps
+generating after a cancellation request reports terminal only after it stops
+producing chunks. A stream that stays quiet costs about two record reads and
+two heartbeats per second per viewer, and an execution parked in `waiting`
+keeps paying that until it is resumed. One read returns at most 500 chunks, so
+a client reattaching to a full log catches up over several reads rather than
+one. Chunks are display data and are never a reason to replay a run.
 
 ## Health and incidents
 

@@ -194,6 +194,31 @@ async def test_stale_append_after_terminal_gets_a_ttl(store) -> None:
     assert await redis.pttl(durable.keys.chunks(run_id)) > 0
 
 
+async def test_append_after_the_control_expired_still_gets_a_ttl(store) -> None:
+    """Past the terminal TTL there is no control left to consult, and no EXPIRE to come."""
+    redis, durable = store
+    await durable.submit(control(), b"{}", binding_digest="b" * 64)
+    run_id, _ = await _claim(durable)
+    await redis.delete(durable.keys.control(run_id))
+    await durable.append_chunk(run_id, 1, b'{"orphan":true}')
+    assert await redis.pttl(durable.keys.chunks(run_id)) > 0
+
+
+async def test_chunk_read_is_bounded_and_resumes_from_the_last_entry(store, monkeypatch) -> None:
+    """One read must not fan in a whole log; the cursor carries the rest."""
+    monkeypatch.setattr("hayhooks.durable.redis.CHUNK_READ_COUNT", 2)
+    _, durable = store
+    await durable.submit(control(), b"{}", binding_digest="b" * 64)
+    run_id, _ = await _claim(durable)
+    for index in range(3):
+        await durable.append_chunk(run_id, 1, b'{"i":%d}' % index)
+
+    first = await durable.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=0)
+    assert [data for _, _, data in first] == [b'{"i":0}', b'{"i":1}']
+    rest = await durable.read_chunks(run_id, first[-1][0], block_ms=0)
+    assert [data for _, _, data in rest] == [b'{"i":2}']
+
+
 async def test_blocking_chunk_read_wakes_on_append_and_times_out_empty(store) -> None:
     _, durable = store
     await durable.submit(control(), b"{}", binding_digest="b" * 64)

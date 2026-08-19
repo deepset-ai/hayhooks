@@ -113,8 +113,9 @@ class DurableContext:
     def stream_chunk_sync(self, payload: Any) -> None:
         """Synchronous counterpart for sync wrappers running in a worker thread."""
         # ponytail: this blocks the pipeline thread on one Redis round trip per chunk
-        # via _sync_await. Batch through an asyncio.Queue drained by a single task if
-        # sync-wrapper generation latency shows up in practice.
+        # via _sync_await, so one run's token rate is capped at roughly 1/RTT -- about
+        # 50 tokens/s against a managed Redis 20 ms away. Batch through an asyncio.Queue
+        # drained by a single task if sync-wrapper generation latency shows up.
         with suppress(Exception):
             # The bridge itself fails once the manager loop is gone, which a wrapper
             # still generating past the shutdown grace period can reach. A display

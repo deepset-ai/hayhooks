@@ -12,6 +12,7 @@ from dataclasses import asdict, replace
 from typing import Any, cast
 
 from hayhooks.durable.backend import (
+    CHUNK_READ_COUNT,
     DEFAULT_TRANSACTION_BACKOFF_MAX_MS,
     DEFAULT_TRANSACTION_MAX_RETRIES,
     MAINTENANCE_BATCH_SIZE,
@@ -286,11 +287,14 @@ class RedisExecutionStore:
         pipe.hget(self.keys.control(run_id), "status")
         pipe.pttl(self.keys.chunks(run_id))
         _, status, ttl = await pipe.execute()
-        if ttl == -1 and status is not None and ExecutionStatus(_text(status)).terminal:
+        if ttl == -1 and (status is None or ExecutionStatus(_text(status)).terminal):
             await self.redis.expire(self.keys.chunks(run_id), self.config.terminal_ttl_seconds)
 
     async def read_chunks(self, run_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]:
-        streams = await self.redis.xread({self.keys.chunks(run_id): after}, block=block_ms or None) or []
+        streams = (
+            await self.redis.xread({self.keys.chunks(run_id): after}, count=CHUNK_READ_COUNT, block=block_ms or None)
+            or []
+        )
         return [
             (_text(entry_id), int(_text(fields[b"attempt"])), bytes(fields[b"data"]))
             for _, entries in streams

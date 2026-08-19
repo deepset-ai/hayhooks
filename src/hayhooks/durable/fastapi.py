@@ -21,6 +21,9 @@ _MAX_OWNER_LENGTH = 512
 # The chunk read blocks server-side, so this also bounds how long a terminal state
 # waits to be noticed. Keep it well under ``durable_redis_socket_timeout``.
 _STREAM_BLOCK_MS = 500
+# Rereading the record is three round trips, so a quiet stream does it every few
+# blocks instead of every one. This is the worst-case delay on the terminal event.
+_STREAM_RECHECK_EVERY = 4
 # An SSE comment line: keeps the connection warm while an execution is quiet.
 _SSE_HEARTBEAT = ":\n\n"
 # Proxies buffer ``text/event-stream`` by default, which stalls the whole stream.
@@ -236,6 +239,7 @@ def create_durable_router(  # noqa: C901, PLR0915 - one factory owns every gener
     async def _chunk_events(
         request: Request, record: Any, execution_id: str, owner_id: str | None, cursor: str
     ) -> AsyncIterator[str]:
+        quiet = 0
         try:
             while True:
                 terminal = record.terminal
@@ -251,11 +255,15 @@ def create_durable_router(  # noqa: C901, PLR0915 - one factory owns every gener
                     yield _sse(record.status.value, execution_result(request, record).model_dump_json())
                     return
                 if not entries:
-                    # A read that blocked without producing anything is the cheap
-                    # moment to recheck the lifecycle: flowing chunks mean running,
-                    # so the record only has to be reread once the stream goes quiet.
+                    # Flowing chunks already mean running, so the lifecycle is only
+                    # rechecked once the stream goes quiet -- and then on a cadence,
+                    # because an execution can sit in `waiting` for a very long time.
                     yield _SSE_HEARTBEAT
-                    record = await get_execution(execution_id, owner_id)
+                    quiet += 1
+                    if quiet % _STREAM_RECHECK_EVERY == 0:
+                        record = await get_execution(execution_id, owner_id)
+                else:
+                    quiet = 0
         except Exception:
             # The response has already begun, so no status code is left to raise
             # with. Name the break and let the client reattach with Last-Event-ID.

@@ -21,6 +21,9 @@ from hayhooks.durable.models import ExecutionAdmissionError, ExecutionStoreError
 
 MAINTENANCE_BATCH_SIZE = 100
 CHUNK_CURSOR_START = "0-0"
+# One read caps its own fan-in: a client reattaching from the start of a full log
+# would otherwise materialize max_stream_chunks * max_stream_chunk_bytes at once.
+CHUNK_READ_COUNT = 500
 _CHUNK_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
 _MAX_STREAM_ID_PART = 2**64 - 1
 DEFAULT_TRANSACTION_MAX_RETRIES = 8
