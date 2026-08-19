@@ -142,6 +142,7 @@ Wrappers that implement exactly one of `run_durable()` or
 |---|---|
 | `POST /{pipeline_name}/run-durable` | Validate and persist a detached execution; accepts an optional `Idempotency-Key` header |
 | `GET /{pipeline_name}/executions/{execution_id}` | Inspect safe status, progress, waiting state, error, or result |
+| `GET /{pipeline_name}/executions/{execution_id}/stream` | Stream display chunks over SSE, ending in the terminal event; resumable with `Last-Event-ID` |
 | `POST /{pipeline_name}/executions/{execution_id}/cancel` | Request cooperative cancellation |
 | `POST /{pipeline_name}/executions/{execution_id}/resume` | Resume an execution waiting for input |
 

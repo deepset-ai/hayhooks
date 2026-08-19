@@ -119,11 +119,15 @@ app.include_router(
 )
 ```
 
-The adapter exposes typed submit, inspect, cancel, and resume routes. It does
-not start workers or own the runtime. Host middleware and dependencies retain
-control of authentication and authorization; the durable layer persists only
-the stable owner ID returned by the dependency. Durable wrapper code can read
-that value through `context.owner_id` after process recovery.
+The adapter exposes typed submit, inspect, stream, cancel, and resume routes.
+It does not start workers or own the runtime. Host middleware and dependencies
+retain control of authentication and authorization; the durable layer persists
+only the stable owner ID returned by the dependency, which must be a non-empty
+string of at most 512 characters (a misconfigured dependency fails closed with
+500). Durable wrapper code can read that value through `context.owner_id` after
+process recovery. The same deployment is also drivable without HTTP through
+`deployment.submit(...)` and the store's resume/cancel operations; see
+[Streaming chunks](#streaming-chunks) for the reattachable SSE endpoint.
 
 Passing `owner_id_dependency=None` is an explicit unscoped security choice:
 
