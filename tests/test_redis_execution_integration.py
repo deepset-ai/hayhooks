@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import socket
+import time
+from contextlib import asynccontextmanager
 from dataclasses import replace
 
+import httpx
 import pytest
+import uvicorn
+from fastapi import FastAPI
+from haystack import Pipeline
+from pydantic import BaseModel
 
-from hayhooks.durable.backend import CHUNK_CURSOR_START
+from hayhooks import BasePipelineWrapper
+from hayhooks.durable import DurableContext, DurableRuntime, DurableSettings, create_durable_router
+from hayhooks.durable.backend import CHUNK_CURSOR_START, ChunkCursorExpiredError
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -28,9 +39,9 @@ from hayhooks.durable.models import (
     ExecutionStatus,
 )
 from hayhooks.durable.redis import RedisExecutionStore
-from hayhooks.durable.store import ExecutionStore
+from hayhooks.durable.store import ExecutionStore, RedisExecutionStoreProvider
 from tests.durable_contract import assert_store_contract, contract_config, control
-from tests.durable_helpers import wait_for_record
+from tests.durable_helpers import wait_for_record, wait_until_async
 
 pytestmark = pytest.mark.integration
 
@@ -206,28 +217,36 @@ async def test_append_after_the_control_expired_still_gets_a_ttl(store) -> None:
 
 async def test_chunk_read_is_bounded_and_resumes_from_the_last_entry(store, monkeypatch) -> None:
     """One read must not fan in a whole log; the cursor carries the rest."""
-    monkeypatch.setattr("hayhooks.durable.redis.CHUNK_READ_COUNT", 2)
     _, durable = store
+    monkeypatch.setattr("hayhooks.durable.backend.CHUNK_READ_MAX_BYTES", 2 * durable.config.max_stream_chunk_bytes)
     await durable.submit(control(), b"{}", binding_digest="b" * 64)
     run_id, _ = await _claim(durable)
     for index in range(3):
         await durable.append_chunk(run_id, 1, b'{"i":%d}' % index)
 
-    first = await durable.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=0)
+    first = await durable.read_chunks(run_id, CHUNK_CURSOR_START)
     assert [data for _, _, data in first] == [b'{"i":0}', b'{"i":1}']
-    rest = await durable.read_chunks(run_id, first[-1][0], block_ms=0)
+    rest = await durable.read_chunks(run_id, first[-1][0])
     assert [data for _, _, data in rest] == [b'{"i":2}']
 
+    await durable.append_chunk(run_id, 1, b'{"i":3}')
+    await durable.append_chunk(run_id, 1, b'{"i":4}')
+    with pytest.raises(ChunkCursorExpiredError):
+        await durable.read_chunks(run_id, first[0][0])
+    with pytest.raises(ChunkCursorExpiredError):
+        await durable.read_chunks(run_id, "9999999999999-0")
 
-async def test_blocking_chunk_read_wakes_on_append_and_times_out_empty(store) -> None:
+
+async def test_chunk_read_returns_immediately_instead_of_holding_a_connection(store) -> None:
+    """A blocking read would pin one pool connection per attached viewer."""
     _, durable = store
     await durable.submit(control(), b"{}", binding_digest="b" * 64)
     run_id, _ = await _claim(durable)
-    assert await durable.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=20) == []
-    reader = asyncio.create_task(durable.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=5_000))
-    await asyncio.sleep(0.05)
+    started = time.monotonic()
+    assert await durable.read_chunks(run_id, CHUNK_CURSOR_START) == []
+    assert time.monotonic() - started < 0.2
     await durable.append_chunk(run_id, 1, b'{"live":true}')
-    assert [data for _, _, data in await reader] == [b'{"live":true}']
+    assert [data for _, _, data in await durable.read_chunks(run_id, CHUNK_CURSOR_START)] == [b'{"live":true}']
 
 
 async def test_redis_rejects_oversized_payload_without_partial_write(store) -> None:
@@ -290,3 +309,123 @@ async def test_redis_adapter_runs_the_public_manager_contract(store) -> None:
 
     assert record.status is ExecutionStatus.COMPLETED
     assert record.result == {"answer": "done"}
+
+
+class _StreamJobRequest(BaseModel):
+    value: int = 0
+
+
+class _StreamJobResult(BaseModel):
+    value: int
+
+
+class _WaitingJobWrapper(BasePipelineWrapper):
+    """Parks in ``waiting`` so an attached stream stays open for the whole test."""
+
+    durable_revision = "stream-pressure-v1"
+
+    def setup(self) -> None:
+        self.pipeline = Pipeline()
+
+    async def run_durable_async(self, context: DurableContext, request: _StreamJobRequest) -> _StreamJobResult:
+        if context.resume_input is None:
+            await context.suspend({"kind": "approval"})
+        return _StreamJobResult(value=request.value)
+
+
+@asynccontextmanager
+async def _streaming_server(prefix: str, *, max_connections: int):
+    """
+    Serve one Redis-backed durable deployment over real HTTP on a deliberately small pool.
+
+    A real server rather than an ASGI transport because ``httpx.ASGITransport`` buffers
+    the whole response body, and an execution stream only ends when the execution does.
+    Uvicorn runs on the test's own loop so the engine and the routes share one Redis pool.
+    """
+    from redis.asyncio import Redis
+
+    client = Redis.from_url(
+        os.environ["HAYHOOKS_TEST_REDIS_URL"], decode_responses=False, max_connections=max_connections
+    )
+    durable_settings = DurableSettings(durable_store="redis", durable_poll_interval=0.05)
+    provider = RedisExecutionStoreProvider(
+        redis=client, key_prefix=f"{prefix}:pressure", close_redis=False, durable_settings=durable_settings
+    )
+    runtime = DurableRuntime(provider)
+    wrapper = _WaitingJobWrapper()
+    wrapper.setup()
+    app = FastAPI()
+    app.include_router(
+        create_durable_router(runtime.deployment("jobs", wrapper), owner_id_dependency=None), prefix="/jobs"
+    )
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="off"))
+    serving = asyncio.create_task(server.serve())
+    await runtime.start()
+    try:
+        await wait_until_async(lambda: server.started, "the test server never started")
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=10) as http:
+            yield http
+    finally:
+        server.should_exit = True
+        await serving
+        await runtime.close()
+        await client.aclose()
+
+
+async def _parked_execution(http: httpx.AsyncClient) -> dict:
+    submitted = await http.post("/jobs/run-durable", json={"value": 1})
+    assert submitted.status_code == 202, submitted.text
+    links = submitted.json()["links"]
+
+    async def parked() -> bool:
+        return (await http.get(links["self"])).json()["status"] == "waiting"
+
+    await wait_until_async(parked, "the execution never parked in waiting", delay=0.05)
+    return links
+
+
+async def _drain(http: httpx.AsyncClient, url: str, attached: asyncio.Event) -> str:
+    """Attach one viewer and keep consuming, so its generator stays inside the chunk read."""
+    try:
+        async with http.stream("GET", url) as response:
+            if response.status_code != 200:
+                return f"HTTP {response.status_code}"
+            async for line in response.aiter_lines():
+                attached.set()
+                if line.startswith("event: error"):
+                    return "error event"
+        return "stream ended"
+    except Exception as error:
+        return type(error).__name__
+    finally:
+        # A refused viewer has to release the barrier too, so the assertion below
+        # reports why it failed instead of the whole test timing out.
+        attached.set()
+
+
+async def test_concurrent_streams_do_not_starve_the_engine_of_connections(isolated_redis) -> None:
+    """A draining viewer must not pin a pool connection: the engine shares that pool."""
+    pool = 8
+    viewers = pool * 3
+    _, prefix = isolated_redis
+    async with _streaming_server(prefix, max_connections=pool) as http:
+        links = await _parked_execution(http)
+        readers: list[asyncio.Task[str]] = []
+        try:
+            # One at a time, so this measures connections held for the life of a
+            # stream rather than a burst of simultaneous attaches, which any pool
+            # smaller than the burst refuses whatever the stream does afterwards.
+            for _ in range(viewers):
+                attached = asyncio.Event()
+                readers.append(asyncio.create_task(_drain(http, links["stream"], attached)))
+                await asyncio.wait_for(attached.wait(), timeout=10)
+            assert [reader.result() for reader in readers if reader.done()] == []
+            # Every viewer is attached and draining; the engine must still get connections.
+            assert (await _parked_execution(http))["self"] != links["self"]
+        finally:
+            for reader in readers:
+                reader.cancel()
+            await asyncio.gather(*readers, return_exceptions=True)

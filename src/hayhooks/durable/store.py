@@ -166,6 +166,7 @@ class ExecutionClaim:
     async def stream_chunk(self, payload: Any) -> None:
         """Append one display chunk outside the durable fence, dropping any failure."""
         try:
+            payload = payload.to_dict() if hasattr(payload, "to_dict") else payload
             chunk = _encode(payload, limit=self.store.config.max_stream_chunk_bytes, label="chunk")
             await self.store.append_chunk(self.record.execution_id, self.record.attempt, chunk)
         except Exception:
@@ -413,12 +414,15 @@ class ExecutionStore:
             return
         await self._core_call("append execution chunk", self.core.append_chunk(execution_id, attempt, chunk))
 
-    async def read_chunks(self, execution_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]:
-        """Read display chunks after *after*, blocking up to *block_ms* for the first."""
+    async def read_chunks(self, execution_id: str, after: str) -> list[tuple[str, int, bytes]]:
+        """Read one bounded page of display chunks after *after*, without blocking."""
         parse_chunk_cursor(after)
-        return await self._core_call(
-            "read execution chunks", self.core.read_chunks(execution_id, after, block_ms=block_ms)
-        )
+        return await self._core_call("read execution chunks", self.core.read_chunks(execution_id, after))
+
+    async def current_attempt(self, execution_id: str) -> int | None:
+        """Read the current attempt without materializing the public execution view."""
+        control = await self._core_call("read execution attempt", self.core.get(execution_id))
+        return None if control is None else control.run_attempt
 
     async def get(self, execution_id: str) -> ExecutionRecord | None:
         view = await self._read_view(execution_id)

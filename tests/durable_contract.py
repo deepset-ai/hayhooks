@@ -101,9 +101,9 @@ async def assert_chunk_log_contract(store: Any, run_id: str) -> None:
     # are ever routed through transition(), this fails.
     assert after.version == before.version
 
-    entries = await store.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=0)
+    entries = await store.read_chunks(run_id, CHUNK_CURSOR_START)
     assert len(entries) == 3, "the configured chunk bound must truncate the oldest entries"
     assert [data for _, _, data in entries] == [b'{"i":1}', b'{"i":2}', b'{"i":3}']
     assert {attempt for _, attempt, _ in entries} == {1}
-    assert await store.read_chunks(run_id, entries[0][0], block_ms=0) == entries[1:]
-    assert await store.read_chunks(run_id, entries[-1][0], block_ms=0) == []
+    assert await store.read_chunks(run_id, entries[0][0]) == entries[1:]
+    assert await store.read_chunks(run_id, entries[-1][0]) == []

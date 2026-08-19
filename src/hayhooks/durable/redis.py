@@ -12,10 +12,11 @@ from dataclasses import asdict, replace
 from typing import Any, cast
 
 from hayhooks.durable.backend import (
-    CHUNK_READ_COUNT,
+    CHUNK_CURSOR_START,
     DEFAULT_TRANSACTION_BACKOFF_MAX_MS,
     DEFAULT_TRANSACTION_MAX_RETRIES,
     MAINTENANCE_BATCH_SIZE,
+    ChunkCursorExpiredError,
     ExecutionContentionError,
     ExecutionIdempotencyConflictError,
     ExecutionStoreConfig,
@@ -24,6 +25,7 @@ from hayhooks.durable.backend import (
     bind_command,
     bind_progress_sequences,
     check_admission,
+    chunk_read_count,
     parse_idempotency_binding,
     parse_lease_member,
     runnable_score,
@@ -277,7 +279,7 @@ class RedisExecutionStore:
         # Only a worker that outlives the whole retention window can still leak a
         # key; that is accepted rather than fencing the chunk log and making every
         # token contend with the lease heartbeat.
-        pipe = self.redis.pipeline()
+        pipe = self.redis.pipeline(transaction=False)
         pipe.xadd(
             self.keys.chunks(run_id),
             {"attempt": attempt, "data": chunk},
@@ -290,11 +292,22 @@ class RedisExecutionStore:
         if ttl == -1 and (status is None or ExecutionStatus(_text(status)).terminal):
             await self.redis.expire(self.keys.chunks(run_id), self.config.terminal_ttl_seconds)
 
-    async def read_chunks(self, run_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]:
-        streams = (
-            await self.redis.xread({self.keys.chunks(run_id): after}, count=CHUNK_READ_COUNT, block=block_ms or None)
-            or []
-        )
+    async def read_chunks(self, run_id: str, after: str) -> list[tuple[str, int, bytes]]:
+        # Deliberately not a blocking XREAD: redis-py pins a pool connection for the
+        # whole block, so one connection per attached viewer would cap concurrent
+        # streams at the pool size and starve the engine that shares it. The SSE
+        # generator polls instead.
+        key = self.keys.chunks(run_id)
+        if after == CHUNK_CURSOR_START:
+            streams = await self.redis.xread({key: after}, count=chunk_read_count(self.config)) or []
+        else:
+            async with self.redis.pipeline(transaction=False) as pipe:
+                pipe.xrange(key, min=after, max=after, count=1)
+                pipe.xread({key: after}, count=chunk_read_count(self.config))
+                cursor, streams = await pipe.execute()
+            streams = streams or []
+            if not cursor:
+                raise ChunkCursorExpiredError(after)
         return [
             (_text(entry_id), int(_text(fields[b"attempt"])), bytes(fields[b"data"]))
             for _, entries in streams

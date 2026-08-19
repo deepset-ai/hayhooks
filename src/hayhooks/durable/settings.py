@@ -16,9 +16,8 @@ class DurableSettings(BaseModel):
     durable_store: Literal["memory", "redis"] = "redis"
     durable_redis_url: str = "redis://localhost:6379/0"
     durable_redis_key_prefix: str = "hayhooks:durable"
-    # Floored, not merely positive: the execution stream blocks server-side in XREAD
-    # for _STREAM_BLOCK_MS, and redis-py applies socket_timeout to that read, so a
-    # sub-second timeout would turn every stream into an immediate `error` event.
+    # Floored, not merely positive: redis-py applies socket_timeout to every read, and
+    # a sub-second budget turns ordinary round trips into spurious timeouts under load.
     durable_redis_socket_timeout: float = Field(default=5.0, ge=1.0, le=300.0)
     durable_redis_socket_connect_timeout: float = Field(default=5.0, gt=0.0, le=300.0)
     durable_redis_health_check_interval: int = Field(default=30, ge=0, le=3_600)

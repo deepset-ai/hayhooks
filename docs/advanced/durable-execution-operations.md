@@ -51,19 +51,34 @@ retain its terminal records through the configured Redis TTL.
 
 ## Streaming load
 
-Every attached stream holds one Redis connection blocked in `XREAD` for up to
-500 ms per poll cycle, so the number of concurrent viewers counts directly
-against Redis client capacity. `HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT` has to
-stay comfortably above that block, which is why it is floored at one second.
+A stream reads its chunk log without blocking, so an attached viewer holds a
+Redis connection only for the microseconds of each read rather than for its
+whole lifetime. That matters because streams share the engine's connection pool:
+a blocking read pins one connection per viewer, which caps concurrent streams at
+the pool size and starves the workers, whose heartbeats and terminal transitions
+need that same pool. The cost of polling instead is bounded extra latency per
+chunk — measured at 31 ms median and 55 ms p95 against a local Redis, versus
+about 1 ms for a blocking read.
 
-A quiet stream rereads its execution record every fourth poll, so a terminal
-event arrives within about two seconds of the last chunk; a run that keeps
-generating after a cancellation request reports terminal only after it stops
-producing chunks. A stream that stays quiet costs about two record reads and
-two heartbeats per second per viewer, and an execution parked in `waiting`
-keeps paying that until it is resumed. One read returns at most 500 chunks, so
-a client reattaching to a full log catches up over several reads rather than
-one. Chunks are display data and are never a reason to replay a run.
+Polling is two-speed: 50 ms while chunks are moving, backing off to 500 ms after
+a second of silence, since an execution can sit in `waiting` for hours with a
+viewer attached. An idle stream rereads its execution record every second, so a
+terminal event arrives within about two seconds of the last chunk; a run that
+keeps generating after a cancellation request reports terminal only after it
+stops producing chunks. An idle stream costs about two chunk reads, three record
+reads, and one heartbeat per second per viewer, and an execution parked in
+`waiting` keeps paying that until it is resumed. One read returns at most
+`4 MB / durable_max_stream_chunk_bytes` chunks — 62 at the default cap — so a
+client reattaching to a full log catches up over several reads rather than
+materializing the whole log at once. Chunks are display data and are never a
+reason to replay a run. A non-empty page also performs one control lookup before
+delivery, which prevents a lease-lost worker from leaking stale chunks before
+its replacement emits.
+
+Each producer also waits for one non-transactional Redis pipeline per chunk.
+That keeps ordering and shutdown behavior simple, but caps token throughput at
+roughly one chunk per Redis round trip. Batch only if production measurements
+show that remote Redis latency is slowing generation.
 
 ## Health and incidents
 

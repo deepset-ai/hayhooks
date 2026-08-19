@@ -23,7 +23,8 @@ MAINTENANCE_BATCH_SIZE = 100
 CHUNK_CURSOR_START = "0-0"
 # One read caps its own fan-in: a client reattaching from the start of a full log
 # would otherwise materialize max_stream_chunks * max_stream_chunk_bytes at once.
-CHUNK_READ_COUNT = 500
+# The cap is on bytes, not entries, because that is the resource being protected.
+CHUNK_READ_MAX_BYTES = 4_000_000
 _CHUNK_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
 _MAX_STREAM_ID_PART = 2**64 - 1
 DEFAULT_TRANSACTION_MAX_RETRIES = 8
@@ -40,6 +41,10 @@ class ExecutionContentionError(ExecutionStoreError):
 
 class ExecutionIdempotencyConflictError(RuntimeError):
     """A logical idempotency key was reused for a different request binding."""
+
+
+class ChunkCursorExpiredError(RuntimeError):
+    """A chunk cursor is no longer present in the bounded stream log."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +119,7 @@ class ExecutionBackend(Protocol):
 
     async def append_chunk(self, run_id: str, attempt: int, chunk: bytes) -> None: ...
 
-    async def read_chunks(self, run_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]: ...
+    async def read_chunks(self, run_id: str, after: str) -> list[tuple[str, int, bytes]]: ...
 
     async def transition(
         self, run_id: str, command: ExecutionCommand, *, candidate: bool = False
@@ -125,6 +130,11 @@ class ExecutionBackend(Protocol):
     async def maintain(self, command_factory: Callable[[int, int], ExecutionCommand]) -> int: ...
 
     async def operational_counts(self) -> dict[str, int]: ...
+
+
+def chunk_read_count(config: ExecutionStoreConfig) -> int:
+    """Return the entry cap that keeps one chunk read under ``CHUNK_READ_MAX_BYTES``."""
+    return max(1, CHUNK_READ_MAX_BYTES // config.max_stream_chunk_bytes)
 
 
 def parse_chunk_cursor(value: str) -> tuple[int, int]:

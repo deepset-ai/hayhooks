@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
@@ -11,19 +12,27 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Reque
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError, create_model
 
-from hayhooks.durable.backend import CHUNK_CURSOR_START, CHUNK_READ_COUNT, parse_chunk_cursor
+from hayhooks.durable.backend import CHUNK_CURSOR_START, ChunkCursorExpiredError, chunk_read_count, parse_chunk_cursor
 from hayhooks.durable.engine import RUN_ID_PATTERN
 from hayhooks.durable.models import ExecutionAdmissionError, ExecutionResult, ExecutionStoreError
 from hayhooks.durable.runtime import DefinitionRevisionConflictError, DurableDeployment, IdempotencyConflictError
 from hayhooks.server.logger import log
 
 _MAX_OWNER_LENGTH = 512
-# The chunk read blocks server-side, so this also bounds how long a terminal state
-# waits to be noticed. Keep it well under ``durable_redis_socket_timeout``.
-_STREAM_BLOCK_MS = 500
-# Rereading the record is three round trips, so a quiet stream does it every few
-# blocks instead of every one. This is the worst-case delay on the terminal event.
-_STREAM_RECHECK_EVERY = 4
+# The chunk read deliberately does not block server-side: a blocking read pins one
+# Redis connection per attached viewer, which caps concurrent streams at the pool
+# size and starves the engine sharing that pool. Poll instead -- fast while chunks
+# are moving, so tokens still arrive smoothly rather than in visible bursts...
+_STREAM_POLL_SECONDS = 0.05
+# ...and backed off once the stream is quiet, because an execution can sit in
+# `waiting` for hours with a viewer attached.
+_STREAM_IDLE_POLL_SECONDS = 0.5
+# Empty polls before a stream counts as idle, at the fast interval above.
+_STREAM_IDLE_AFTER = 20
+# Rereading the record is three round trips and a heartbeat is a wasted frame, so an
+# idle stream does both every few idle polls. This is the worst-case delay on the
+# terminal event, on top of the time it takes to go idle.
+_STREAM_RECHECK_EVERY = 2
 # An SSE comment line: keeps the connection warm while an execution is quiet.
 _SSE_HEARTBEAT = ":\n\n"
 # Proxies buffer ``text/event-stream`` by default, which stalls the whole stream.
@@ -236,37 +245,58 @@ def create_durable_router(  # noqa: C901, PLR0915 - one factory owns every gener
             headers=_SSE_HEADERS,
         )
 
-    async def _chunk_events(
+    async def _chunk_events(  # noqa: C901 - one loop owns cursor, attempt, and lifecycle ordering
         request: Request, record: Any, execution_id: str, owner_id: str | None, cursor: str
     ) -> AsyncIterator[str]:
+        page = chunk_read_count(deployment.store.config)
+        visible_attempt = record.attempt
         quiet = 0
         try:
+            # Prove the stream is live before the first poll interval elapses.
+            yield _SSE_HEARTBEAT
             while True:
                 terminal = record.terminal
                 # Draining after the terminal read, never before, is what keeps the
                 # last chunks of an execution from being lost.
-                entries = await deployment.store.read_chunks(
-                    execution_id, cursor, block_ms=0 if terminal else _STREAM_BLOCK_MS
-                )
+                try:
+                    entries = await deployment.store.read_chunks(execution_id, cursor)
+                except ChunkCursorExpiredError:
+                    yield _sse("gap", '{"detail":"Requested stream history is no longer available"}')
+                    cursor = CHUNK_CURSOR_START
+                    continue
+                if entries and not terminal:
+                    # A lease-lost worker can append after its replacement was
+                    # claimed but before that replacement emits its first chunk.
+                    # Highest-attempt-seen cannot identify that ordering, so anchor
+                    # every non-empty page to the current control attempt first.
+                    current_attempt = await deployment.store.current_attempt(execution_id)
+                    if current_attempt is not None:
+                        visible_attempt = max(visible_attempt, current_attempt)
                 for entry_id, attempt, data in entries:
                     cursor = entry_id
+                    if attempt < visible_attempt:
+                        continue
+                    visible_attempt = attempt
                     yield _sse("chunk", f'{{"attempt":{attempt},"payload":{data.decode()}}}', entry_id=entry_id)
-                # One read is capped at CHUNK_READ_COUNT, so a full page means the
-                # terminal drain is not finished; stopping here would silently
-                # truncate a client reattaching to an already-finished execution.
-                if terminal and len(entries) < CHUNK_READ_COUNT:
+                # One read is capped at a page, so a full page means the terminal
+                # drain is not finished; stopping here would silently truncate a
+                # client reattaching to an already-finished execution.
+                if terminal and len(entries) < page:
                     yield _sse(record.status.value, execution_result(request, record).model_dump_json())
                     return
-                if not entries:
-                    # Flowing chunks already mean running, so the lifecycle is only
-                    # rechecked once the stream goes quiet -- and then on a cadence,
-                    # because an execution can sit in `waiting` for a very long time.
-                    yield _SSE_HEARTBEAT
-                    quiet += 1
-                    if quiet % _STREAM_RECHECK_EVERY == 0:
-                        record = await get_execution(execution_id, owner_id)
-                else:
+                if entries:
                     quiet = 0
+                    continue
+                quiet += 1
+                idle = quiet > _STREAM_IDLE_AFTER
+                # Flowing chunks already mean running, so the lifecycle is only
+                # rechecked once the stream goes idle -- and then on a cadence,
+                # because an execution can sit in `waiting` for a very long time.
+                if idle and quiet % _STREAM_RECHECK_EVERY == 0:
+                    yield _SSE_HEARTBEAT
+                    record = await get_execution(execution_id, owner_id)
+                    visible_attempt = max(visible_attempt, record.attempt)
+                await asyncio.sleep(_STREAM_IDLE_POLL_SECONDS if idle else _STREAM_POLL_SECONDS)
         except Exception:
             # The response has already begun, so no status code is left to raise
             # with. Name the break and let the client reattach with Last-Event-ID.

@@ -2,7 +2,13 @@
 
 from hayhooks.a2a import A2APipelineWrapper
 from hayhooks.callbacks import default_on_pipeline_end, default_on_tool_call_end, default_on_tool_call_start
-from hayhooks.durable import ExecutionProgress, ExecutionResult, current_durable_context, current_execution_id
+from hayhooks.durable import (
+    ExecutionProgress,
+    ExecutionResult,
+    current_durable_context,
+    current_execution_id,
+    durable_streaming_callback,
+)
 from hayhooks.durable.context import DurableContext
 from hayhooks.durable.models import ExecutionStatus
 from hayhooks.events import PipelineEvent
@@ -43,6 +49,7 @@ __all__ = [
     "default_on_pipeline_end",
     "default_on_tool_call_end",
     "default_on_tool_call_start",
+    "durable_streaming_callback",
     "get_input_files",
     "get_last_user_input_text",
     "get_last_user_message",

@@ -1,6 +1,8 @@
 import asyncio
 import importlib.metadata
+import inspect
 import json
+import logging
 import threading
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -25,7 +27,7 @@ from hayhooks.durable.adapters import (
     _checkpoint_data,
     _restore_agent_state,
 )
-from hayhooks.durable.backend import CHUNK_CURSOR_START, CHUNK_READ_COUNT
+from hayhooks.durable.backend import CHUNK_CURSOR_START, ExecutionStoreConfig, chunk_read_count
 from hayhooks.durable.context import execution_context_scope
 from hayhooks.durable.models import ExecutionCheckpoint, ExecutionKind, ExecutionRecord, ExecutionStatus
 from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, _canonical_json, _operation_fingerprint
@@ -294,6 +296,24 @@ class BlockingAdmissionWrapper(BasePipelineWrapper):
         self.started.set()
         await asyncio.to_thread(self.release.wait)
         return Result(value=request.value + 1)
+
+
+async def test_refusing_a_sync_call_on_the_manager_loop_does_not_leak_its_coroutine() -> None:
+    context = DurableContext(_Claim(_agent_record("loop-refusal")), adapter=object())
+    coroutine = context.check_cancelled()
+    with pytest.raises(RuntimeError, match="cannot run on the server event loop"):
+        context._sync_await(coroutine)
+    assert inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED
+
+
+async def test_a_sync_chunk_on_the_manager_loop_is_reported_instead_of_vanishing(caplog) -> None:
+    """A sync callback wired into an Agent runs on the loop, where the bridge cannot work."""
+    context = DurableContext(_Claim(_agent_record("sync-chunk-on-loop")), adapter=object())
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            context.stream_chunk_sync(StreamingChunk(content="tick"))
+    # Named once, not once per token: both failure modes repeat for the whole run.
+    assert caplog.text.count("Dropped a display chunk") == 1
 
 
 async def test_durable_lifecycle_logs_identifiers_without_payload(monkeypatch) -> None:
@@ -809,7 +829,7 @@ def test_sync_durable_wrapper_uses_context_sync_controls(monkeypatch) -> None:
 
 def test_durable_stream_drains_a_full_backlog_before_its_terminal_event(monkeypatch) -> None:
     """Reattaching to a finished execution must replay every chunk, not one page."""
-    backlog = CHUNK_READ_COUNT + 100
+    backlog = chunk_read_count(ExecutionStoreConfig()) + 10
     app = _durable_app(monkeypatch, "backlog", ChunkBacklogWrapper())
 
     with TestClient(app) as client:
@@ -1283,7 +1303,7 @@ async def test_durable_chat_with_website_example_streams_tokens_across_its_check
             record = await wait_for_record(
                 deployment, submitted.execution_id, message="the streaming example did not complete"
             )
-            chunks = await deployment.store.read_chunks(submitted.execution_id, CHUNK_CURSOR_START, block_ms=0)
+            chunks = await deployment.store.read_chunks(submitted.execution_id, CHUNK_CURSOR_START)
 
     assert record.status is ExecutionStatus.COMPLETED
     assert record.result["reply"] == "".join(tokens)
@@ -1333,7 +1353,7 @@ async def test_durable_streaming_example_keeps_concurrent_executions_apart() -> 
                     deployment, execution.execution_id, message="a concurrent streaming execution did not complete"
                 )
                 assert record.status is ExecutionStatus.COMPLETED, record.error
-                chunks = await deployment.store.read_chunks(execution.execution_id, CHUNK_CURSOR_START, block_ms=0)
+                chunks = await deployment.store.read_chunks(execution.execution_id, CHUNK_CURSOR_START)
                 streams[record.result["reply"]] = [json.loads(data)["content"] for _, _, data in chunks]
 
     assert streams == {tag: [f"{tag}-{index}" for index in range(tokens)] for tag in tags}
@@ -1372,7 +1392,7 @@ async def test_durable_streaming_example_retries_into_generation_without_refetch
             record = await wait_for_record(
                 deployment, submitted.execution_id, message="the streaming example did not survive its retry"
             )
-            chunks = await deployment.store.read_chunks(submitted.execution_id, CHUNK_CURSOR_START, block_ms=0)
+            chunks = await deployment.store.read_chunks(submitted.execution_id, CHUNK_CURSOR_START)
 
     assert record.status is ExecutionStatus.COMPLETED
     assert record.attempt == 2

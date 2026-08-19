@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hayhooks.durable.backend import CHUNK_CURSOR_START
+from hayhooks.durable.backend import CHUNK_CURSOR_START, ChunkCursorExpiredError
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -94,8 +94,8 @@ async def test_terminal_cleanup_removes_the_chunk_log() -> None:
 
 async def test_chunk_read_is_bounded_and_resumes_from_the_last_entry(monkeypatch) -> None:
     """One read must not fan in a whole log; the cursor carries the rest."""
-    monkeypatch.setattr("hayhooks.durable.reference.CHUNK_READ_COUNT", 2)
     store = InMemoryExecutionStore(deployment="integration", config=contract_config())
+    monkeypatch.setattr("hayhooks.durable.backend.CHUNK_READ_MAX_BYTES", 2 * store.config.max_stream_chunk_bytes)
     await store.submit(control(), b"{}", binding_digest="b" * 64)
     run_id = await store.read_candidate()
     assert run_id is not None
@@ -103,7 +103,14 @@ async def test_chunk_read_is_bounded_and_resumes_from_the_last_entry(monkeypatch
     for index in range(3):
         await store.append_chunk(run_id, 1, b'{"i":%d}' % index)
 
-    first = await store.read_chunks(run_id, CHUNK_CURSOR_START, block_ms=0)
+    first = await store.read_chunks(run_id, CHUNK_CURSOR_START)
     assert [data for _, _, data in first] == [b'{"i":0}', b'{"i":1}']
-    rest = await store.read_chunks(run_id, first[-1][0], block_ms=0)
+    rest = await store.read_chunks(run_id, first[-1][0])
     assert [data for _, _, data in rest] == [b'{"i":2}']
+
+    await store.append_chunk(run_id, 1, b'{"i":3}')
+    await store.append_chunk(run_id, 1, b'{"i":4}')
+    with pytest.raises(ChunkCursorExpiredError):
+        await store.read_chunks(run_id, first[0][0])
+    with pytest.raises(ChunkCursorExpiredError):
+        await store.read_chunks(run_id, "1-0")

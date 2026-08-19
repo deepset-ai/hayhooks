@@ -42,6 +42,10 @@ class StreamDroppedError(Exception):
     """The server ended the stream with an error event instead of a terminal one."""
 
 
+class StreamGapError(Exception):
+    """The bounded chunk log no longer contains the requested cursor."""
+
+
 def follow(
     console: Console, client: httpx.Client, url: str, cursor: str | None, *, detach_after: int | None
 ) -> tuple[str | None, dict[str, Any] | None]:
@@ -51,13 +55,17 @@ def follow(
         cursor = event.get("id", cursor)
         if event["event"] == "error":
             raise StreamDroppedError(json.loads(event["data"]).get("detail", "execution stream interrupted"))
+        if event["event"] == "gap":
+            raise StreamGapError(json.loads(event["data"])["detail"])
         if event["event"] != "chunk":
             console.print()
             return cursor, json.loads(event["data"])
         chunk = json.loads(event["data"])
         if attempt is None:
             attempt = chunk["attempt"]
-        elif chunk["attempt"] != attempt:
+        elif chunk["attempt"] < attempt:
+            continue
+        elif chunk["attempt"] > attempt:
             # A retried attempt replays from its checkpoint, so tokens printed
             # before the crash arrive again. Printing cannot retract them; a
             # client with a rewritable buffer would reset it here instead.
@@ -92,6 +100,7 @@ def main() -> int:
         console.print(Panel.fit(f"[bold cyan]GET[/] {stream_url}", title="Streaming", border_style="cyan"))
         cursor, terminal, detached = None, None, False
         while terminal is None:
+            gap = False
             try:
                 cursor, terminal = follow(
                     console, client, stream_url, cursor, detach_after=None if detached else _DETACH_AFTER_CHUNKS
@@ -99,16 +108,24 @@ def main() -> int:
             except (httpx.HTTPError, StreamDroppedError) as error:
                 console.print()
                 console.print(Panel(str(error), title="Stream interrupted", border_style="red"))
-            if terminal is None:
-                detached = True
+            except StreamGapError as error:
+                gap = True
+                cursor = None
                 console.print()
                 console.print(
-                    Panel(
-                        f"Reattaching from Last-Event-ID {cursor}. Nothing between here and there is lost.",
-                        title="Detached",
-                        border_style="yellow",
-                    )
+                    Panel(f"{error}. Replaying the retained tail.", title="Partial stream", border_style="red")
                 )
+            if terminal is None:
+                detached = True
+                if not gap:
+                    console.print()
+                    console.print(
+                        Panel(
+                            f"Reattaching from Last-Event-ID {cursor}. Nothing between here and there is lost.",
+                            title="Detached",
+                            border_style="yellow",
+                        )
+                    )
                 time.sleep(_PAUSE_SECONDS)
 
         console.print(Panel(JSON.from_data(terminal), title=f"Terminal event: {terminal['status']}"))

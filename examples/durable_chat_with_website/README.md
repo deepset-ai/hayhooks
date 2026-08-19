@@ -22,14 +22,12 @@ cannot work under checkpointing: run data is serialized into the
 `Pipeline.run` rebuilds its `data` from the snapshot when resuming, so the
 callback disappears at the first checkpoint.
 
-Sharing one bound callback across concurrent executions is safe, and for exactly
-the reason `async_streaming_generator` is: its `_async_streaming_callback` is
-also a single module-level function handed to every concurrent run, and the
-per-run destination comes from a `ContextVar` resolved on each call. Hayhooks
-routes on `_ASYNC_STREAMING_QUEUE`; this routes on the durable execution
-context. Per-run injection buys that helper control over *which* components
-stream, not isolation between runs. A run-time `streaming_callback` still takes
-precedence, so ordinary streaming endpoints on the same wrapper behave normally.
+The built-in `durable_streaming_callback` resolves the execution from a
+`ContextVar` on each call, so one callback bound to a shared component still
+keeps concurrent streams isolated. Per-run injection buys the ordinary helper
+control over *which* components stream, not isolation between runs. A run-time
+`streaming_callback` still takes precedence, so ordinary streaming endpoints on
+the same wrapper behave normally.
 
 The included `httpx` client submits a question, streams the answer, then
 deliberately drops the connection mid-answer and reattaches with

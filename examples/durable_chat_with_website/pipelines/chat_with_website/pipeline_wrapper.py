@@ -4,10 +4,9 @@ from pathlib import Path
 
 from haystack import Pipeline
 from haystack.core.errors import PipelineRuntimeError
-from haystack.dataclasses import StreamingChunk
 from pydantic import BaseModel, Field
 
-from hayhooks import BasePipelineWrapper, DurableContext, current_durable_context
+from hayhooks import BasePipelineWrapper, DurableContext, durable_streaming_callback
 
 DEFAULT_URLS = ["https://haystack.deepset.ai", "https://www.redis.io"]
 
@@ -26,18 +25,6 @@ class ChatAnswer(BaseModel):
     urls: list[str]
 
 
-def stream_to_execution(chunk: StreamingChunk) -> None:
-    """
-    Forward one generated token to the SSE stream of whichever execution is running.
-
-    Resolving the execution per call, rather than closing over one, is what lets a
-    single shared Pipeline serve concurrent durable executions without crossing
-    their streams.
-    """
-    if context := current_durable_context():
-        context.stream_chunk_sync(chunk)
-
-
 class PipelineWrapper(BasePipelineWrapper):
     """Fetch pages durably, then stream the generated answer to the SSE endpoint."""
 
@@ -51,13 +38,10 @@ class PipelineWrapper(BasePipelineWrapper):
         # `Pipeline.run` rebuilds `data` from the snapshot on resume, so the callback
         # is gone from the first checkpoint on. Binding it to the component survives.
         #
-        # Sharing one bound callback across concurrent executions is safe for the same
-        # reason `_async_streaming_callback` is: it is a module-level function that
-        # resolves its destination per call from a ContextVar. Hayhooks routes on
-        # `_ASYNC_STREAMING_QUEUE`; this routes on the durable execution context. A
-        # run-time `streaming_callback` still wins, so ordinary streaming endpoints on
-        # this wrapper are unaffected.
-        self.pipeline.get_component("llm").streaming_callback = stream_to_execution
+        # The helper resolves its destination per call from a ContextVar, so one bound
+        # callback keeps concurrent durable executions isolated. A run-time callback
+        # still wins, leaving ordinary streaming endpoints unaffected.
+        self.pipeline.get_component("llm").streaming_callback = durable_streaming_callback
 
     async def run_durable_async(self, context: DurableContext, request: ChatRequest) -> ChatAnswer:
         # This body re-runs from the top on every attempt, so the message has to say

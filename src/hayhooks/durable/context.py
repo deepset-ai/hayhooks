@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Coroutine, Mapping
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,6 +18,7 @@ from hayhooks.durable.models import (
     RetryableExecutionError,
     validate_json,
 )
+from hayhooks.server.logger import log
 
 if TYPE_CHECKING:
     from hayhooks.durable.adapters import HaystackDurableAdapter
@@ -32,6 +33,12 @@ _active_context: ContextVar[DurableContext | None] = ContextVar("hayhooks_durabl
 def get_current_durable_context() -> DurableContext | None:
     """Return the context active in a durable wrapper, component, hook, or tool."""
     return _active_context.get()
+
+
+def durable_streaming_callback(payload: Any) -> None:
+    """Forward a synchronous Pipeline callback to its active durable execution."""
+    if context := get_current_durable_context():
+        context.stream_chunk_sync(payload)
 
 
 @contextmanager
@@ -57,6 +64,7 @@ class DurableContext:
         self.record = claim.record
         self.adapter = adapter
         self._event_loop = event_loop or asyncio.get_running_loop()
+        self._chunk_drop_reported = False
 
     @property
     def execution_id(self) -> str:
@@ -108,7 +116,7 @@ class DurableContext:
 
     async def stream_chunk(self, payload: Any) -> None:
         """Append one best-effort display chunk outside the durable fence."""
-        await self.claim.stream_chunk(payload.to_dict() if hasattr(payload, "to_dict") else payload)
+        await self.claim.stream_chunk(payload)
 
     def stream_chunk_sync(self, payload: Any) -> None:
         """Synchronous counterpart for sync wrappers running in a worker thread."""
@@ -116,11 +124,20 @@ class DurableContext:
         # via _sync_await, so one run's token rate is capped at roughly 1/RTT -- about
         # 50 tokens/s against a managed Redis 20 ms away. Batch through an asyncio.Queue
         # drained by a single task if sync-wrapper generation latency shows up.
-        with suppress(Exception):
-            # The bridge itself fails once the manager loop is gone, which a wrapper
-            # still generating past the shutdown grace period can reach. A display
-            # chunk is never worth failing the run it describes.
+        try:
             self._sync_await(self.stream_chunk(payload))
+        except Exception:
+            # Two things land here and neither is worth failing the run it describes:
+            # the bridge is gone, which a wrapper still generating past the shutdown
+            # grace period reaches, or the callback is running on the manager loop
+            # because it was wired into an Agent, which Haystack calls inline. The
+            # second silently empties the whole stream, so this cannot stay quiet --
+            # but once per execution, because both failures repeat on every token.
+            if not self._chunk_drop_reported:
+                self._chunk_drop_reported = True
+                log.bind(execution_id=self.execution_id).opt(exception=True).warning(
+                    "Dropped a display chunk; call `await context.stream_chunk(...)` from async code"
+                )
 
     def report_progress_sync(
         self, message: str, *, kind: str = "progress", metadata: Mapping[str, Any] | None = None
@@ -184,6 +201,9 @@ class DurableContext:
         except RuntimeError:
             running = None
         if running is self._event_loop:
+            # The caller already built the coroutine, so close it here: a refusal must
+            # not also leave a "coroutine was never awaited" warning behind.
+            cast(Coroutine[Any, Any, Any], awaitable).close()
             msg = "A synchronous durable context method cannot run on the server event loop"
             raise RuntimeError(msg)
 

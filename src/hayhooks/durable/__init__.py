@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hayhooks.durable.context import DurableContext, get_current_durable_context
+from hayhooks.durable.context import DurableContext, durable_streaming_callback, get_current_durable_context
 from hayhooks.durable.fastapi import create_durable_router
 from hayhooks.durable.mode import DurableAuthoringMode, durable_authoring_mode
 from hayhooks.durable.models import (
@@ -62,4 +62,5 @@ __all__ = [
     "current_execution_id",
     "durable_authoring_mode",
     "durable_runtime",
+    "durable_streaming_callback",
 ]

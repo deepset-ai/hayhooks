@@ -206,13 +206,13 @@ stream of one execution's display chunks, followed by a terminal `completed`,
 `failed`, or `canceled` event carrying the same public projection the inspect
 route returns. The submit response advertises it as the `stream` link.
 
-Chunks are best-effort display data, deliberately outside the durable fence: a
-chunk append is a single `XADD` with no transaction, so token-rate streaming
-cannot contend with the heartbeat. Nothing about a chunk can fail a run
-either: an oversized payload (chunks are capped at 64 KB) or a backend blip
-drops that chunk and logs it, because replaying a pipeline to recover a display
-token is never the right trade. Progress events remain the coarse durable audit
-trail.
+Chunks are best-effort display data, deliberately outside the durable fence. A
+chunk append uses one non-transactional Redis pipeline and never writes the
+control record, so token-rate streaming cannot invalidate a heartbeat. Nothing
+about a chunk can fail a run either: an invalid or oversized payload (chunks are
+capped at 64 KB) or a backend blip drops that chunk and logs it, because
+replaying a pipeline to recover a display token is never the right trade.
+Progress events remain the coarse durable audit trail.
 
 ```python
 class StreamingWrapper(BasePipelineWrapper):
@@ -233,7 +233,8 @@ that does not survive here: `run_pipeline_async` data is serialized into the
 `Pipeline.run` rebuilds its `data` from the snapshot when resuming, so a callback
 passed as run data disappears at the first checkpoint.
 
-Binding one callback to a shared component is safe for the same reason
+Hayhooks provides the synchronous callback that a Pipeline component needs.
+Binding it to a shared component is safe for the same reason
 `async_streaming_generator` can hand the same module-level
 `_async_streaming_callback` to every concurrent run: the callback carries no
 per-run state and resolves its destination on each call from a `ContextVar`.
@@ -242,9 +243,7 @@ execution context, which the engine sets per execution task and `asyncio.to_thre
 copies into the Pipeline's worker thread:
 
 ```python
-def stream_to_execution(chunk: StreamingChunk) -> None:
-    if context := current_durable_context():
-        context.stream_chunk_sync(chunk)
+from hayhooks import durable_streaming_callback
 
 
 class StreamingPipelineWrapper(BasePipelineWrapper):
@@ -252,11 +251,13 @@ class StreamingPipelineWrapper(BasePipelineWrapper):
 
     def setup(self) -> None:
         self.pipeline = Pipeline.loads(...)
-        self.pipeline.get_component("llm").streaming_callback = stream_to_execution
+        self.pipeline.get_component("llm").streaming_callback = durable_streaming_callback
 ```
 
 `run_pipeline_async` drives the Pipeline on a worker thread, which is why that
-path uses `context.stream_chunk_sync` rather than the awaitable form. What
+callback uses the synchronous bridge. The Agent path is the other way round:
+`run_agent_async` awaits `Agent.run_async` on the server loop, where the bridge
+cannot work, so an Agent takes `context.stream_chunk` as shown above. What
 `pipeline_run_args` injection actually buys `async_streaming_generator` is
 control over *which* components stream without permanently mutating a shared
 Pipeline; here the callback simply does nothing outside a durable execution. A
@@ -265,10 +266,13 @@ ordinary streaming endpoint on the same wrapper is unaffected. See
 `examples/durable_chat_with_website` for the whole wrapper. Each SSE event
 carries the entry ID as `id:` and the producing `attempt` in its payload; a
 client resets its buffer when `attempt` increases, because a retried attempt
-re-streams from its checkpoint. Reconnecting clients resend `Last-Event-ID`
-automatically and resume from that cursor. A browser `EventSource` reconnects
-whenever the server closes the connection, including after the terminal event,
-so call `close()` once that event arrives.
+re-streams from its checkpoint. The server ignores chunks from an older attempt
+once a newer one is known. Reconnecting clients resend `Last-Event-ID`
+automatically and resume from that cursor. If the bounded log no longer contains
+that cursor, the stream emits a `gap` event, replays the retained tail, and then
+continues; reset or mark the client buffer as partial when that happens. A
+browser `EventSource` reconnects whenever the server closes the connection,
+including after the terminal event, so call `close()` once that event arrives.
 
 The stream follows one execution for its whole life, not just one run of it: an
 execution that suspends into `waiting` keeps its stream open and heartbeating
@@ -279,10 +283,14 @@ connection parked that long is not what you want.
 `durable_max_stream_chunks` bounds the log per execution (10 000 by default);
 `0` disables chunk production entirely while leaving the endpoint working.
 `durable_max_stream_chunk_bytes` caps a single chunk at 64 KB by default; an
-oversized chunk is dropped, never failed. The two bounds multiply: size Redis
-for `durable_max_stream_chunks * durable_max_stream_chunk_bytes` per streaming
+oversized chunk is dropped, never failed, and it also sets how many entries one
+read returns, so that a single read stays under 4 MB whatever the cap is. The
+two bounds multiply: size Redis for
+`durable_max_stream_chunks * durable_max_stream_chunk_bytes` per streaming
 execution, times the executions running at once. The log expires with its
-execution under `durable_terminal_ttl_seconds`.
+execution under `durable_terminal_ttl_seconds`. A new viewer that starts after
+the log has overflowed receives only the retained tail; the terminal result
+remains authoritative.
 
 A stream that breaks after its headers were sent has no status code left to
 report with, so it ends in an `error` event instead. Treat it the way a client

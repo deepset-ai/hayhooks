@@ -3,20 +3,21 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections import deque
 from collections.abc import Callable
 
 from hayhooks.durable.backend import (
-    CHUNK_READ_COUNT,
+    CHUNK_CURSOR_START,
     MAINTENANCE_BATCH_SIZE,
+    ChunkCursorExpiredError,
     ExecutionIdempotencyConflictError,
     ExecutionStoreConfig,
     SubmissionResult,
     bind_command,
     bind_progress_sequences,
     check_admission,
+    chunk_read_count,
     parse_chunk_cursor,
     parse_idempotency_binding,
     parse_lease_member,
@@ -103,17 +104,13 @@ class InMemoryExecutionStore:
         # entry already registered for the run removes it at the terminal TTL,
         # mirroring the Redis backend's EXPIRE.
 
-    async def read_chunks(self, run_id: str, after: str, *, block_ms: int) -> list[tuple[str, int, bytes]]:
-        # ponytail: a 20 ms poll instead of an asyncio.Condition, so a dev-mode SSE
-        # client sees up to 20 ms of extra per-token latency. Swap in a Condition if
-        # that ever shows; the Redis backend already blocks natively.
-        deadline = time.monotonic() + block_ms / 1_000
+    async def read_chunks(self, run_id: str, after: str) -> list[tuple[str, int, bytes]]:
         _, cursor = parse_chunk_cursor(after)
-        while True:
-            fresh = [entry for entry in self._chunks.get(run_id, ()) if entry[0] > cursor][:CHUNK_READ_COUNT]
-            if fresh or time.monotonic() >= deadline:
-                return [(f"0-{sequence}", attempt, chunk) for sequence, attempt, chunk in fresh]
-            await asyncio.sleep(0.02)
+        entries = self._chunks.get(run_id, ())
+        fresh = [entry for entry in entries if entry[0] > cursor][: chunk_read_count(self.config)]
+        if after != CHUNK_CURSOR_START and not any(f"0-{sequence}" == after for sequence, _, _ in entries):
+            raise ChunkCursorExpiredError(after)
+        return [(f"0-{sequence}", attempt, chunk) for sequence, attempt, chunk in fresh]
 
     async def transition(self, run_id: str, command: ExecutionCommand, *, candidate: bool = False) -> TransitionPlan:
         current = self._controls.get(run_id)
