@@ -75,7 +75,11 @@ async def _ask(client: httpx.AsyncClient, marker: str, question: str) -> dict:
 
 def _processing_window(terminal: dict) -> tuple[datetime, datetime]:
     """The server-side span between an execution's first and last progress events."""
-    stamps = [datetime.fromisoformat(event["timestamp"]) for event in terminal["progress"]]
+    # Pydantic serializes UTC datetimes with a `Z` suffix, which Python 3.10's
+    # datetime.fromisoformat cannot parse.
+    stamps = [
+        datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00")) for event in terminal["progress"]
+    ]
     return min(stamps), max(stamps)
 
 
