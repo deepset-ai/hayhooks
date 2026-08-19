@@ -34,6 +34,7 @@ _ASYNC_STREAMING_QUEUE: contextvars.ContextVar[asyncio.Queue[StreamingChunk]] = 
 _ASYNC_STREAMING_LOOP: contextvars.ContextVar[asyncio.AbstractEventLoop] = contextvars.ContextVar(
     "_hayhooks_async_streaming_loop"
 )
+_SHIELDED_PIPELINE_TASKS: set[asyncio.Task[Any]] = set()
 
 # Streaming callbacks are module-level so Haystack can serialize snapshot inputs.
 # The active queues live in ContextVars and are set around pipeline execution, so
@@ -789,6 +790,25 @@ def _check_pipeline_task_exception(pipeline_task: asyncio.Task) -> None:
             raise exception
 
 
+def _handle_shielded_pipeline_task_done(pipeline_task: asyncio.Task) -> None:
+    """Keep shielded tasks alive until completion and retrieve detached exceptions."""
+    _SHIELDED_PIPELINE_TASKS.discard(pipeline_task)
+    with contextlib.suppress(asyncio.CancelledError):
+        if error := pipeline_task.exception():
+            log.opt(exception=error).error("Error in shielded pipeline task")
+
+
+def _detach_pipeline_task(pipeline_task: asyncio.Task) -> None:
+    """Keep an unfinished pipeline task alive after its stream closes."""
+    if pipeline_task.done():
+        with contextlib.suppress(asyncio.CancelledError):
+            pipeline_task.exception()
+        return
+
+    _SHIELDED_PIPELINE_TASKS.add(pipeline_task)
+    pipeline_task.add_done_callback(_handle_shielded_pipeline_task_done)
+
+
 async def _stream_chunks_from_queue(
     queue: asyncio.Queue[StreamingChunk],
     pipeline_task: asyncio.Task,
@@ -826,9 +846,6 @@ async def _stream_chunks_from_queue(
             if queue.empty():
                 _check_pipeline_task_exception(pipeline_task)
             continue
-        except asyncio.CancelledError:
-            log.warning("Async streaming generator was cancelled")
-            break
         except Exception as e:
             log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
             raise
@@ -837,22 +854,29 @@ async def _stream_chunks_from_queue(
     _check_pipeline_task_exception(pipeline_task)
 
 
-async def _cleanup_pipeline_async(pipeline_task: asyncio.Task) -> None:
+async def _cleanup_pipeline_async(pipeline_task: asyncio.Task, *, shield_pipeline_task: bool = False) -> None:
     """
     Cleans up the pipeline task if it's still running.
 
     Args:
         pipeline_task: The task to clean up
+        shield_pipeline_task: Keep the task running after the stream closes instead of cancelling it
     """
-    if not pipeline_task.done():
-        pipeline_task.cancel()
-        try:
-            await asyncio.wait_for(pipeline_task, timeout=1.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            pass
-        except Exception as e:
-            # Don't re-raise - this runs in finally block, so we don't want to mask original errors
-            log.opt(exception=True).warning("Error during pipeline task cleanup: {}", e)
+    if shield_pipeline_task:
+        _detach_pipeline_task(pipeline_task)
+        return
+
+    if pipeline_task.done():
+        return
+
+    pipeline_task.cancel()
+    try:
+        await asyncio.wait_for(pipeline_task, timeout=1.0)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        pass
+    except Exception as e:
+        # Don't re-raise - this runs in finally block, so we don't want to mask original errors
+        log.opt(exception=True).warning("Error during pipeline task cleanup: {}", e)
 
 
 def async_streaming_generator(  # noqa: PLR0913, C901
@@ -867,6 +891,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
     include_outputs_from: set[str] | None = None,
     allow_sync_streaming_callbacks: bool = False,
     external_event_queue: asyncio.Queue[StreamingChunk | PipelineEvent | str | dict[str, Any]] | None = None,
+    shield_pipeline_task: bool = False,
 ) -> AsyncGenerator[StreamingChunk | PipelineEvent | str | dict[str, Any], None]:
     """
     Creates an async generator that yields streaming chunks from a pipeline or agent execution.
@@ -897,6 +922,8 @@ def async_streaming_generator(  # noqa: PLR0913, C901
         external_event_queue: Optional external asyncio queue to merge with internal events. Events from this
                              queue will be yielded alongside streaming chunks from the pipeline. Supports
                              StreamingChunk, PipelineEvent, str, or custom dict events.
+        shield_pipeline_task: Keep the pipeline task running if the stream closes or its consumer is cancelled.
+                              Defaults to False, preserving the existing behavior of cancelling the task.
 
     Yields:
         StreamingChunk: Individual chunks from the streaming execution
@@ -966,7 +993,7 @@ def async_streaming_generator(  # noqa: PLR0913, C901
                     yield result
                 yield chunk
 
-            await pipeline_task
+            await (asyncio.shield(pipeline_task) if shield_pipeline_task else pipeline_task)
             final_chunk = _process_pipeline_end(pipeline_task.result(), on_pipeline_end)
             if final_chunk:
                 yield final_chunk
@@ -975,6 +1002,6 @@ def async_streaming_generator(  # noqa: PLR0913, C901
             log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
             raise
         finally:
-            await _cleanup_pipeline_async(pipeline_task)
+            await _cleanup_pipeline_async(pipeline_task, shield_pipeline_task=shield_pipeline_task)
 
     return generator()
