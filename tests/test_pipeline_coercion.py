@@ -86,13 +86,6 @@ def serialize_for_client(instance: Any) -> Any:
 
 TOOL_CALL = ToolCall(tool_name="t", arguments={"a": 1}, id="1")
 
-# Round-tripping these through Pydantic relies on a from_dict fix that is in Haystack main but not yet released.
-# Non-strict so the cases pass (xpass) automatically once the fix ships (expected in Haystack v3.1).
-NEEDS_HAYSTACK_MAIN = pytest.mark.xfail(
-    reason="Requires an unreleased Haystack from_dict fix for ChatMessage/GeneratedAnswer (expected in v3.1)",
-    strict=False,
-)
-
 COERCIBLE_INSTANCES = [
     # A Document with all non-bytes fields and a ChatMessage with every content-part type, to exercise the
     # serialization of each field / content type.
@@ -121,12 +114,10 @@ COERCIBLE_INSTANCES = [
             _meta={"k": "v"},
         ),
         id="ChatMessage",
-        marks=NEEDS_HAYSTACK_MAIN,
     ),
     pytest.param(
         GeneratedAnswer(data="answer", query="q", documents=[Document(content="d")]),
         id="GeneratedAnswer",
-        marks=NEEDS_HAYSTACK_MAIN,
     ),
     pytest.param(ImageContent(base64_image="aGVsbG8=", mime_type="image/png"), id="ImageContent"),
     pytest.param(

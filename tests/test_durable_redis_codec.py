@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from hayhooks.durable.backend import MAINTENANCE_BATCH_SIZE, ExecutionStoreCorruptionError
+from hayhooks.durable.backend import MAINTENANCE_BATCH_SIZE, ExecutionStoreCorruptionError, chunk_read_count
 from hayhooks.durable.engine import MAX_CONTROL_SCALAR_BYTES, Claim, Heartbeat, decide, initial_control
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys, decode_control, digest, encode_control
 
@@ -131,3 +131,43 @@ async def test_heartbeat_writes_only_lease_fields() -> None:
     pipe.hset.assert_called_once_with(store.keys.control("run-1"), "lease_expires_at_ms", 3_000)
     pipe.zadd.assert_called_once_with(store.keys.lease_expiry, {RedisKeys.lease_member("run-1", 1): 3_000})
     pipe.zrem.assert_not_called()
+
+
+async def test_chunk_append_uses_only_xadd_and_expire() -> None:
+    pipe = MagicMock()
+    pipe.execute = AsyncMock(return_value=[])
+    redis = Mock()
+    redis.pipeline.return_value = pipe
+    store = RedisExecutionStore(redis, deployment="deployment")
+
+    await store.append_chunk("run-1", 2, b'{"content":"hello"}')
+
+    pipe.xadd.assert_called_once_with(
+        store.keys.chunks("run-1"),
+        {"attempt": 2, "data": b'{"content":"hello"}'},
+        maxlen=store.config.max_stream_chunks,
+        approximate=False,
+    )
+    pipe.expire.assert_called_once_with(store.keys.chunks("run-1"), store.config.terminal_ttl_seconds)
+    pipe.hget.assert_not_called()
+    pipe.pttl.assert_not_called()
+
+
+async def test_chunk_resume_uses_one_range_read() -> None:
+    redis = AsyncMock()
+    redis.xrange.return_value = [
+        (b"1-0", {b"attempt": b"1", b"data": b'{"content":"old"}'}),
+        (b"2-0", {b"attempt": b"2", b"data": b'{"content":"new"}'}),
+    ]
+    store = RedisExecutionStore(redis, deployment="deployment")
+
+    entries = await store.read_chunks("run-1", "1-0")
+
+    assert entries == [("2-0", 2, b'{"content":"new"}')]
+    redis.xrange.assert_awaited_once_with(
+        store.keys.chunks("run-1"),
+        min="1-0",
+        max="+",
+        count=chunk_read_count(store.config) + 1,
+    )
+    redis.xread.assert_not_awaited()

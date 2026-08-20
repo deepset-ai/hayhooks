@@ -21,18 +21,17 @@ from hayhooks.server.logger import log
 _MAX_OWNER_LENGTH = 512
 # The chunk read deliberately does not block server-side: a blocking read pins one
 # Redis connection per attached viewer, which caps concurrent streams at the pool
-# size and starves the engine sharing that pool. Poll instead -- fast while chunks
-# are moving, so tokens still arrive smoothly rather than in visible bursts...
-_STREAM_POLL_SECONDS = 0.05
+# size and starves the engine sharing that pool. Poll at a human-scale display
+# cadence while chunks are moving rather than chasing every model delta.
+_STREAM_POLL_SECONDS = 0.1
 # ...and backed off once the stream is quiet, because an execution can sit in
 # `waiting` for hours with a viewer attached.
-_STREAM_IDLE_POLL_SECONDS = 0.5
+_STREAM_IDLE_POLL_SECONDS = 1.0
 # Empty polls before a stream counts as idle, at the fast interval above.
-_STREAM_IDLE_AFTER = 20
-# Rereading the record is three round trips and a heartbeat is a wasted frame, so an
-# idle stream does both every few idle polls. This is the worst-case delay on the
-# terminal event, on top of the time it takes to go idle.
-_STREAM_RECHECK_EVERY = 2
+_STREAM_IDLE_AFTER = 10
+# Rereading the record is three round trips, so an idle stream does it once per
+# second together with its heartbeat. This bounds terminal-event delay after idle.
+_STREAM_RECHECK_EVERY = 1
 # An SSE comment line: keeps the connection warm while an execution is quiet.
 _SSE_HEARTBEAT = ":\n\n"
 # Proxies buffer ``text/event-stream`` by default, which stalls the whole stream.
@@ -286,6 +285,11 @@ def create_durable_router(  # noqa: C901, PLR0915 - one factory owns every gener
                     return
                 if entries:
                     quiet = 0
+                    # A full page means backlog and should drain immediately. A
+                    # partial page is caught up, so pace the next Redis read.
+                    if len(entries) == page:
+                        continue
+                    await asyncio.sleep(_STREAM_POLL_SECONDS)
                     continue
                 quiet += 1
                 idle = quiet > _STREAM_IDLE_AFTER

@@ -41,8 +41,7 @@ class DurableSettings(BaseModel):
     durable_poll_interval: float = Field(default=1.0, ge=0.05, le=60.0)
     durable_lease_duration_ms: int = Field(default=30_000, ge=1, le=86_400_000)
     durable_lease_commit_safety_ms: int = Field(default=1_500, ge=0, le=86_400_000)
-    # Keep the default conservative until Agent tools and shared components are
-    # proven concurrency-safe.
+    # Per-process ceiling for concurrent executions of each deployment.
     durable_execution_concurrency: int = Field(default=1, ge=1, le=128)
 
     @model_validator(mode="after")

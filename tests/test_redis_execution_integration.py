@@ -205,6 +205,15 @@ async def test_stale_append_after_terminal_gets_a_ttl(store) -> None:
     assert await redis.pttl(durable.keys.chunks(run_id)) > 0
 
 
+async def test_live_chunk_log_has_a_rolling_ttl(store) -> None:
+    """Best-effort display history must stay bounded even before terminal cleanup."""
+    redis, durable = store
+    await durable.submit(control(), b"{}", binding_digest="b" * 64)
+    run_id, _ = await _claim(durable)
+    await durable.append_chunk(run_id, 1, b'{"live":true}')
+    assert await redis.pttl(durable.keys.chunks(run_id)) > 0
+
+
 async def test_append_after_the_control_expired_still_gets_a_ttl(store) -> None:
     """Past the terminal TTL there is no control left to consult, and no EXPIRE to come."""
     redis, durable = store

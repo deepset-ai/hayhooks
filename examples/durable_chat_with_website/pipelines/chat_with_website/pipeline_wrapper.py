@@ -29,7 +29,6 @@ class PipelineWrapper(BasePipelineWrapper):
     """Fetch pages durably, then stream the generated answer to the SSE endpoint."""
 
     durable_revision = "durable-chat-with-website-v1"
-
     def setup(self) -> None:
         self.pipeline = Pipeline.loads((Path(__file__).parent / "chat_with_website.yml").read_text())
         # `async_streaming_generator` passes its callback per run in `pipeline_run_args`.

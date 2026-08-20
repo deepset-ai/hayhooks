@@ -55,6 +55,7 @@ _ENV_SETTINGS = [
     ("HAYHOOKS_DURABLE_LEASE_DURATION_MS", "durable_lease_duration_ms", 30_000, "45000", 45_000),
     ("HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS", "durable_lease_commit_safety_ms", 1_500, "2000", 2_000),
     ("HAYHOOKS_DURABLE_POLL_INTERVAL", "durable_poll_interval", 1.0, "0.5", 0.5),
+    ("HAYHOOKS_DURABLE_EXECUTION_CONCURRENCY", "durable_execution_concurrency", 1, "3", 3),
     ("HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS", "durable_max_nonterminal_executions", 0, "250", 250),
     ("HAYHOOKS_DURABLE_REDIS_SOCKET_TIMEOUT", "durable_redis_socket_timeout", 5.0, "3.5", 3.5),
     ("HAYHOOKS_DURABLE_REDIS_SOCKET_CONNECT_TIMEOUT", "durable_redis_socket_connect_timeout", 5.0, "2.5", 2.5),

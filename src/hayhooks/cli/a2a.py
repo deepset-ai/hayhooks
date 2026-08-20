@@ -49,7 +49,7 @@ def run(  # noqa: PLR0913
         typer.Option(
             "--durable-execution-concurrency",
             min=1,
-            help="Maximum concurrent durable Agent executions per deployed agent",
+            help="Operator concurrency ceiling per deployed durable Agent",
         ),
     ] = None,
     debug: Annotated[bool, typer.Option("--debug", help="If true, tracebacks should be returned on errors")] = False,

@@ -67,6 +67,67 @@ connection on purpose, prints the `Last-Event-ID` it reached, reattaches, and
 finishes the answer without a gap. The stream ends with a `completed` event
 carrying the same projection the inspect route returns.
 
+### Run the three-pane recovery show
+
+For the full demo, set the durable concurrency ceiling to two:
+
+```bash
+HAYHOOKS_DURABLE_EXECUTION_CONCURRENCY=2 hayhooks run \
+  --pipelines-dir examples/durable_chat_with_website/pipelines
+```
+
+Then launch the show from another terminal:
+
+```bash
+python examples/durable_chat_with_website/showcase.py
+```
+
+Two long answers stream concurrently in the top panes. **ATLAS** cuts its SSE
+connection after 12 seconds and **COMET** after 16 seconds. Each execution keeps
+running while its client is away, an inspect request proves that from the
+control plane, and the client reattaches three seconds later with its saved
+`Last-Event-ID`. A successful pane finishes with an exact-replay proof: the
+chunks seen across both connections reconstruct the durable result with no gap
+or duplicates.
+
+The bottom HTTP flight recorder makes the sequence visible across both clients:
+
+```text
+POST → 202    submit execution
+GET  → 200    open SSE stream
+CLOSE ✂       drop only the client connection
+GET  → 200    execution is still running
+GET  → 200    reattach with Last-Event-ID
+SSE  completed
+```
+
+The live dashboard uses Rich, which Hayhooks already installs. Enlarge the
+terminal to at least 100 columns by 28 rows so both streams have room to breathe.
+
+### Manual curl handoff
+
+To show the resumable stream in two side-by-side terminals, run the start script
+in the first terminal. It requests a deliberately long answer, saves the stream
+URL and raw SSE transcript in the system temporary directory, and uses
+`jq --unbuffered` to print only the generated text:
+
+```bash
+./examples/durable_chat_with_website/start_stream.sh
+```
+
+After at least ten seconds, press Ctrl-C in the first terminal. Then run the
+resume script in the second terminal. It reads the saved cursor and asks
+Hayhooks for only the events after it:
+
+```bash
+./examples/durable_chat_with_website/resume_stream.sh
+```
+
+The generated text continues in the second terminal without repeating completed
+chunks, while the printed `Last-Event-ID` makes the resume cursor visible. If
+the bounded chunk log has discarded that cursor, Hayhooks prints the `gap`
+detail before replaying the retained tail.
+
 5. To watch the durable half, restart Hayhooks while a request is in flight.
 
 The client reports the broken stream and keeps reattaching. Once the lease

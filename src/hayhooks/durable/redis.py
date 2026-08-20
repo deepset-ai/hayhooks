@@ -268,17 +268,10 @@ class RedisExecutionStore:
         return [bytes(value) for value in await self.redis.lrange(self.keys.progress(run_id), 0, -1)]
 
     async def append_chunk(self, run_id: str, attempt: int, chunk: bytes) -> None:
-        # Chunks are unfenced best-effort display data, so a worker that lost its
-        # lease can still append; each entry carries `attempt` and clients reset on
-        # increase. The terminal transaction expires only keys that exist at that
-        # moment, so a stale append that creates the chunks key after the run went
-        # terminal would leak it forever. Reading the control status and the key
-        # TTL in the same pipeline as the XADD covers every interleaving with the
-        # terminal transaction: if it ran first, the status here is terminal and
-        # the missing TTL gets set; if it runs after, its own EXPIRE sees the key.
-        # Only a worker that outlives the whole retention window can still leak a
-        # key; that is accepted rather than fencing the chunk log and making every
-        # token contend with the lease heartbeat.
+        # Keep a rolling TTL on best-effort display data. This closes every stale-
+        # writer leak without reading control state on every model delta. A run
+        # quiet for the whole retention window may lose old display chunks; the
+        # cursor gap contract already covers that bounded-history case.
         pipe = self.redis.pipeline(transaction=False)
         pipe.xadd(
             self.keys.chunks(run_id),
@@ -286,32 +279,26 @@ class RedisExecutionStore:
             maxlen=self.config.max_stream_chunks,
             approximate=False,
         )
-        pipe.hget(self.keys.control(run_id), "status")
-        pipe.pttl(self.keys.chunks(run_id))
-        _, status, ttl = await pipe.execute()
-        if ttl == -1 and (status is None or ExecutionStatus(_text(status)).terminal):
-            await self.redis.expire(self.keys.chunks(run_id), self.config.terminal_ttl_seconds)
+        pipe.expire(self.keys.chunks(run_id), self.config.terminal_ttl_seconds)
+        await pipe.execute()
 
     async def read_chunks(self, run_id: str, after: str) -> list[tuple[str, int, bytes]]:
-        # Deliberately not a blocking XREAD: redis-py pins a pool connection for the
+        # Deliberately not a blocking read: redis-py pins a pool connection for the
         # whole block, so one connection per attached viewer would cap concurrent
         # streams at the pool size and starve the engine that shares it. The SSE
-        # generator polls instead.
+        # generator polls instead. One inclusive XRANGE both proves that a resume
+        # cursor is still retained and returns the entries after it.
         key = self.keys.chunks(run_id)
+        count = chunk_read_count(self.config)
         if after == CHUNK_CURSOR_START:
-            streams = await self.redis.xread({key: after}, count=chunk_read_count(self.config)) or []
+            entries = await self.redis.xrange(key, min="-", max="+", count=count)
         else:
-            async with self.redis.pipeline(transaction=False) as pipe:
-                pipe.xrange(key, min=after, max=after, count=1)
-                pipe.xread({key: after}, count=chunk_read_count(self.config))
-                cursor, streams = await pipe.execute()
-            streams = streams or []
-            if not cursor:
+            entries = await self.redis.xrange(key, min=after, max="+", count=count + 1)
+            if not entries or _text(entries[0][0]) != after:
                 raise ChunkCursorExpiredError(after)
+            entries = entries[1:]
         return [
-            (_text(entry_id), int(_text(fields[b"attempt"])), bytes(fields[b"data"]))
-            for _, entries in streams
-            for entry_id, fields in entries
+            (_text(entry_id), int(_text(fields[b"attempt"])), bytes(fields[b"data"])) for entry_id, fields in entries
         ]
 
     async def transition(  # noqa: C901

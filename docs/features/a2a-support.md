@@ -53,7 +53,7 @@ HAYHOOKS_DURABLE_STORE=redis        # Redis by default; memory is volatile
 HAYHOOKS_DURABLE_REDIS_URL=redis://localhost:6379/0
 HAYHOOKS_DURABLE_REDIS_KEY_PREFIX=hayhooks:durable
 HAYHOOKS_DURABLE_EXECUTION_CONCURRENCY=1
-                                    # Workers per deployed durable Agent
+                                    # Operator ceiling per durable Agent
 ```
 
 ## Which pipelines are exposed
@@ -285,9 +285,9 @@ class PipelineWrapper(A2APipelineWrapper):
 ```
 
 The wrapper does not create an executor, worker, record, queue, or Redis client. Durable execution uses Redis by
-default; set `HAYHOOKS_DURABLE_STORE=memory` only for non-recoverable local development. Concurrent
-execution is controlled by `HAYHOOKS_DURABLE_EXECUTION_CONCURRENCY` and requires the Agent, tools, and their shared
-dependencies to be concurrency-safe.
+default; set `HAYHOOKS_DURABLE_STORE=memory` only for non-recoverable local development.
+`HAYHOOKS_DURABLE_EXECUTION_CONCURRENCY` is the per-process ceiling. Increasing it requires the Agent, tools, and
+their shared dependencies to be concurrency-safe.
 
 Snapshots, validated messages, and internal tool state remain server-side. A restarted Hayhooks process reclaims
 incomplete Redis work from its last safe checkpoint. Tool effects before a checkpoint may be replayed, so tools should

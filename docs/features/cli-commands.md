@@ -149,7 +149,7 @@ hayhooks a2a run --host 0.0.0.0 --port 1418
 | `--execution-store` | | Built-in durable execution backend: `memory` or `redis` | `redis` |
 | `--execution-redis-url` | | Redis URL for durable execution storage | `redis://localhost:6379/0` |
 | `--execution-redis-key-prefix` | | Redis key prefix for durable execution storage | `hayhooks:durable` |
-| `--durable-execution-concurrency` | | Maximum concurrent durable Agent executions per deployed agent | `1` |
+| `--durable-execution-concurrency` | | Operator concurrency ceiling per deployed durable Agent | `1` |
 | `--debug` | | Include tracebacks in errors | `false` |
 
 ## Pipeline Management Commands

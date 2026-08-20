@@ -274,7 +274,7 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 ### HAYHOOKS_DURABLE_EXECUTION_CONCURRENCY
 
 - Default: `1`
-- Description: Maximum concurrent durable executions per deployment. Increase it only when the Pipeline or Agent and its shared dependencies are concurrency-safe.
+- Description: Per-process ceiling for concurrent durable executions of each deployment. Active work scales from zero to this limit as executions become runnable.
 
 ### HAYHOOKS_DURABLE_POLL_INTERVAL
 

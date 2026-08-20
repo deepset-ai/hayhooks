@@ -159,10 +159,10 @@ When the host owns an existing binary Redis client, pass `redis=client` and
 Do not use `decode_responses=True`.
 
 Every Uvicorn worker owns a runtime, Redis pool, and worker tasks. Redis leases
-and fences coordinate them, so effective concurrency is `processes ×
-durable_execution_concurrency` per deployment. Keep wrapper revisions identical
-across replicas and start with one to three processes and conservative
-concurrency.
+and fences coordinate them, so the setting is a per-process, per-deployment
+ceiling and effective concurrency is `processes ×
+durable_execution_concurrency`. Keep wrapper revisions identical across replicas
+and start with one to three processes and conservative concurrency.
 
 Built-in providers snapshot `DurableSettings`, and the runtime adopts that
 snapshot when a provider is supplied. Conflicting runtime and provider settings
