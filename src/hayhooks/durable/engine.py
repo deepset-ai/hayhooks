@@ -169,6 +169,8 @@ class Claim:
     lease_duration_ms: int
     max_run_attempts: int
     worker_revision: str
+    revision_error: bytes
+    attempts_error: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +215,7 @@ class ScheduleRetry:
     now_ms: int
     delay_ms: int
     max_application_retries: int
-    error: bytes = b""
+    error: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
 
@@ -265,6 +267,8 @@ class RecoverExpiredLease:
     indexed_deadline_ms: int
     max_run_attempts: int
     worker_revision: str
+    revision_error: bytes
+    attempts_error: bytes
 
 
 ExecutionCommand = (
@@ -386,14 +390,12 @@ def _claim(control: ExecutionControl, command: Claim) -> TransitionPlan:
         raise InvalidExecutionTransitionError("execution is not queued")
     if control.available_at_ms is not None and control.available_at_ms > command.now_ms:
         raise InvalidExecutionTransitionError("queued execution is not due")
-    if control.definition_revision != command.worker_revision:
-        return _terminal(
-            control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, b"definition revision is incompatible"
-        )
     if control.cancel_requested_at_ms is not None:
         return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
+    if control.definition_revision != command.worker_revision:
+        return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.revision_error)
     if control.run_attempt >= command.max_run_attempts:
-        return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, b"run attempts exhausted")
+        return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error)
     deadline = command.now_ms + command.lease_duration_ms
     next_control = _business(
         control,
@@ -470,7 +472,7 @@ def _retry(control: ExecutionControl, command: ScheduleRetry) -> TransitionPlan:
             command.now_ms,
             ExecutionStatus.FAILED,
             PayloadKind.ERROR,
-            command.error or b"application retries exhausted",
+            command.error,
             progress_events=progress_events,
         )
     due = command.now_ms + max(0, command.delay_ms)
@@ -495,8 +497,16 @@ def _retry(control: ExecutionControl, command: ScheduleRetry) -> TransitionPlan:
 
 def _suspend(control: ExecutionControl, command: Suspend) -> TransitionPlan:
     _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+    progress_events = _progress_events(control.progress_sequence, command.progress_events)
     if control.cancel_requested_at_ms is not None:
-        return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
+        return _terminal(
+            control,
+            command.now_ms,
+            ExecutionStatus.CANCELED,
+            None,
+            None,
+            progress_events=progress_events,
+        )
     next_control = _business(
         control,
         command.now_ms,
@@ -511,7 +521,7 @@ def _suspend(control: ExecutionControl, command: Suspend) -> TransitionPlan:
             PayloadWrite(PayloadKind.CHECKPOINT, command.checkpoint),
             PayloadWrite(PayloadKind.WAIT, command.wait),
         ),
-        progress_events=_progress_events(control.progress_sequence, command.progress_events),
+        progress_events=progress_events,
         lease_index_update=LeaseIndexUpdate(None, control.fence),
     )
 
@@ -551,11 +561,9 @@ def _recover(control: ExecutionControl, command: RecoverExpiredLease) -> Transit
     if control.cancel_requested_at_ms is not None:
         return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
     if control.definition_revision != command.worker_revision:
-        return _terminal(
-            control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, b"definition revision is incompatible"
-        )
+        return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.revision_error)
     if control.run_attempt >= command.max_run_attempts:
-        return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, b"run attempts exhausted")
+        return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error)
     next_control = _business(
         control, command.now_ms, status=ExecutionStatus.QUEUED, lease_owner=None, lease_expires_at_ms=None
     )

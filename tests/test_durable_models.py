@@ -8,12 +8,7 @@ from datetime import timezone
 import pytest
 from pydantic import BaseModel
 
-from hayhooks.durable.engine import (
-    ExecutionPayloadSizeError,
-    ExecutionStatus,
-    PayloadKind,
-    ProgressEvent,
-)
+from hayhooks.durable.engine import ExecutionPayloadSizeError, ExecutionStatus, PayloadKind, ProgressEvent
 from hayhooks.durable.models import (
     CheckpointEnvelope,
     ExecutionKind,
@@ -46,9 +41,7 @@ def json_payload(value: object) -> bytes:
             id="checkpoint",
         ),
         pytest.param({"answer": 42}, id="result"),
-        pytest.param(
-            PersistedError(type="ValueError", message="bad", code="E1").model_dump(mode="json"), id="error"
-        ),
+        pytest.param(PersistedError(type="ValueError", message="bad", code="E1").model_dump(mode="json"), id="error"),
         pytest.param(
             {"kind": "approval", "message": "Continue?", "expected_input_schema": {"type": "boolean"}},
             id="wait",
@@ -100,9 +93,7 @@ def test_operation_fingerprint_is_canonical_but_preserves_list_order() -> None:
 
     first = SetInput(tags={"zeta", "alpha"}, steps=[1, 2])
     second = SetInput(tags={"alpha", "zeta"}, steps=[1, 2])
-    assert operation_fingerprint("jobs", "v1", "owner", first) == operation_fingerprint(
-        "jobs", "v1", "owner", second
-    )
+    assert operation_fingerprint("jobs", "v1", "owner", first) == operation_fingerprint("jobs", "v1", "owner", second)
     assert operation_fingerprint("jobs", "v1", None, {"a": 1, "b": 2}) == operation_fingerprint(
         "jobs", "v1", None, {"b": 2, "a": 1}
     )
@@ -126,7 +117,9 @@ def test_public_projection_excludes_private_data_and_allowlists_wait_fields() ->
         payloads={
             PayloadKind.INPUT: json_payload({"private_input": "hidden"}),
             PayloadKind.CHECKPOINT: json_payload({"private_checkpoint": "hidden"}),
-            PayloadKind.ERROR: json_payload(PersistedError(type="RetryError", message="retrying").model_dump(mode="json")),
+            PayloadKind.ERROR: json_payload(
+                PersistedError(type="RetryError", message="retrying").model_dump(mode="json")
+            ),
             PayloadKind.WAIT: json_payload(
                 {
                     "kind": "approval",
@@ -185,7 +178,7 @@ def test_error_messages_are_redacted_and_bounded() -> None:
     error = PersistedError(
         type="RuntimeError",
         message=(
-            'Authorization: Bearer auth-token password=hunter2 '
+            "Authorization: Bearer auth-token password=hunter2 "
             'https://example.test/?api_key=query-secret&token=other {"client_secret":"json-secret"}'
         ),
     )

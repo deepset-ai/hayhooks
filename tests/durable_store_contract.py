@@ -28,7 +28,6 @@ from hayhooks.durable.store import (
     StoreConfig,
 )
 
-
 CONTRACT_CONFIG = StoreConfig(
     lease_commit_safety_ms=10,
     max_payload_bytes=64,
@@ -37,6 +36,8 @@ CONTRACT_CONFIG = StoreConfig(
     max_stream_chunks=3,
     max_stream_chunk_bytes=64,
 )
+REVISION_ERROR = b"revision"
+ATTEMPTS_ERROR = b"attempts"
 
 
 def contract_control(
@@ -77,13 +78,13 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     assert snapshot is not None and snapshot.payloads[PayloadKind.INPUT] == b"input"
     assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
 
-    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1"))
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
     assert claimed is not None and claimed.next_control.status is ExecutionStatus.RUNNING
     released = await store.transition(control.run_id, ReleaseClaim(claimed.next_control.fence, "worker"))
     assert released.next_control.run_attempt == 0
     assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
 
-    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1"))
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
     assert claimed is not None
     heartbeat = await store.transition(
         control.run_id,
@@ -120,12 +121,12 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     assert suspended.next_control.status is ExecutionStatus.WAITING
     resumed = await store.transition(control.run_id, Resume(0, "v1", b"resumed"))
     assert resumed.next_control.status is ExecutionStatus.QUEUED
-    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1"))
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
     assert claimed is not None
     await store.transition(control.run_id, RequestCancellation(0, "stop"))
     terminal = await store.transition(
         control.run_id,
-        Complete(claimed.next_control.fence, "worker", 0, b"ignored"),
+        Complete(claimed.next_control.fence, "worker", 0, b"x" * (store.config.max_payload_bytes + 1)),
     )
     assert terminal.next_control.status is ExecutionStatus.CANCELED
     snapshot = await store.read(control.run_id)

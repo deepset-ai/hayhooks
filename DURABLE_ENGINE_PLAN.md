@@ -40,14 +40,19 @@ Implemented:
   cooperative cancellation, retry/suspend control flow, and isolated streaming.
 - [x] Retry transitions commit buffered progress through the reducer.
 - [x] Dead-code audit and removal of incidental single-call store wrappers.
+- [x] Phase 4 portable typed deployment, supervised workers, maintenance,
+  submission gate, retries, health, shutdown, and dynamic runtime lifecycle.
+- [x] Revision/attempt failures receive valid bounded error payloads from the runtime.
+- [x] Cancellation-winning suspension retains its buffered progress.
 
 Current focused verification:
 
 - Ruff and formatting pass for the changed package and tests.
 - `ty` passes for `hayhooks.durable` and the lazy root initializer.
-- 53 focused tests pass, including the existing root import compatibility test.
-- The full local non-integration run passes: 668 passed, 39 skipped, and 16
-  integration tests deselected.
+- 74 focused durable tests pass, including the existing root import compatibility
+  test.
+- The full local non-integration `tests/` run passes: 716 passed, 3 skipped, 16
+  integration tests deselected, 3 expected failures, and 6 expected passes.
 
 ## Non-negotiable architecture
 
@@ -322,24 +327,24 @@ Goal: run an arbitrary typed durable callable against an explicit
 
 Implement in `runtime.py`:
 
-- [ ] Frozen `RuntimeConfig` for worker concurrency, polling, shutdown grace,
+- [x] Frozen `RuntimeConfig` for worker concurrency, polling, shutdown grace,
   lease duration, maximum recovered run attempts, maximum application retries,
   retry base/max delay, and operational backoff bounds.
-- [ ] Cross-field validation proving the lease duration exceeds the commit
+- [x] Cross-field validation proving the lease duration exceeds the commit
   safety margin and leaves more than one heartbeat interval for a safe commit.
-- [ ] `DurableDeployment` containing name, immutable definition revision,
+- [x] `DurableDeployment` containing name, immutable definition revision,
   explicit store, request model, optional result/resume models, and runner.
-- [ ] `DurableRuntime` that owns deployment worker tasks but not a global
+- [x] `DurableRuntime` that owns deployment worker tasks but not a global
   registry or implicit database client.
-- [ ] Idempotent `start()` and `close()` plus asynchronous install/remove methods
+- [x] Idempotent `start()` and `close()` plus asynchronous install/remove methods
   usable by a dynamic host.
-- [ ] Submission gate: closing a deployment rejects new submissions and waits
+- [x] Submission gate: closing a deployment rejects new submissions and waits
   for already-admitted submissions before nonterminal work is counted.
-- [ ] Fixed worker slots that restart if a slot exits unexpectedly.
-- [ ] Separate bounded lease-maintenance task.
-- [ ] Store-error retry with bounded jitter and a health error streak.
-- [ ] Direct submit/get/cancel/resume methods with owner and revision checks.
-- [ ] Aggregate runtime/deployment health with configured/running/draining slots,
+- [x] Fixed worker slots that restart if a slot exits unexpectedly.
+- [x] Separate bounded lease-maintenance task.
+- [x] Store-error retry with bounded jitter and a health error streak.
+- [x] Direct submit/get/cancel/resume methods with owner and revision checks.
+- [x] Aggregate runtime/deployment health with configured/running/draining slots,
   maintenance state, accepting state, store-error streak, and store counts.
 
 Submission rules:
@@ -387,15 +392,15 @@ Shutdown rules:
 
 Tests:
 
-- [ ] Detached execution completes independently of submit request lifetime.
-- [ ] Retry delay and both attempt budgets are enforced.
-- [ ] Cancellation wins a result race.
-- [ ] Revision mismatch never runs application code.
-- [ ] Runtime instances and deployments are isolated.
-- [ ] Quiesce waits for an admitted submission and rejects later submissions.
-- [ ] Worker/store failures affect health and a later success clears the streak.
-- [ ] Canceled or crashed worker tasks recreate their slot.
-- [ ] Shutdown and lease loss retain non-cancellable thread work until it exits.
+- [x] Detached execution completes independently of submit request lifetime.
+- [x] Retry delay and both attempt budgets are enforced.
+- [x] Cancellation wins a result race.
+- [x] Revision mismatch never runs application code.
+- [x] Runtime instances and deployments are isolated.
+- [x] Quiesce waits for an admitted submission and rejects later submissions.
+- [x] Worker/store failures affect health and a later success clears the streak.
+- [x] Canceled or crashed worker tasks recreate their slot.
+- [x] Shutdown and lease loss retain non-cancellable thread work until it exits.
 
 Acceptance:
 

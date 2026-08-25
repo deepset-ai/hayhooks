@@ -27,7 +27,7 @@ from hayhooks.durable.engine import (
 )
 from hayhooks.durable.models import CheckpointEnvelope, ExecutionKind, decode_json, encode_json
 from hayhooks.durable.store import CHUNK_CURSOR_START, MemoryExecutionStore, StoreConfig
-from tests.durable_store_contract import contract_control
+from tests.durable_store_contract import ATTEMPTS_ERROR, REVISION_ERROR, contract_control
 
 
 def decode_checkpoint(payload: bytes) -> CheckpointEnvelope:
@@ -54,7 +54,7 @@ async def context_factory():
                 b"{}",
             )
         worker_id = f"worker-{run_id}"
-        plan = await store.claim(Claim(worker_id, 0, lease_duration_ms, 3, "v1"))
+        plan = await store.claim(Claim(worker_id, 0, lease_duration_ms, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
         assert plan is not None and plan.next_control.run_id == run_id
         stored = await store.read(run_id)
         assert stored is not None

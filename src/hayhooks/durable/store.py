@@ -124,7 +124,14 @@ class ExecutionStore(Protocol):
 
     async def claim(self, command: Claim) -> TransitionPlan | None: ...
 
-    async def maintain(self, *, max_run_attempts: int, worker_revision: str) -> int: ...
+    async def maintain(
+        self,
+        *,
+        max_run_attempts: int,
+        worker_revision: str,
+        revision_error: bytes,
+        attempts_error: bytes,
+    ) -> int: ...
 
     async def append_chunk(self, run_id: str, attempt: int, data: bytes) -> None: ...
 
@@ -211,12 +218,11 @@ class MemoryExecutionStore:
             command.lease_duration_ms <= self.config.lease_commit_safety_ms
         ):
             raise ValueError("lease duration must exceed the commit safety margin")
-        for name in ("checkpoint", "wait", "result", "error"):
-            if (payload := getattr(command, name, None)) is not None:
-                _check_size(name, payload, self.config.max_payload_bytes)
-        for event in getattr(command, "progress_events", ()):
-            _check_size("progress event", event, self.config.max_progress_event_bytes)
         plan = decide(current, command)
+        for write in plan.payload_writes:
+            _check_size(write.kind.value, write.data, self.config.max_payload_bytes)
+        for event in plan.progress_events:
+            _check_size("progress event", event.data, self.config.max_progress_event_bytes)
         self._apply(current, plan)
         if not isinstance(command, Heartbeat) and (
             plan.next_control != current
@@ -255,7 +261,14 @@ class MemoryExecutionStore:
                 )
             return None
 
-    async def maintain(self, *, max_run_attempts: int, worker_revision: str) -> int:
+    async def maintain(
+        self,
+        *,
+        max_run_attempts: int,
+        worker_revision: str,
+        revision_error: bytes,
+        attempts_error: bytes,
+    ) -> int:
         now_ms = self._clock()
         recovered = 0
         for (run_id, fence), deadline in sorted(self._lease_expiry.items(), key=lambda item: item[1])[
@@ -266,7 +279,15 @@ class MemoryExecutionStore:
             try:
                 await self.transition(
                     run_id,
-                    RecoverExpiredLease(0, fence, deadline, max_run_attempts, worker_revision),
+                    RecoverExpiredLease(
+                        0,
+                        fence,
+                        deadline,
+                        max_run_attempts,
+                        worker_revision,
+                        revision_error,
+                        attempts_error,
+                    ),
                 )
                 recovered += 1
             except ExecutionNotFoundError:
