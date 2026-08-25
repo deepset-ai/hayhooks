@@ -17,6 +17,7 @@ from hayhooks.durable.engine import (
     InvalidExecutionTransitionError,
     PayloadKind,
     RecoverExpiredLease,
+    ReleaseClaim,
     RequestCancellation,
     Resume,
     ScheduleRetry,
@@ -46,6 +47,11 @@ def claim(current, *, now_ms: int = 200):
     return decide(current, Claim("worker-a", now_ms, 500, 3, "rev-1"))
 
 
+@pytest.fixture
+def claimed_control():
+    return claim(control()).next_control
+
+
 def test_submission_is_an_initial_control_and_input_only() -> None:
     plan = submission_plan(control(), b"input")
     assert plan.next_control.version == 1
@@ -53,17 +59,21 @@ def test_submission_is_an_initial_control_and_input_only() -> None:
     assert plan.lease_index_update is None
 
 
-def test_claim_fences_and_heartbeat_renews_without_business_version() -> None:
-    claimed = claim(control()).next_control
+def test_claim_fences_and_heartbeat_renews_without_business_version(claimed_control) -> None:
+    claimed = claimed_control
     assert (claimed.status, claimed.version, claimed.fence, claimed.run_attempt) == (
         ExecutionStatus.RUNNING,
         2,
         1,
         1,
     )
-    heartbeat = decide(claimed, Heartbeat(1, "worker-a", 300, 500)).next_control
+    heartbeat_plan = decide(claimed, Heartbeat(1, "worker-a", 300, 500))
+    heartbeat = heartbeat_plan.next_control
     assert heartbeat.version == claimed.version
+    assert heartbeat.updated_at_ms == claimed.updated_at_ms
     assert heartbeat.lease_expires_at_ms == 800
+    assert heartbeat_plan.lease_index_update and heartbeat_plan.lease_index_update.deadline_ms == 800
+    assert not heartbeat_plan.payload_writes and not heartbeat_plan.progress_events
     with pytest.raises(ExecutionLeaseLostError):
         decide(heartbeat, Heartbeat(0, "worker-a", 301, 500))
     with pytest.raises(ExecutionLeaseLostError):
@@ -73,32 +83,38 @@ def test_claim_fences_and_heartbeat_renews_without_business_version() -> None:
 @pytest.mark.parametrize(
     "command",
     [
-        lambda c: Checkpoint(c.fence, "stale", 300, 500, b"checkpoint"),
-        lambda c: Complete(c.fence + 1, "worker-a", 300, b"result"),
-        lambda c: ScheduleRetry(c.fence + 1, "worker-a", 300, 100, 2, b"error"),
-        lambda c: Suspend(c.fence + 1, "worker-a", 300, b"checkpoint", b"wait"),
+        pytest.param(Checkpoint(1, "stale", 300, 500, b"checkpoint"), id="checkpoint"),
+        pytest.param(Complete(2, "worker-a", 300, b"result"), id="complete"),
+        pytest.param(Fail(2, "worker-a", 300, b"error"), id="fail"),
+        pytest.param(ReleaseClaim(1, "stale", 300), id="release"),
+        pytest.param(ScheduleRetry(2, "worker-a", 300, 100, 2, b"error"), id="retry"),
+        pytest.param(Suspend(2, "worker-a", 300, b"checkpoint", b"wait"), id="suspend"),
     ],
 )
-def test_owned_transitions_reject_stale_fences(command) -> None:
+def test_owned_transitions_reject_stale_fences(command, claimed_control) -> None:
     with pytest.raises(ExecutionLeaseLostError):
-        decide(claim(control()).next_control, command(claim(control()).next_control))
+        decide(claimed_control, command)
 
 
-def test_cancellation_wins_completion_and_retry() -> None:
-    claimed = claim(control()).next_control
-    canceled = decide(claimed, RequestCancellation(250, "💥" * 2_000)).next_control
+def test_cancellation_wins_every_owned_outcome(claimed_control) -> None:
+    canceled = decide(claimed_control, RequestCancellation(250, "💥" * 2_000)).next_control
     assert canceled.cancel_reason == "💥" * 1_024
     assert len(canceled.cancel_reason.encode()) == 4_096
-    terminal = decide(canceled, Complete(1, "worker-a", 300, b"result"))
-    assert terminal.next_control.status is ExecutionStatus.CANCELED
-    assert not terminal.payload_writes
-    retried = decide(canceled, ScheduleRetry(1, "worker-a", 300, 100, 2, b"error"))
-    assert retried.next_control.status is ExecutionStatus.CANCELED
+    commands = (
+        Complete(1, "worker-a", 300, b"result"),
+        Fail(1, "worker-a", 300, b"error"),
+        ScheduleRetry(1, "worker-a", 300, 100, 2, b"error"),
+        Suspend(1, "worker-a", 300, b"checkpoint", b"wait"),
+    )
+    for command in commands:
+        terminal = decide(canceled, command)
+        assert terminal.next_control.status is ExecutionStatus.CANCELED
+        assert not terminal.payload_writes
+        assert terminal.payload_deletes == (PayloadKind.RESULT, PayloadKind.ERROR, PayloadKind.WAIT)
 
 
-def test_retry_and_lease_recovery_requeue_without_resetting_retry_count() -> None:
-    claimed = claim(control()).next_control
-    retry = decide(claimed, ScheduleRetry(1, "worker-a", 300, 100, 2, b"retry"))
+def test_retry_and_lease_recovery_requeue_without_resetting_retry_count(claimed_control) -> None:
+    retry = decide(claimed_control, ScheduleRetry(1, "worker-a", 300, 100, 2, b"retry"))
     queued = retry.next_control
     assert (queued.status, queued.available_at_ms, queued.run_attempt, queued.application_retry_count) == (
         ExecutionStatus.QUEUED,
@@ -116,10 +132,9 @@ def test_retry_and_lease_recovery_requeue_without_resetting_retry_count() -> Non
     assert recovered.next_control.run_attempt == 2
 
 
-def test_wait_resume_and_progress_preserve_checkpoint_boundary() -> None:
-    claimed = claim(control()).next_control
+def test_wait_resume_and_progress_preserve_checkpoint_boundary(claimed_control) -> None:
     waiting = decide(
-        claimed,
+        claimed_control,
         Suspend(1, "worker-a", 300, b"checkpoint", b"wait", progress_events=(b"waiting",)),
     )
     assert waiting.next_control.status is ExecutionStatus.WAITING
@@ -129,13 +144,13 @@ def test_wait_resume_and_progress_preserve_checkpoint_boundary() -> None:
     assert [event.sequence for event in (*waiting.progress_events, *resumed.progress_events)] == [1, 2]
 
 
-def test_terminal_state_is_irreversible_and_payloads_are_exclusive() -> None:
-    completed = decide(claim(control()).next_control, Complete(1, "worker-a", 300, b"result"))
+def test_terminal_state_is_irreversible_and_payloads_are_exclusive(claimed_control) -> None:
+    completed = decide(claimed_control, Complete(1, "worker-a", 300, b"result"))
     assert completed.payload_deletes == (PayloadKind.ERROR, PayloadKind.WAIT)
     assert decide(completed.next_control, RequestCancellation(400, "late")).next_control == completed.next_control
     with pytest.raises(InvalidExecutionTransitionError):
         decide(completed.next_control, Claim("worker-a", 400, 500, 3, "rev-1"))
-    failed = decide(claim(control()).next_control, Fail(1, "worker-a", 300, b"error"))
+    failed = decide(claimed_control, Fail(1, "worker-a", 300, b"error"))
     assert failed.payload_deletes == (PayloadKind.RESULT, PayloadKind.WAIT)
 
 
@@ -150,3 +165,22 @@ def test_stale_lease_index_is_removed_without_changing_control() -> None:
     plan = decide(current, RecoverExpiredLease(200, 1, 100, 3, "rev-1"))
     assert plan.next_control == current
     assert plan.lease_index_update and plan.lease_index_update.deadline_ms is None
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        pytest.param({"cancel_requested_at_ms": 250}, ExecutionStatus.CANCELED, id="canceled"),
+        pytest.param({"definition_revision": "rev-2"}, ExecutionStatus.FAILED, id="revision"),
+        pytest.param({"run_attempt": 3}, ExecutionStatus.FAILED, id="attempts"),
+    ],
+)
+def test_expired_lease_recovery_honors_cancellation_revision_and_attempt_budget(
+    changes, expected, claimed_control
+) -> None:
+    current = replace(claimed_control, **changes)
+    recovered = decide(
+        current,
+        RecoverExpiredLease(1_000, current.fence, current.lease_expires_at_ms or 0, 3, "rev-1"),
+    )
+    assert recovered.next_control.status is expected

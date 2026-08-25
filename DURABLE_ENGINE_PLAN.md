@@ -33,16 +33,17 @@ Implemented:
 - [x] Duplicate `run_id` submissions are rejected before any mutation.
 - [x] Importing `hayhooks.durable` no longer imports `hayhooks.server`; the
   existing root-level Hayhooks API is resolved lazily.
+- [x] Phase 1 reducer/store audit and backend-neutral shared store contract.
+- [x] Phase 2 immutable payload models, strict JSON codecs, public projection,
+  canonical fingerprints, and persisted-error redaction.
 
 Current focused verification:
 
 - Ruff and formatting pass for the changed package and tests.
 - `ty` passes for `hayhooks.durable` and the lazy root initializer.
-- 17 focused tests pass, including the existing root import compatibility test.
-- The full local non-integration run reached 643 passing tests and reported four
-  failures in existing OpenAPI/CORS tests under the locally installed
-  FastAPI/Pydantic/OpenTelemetry versions. Re-run those through the repository's
-  intended Hatch environments before assigning them to durable work.
+- 42 focused tests pass, including the existing root import compatibility test.
+- The full local non-integration run passes: 656 passed, 39 skipped, and 16
+  integration tests deselected.
 
 ## Non-negotiable architecture
 
@@ -156,19 +157,19 @@ depends on them.
 
 Tasks:
 
-- [ ] Review every reducer command against the transition table below.
-- [ ] Confirm every plan writes mutually exclusive terminal payloads and removes
+- [x] Review every reducer command against the transition table below.
+- [x] Confirm every plan writes mutually exclusive terminal payloads and removes
   obsolete wait/error/result payloads.
-- [ ] Confirm heartbeat changes only the lease deadline and lease index, without
+- [x] Confirm heartbeat changes only the lease deadline and lease index, without
   incrementing the business version.
-- [ ] Confirm cancellation wins over completion, failure, retry, and suspension.
-- [ ] Confirm stale fences and the lease safety window reject owned writes.
-- [ ] Confirm release-after-failed-post-claim-read returns the run to queued
+- [x] Confirm cancellation wins over completion, failure, retry, and suspension.
+- [x] Confirm stale fences and the lease safety window reject owned writes.
+- [x] Confirm release-after-failed-post-claim-read returns the run to queued
   without consuming an attempt.
-- [ ] Convert the existing store tests into a reusable async contract function
+- [x] Convert the existing store tests into a reusable async contract function
   that can later run unchanged against Redis. Keep store-specific tests outside
   that shared contract.
-- [ ] Add only missing edge cases found during this review; avoid mirroring each
+- [x] Add only missing edge cases found during this review; avoid mirroring each
   reducer branch with redundant tests.
 
 Transition table:
@@ -202,22 +203,22 @@ model.
 
 Implement in `models.py`:
 
-- [ ] `JsonValue` aliases and one strict JSON encoder/decoder using UTF-8,
+- [x] `JsonValue` aliases and one strict JSON encoder/decoder using UTF-8,
   compact separators, `allow_nan=False`, and deterministic key ordering where a
   fingerprint is required.
-- [ ] `ExecutionKind` with only `pipeline` and `agent` for this release.
-- [ ] Immutable checkpoint envelope containing adapter kind, adapter checkpoint
+- [x] `ExecutionKind` with only `pipeline` and `agent` for this release.
+- [x] Immutable checkpoint envelope containing adapter kind, adapter checkpoint
   data, application state, and optional resume input.
-- [ ] Sanitized persisted error value with type, bounded message, retryable flag,
+- [x] Sanitized persisted error value with type, bounded message, retryable flag,
   and optional code.
-- [ ] Immutable public progress and execution-result models suitable for direct
+- [x] Immutable public progress and execution-result models suitable for direct
   FastAPI response use.
-- [ ] A projection function from `StoredExecution` to the public result.
-- [ ] UTC conversion for internal millisecond timestamps.
-- [ ] Canonical operation fingerprinting over deployment, revision, owner, and
+- [x] A projection function from `StoredExecution` to the public result.
+- [x] UTC conversion for internal millisecond timestamps.
+- [x] Canonical operation fingerprinting over deployment, revision, owner, and
   validated input. Sets must be sorted deterministically; list order must remain
   meaningful.
-- [ ] Secret redaction for public exception messages before persistence.
+- [x] Secret redaction for public exception messages before persistence.
 
 Public projection rules:
 
@@ -235,14 +236,14 @@ projects data; reducer commands change it.
 
 Tests:
 
-- [ ] Round-trip every payload kind.
-- [ ] Reject non-JSON values, NaN/infinity, malformed UTF-8/JSON, and oversized
+- [x] Round-trip every payload kind.
+- [x] Reject non-JSON values, NaN/infinity, malformed UTF-8/JSON, and oversized
   data at the encode boundary.
-- [ ] Verify deterministic fingerprints for mapping order and set-valued
+- [x] Verify deterministic fingerprints for mapping order and set-valued
   Pydantic input.
-- [ ] Verify list reordering changes the fingerprint.
-- [ ] Verify public projections contain no private fields.
-- [ ] Verify error messages redact common token, authorization, password, and
+- [x] Verify list reordering changes the fingerprint.
+- [x] Verify public projections contain no private fields.
+- [x] Verify error messages redact common token, authorization, password, and
   query-string secret forms and respect the reducer scalar bound.
 
 Acceptance:
