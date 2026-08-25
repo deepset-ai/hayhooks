@@ -114,14 +114,25 @@ def test_cancellation_wins_every_owned_outcome(claimed_control) -> None:
 
 
 def test_retry_and_lease_recovery_requeue_without_resetting_retry_count(claimed_control) -> None:
-    retry = decide(claimed_control, ScheduleRetry(1, "worker-a", 300, 100, 2, b"retry"))
+    retry = decide(
+        claimed_control,
+        ScheduleRetry(1, "worker-a", 300, 100, 2, b"retry", progress_events=(b"retrying",)),
+    )
     queued = retry.next_control
-    assert (queued.status, queued.available_at_ms, queued.run_attempt, queued.application_retry_count) == (
+    assert (
+        queued.status,
+        queued.available_at_ms,
+        queued.run_attempt,
+        queued.application_retry_count,
+        queued.progress_sequence,
+    ) == (
         ExecutionStatus.QUEUED,
         400,
         1,
         1,
+        1,
     )
+    assert retry.progress_events[0].data == b"retrying"
     next_claim = claim(replace(queued, available_at_ms=None), now_ms=400).next_control
     recovered = decide(
         next_claim,

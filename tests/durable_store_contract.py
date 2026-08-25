@@ -58,7 +58,7 @@ def contract_control(
     )
 
 
-async def assert_store_contract(store: ExecutionStore) -> None:
+async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     """Exercise public store behavior without backend-specific access."""
     control = contract_control(store.deployment)
     with pytest.raises(InvalidExecutionTransitionError):

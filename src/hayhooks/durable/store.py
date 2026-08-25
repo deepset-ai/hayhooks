@@ -147,7 +147,7 @@ class MemoryExecutionStore:
             raise ValueError("deployment cannot be empty")
         self.deployment = deployment
         self.config = config or StoreConfig()
-        self._clock = clock or _wall_clock_ms
+        self._clock = clock or (lambda: time.time_ns() // 1_000_000)
         self._controls: dict[str, ExecutionControl] = {}
         self._payloads: dict[str, dict[PayloadKind, bytes]] = {}
         self._progress: dict[str, list[ProgressEvent]] = {}
@@ -203,11 +203,28 @@ class MemoryExecutionStore:
         current = self._controls.get(run_id)
         if current is None:
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
-        command = _bind_command(command, self._clock(), self.config.lease_commit_safety_ms)
-        _validate_command(command, self.config)
+        changes = {"now_ms": self._clock()}
+        if isinstance(command, _LEASE_COMMANDS):
+            changes["lease_commit_safety_ms"] = self.config.lease_commit_safety_ms
+        command = replace(command, **changes)
+        if isinstance(command, (Heartbeat, Checkpoint)) and (
+            command.lease_duration_ms <= self.config.lease_commit_safety_ms
+        ):
+            raise ValueError("lease duration must exceed the commit safety margin")
+        for name in ("checkpoint", "wait", "result", "error"):
+            if (payload := getattr(command, name, None)) is not None:
+                _check_size(name, payload, self.config.max_payload_bytes)
+        for event in getattr(command, "progress_events", ()):
+            _check_size("progress event", event, self.config.max_progress_event_bytes)
         plan = decide(current, command)
         self._apply(current, plan)
-        if not isinstance(command, Heartbeat) and _has_effect(current, plan):
+        if not isinstance(command, Heartbeat) and (
+            plan.next_control != current
+            or plan.payload_writes
+            or plan.payload_deletes
+            or plan.progress_events
+            or plan.lease_index_update
+        ):
             log.bind(
                 run_id=run_id,
                 command=type(command).__name__,
@@ -230,7 +247,12 @@ class MemoryExecutionStore:
         try:
             return await self.transition(run_id, command)
         except (ExecutionNotFoundError, InvalidExecutionTransitionError):
-            self._repair_runnable(run_id)
+            self._runnable.pop(run_id, None)
+            control = self._controls.get(run_id)
+            if control is not None and control.status is ExecutionStatus.QUEUED:
+                self._runnable[run_id] = (
+                    control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
+                )
             return None
 
     async def maintain(self, *, max_run_attempts: int, worker_revision: str) -> int:
@@ -318,14 +340,6 @@ class MemoryExecutionStore:
                 binding,
             )
 
-    def _repair_runnable(self, run_id: str) -> None:
-        self._runnable.pop(run_id, None)
-        control = self._controls.get(run_id)
-        if control is not None and control.status is ExecutionStatus.QUEUED:
-            self._runnable[run_id] = (
-                control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
-            )
-
     def _cleanup_terminal(self, now_ms: int) -> None:
         for run_id, (expires_at, digest, binding) in tuple(self._terminal_cleanup.items()):
             if expires_at > now_ms:
@@ -350,37 +364,6 @@ def parse_chunk_cursor(value: str) -> tuple[int, int]:
     return cursor
 
 
-def _wall_clock_ms() -> int:
-    return time.time_ns() // 1_000_000
-
-
-def _bind_command(command: ExecutionCommand, now_ms: int, lease_commit_safety_ms: int) -> ExecutionCommand:
-    changes = {"now_ms": now_ms}
-    if isinstance(command, _LEASE_COMMANDS):
-        changes["lease_commit_safety_ms"] = lease_commit_safety_ms
-    return replace(command, **changes)
-
-
-def _validate_command(command: ExecutionCommand, config: StoreConfig) -> None:
-    if isinstance(command, (Heartbeat, Checkpoint)) and command.lease_duration_ms <= config.lease_commit_safety_ms:
-        raise ValueError("lease duration must exceed the commit safety margin")
-    for name in ("checkpoint", "wait", "result", "error"):
-        if (payload := getattr(command, name, None)) is not None:
-            _check_size(name, payload, config.max_payload_bytes)
-    for event in getattr(command, "progress_events", ()):
-        _check_size("progress event", event, config.max_progress_event_bytes)
-
-
 def _check_size(label: str, payload: bytes, limit: int) -> None:
     if len(payload) > limit:
         raise ExecutionPayloadSizeError(f"{label} exceeds its configured byte limit")
-
-
-def _has_effect(current: ExecutionControl, plan: TransitionPlan) -> bool:
-    return bool(
-        plan.next_control != current
-        or plan.payload_writes
-        or plan.payload_deletes
-        or plan.progress_events
-        or plan.lease_index_update
-    )

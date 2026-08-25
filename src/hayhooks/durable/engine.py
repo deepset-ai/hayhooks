@@ -18,12 +18,6 @@ MAX_CANCELLATION_REASON_LENGTH = 2_000
 _RUN_ID_RE = re.compile(f"{RUN_ID_PATTERN}\\Z")
 
 
-def validate_run_id(run_id: str) -> None:
-    """Reject execution IDs that cannot be embedded safely in backend keys."""
-    if not _RUN_ID_RE.fullmatch(run_id):
-        raise ValueError("run_id has an invalid key-safe format")
-
-
 def normalize_cancellation_reason(reason: str | None) -> str | None:
     """Bound cancellation text by both characters and persisted UTF-8 bytes."""
     if not reason:
@@ -109,13 +103,16 @@ class ExecutionControl:
             "kind",
         ):
             value = getattr(self, name)
-            if not value or len(value.encode()) > MAX_CONTROL_SCALAR_BYTES:
-                raise ValueError(f"{name} must be non-empty and at most {MAX_CONTROL_SCALAR_BYTES} bytes")
+            if (
+                not value
+                or len(value.encode()) > MAX_CONTROL_SCALAR_BYTES
+                or (name == "run_id" and not _RUN_ID_RE.fullmatch(value))
+            ):
+                raise ValueError(f"{name} must be non-empty, valid, and at most {MAX_CONTROL_SCALAR_BYTES} bytes")
         for name in ("owner_id", "lease_owner", "cancel_reason"):
             value = getattr(self, name)
             if value is not None and len(value.encode()) > MAX_CONTROL_SCALAR_BYTES:
                 raise ValueError(f"{name} must be at most {MAX_CONTROL_SCALAR_BYTES} bytes")
-        validate_run_id(self.run_id)
         for name in (
             "version",
             "fence",
@@ -217,6 +214,7 @@ class ScheduleRetry:
     delay_ms: int
     max_application_retries: int
     error: bytes = b""
+    progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
 
 
@@ -360,13 +358,23 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
     if isinstance(command, (Complete, Fail)):
         _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         completed = isinstance(command, Complete)
-        return _terminal_or_canceled(
+        progress_events = _progress_events(control.progress_sequence, command.progress_events)
+        if control.cancel_requested_at_ms is not None:
+            return _terminal(
+                control,
+                command.now_ms,
+                ExecutionStatus.CANCELED,
+                None,
+                None,
+                progress_events=progress_events,
+            )
+        return _terminal(
             control,
             command.now_ms,
             ExecutionStatus.COMPLETED if completed else ExecutionStatus.FAILED,
             PayloadKind.RESULT if completed else PayloadKind.ERROR,
             command.result if isinstance(command, Complete) else command.error,
-            command.progress_events,
+            progress_events=progress_events,
         )
     if isinstance(command, RecoverExpiredLease):
         return _recover(control, command)
@@ -446,8 +454,16 @@ def _cancel(control: ExecutionControl, command: RequestCancellation) -> Transiti
 
 def _retry(control: ExecutionControl, command: ScheduleRetry) -> TransitionPlan:
     _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+    progress_events = _progress_events(control.progress_sequence, command.progress_events)
     if control.cancel_requested_at_ms is not None:
-        return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
+        return _terminal(
+            control,
+            command.now_ms,
+            ExecutionStatus.CANCELED,
+            None,
+            None,
+            progress_events=progress_events,
+        )
     if control.application_retry_count >= command.max_application_retries:
         return _terminal(
             control,
@@ -455,6 +471,7 @@ def _retry(control: ExecutionControl, command: ScheduleRetry) -> TransitionPlan:
             ExecutionStatus.FAILED,
             PayloadKind.ERROR,
             command.error or b"application retries exhausted",
+            progress_events=progress_events,
         )
     due = command.now_ms + max(0, command.delay_ms)
     next_control = _business(
@@ -463,6 +480,7 @@ def _retry(control: ExecutionControl, command: ScheduleRetry) -> TransitionPlan:
         status=ExecutionStatus.QUEUED,
         application_retry_count=control.application_retry_count + 1,
         available_at_ms=due,
+        progress_sequence=control.progress_sequence + len(progress_events),
         lease_owner=None,
         lease_expires_at_ms=None,
     )
@@ -470,6 +488,7 @@ def _retry(control: ExecutionControl, command: ScheduleRetry) -> TransitionPlan:
         next_control,
         payload_writes=((PayloadWrite(PayloadKind.ERROR, command.error),) if command.error else ()),
         payload_deletes=((PayloadKind.ERROR,) if not command.error else ()),
+        progress_events=progress_events,
         lease_index_update=LeaseIndexUpdate(None, control.fence),
     )
 
@@ -541,20 +560,6 @@ def _recover(control: ExecutionControl, command: RecoverExpiredLease) -> Transit
         control, command.now_ms, status=ExecutionStatus.QUEUED, lease_owner=None, lease_expires_at_ms=None
     )
     return TransitionPlan(next_control, lease_index_update=LeaseIndexUpdate(None, control.fence))
-
-
-def _terminal_or_canceled(
-    control: ExecutionControl,
-    now_ms: int,
-    status: ExecutionStatus,
-    payload_kind: PayloadKind,
-    payload: bytes,
-    progress_values: tuple[bytes, ...] = (),
-) -> TransitionPlan:
-    progress_events = _progress_events(control.progress_sequence, progress_values)
-    if control.cancel_requested_at_ms is not None:
-        return _terminal(control, now_ms, ExecutionStatus.CANCELED, None, None, progress_events=progress_events)
-    return _terminal(control, now_ms, status, payload_kind, payload, progress_events=progress_events)
 
 
 def _terminal(

@@ -36,13 +36,17 @@ Implemented:
 - [x] Phase 1 reducer/store audit and backend-neutral shared store contract.
 - [x] Phase 2 immutable payload models, strict JSON codecs, public projection,
   canonical fingerprints, and persisted-error redaction.
+- [x] Phase 3 fenced execution context, heartbeat ownership, buffered progress,
+  cooperative cancellation, retry/suspend control flow, and isolated streaming.
+- [x] Retry transitions commit buffered progress through the reducer.
+- [x] Dead-code audit and removal of incidental single-call store wrappers.
 
 Current focused verification:
 
 - Ruff and formatting pass for the changed package and tests.
 - `ty` passes for `hayhooks.durable` and the lazy root initializer.
-- 42 focused tests pass, including the existing root import compatibility test.
-- The full local non-integration run passes: 656 passed, 39 skipped, and 16
+- 53 focused tests pass, including the existing root import compatibility test.
+- The full local non-integration run passes: 668 passed, 39 skipped, and 16
   integration tests deselected.
 
 ## Non-negotiable architecture
@@ -259,19 +263,19 @@ streaming controls to application code while keeping reducer commands explicit.
 
 Implement in `context.py`:
 
-- [ ] A `ContextVar` holding the active `DurableContext` and a scope context
+- [x] A `ContextVar` holding the active `DurableContext` and a scope context
   manager that always resets its token.
-- [ ] `current_durable_context()` and a stateless synchronous
+- [x] `current_durable_context()` and a stateless synchronous
   `durable_streaming_callback(payload)` for Pipeline components.
-- [ ] `DurableContext` properties for execution ID, run attempt, owner ID,
+- [x] `DurableContext` properties for execution ID, run attempt, owner ID,
   application state, and resume input.
-- [ ] `checkpoint()`, `report_progress()`, `check_cancelled()`, `retry()`,
+- [x] `checkpoint()`, `report_progress()`, `check_cancelled()`, `retry()`,
   `suspend()`, and `stream_chunk()` async methods.
-- [ ] Sync counterparts only for code that the runtime deliberately executes in
+- [x] Sync counterparts only for code that the runtime deliberately executes in
   a worker thread.
-- [ ] A private claimed-execution handle containing store, run ID, fence, worker
+- [x] A private claimed-execution handle containing store, run ID, fence, worker
   ID, lease duration, decoded checkpoint, and a lease-lost event.
-- [ ] A heartbeat task that renews at a safe cadence and marks the claim lost on
+- [x] A heartbeat task that renews at a safe cadence and marks the claim lost on
   definitive lease rejection.
 
 Behavioral rules:
@@ -295,15 +299,15 @@ Behavioral rules:
 
 Tests:
 
-- [ ] Checkpoint and progress share one transition.
-- [ ] Concurrent cancellation cannot erase checkpoint progress.
-- [ ] Stale or lost claims reject every owned context operation.
-- [ ] Suspend persists checkpoint, application state, wait data, and progress
+- [x] Checkpoint and progress share one transition.
+- [x] Concurrent cancellation cannot erase checkpoint progress.
+- [x] Stale or lost claims reject every owned context operation.
+- [x] Suspend persists checkpoint, application state, wait data, and progress
   atomically.
-- [ ] Resume input survives process-style reconstruction and is consumed once
+- [x] Resume input survives process-style reconstruction and is consumed once
   per attempt.
-- [ ] Sync bridge works from a thread and refuses the runtime loop.
-- [ ] Concurrent contexts keep callbacks and chunks isolated.
+- [x] Sync bridge works from a thread and refuses the runtime loop.
+- [x] Concurrent contexts keep callbacks and chunks isolated.
 
 Acceptance:
 

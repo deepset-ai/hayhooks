@@ -233,7 +233,8 @@ def _canonical_json(value: object, *, max_bytes: int) -> JsonValue:
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise ValueError("JSON object keys must be strings")
-        return {key: _canonical_json(item, max_bytes=max_bytes) for key, item in value.items()}
+        mapping = cast(Mapping[str, object], value)
+        return {key: _canonical_json(item, max_bytes=max_bytes) for key, item in mapping.items()}
     if isinstance(value, list | tuple):
         return [_canonical_json(item, max_bytes=max_bytes) for item in value]
     if isinstance(value, set | frozenset):
