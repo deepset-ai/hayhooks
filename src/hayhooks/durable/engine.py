@@ -18,6 +18,12 @@ MAX_CANCELLATION_REASON_LENGTH = 2_000
 _RUN_ID_RE = re.compile(f"{RUN_ID_PATTERN}\\Z")
 
 
+def validate_run_id(run_id: str) -> None:
+    """Reject execution IDs that cannot be embedded safely in store keys."""
+    if not isinstance(run_id, str) or not _RUN_ID_RE.fullmatch(run_id):
+        raise ValueError(f"run_id must match {RUN_ID_PATTERN}")
+
+
 def normalize_cancellation_reason(reason: str | None) -> str | None:
     """Bound cancellation text by both characters and persisted UTF-8 bytes."""
     if not reason:
@@ -94,8 +100,8 @@ class ExecutionControl:
     updated_at_ms: int = 0
 
     def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
         for name in (
-            "run_id",
             "idempotency_digest",
             "idempotency_binding_digest",
             "deployment",
@@ -103,11 +109,7 @@ class ExecutionControl:
             "kind",
         ):
             value = getattr(self, name)
-            if (
-                not value
-                or len(value.encode()) > MAX_CONTROL_SCALAR_BYTES
-                or (name == "run_id" and not _RUN_ID_RE.fullmatch(value))
-            ):
+            if not value or len(value.encode()) > MAX_CONTROL_SCALAR_BYTES:
                 raise ValueError(f"{name} must be non-empty, valid, and at most {MAX_CONTROL_SCALAR_BYTES} bytes")
         for name in ("owner_id", "lease_owner", "cancel_reason"):
             value = getattr(self, name)

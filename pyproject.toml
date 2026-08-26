@@ -132,6 +132,7 @@ extra-dependencies = [
   "pytest-asyncio",
   "pytest-cov",
   "pytest-mock",
+  "redis>=5,<9",
   "ty",
 ]
 

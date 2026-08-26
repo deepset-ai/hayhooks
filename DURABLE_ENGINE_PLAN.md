@@ -46,16 +46,19 @@ Implemented:
 - [x] Cancellation-winning suspension retains its buffered progress.
 - [x] Phase 5 Haystack 3.1 Pipeline/Agent adapter, optional dependencies, and
   minimum/latest v3 CI coverage.
+- [x] Phase 6 Redis 6.2+ store using the same direct protocol and reducer.
 
 Current focused verification:
 
 - Ruff and formatting pass for the changed package and tests.
 - `ty` passes for `hayhooks.durable` and the lazy root initializer.
-- 93 focused durable tests pass against Haystack 3.1.0; the Haystack 2
-  compatibility environment passes 77 and skips the 17 v3-only cases.
+- 105 focused durable tests pass against Haystack 3.1.0; the Haystack 2
+  compatibility environment passes 89 and skips the 17 v3-only cases.
+- 9 real-Redis integration tests pass, including optimistic races, retention,
+  and process-kill Pipeline checkpoint recovery.
 - The full local non-integration `tests/` run passes in both environments:
-  692 passed and 56 skipped on Haystack 2; 741 passed, 4 skipped, and 3 expected
-  failures on Haystack 3.1.0. Both deselect 16 integration tests.
+  704 passed and 56 skipped on Haystack 2; 753 passed, 4 skipped, and 3 expected
+  failures on Haystack 3.1.0. Both deselect 25 integration tests.
 
 ## Non-negotiable architecture
 
@@ -479,27 +482,27 @@ Goal: add cross-process durability without changing runtime or reducer APIs.
 
 Implement in `redis.py`:
 
-- [ ] Strict deployment/key-prefix validation and a cluster-safe hash-tagged
+- [x] Strict deployment/key-prefix validation and a cluster-safe hash-tagged
   namespace.
-- [ ] Explicit control-hash codec covering every `ExecutionControl` field and
+- [x] Explicit control-hash codec covering every `ExecutionControl` field and
   rejecting missing, unknown-invalid, negative, oversized, or contradictory
   values as corruption.
-- [ ] Redis `TIME` binding for submissions and transitions.
-- [ ] Atomic submission covering idempotency binding, duplicate run ID,
+- [x] Redis `TIME` binding for submissions and transitions.
+- [x] Atomic submission covering idempotency binding, duplicate run ID,
   admission capacity, control, input payload, and runnable index.
-- [ ] Atomic reducer transition using `WATCH`/`MULTI` with bounded contention
+- [x] Atomic reducer transition using `WATCH`/`MULTI` with bounded contention
   retries. Re-read authoritative control and rerun `decide()` after every watch
   conflict.
-- [ ] Atomic updates for control, payload writes/deletes, progress, runnable
+- [x] Atomic updates for control, payload writes/deletes, progress, runnable
   index, lease-expiry index, nonterminal count, idempotency, and terminal TTL.
-- [ ] Non-destructive due-candidate reads; the fenced claim transition chooses
+- [x] Non-destructive due-candidate reads; the fenced claim transition chooses
   the winner across workers and processes.
-- [ ] Bounded maintenance reads of expired lease members and reducer-driven
+- [x] Bounded maintenance reads of expired lease members and reducer-driven
   repair/recovery.
-- [ ] Bounded Redis Stream chunks with attempt metadata, resume cursor, page-size
+- [x] Bounded Redis Stream chunks with attempt metadata, resume cursor, page-size
   bound, and rolling TTL.
-- [ ] Error normalization so redis-py failures appear as `ExecutionStoreError`.
-- [ ] Explicit client ownership: the store accepts a binary Redis client and
+- [x] Error normalization so redis-py failures appear as `ExecutionStoreError`.
+- [x] Explicit client ownership: the store accepts a binary Redis client and
   never closes a caller-owned client. Reject `decode_responses=True`.
 
 Redis layout per deployment:
@@ -520,20 +523,20 @@ use them.
 
 Tests:
 
-- [ ] Run the Phase 1 shared store contract unchanged against Redis.
-- [ ] Control codec round trip and corruption matrix.
-- [ ] Concurrent submissions with the same idempotency key create one run.
-- [ ] Same run ID with different idempotency material cannot overwrite data.
-- [ ] Concurrent claims return exactly one fenced owner.
-- [ ] Concurrent checkpoints preserve every progress event exactly once.
-- [ ] Cancel/checkpoint and resume/checkpoint races preserve the winner's data.
-- [ ] Stale lease-index entries repair only themselves.
-- [ ] Heartbeat writes only lease fields and the index.
-- [ ] Chunk append uses only bounded stream append and TTL operations; failure is
+- [x] Run the Phase 1 shared store contract unchanged against Redis.
+- [x] Control codec round trip and corruption matrix.
+- [x] Concurrent submissions with the same idempotency key create one run.
+- [x] Same run ID with different idempotency material cannot overwrite data.
+- [x] Concurrent claims return exactly one fenced owner.
+- [x] Concurrent checkpoints preserve every progress event exactly once.
+- [x] Cancel/checkpoint and resume/checkpoint races preserve the winner's data.
+- [x] Stale lease-index entries repair only themselves.
+- [x] Heartbeat writes only lease fields and the index.
+- [x] Chunk append uses only bounded stream append and TTL operations; failure is
   non-fatal to the execution.
-- [ ] Terminal TTL removes control, payloads, progress, chunks, and idempotency
+- [x] Terminal TTL removes control, payloads, progress, chunks, and idempotency
   while keeping capacity correct.
-- [ ] A real process-kill/restart test recovers and completes one Pipeline run.
+- [x] A real process-kill/restart test recovers and completes one Pipeline run.
 
 Acceptance:
 
@@ -769,10 +772,10 @@ CI and packaging:
   package and no accidental files.
 - [ ] Install the built wheel into a clean environment and verify portable
   imports before importing Hayhooks server code.
-- [ ] Keep the existing Haystack 2 test job for non-durable compatibility.
-- [ ] Add Haystack 3.1+ unit/type jobs with the durable extra.
-- [ ] Add Redis 6.2 service-backed store and integration tests.
-- [ ] Keep process-kill recovery as a bounded smoke test on one representative
+- [x] Keep the existing Haystack 2 test job for non-durable compatibility.
+- [x] Add Haystack 3.1+ unit/type jobs with the durable extra.
+- [x] Add Redis 6.2 service-backed store and integration tests.
+- [x] Keep process-kill recovery as a bounded smoke test on one representative
   Python version.
 - [ ] Run Ruff, format check, `ty`, unit tests, Redis integration tests, process
   recovery, example tests, and strict docs.

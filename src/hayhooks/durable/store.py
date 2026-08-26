@@ -47,6 +47,14 @@ class ExecutionStoreError(RuntimeError):
     """A durable store operation failed."""
 
 
+class ExecutionStoreCorruptionError(ExecutionStoreError):
+    """Persisted state cannot be decoded without violating durable invariants."""
+
+
+class ExecutionContentionError(ExecutionStoreError):
+    """A bounded optimistic transaction could not obtain a stable snapshot."""
+
+
 class ExecutionAdmissionError(RuntimeError):
     """The configured nonterminal execution limit has been reached."""
 
@@ -172,7 +180,7 @@ class MemoryExecutionStore:
     async def submit(self, control: ExecutionControl, input_payload: bytes) -> SubmissionResult:
         if control.deployment != self.deployment:
             raise ValueError("control deployment does not match this store")
-        _check_size("input", input_payload, self.config.max_payload_bytes)
+        validate_payload_size("input", input_payload, self.config.max_payload_bytes)
         self._cleanup_terminal(self._clock())
         binding = (control.run_id, control.idempotency_binding_digest)
         if existing := self._idempotency.get(control.idempotency_digest):
@@ -210,19 +218,9 @@ class MemoryExecutionStore:
         current = self._controls.get(run_id)
         if current is None:
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
-        changes = {"now_ms": self._clock()}
-        if isinstance(command, _LEASE_COMMANDS):
-            changes["lease_commit_safety_ms"] = self.config.lease_commit_safety_ms
-        command = replace(command, **changes)
-        if isinstance(command, (Heartbeat, Checkpoint)) and (
-            command.lease_duration_ms <= self.config.lease_commit_safety_ms
-        ):
-            raise ValueError("lease duration must exceed the commit safety margin")
+        command = bind_store_command(command, self._clock(), self.config)
         plan = decide(current, command)
-        for write in plan.payload_writes:
-            _check_size(write.kind.value, write.data, self.config.max_payload_bytes)
-        for event in plan.progress_events:
-            _check_size("progress event", event.data, self.config.max_progress_event_bytes)
+        validate_transition_plan(plan, self.config)
         self._apply(current, plan)
         if not isinstance(command, Heartbeat) and (
             plan.next_control != current
@@ -300,7 +298,7 @@ class MemoryExecutionStore:
             return
         if attempt < 0:
             raise ValueError("stream chunk attempt cannot be negative")
-        _check_size("stream chunk", data, self.config.max_stream_chunk_bytes)
+        validate_payload_size("stream chunk", data, self.config.max_stream_chunk_bytes)
         self._chunk_sequence += 1
         chunks = self._chunks.setdefault(run_id, deque(maxlen=self.config.max_stream_chunks))
         chunks.append(StreamChunk(f"0-{self._chunk_sequence}", attempt, data))
@@ -337,9 +335,7 @@ class MemoryExecutionStore:
 
         self._runnable.pop(control.run_id, None)
         if control.status is ExecutionStatus.QUEUED:
-            self._runnable[control.run_id] = (
-                control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
-            )
+            self._runnable[control.run_id] = runnable_score(control)
 
         if lease := plan.lease_index_update:
             member = (control.run_id, lease.fence)
@@ -385,6 +381,30 @@ def parse_chunk_cursor(value: str) -> tuple[int, int]:
     return cursor
 
 
-def _check_size(label: str, payload: bytes, limit: int) -> None:
+def runnable_score(control: ExecutionControl) -> int:
+    """Return the due-time score shared by every runnable index."""
+    return control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
+
+
+def bind_store_command(command: ExecutionCommand, now_ms: int, config: StoreConfig) -> ExecutionCommand:
+    """Bind a store clock and lease policy before reduction."""
+    changes = {"now_ms": now_ms}
+    if isinstance(command, _LEASE_COMMANDS):
+        changes["lease_commit_safety_ms"] = config.lease_commit_safety_ms
+    bound = replace(command, **changes)
+    if isinstance(bound, (Claim, Heartbeat, Checkpoint)) and (bound.lease_duration_ms <= config.lease_commit_safety_ms):
+        raise ValueError("lease duration must exceed the commit safety margin")
+    return bound
+
+
+def validate_transition_plan(plan: TransitionPlan, config: StoreConfig) -> None:
+    """Enforce shared byte limits on effects that the reducer chose to persist."""
+    for write in plan.payload_writes:
+        validate_payload_size(write.kind.value, write.data, config.max_payload_bytes)
+    for event in plan.progress_events:
+        validate_payload_size("progress event", event.data, config.max_progress_event_bytes)
+
+
+def validate_payload_size(label: str, payload: bytes, limit: int) -> None:
     if len(payload) > limit:
         raise ExecutionPayloadSizeError(f"{label} exceeds its configured byte limit")

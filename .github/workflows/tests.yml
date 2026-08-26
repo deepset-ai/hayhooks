@@ -75,6 +75,38 @@ jobs:
       - name: Ty - check types (Haystack v3)
         run: hatch run test:types
 
+  tests-redis:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:6.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      HAYHOOKS_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Hatch
+        run: pip install hatch==${{ env.HATCH_VERSION }}
+
+      - name: Install Haystack 3.1 into the test env
+        run: |
+          hatch env create test
+          hatch -e test env run -- uv pip install --upgrade "haystack-ai>=3.1,<4"
+
+      - name: Run Redis integration tests
+        run: hatch run test:integration tests/test_it_durable_redis.py tests/test_it_durable_redis_process.py
+
   linting:
     runs-on: ubuntu-slim
     steps:
