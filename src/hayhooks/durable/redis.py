@@ -39,7 +39,6 @@ from hayhooks.durable.engine import (
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     MAINTENANCE_BATCH_SIZE,
-    MAX_CHUNK_READ_BYTES,
     ChunkCursorExpiredError,
     ExecutionAdmissionError,
     ExecutionContentionError,
@@ -51,6 +50,7 @@ from hayhooks.durable.store import (
     StreamChunk,
     SubmissionResult,
     bind_store_command,
+    chunk_read_count,
     parse_chunk_cursor,
     runnable_score,
     validate_payload_size,
@@ -451,7 +451,7 @@ class RedisExecutionStore:
     async def read_chunks(self, run_id: str, after: str) -> tuple[StreamChunk, ...]:
         validate_run_id(run_id)
         parse_chunk_cursor(after)
-        count = max(1, MAX_CHUNK_READ_BYTES // self.config.max_stream_chunk_bytes)
+        count = chunk_read_count(self.config)
         with _redis_errors():
             if after == CHUNK_CURSOR_START:
                 entries = await self.redis.xrange(self.keys.chunks(run_id), min="-", max="+", count=count)

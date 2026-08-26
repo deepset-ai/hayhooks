@@ -188,4 +188,4 @@ async def test_retry_request_carries_buffered_progress(context_factory) -> None:
     await context.report_progress("retrying")
     with pytest.raises(_RetryRequestedError) as raised:
         await context.retry("later", delay=1.5)
-    assert (raised.value.message, raised.value.delay, len(raised.value.progress_events)) == ("later", 1.5, 1)
+    assert (str(raised.value), raised.value.delay, len(raised.value.progress_events)) == ("later", 1.5, 1)

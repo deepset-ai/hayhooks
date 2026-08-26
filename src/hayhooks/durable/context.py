@@ -38,7 +38,6 @@ class DurableExecutionCancelledError(RuntimeError):
 class _RetryRequestedError(Exception):
     def __init__(self, message: str, delay: float, progress_events: tuple[bytes, ...]) -> None:
         super().__init__(message)
-        self.message = message
         self.delay = delay
         self.progress_events = progress_events
 

@@ -47,17 +47,18 @@ Implemented:
 - [x] Phase 5 Haystack 3.1 Pipeline/Agent adapter, optional dependencies, and
   minimum/latest v3 CI coverage.
 - [x] Phase 6 Redis 6.2+ store using the same direct protocol and reducer.
+- [x] Phase 7 portable typed FastAPI REST/SSE adapter.
 
 Current focused verification:
 
 - Ruff and formatting pass for the changed package and tests.
 - `ty` passes for `hayhooks.durable` and the lazy root initializer.
-- 105 focused durable tests pass against Haystack 3.1.0; the Haystack 2
-  compatibility environment passes 89 and skips the 17 v3-only cases.
+- 120 focused durable tests pass against Haystack 3.1.0; the Haystack 2
+  compatibility environment passes 104 and skips the 17 v3-only cases.
 - 9 real-Redis integration tests pass, including optimistic races, retention,
   and process-kill Pipeline checkpoint recovery.
 - The full local non-integration `tests/` run passes in both environments:
-  704 passed and 56 skipped on Haystack 2; 753 passed, 4 skipped, and 3 expected
+  719 passed and 56 skipped on Haystack 2; 768 passed, 4 skipped, and 3 expected
   failures on Haystack 3.1.0. Both deselect 25 integration tests.
 
 ## Non-negotiable architecture
@@ -564,45 +565,47 @@ to a host-selected prefix:
 
 HTTP contract:
 
-- [ ] The submit body uses the deployment's Pydantic request model and the
+- [x] The submit body uses the deployment's Pydantic request model and the
   response uses its typed result model.
-- [ ] `Idempotency-Key` controls idempotency but never becomes the execution ID.
-- [ ] Created/nonterminal submissions return 202; terminal idempotent replays may
+- [x] `Idempotency-Key` controls owner-scoped idempotency but never becomes the
+  execution ID. Unscoped bearer-ID mode rejects caller idempotency keys because
+  they would become alternate lookup credentials.
+- [x] Created/nonterminal submissions return 202; terminal idempotent replays may
   return 200 and set an explicit replay header.
-- [ ] Set `Location` and links using FastAPI route names, so host prefixes and
+- [x] Set `Location` and links using FastAPI route names, so host prefixes and
   root paths remain correct.
-- [ ] 404 hides both missing executions and owner mismatches.
-- [ ] 409 represents idempotency, revision, and non-waiting resume conflicts.
-- [ ] 422 represents request/resume/cursor/payload validation.
-- [ ] 503 represents admission and store unavailability, with `Retry-After` for
+- [x] 404 hides both missing executions and owner mismatches.
+- [x] 409 represents idempotency, revision, and non-waiting resume conflicts.
+- [x] 422 represents request/resume/cursor/payload validation.
+- [x] 503 represents admission and store unavailability, with `Retry-After` for
   admission.
-- [ ] The owner dependency is supplied by the host. Passing `None` explicitly
+- [x] The owner dependency is supplied by the host. Passing `None` explicitly
   enables bearer-by-unguessable-ID mode. Invalid configured owner values fail
   closed.
-- [ ] Bound owner and idempotency header sizes before hashing or persistence.
+- [x] Bound owner and idempotency header sizes before hashing or persistence.
 
 SSE contract:
 
-- [ ] Validate `Last-Event-ID` and ownership before response headers are sent.
-- [ ] Emit heartbeat comments while idle.
-- [ ] Emit `chunk` with cursor ID, attempt, and JSON payload.
-- [ ] Ignore chunks older than the authoritative/current visible attempt.
-- [ ] Emit `gap` and replay the retained tail when the requested cursor expired.
-- [ ] Drain every retained chunk page before emitting the terminal event.
-- [ ] Emit terminal event names matching `completed`, `failed`, or `canceled`.
-- [ ] If failure occurs after headers, emit `error` and let clients reattach.
-- [ ] Keep a waiting execution's stream alive; client disconnect never cancels
+- [x] Validate `Last-Event-ID` and ownership before response headers are sent.
+- [x] Emit heartbeat comments while idle.
+- [x] Emit `chunk` with cursor ID, attempt, and JSON payload.
+- [x] Ignore chunks older than the authoritative/current visible attempt.
+- [x] Emit `gap` and replay the retained tail when the requested cursor expired.
+- [x] Drain every retained chunk page before emitting the terminal event.
+- [x] Emit terminal event names matching `completed`, `failed`, or `canceled`.
+- [x] If failure occurs after headers, emit `error` and let clients reattach.
+- [x] Keep a waiting execution's stream alive; client disconnect never cancels
   the execution.
-- [ ] Poll without pinning a Redis connection for the life of the SSE client.
+- [x] Poll without pinning a Redis connection for the life of the SSE client.
 
 Tests:
 
-- [ ] Typed schema and every route under a non-empty prefix/root path.
-- [ ] Owner isolation for inspect, cancel, resume, stream, and idempotency.
-- [ ] Unscoped bearer-ID mode.
-- [ ] Reconnect from `Last-Event-ID`, expired cursor gap, stale attempt filtering,
+- [x] Typed schema and every route under a non-empty prefix/root path.
+- [x] Owner isolation for inspect, cancel, resume, stream, and idempotency.
+- [x] Unscoped bearer-ID mode and rejection of alternate idempotency credentials.
+- [x] Reconnect from `Last-Event-ID`, expired cursor gap, stale attempt filtering,
   zero chunk limit, terminal backlog drain, and midstream error framing.
-- [ ] Failed/oversized chunk append never fails or retries the execution.
+- [x] Failed/oversized chunk append never fails or retries the execution.
 
 Acceptance:
 

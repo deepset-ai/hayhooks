@@ -308,8 +308,9 @@ class MemoryExecutionStore:
         chunks = tuple(self._chunks.get(run_id, ()))
         if after != CHUNK_CURSOR_START and not any(chunk.cursor == after for chunk in chunks):
             raise ChunkCursorExpiredError(after)
-        count = max(1, MAX_CHUNK_READ_BYTES // self.config.max_stream_chunk_bytes)
-        return tuple(chunk for chunk in chunks if int(chunk.cursor.partition("-")[2]) > sequence)[:count]
+        return tuple(chunk for chunk in chunks if int(chunk.cursor.partition("-")[2]) > sequence)[
+            : chunk_read_count(self.config)
+        ]
 
     async def operational_counts(self) -> dict[str, int]:
         self._cleanup_terminal(self._clock())
@@ -379,6 +380,11 @@ def parse_chunk_cursor(value: str) -> tuple[int, int]:
     if max(cursor) > _MAX_CURSOR_PART:
         raise ValueError("chunk cursor parts must be 64-bit unsigned integers")
     return cursor
+
+
+def chunk_read_count(config: StoreConfig) -> int:
+    """Return the shared bounded chunk page size."""
+    return max(1, MAX_CHUNK_READ_BYTES // config.max_stream_chunk_bytes)
 
 
 def runnable_score(control: ExecutionControl) -> int:

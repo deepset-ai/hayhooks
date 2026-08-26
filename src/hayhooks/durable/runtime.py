@@ -51,7 +51,13 @@ from hayhooks.durable.models import (
     encode_json,
     operation_fingerprint,
 )
-from hayhooks.durable.store import ExecutionStore, ExecutionStoreError, StoredExecution, SubmissionResult
+from hayhooks.durable.store import (
+    ExecutionStore,
+    ExecutionStoreCorruptionError,
+    ExecutionStoreError,
+    StoredExecution,
+    SubmissionResult,
+)
 
 DurableRunner: TypeAlias = Callable[[DurableContext, BaseModel], object]
 
@@ -326,14 +332,19 @@ class DurableDeployment:
     ) -> TransitionPlan:
         """Validate resume input and atomically requeue a waiting execution."""
         stored = await self.get(run_id, owner_id=owner_id, enforce_owner=enforce_owner)
-        checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
-        if checkpoint_payload is None:
-            raise ValueError("waiting execution has no checkpoint")
-        checkpoint = CheckpointEnvelope.model_validate(
-            decode_json(checkpoint_payload, max_bytes=self.store.config.max_payload_bytes)
-        )
-        if checkpoint.adapter_kind is not self.kind:
-            raise ValueError("checkpoint kind does not match the deployment")
+        if stored.control.status is not ExecutionStatus.WAITING:
+            raise InvalidExecutionTransitionError("only waiting executions can resume")
+        try:
+            checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
+            if checkpoint_payload is None:
+                raise ValueError("waiting execution has no checkpoint")
+            checkpoint = CheckpointEnvelope.model_validate(
+                decode_json(checkpoint_payload, max_bytes=self.store.config.max_payload_bytes)
+            )
+            if checkpoint.adapter_kind is not self.kind:
+                raise ValueError("checkpoint kind does not match the deployment")
+        except (ExecutionPayloadSizeError, TypeError, ValueError) as error:
+            raise ExecutionStoreCorruptionError("stored checkpoint payload is invalid") from error
         if self.resume_model is not None:
             resume_input = self.resume_model.model_validate(resume_input).model_dump(mode="json")
         checkpoint = CheckpointEnvelope.model_validate(
