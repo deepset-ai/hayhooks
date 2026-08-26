@@ -142,6 +142,7 @@ class DurableContext:
         self._pending_progress: list[bytes] = []
         self._operation_lock = asyncio.Lock()
         self._chunk_drop_reported = False
+        self._adapter: Any | None = None
 
     @property
     def execution_id(self) -> str:
@@ -272,6 +273,30 @@ class DurableContext:
                 log.bind(run_id=self.execution_id, exception_type=type(error).__name__).debug(
                     "Dropped a durable display chunk"
                 )
+
+    def run_pipeline(self, data: dict[str, Any], *, checkpoint_at: str | None = None) -> dict[str, Any]:
+        """Run this execution's configured Haystack Pipeline."""
+        if self._adapter is None:
+            raise RuntimeError("this durable execution has no Haystack adapter")
+        return self._adapter.run_pipeline(self, data, checkpoint_at=checkpoint_at)
+
+    async def run_pipeline_async(self, data: dict[str, Any], *, checkpoint_at: str | None = None) -> dict[str, Any]:
+        """Asynchronously run this execution's configured Haystack Pipeline."""
+        if self._adapter is None:
+            raise RuntimeError("this durable execution has no Haystack adapter")
+        return await self._adapter.run_pipeline_async(self, data, checkpoint_at=checkpoint_at)
+
+    def run_agent(self, *, messages: list[Any], **kwargs: Any) -> dict[str, Any]:
+        """Run this execution's configured Haystack Agent."""
+        if self._adapter is None:
+            raise RuntimeError("this durable execution has no Haystack adapter")
+        return self._adapter.run_agent(self, messages=messages, **kwargs)
+
+    async def run_agent_async(self, *, messages: list[Any], **kwargs: Any) -> dict[str, Any]:
+        """Asynchronously run this execution's configured Haystack Agent."""
+        if self._adapter is None:
+            raise RuntimeError("this durable execution has no Haystack adapter")
+        return await self._adapter.run_agent_async(self, messages=messages, **kwargs)
 
     def checkpoint_sync(self, adapter_checkpoint: JsonValue = None) -> None:
         self._sync(self.checkpoint(adapter_checkpoint))

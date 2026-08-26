@@ -119,6 +119,7 @@ class DurableDeployment:
         kind: ExecutionKind = ExecutionKind.PIPELINE,
         result_model: type[BaseModel] | None = None,
         resume_model: type[BaseModel] | None = None,
+        adapter: Any | None = None,
         config: RuntimeConfig | None = None,
     ) -> None:
         if not name or store.deployment != name:
@@ -141,6 +142,9 @@ class DurableDeployment:
         self.resume_model = resume_model
         self.runner = runner
         self.kind = ExecutionKind(kind)
+        self.adapter = adapter
+        if adapter is not None and adapter.kind is not self.kind:
+            raise ValueError("Haystack adapter kind does not match the deployment")
         self.config = config or RuntimeConfig()
         heartbeat_interval_ms = max(10, self.config.lease_duration_ms / 3)
         safe_lease_ms = self.config.lease_duration_ms - store.config.lease_commit_safety_ms
@@ -522,6 +526,7 @@ class DurableDeployment:
                 checkpoint,
             )
             context = DurableContext(claim)
+            context._adapter = self.adapter
             try:
                 async with claim:
                     try:
@@ -701,21 +706,54 @@ class DurableRuntime:
         self._started = False
         self._closed = False
 
+    @property
+    def started(self) -> bool:
+        return self._started
+
+    def add(self, deployment: DurableDeployment) -> None:
+        """Register a deployment before this runtime starts."""
+        if self._closed:
+            raise RuntimeError("a closed durable runtime cannot install deployments")
+        if self._started:
+            raise RuntimeError("use install after the durable runtime has started")
+        if deployment.name in self._deployments:
+            raise ValueError(f"durable deployment '{deployment.name}' is already installed")
+        self._deployments[deployment.name] = deployment
+
+    def discard(self, name: str) -> DurableDeployment:
+        """Drop an unstarted deployment that failed host-side publication."""
+        if self._started:
+            raise RuntimeError("use remove after the durable runtime has started")
+        try:
+            return self._deployments.pop(name)
+        except KeyError:
+            raise KeyError(f"durable deployment '{name}' is not installed") from None
+
     async def install(self, deployment: DurableDeployment) -> None:
+        if not self._started:
+            self.add(deployment)
+            return
         if self._closed:
             raise RuntimeError("a closed durable runtime cannot install deployments")
         if deployment.name in self._deployments:
             raise ValueError(f"durable deployment '{deployment.name}' is already installed")
-        if self._started:
-            await deployment.start()
         self._deployments[deployment.name] = deployment
+        try:
+            await deployment.start()
+        except BaseException:
+            del self._deployments[deployment.name]
+            raise
 
-    async def remove(self, name: str) -> DurableDeployment:
+    async def remove(self, name: str, *, close: bool = True) -> DurableDeployment:
+        """Remove a deployment, optionally retaining a quiesced instance for rollback."""
+        if not self._started:
+            return self.discard(name)
         try:
             deployment = self._deployments[name]
         except KeyError:
             raise KeyError(f"durable deployment '{name}' is not installed") from None
-        await deployment.close()
+        if close:
+            await deployment.close()
         del self._deployments[name]
         return deployment
 

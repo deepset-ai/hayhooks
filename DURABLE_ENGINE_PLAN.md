@@ -48,6 +48,8 @@ Implemented:
   minimum/latest v3 CI coverage.
 - [x] Phase 6 Redis 6.2+ store using the same direct protocol and reducer.
 - [x] Phase 7 portable typed FastAPI REST/SSE adapter.
+- [x] Phase 8 initial Hayhooks integration: typed durable wrapper contract,
+  app-owned runtime/store lifecycle, route mounting/removal, and health.
 
 Current focused verification:
 
@@ -620,57 +622,57 @@ route publication only. Execution behavior remains in `hayhooks.durable`.
 
 Wrapper authoring contract:
 
-- [ ] Add `durable_revision` and optional `durable_resume_model` class
+- [x] Add `durable_revision` and optional `durable_resume_model` class
   attributes to `BasePipelineWrapper`.
-- [ ] Add `run_durable(context, request)` and
+- [x] Add `run_durable(context, request)` and
   `run_durable_async(context, request)` authoring methods.
-- [ ] Detect whether the subclass overrides each method and require exactly one.
-- [ ] Resolve annotations and require exactly
+- [x] Detect whether the subclass overrides each method and require exactly one.
+- [x] Resolve annotations and require exactly
   `(context: DurableContext, request: PydanticModel)` plus an optional typed
   return annotation.
-- [ ] Require a non-empty immutable revision and a real Haystack 3.1 Pipeline or
+- [x] Require a non-empty immutable revision and a real Haystack 3.1 Pipeline or
   Agent.
 
 Hayhooks configuration:
 
-- [ ] Add durable environment settings to `AppSettings`, then map them once into
+- [x] Add durable environment settings to `AppSettings`, then map them once into
   `StoreConfig` and `RuntimeConfig`. Do not make portable settings inherit server
   settings or vice versa.
-- [ ] Default production storage to Redis; memory must be an explicit
+- [x] Default production storage to Redis; memory must be an explicit
   development/test choice and must never be an automatic Redis fallback.
-- [ ] Keep Redis connection ownership in the Hayhooks app lifespan: create the
+- [x] Keep Redis connection ownership in the Hayhooks app lifespan: create the
   binary client, create one namespaced store per durable deployment, close the
   runtime first, then the client.
-- [ ] Expose limits for TTL, payload/progress/chunks, nonterminal admission,
+- [x] Expose limits for TTL, payload/progress/chunks, nonterminal admission,
   concurrency, attempts/retries, polling, leases, and shutdown grace. Avoid
   adding knobs not consumed by code.
 
 Application lifecycle:
 
-- [ ] Give each FastAPI app its own `DurableRuntime`; do not introduce a durable
+- [x] Give each FastAPI app its own `DurableRuntime`; do not introduce a durable
   module singleton.
-- [ ] Startup deploys/installs durable deployments before starting worker slots.
-- [ ] App shutdown closes submissions, workers, maintenance, and then owned
+- [x] Startup deploys/installs durable deployments before starting worker slots.
+- [x] App shutdown closes submissions, workers, maintenance, and then owned
   Redis resources.
-- [ ] Empty/non-durable Hayhooks startup does not contact Redis.
-- [ ] Include deployment health and store counts in status responses without
+- [x] Empty/non-durable Hayhooks startup does not contact Redis.
+- [x] Include deployment health and store counts in status responses without
   exposing payloads.
 
 Deployment and route lifecycle:
 
-- [ ] Construct a portable `DurableDeployment` from the validated wrapper,
+- [x] Construct a portable `DurableDeployment` from the validated wrapper,
   explicit store, Haystack adapter, method runner, and models.
-- [ ] Include its portable router under `/{pipeline_name}`.
-- [ ] Track every durable route name/path so overwrite or undeploy removes the
+- [x] Include its portable router under `/{pipeline_name}`.
+- [x] Track every durable route name/path so overwrite or undeploy removes the
   complete route family and invalidates OpenAPI once.
-- [ ] Before overwrite/undeploy: close submission admission, wait for admitted
+- [x] Before overwrite/undeploy: close submission admission, wait for admitted
   submissions, stop new claims, then read authoritative nonterminal count.
-- [ ] Reject replacement/removal with 409 while queued, running, or waiting work
+- [x] Reject replacement/removal with 409 while queued, running, or waiting work
   remains. This is the first clean policy; do not build cross-revision draining
   until a real rollout requirement demands it.
-- [ ] If candidate preparation/publication fails, restart the old deployment and
+- [x] If candidate preparation/publication fails, restart the old deployment and
   leave its wrapper, routes, files, and runtime association intact.
-- [ ] Prepare a candidate store before publishing its routes; never publish a
+- [x] Prepare a candidate store before publishing its routes; never publish a
   deployment whose store failed initialization.
 
 Avoid porting the reference branch's broad registry/app refactor unless a
@@ -682,12 +684,12 @@ Tests:
 
 - [ ] Startup deployment publishes typed durable routes and runs work.
 - [ ] Two app instances do not share durable runtimes or workers.
-- [ ] Overwrite binds routes to the new wrapper, models, runner, and revision.
+- [x] Overwrite binds routes to the new wrapper, models, runner, and revision.
 - [ ] Overwrite/undeploy rejects live queued, running, and waiting work.
-- [ ] Failed preparation/publication restores the old deployment.
+- [x] Failed preparation/publication restores the old deployment.
 - [ ] Durable-to-nondurable overwrite removes all durable routes.
 - [ ] Store initialization failure publishes nothing.
-- [ ] Existing ordinary run, streaming, MCP, and request-bound A2A tests remain
+- [x] Existing ordinary run, streaming, MCP, and request-bound A2A tests remain
   unchanged and passing.
 
 Acceptance:

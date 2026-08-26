@@ -11,7 +11,9 @@ import pytest
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from haystack import Pipeline
+from pydantic import BaseModel
 
+from hayhooks.durable.context import DurableContext
 from hayhooks.server.exceptions import PipelineFilesError, PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
@@ -586,10 +588,50 @@ def test_create_pipeline_wrapper_instance_missing_methods():
     with pytest.raises(
         PipelineWrapperError,
         match=re.escape(
-            "At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, run_response, or run_response_async must be implemented"
+            "At least one of run_api, run_api_async, run_chat_completion, "
+            "run_chat_completion_async, run_response, or run_response_async must be implemented"
         ),
     ):
         create_pipeline_wrapper_instance(module)
+
+
+class DurableRequest(BaseModel):
+    value: int
+
+
+@pytest.mark.parametrize(
+    ("revision", "methods", "error"),
+    [
+        ("v1", ("sync",), None),
+        (None, ("sync",), "durable wrappers require a non-empty durable_revision"),
+        ("v1", ("sync", "async"), "exactly one of run_durable or run_durable_async must be implemented"),
+    ],
+)
+def test_create_pipeline_wrapper_instance_validates_durable_contract(revision, methods, error):
+    def setup(self):
+        self.pipeline = Pipeline()
+
+    def run_durable(self, context: DurableContext, request: DurableRequest) -> dict:
+        del self, context, request
+        return {}
+
+    async def run_durable_async(self, context: DurableContext, request: DurableRequest) -> dict:
+        del self, context, request
+        return {}
+
+    attributes = {"setup": setup, "durable_revision": revision}
+    if "sync" in methods:
+        attributes["run_durable"] = run_durable
+    if "async" in methods:
+        attributes["run_durable_async"] = run_durable_async
+    module = type("Module", (), {"PipelineWrapper": type("DurableWrapper", (BasePipelineWrapper,), attributes)})
+
+    if error is not None:
+        with pytest.raises(PipelineWrapperError, match=error):
+            create_pipeline_wrapper_instance(module)
+    else:
+        wrapper = create_pipeline_wrapper_instance(module)
+        assert wrapper._is_run_durable_implemented
 
 
 def test_register_prepared_pipeline_does_not_call_setup():

@@ -9,7 +9,7 @@ import traceback
 from collections.abc import AsyncGenerator, Callable, Generator
 from functools import wraps
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_type_hints
 
 import docstring_parser
 from fastapi import FastAPI, Form, HTTPException
@@ -18,6 +18,10 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
+from hayhooks.durable.fastapi import create_durable_router
+from hayhooks.durable.haystack import HaystackDurableAdapter
+from hayhooks.durable.runtime import DurableDeployment, DurableRuntime
+from hayhooks.durable.store import MemoryExecutionStore
 from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
 from hayhooks.server.logger import log, log_elapsed
 from hayhooks.server.pipelines.models import (
@@ -563,7 +567,21 @@ def rebuild_openapi(app: FastAPI) -> None:
     app.setup()
 
 
-def _register_prepared_pipeline(
+def _remove_pipeline_routes(app: FastAPI, pipeline_name: str) -> None:
+    if not isinstance(app.routes, list):
+        return
+    for route in tuple(app.routes):
+        prefix = getattr(getattr(route, "include_context", None), "prefix", None)
+        if prefix == f"/{pipeline_name}" or (
+            isinstance(route, APIRoute) and route.path.startswith(f"/{pipeline_name}/")
+        ):
+            app.routes.remove(route)
+    mark_routes_changed = getattr(app.router, "_mark_routes_changed", None)
+    if callable(mark_routes_changed):
+        mark_routes_changed()
+
+
+def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
     pipeline_name: str,
     pipeline_wrapper: BasePipelineWrapper,
     app: FastAPI | None = None,
@@ -629,14 +647,86 @@ def _register_prepared_pipeline(
     if extra_metadata:
         metadata.update(extra_metadata)
 
-    # Add wrapper to registry
-    clog.debug("Adding pipeline to registry with metadata: {}", metadata)
-    registry.add(pipeline_name, pipeline_wrapper, metadata=metadata)
-    clog.success("Pipeline '{}' successfully added to registry", pipeline_name)
+    durable_deployment = None
+    if app and (pipeline_wrapper._is_run_durable_implemented or pipeline_wrapper._is_run_durable_async_implemented):
+        adapter = HaystackDurableAdapter(pipeline_wrapper.pipeline)
+        runner = (
+            pipeline_wrapper.run_durable_async
+            if pipeline_wrapper._is_run_durable_async_implemented
+            else pipeline_wrapper.run_durable
+        )
+        hints = get_type_hints(runner)
+        return_annotation = hints.get("return")
+        result_model = (
+            return_annotation
+            if isinstance(return_annotation, type) and issubclass(return_annotation, BaseModel)
+            else None
+        )
+        if settings.durable_store == "memory":
+            store = MemoryExecutionStore(pipeline_name, config=app.state.durable_store_config)
+        else:
+            from hayhooks.durable.redis import RedisExecutionStore
 
-    # Create API route if app is provided
-    if app:
-        add_pipeline_api_route(app, pipeline_name, pipeline_wrapper, _defer_openapi_rebuild=_defer_openapi_rebuild)
+            if not hasattr(app.state, "durable_redis"):
+                from redis.asyncio import Redis
+
+                app.state.durable_redis = Redis.from_url(settings.durable_redis_url, decode_responses=False)
+            store = RedisExecutionStore(
+                app.state.durable_redis,
+                pipeline_name,
+                config=app.state.durable_store_config,
+                key_prefix=settings.durable_redis_key_prefix,
+            )
+        durable_deployment = DurableDeployment(
+            pipeline_name,
+            pipeline_wrapper.durable_revision or "",
+            store,
+            hints["request"],
+            runner,
+            kind=adapter.kind,
+            result_model=result_model,
+            resume_model=pipeline_wrapper.durable_resume_model,
+            adapter=adapter,
+            config=app.state.durable_runtime_config,
+        )
+        metadata["durable_deployment"] = durable_deployment
+
+    try:
+        if durable_deployment is not None and app is not None:
+            runtime: DurableRuntime = app.state.durable_runtime
+            if runtime.started:
+                future = asyncio.run_coroutine_threadsafe(runtime.install(durable_deployment), app.state.durable_loop)
+                future.result()
+            else:
+                runtime.add(durable_deployment)
+
+        clog.debug("Adding pipeline to registry with metadata: {}", metadata)
+        registry.add(pipeline_name, pipeline_wrapper, metadata=metadata)
+        clog.success("Pipeline '{}' successfully added to registry", pipeline_name)
+
+        if app:
+            add_pipeline_api_route(app, pipeline_name, pipeline_wrapper, _defer_openapi_rebuild=_defer_openapi_rebuild)
+            if durable_deployment is not None:
+                app.include_router(
+                    create_durable_router(durable_deployment, owner_id_dependency=None), prefix=f"/{pipeline_name}"
+                )
+                if not _defer_openapi_rebuild:
+                    rebuild_openapi(app)
+    except BaseException:
+        if app:
+            _remove_pipeline_routes(app, pipeline_name)
+        registry.remove(pipeline_name)
+        if durable_deployment is not None and app is not None:
+            runtime = app.state.durable_runtime
+            try:
+                if runtime.started:
+                    future = asyncio.run_coroutine_threadsafe(runtime.remove(pipeline_name), app.state.durable_loop)
+                    future.result()
+                else:
+                    runtime.discard(pipeline_name)
+            except KeyError:
+                pass
+        raise
 
     return {"name": pipeline_name}
 
@@ -730,13 +820,14 @@ def prepare_pipeline_yaml(
         return PreparedPipeline(name=pipeline_name, wrapper=pipeline_wrapper, extra_metadata=extra_metadata)
 
 
-def commit_prepared_pipeline(
+def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
     prepared: PreparedPipeline,
     app: FastAPI | None = None,
     overwrite: bool = False,
     *,
     _defer_openapi_rebuild: bool = False,
     cleanup_files_on_overwrite: bool = True,
+    source_files: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """
     Commit a prepared pipeline to the registry and (optionally) add its route.
@@ -750,6 +841,7 @@ def commit_prepared_pipeline(
         overwrite: Whether to replace an existing deployed pipeline with the same name.
         _defer_openapi_rebuild: Forwarded to route registration.
         cleanup_files_on_overwrite: If ``True``, remove persisted files when replacing an existing pipeline.
+        source_files: Candidate source to persist atomically with the host-side publication.
     """
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_COMMIT,
@@ -763,23 +855,115 @@ def commit_prepared_pipeline(
             }
         ),
     ):
-        if registry.get(prepared.name) is not None:
+        old_wrapper = registry.get(prepared.name)
+        old_metadata = registry.get_metadata(prepared.name)
+        old_deployment = cast(DurableDeployment | None, (old_metadata or {}).get("durable_deployment"))
+        runtime: DurableRuntime | None = app.state.durable_runtime if app and old_deployment is not None else None
+        old_quiesced = False
+        old_detached = False
+        old_removed = False
+        backup_dir: Path | None = None
+
+        if old_wrapper is not None:
             if not overwrite:
                 msg = f"Pipeline '{prepared.name}' already exists"
                 raise PipelineAlreadyExistsError(msg)
 
-            log.bind(pipeline_name=prepared.name).debug("Clearing existing pipeline '{}'", prepared.name)
-            registry.remove(prepared.name)
-            if cleanup_files_on_overwrite:
-                remove_pipeline_files(prepared.name, settings.pipelines_dir)
+            if old_deployment is not None and runtime is not None and runtime.started:
+                assert app is not None
+                future = asyncio.run_coroutine_threadsafe(old_deployment.quiesce(), app.state.durable_loop)
+                future.result()
+                old_quiesced = True
+                future = asyncio.run_coroutine_threadsafe(
+                    old_deployment.store.operational_counts(), app.state.durable_loop
+                )
+                if future.result()["nonterminal"]:
+                    future = asyncio.run_coroutine_threadsafe(old_deployment.start(), app.state.durable_loop)
+                    future.result()
+                    raise HTTPException(status_code=409, detail="durable executions are still active")
 
-        return _register_prepared_pipeline(
-            pipeline_name=prepared.name,
-            pipeline_wrapper=prepared.wrapper,
-            app=app,
-            extra_metadata=prepared.extra_metadata,
-            _defer_openapi_rebuild=_defer_openapi_rebuild,
-        )
+        try:
+            if source_files is not None:
+                pipelines_dir = Path(settings.pipelines_dir)
+                pipelines_dir.mkdir(parents=True, exist_ok=True)
+                backup_dir = Path(tempfile.mkdtemp(prefix=f".{prepared.name}-", dir=pipelines_dir))
+                for path in (
+                    pipelines_dir / prepared.name,
+                    pipelines_dir / f"{prepared.name}.yml",
+                    pipelines_dir / f"{prepared.name}.yaml",
+                ):
+                    if path.exists():
+                        path.replace(backup_dir / path.name)
+                save_pipeline_files(prepared.name, source_files, settings.pipelines_dir)
+                if "pipeline_wrapper.py" in source_files:
+                    module = load_pipeline_module(prepared.name, dir_path=pipelines_dir / prepared.name)
+                    prepared.wrapper = create_pipeline_wrapper_instance(module)
+
+            if old_wrapper is not None:
+                log.bind(pipeline_name=prepared.name).debug("Clearing existing pipeline '{}'", prepared.name)
+                if old_deployment is not None and runtime is not None:
+                    assert app is not None
+                    if runtime.started:
+                        future = asyncio.run_coroutine_threadsafe(
+                            runtime.remove(prepared.name, close=False), app.state.durable_loop
+                        )
+                        future.result()
+                    else:
+                        runtime.discard(prepared.name)
+                    old_detached = True
+                registry.remove(prepared.name)
+                old_removed = True
+                if app:
+                    _remove_pipeline_routes(app, prepared.name)
+                if cleanup_files_on_overwrite and source_files is None:
+                    remove_pipeline_files(prepared.name, settings.pipelines_dir)
+
+            result = _register_prepared_pipeline(
+                pipeline_name=prepared.name,
+                pipeline_wrapper=prepared.wrapper,
+                app=app,
+                extra_metadata=prepared.extra_metadata,
+                _defer_openapi_rebuild=_defer_openapi_rebuild,
+            )
+        except BaseException:
+            if backup_dir is not None:
+                remove_pipeline_files(prepared.name, settings.pipelines_dir)
+                for path in backup_dir.iterdir():
+                    path.replace(Path(settings.pipelines_dir) / path.name)
+
+            if old_detached and runtime is not None:
+                assert app is not None
+                assert old_deployment is not None
+                if runtime.started:
+                    future = asyncio.run_coroutine_threadsafe(runtime.install(old_deployment), app.state.durable_loop)
+                    future.result()
+                else:
+                    runtime.add(old_deployment)
+            elif old_quiesced and old_deployment is not None and app is not None:
+                future = asyncio.run_coroutine_threadsafe(old_deployment.start(), app.state.durable_loop)
+                future.result()
+
+            if old_removed and old_wrapper is not None:
+                registry.add(prepared.name, old_wrapper, metadata=old_metadata)
+                if app:
+                    add_pipeline_api_route(
+                        app, prepared.name, old_wrapper, _defer_openapi_rebuild=_defer_openapi_rebuild
+                    )
+                    if old_deployment is not None:
+                        app.include_router(
+                            create_durable_router(old_deployment, owner_id_dependency=None), prefix=f"/{prepared.name}"
+                        )
+                        if not _defer_openapi_rebuild:
+                            rebuild_openapi(app)
+            raise
+        finally:
+            if backup_dir is not None:
+                shutil.rmtree(backup_dir, ignore_errors=True)
+
+        if old_detached and old_deployment is not None and app is not None:
+            future = asyncio.run_coroutine_threadsafe(old_deployment.close(), app.state.durable_loop)
+            future.result()
+        return result
 
 
 def deploy_pipeline_files(
@@ -827,17 +1011,14 @@ def deploy_pipeline_files(
             }
         ),
     ):
-        cleanup_files_on_overwrite = overwrite and not save_files
-        if overwrite and save_files:
-            remove_pipeline_files(pipeline_name, settings.pipelines_dir)
-
-        prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=save_files)
+        prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=False)
         return commit_prepared_pipeline(
             prepared,
             app=app,
             overwrite=overwrite,
             _defer_openapi_rebuild=_defer_openapi_rebuild,
-            cleanup_files_on_overwrite=cleanup_files_on_overwrite,
+            cleanup_files_on_overwrite=overwrite and not save_files,
+            source_files=files if save_files else None,
         )
 
 
@@ -889,17 +1070,18 @@ def deploy_pipeline_yaml(
         ),
     ):
         save_file = True if options is None else bool(options.get("save_file", True))
-        cleanup_files_on_overwrite = overwrite and not save_file
-        if overwrite and save_file:
-            remove_pipeline_files(pipeline_name, settings.pipelines_dir)
-
-        prepared = prepare_pipeline_yaml(pipeline_name, source_code=source_code, options=options)
+        prepared = prepare_pipeline_yaml(
+            pipeline_name,
+            source_code=source_code,
+            options={**(options or {}), "save_file": False},
+        )
         return commit_prepared_pipeline(
             prepared,
             app=app,
             overwrite=overwrite,
             _defer_openapi_rebuild=_defer_openapi_rebuild,
-            cleanup_files_on_overwrite=cleanup_files_on_overwrite,
+            cleanup_files_on_overwrite=overwrite and not save_file,
+            source_files={f"{pipeline_name}.yml": source_code} if save_file else None,
         )
 
 
@@ -987,6 +1169,23 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
         if pipeline_name not in registry.get_names():
             raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
 
+        metadata = registry.get_metadata(pipeline_name) or {}
+        if (deployment := metadata.get("durable_deployment")) is not None and app is not None:
+            runtime: DurableRuntime = app.state.durable_runtime
+            if runtime.started:
+                future = asyncio.run_coroutine_threadsafe(deployment.quiesce(), app.state.durable_loop)
+                future.result()
+                future = asyncio.run_coroutine_threadsafe(deployment.store.operational_counts(), app.state.durable_loop)
+                counts = future.result()
+                if counts["nonterminal"]:
+                    future = asyncio.run_coroutine_threadsafe(deployment.start(), app.state.durable_loop)
+                    future.result()
+                    raise HTTPException(status_code=409, detail="durable executions are still active")
+                future = asyncio.run_coroutine_threadsafe(runtime.remove(pipeline_name), app.state.durable_loop)
+                future.result()
+            else:
+                runtime.discard(pipeline_name)
+
         # Remove pipeline from registry
         registry.remove(pipeline_name)
 
@@ -994,17 +1193,8 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
         unload_pipeline_modules(pipeline_name)
 
         if app:
-            # Remove API routes for the pipeline
-            # All pipelines have a run endpoint at /<pipeline_name>/run
-            routes_to_remove = [
-                route for route in app.routes if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run"
-            ]
-            for route in routes_to_remove:
-                app.routes.remove(route)
-
-            # Invalidate OpenAPI cache
-            app.openapi_schema = None
-            app.setup()
+            _remove_pipeline_routes(app, pipeline_name)
+            rebuild_openapi(app)
 
         # Remove pipeline files if they exist
         remove_pipeline_files(pipeline_name, settings.pipelines_dir)

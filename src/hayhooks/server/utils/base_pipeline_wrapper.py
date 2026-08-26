@@ -2,6 +2,10 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
+from pydantic import BaseModel
+
+from hayhooks.durable.context import DurableContext
+
 
 class BasePipelineWrapper(ABC):
     # Class attribute to skip MCP listing of the pipeline
@@ -19,6 +23,10 @@ class BasePipelineWrapper(ABC):
     # (a list of dicts with "id", "name", "description", "tags", "examples")
     a2a_card: dict[str, Any] | None = None
 
+    # Opt in to detached durable execution with an immutable deployment revision.
+    durable_revision: str | None = None
+    durable_resume_model: type[BaseModel] | None = None
+
     def __init__(self):
         self.pipeline = None
         self._is_run_api_implemented = False
@@ -28,6 +36,8 @@ class BasePipelineWrapper(ABC):
         self._is_run_response_implemented = False
         self._is_run_response_async_implemented = False
         self._is_run_file_upload_implemented = False
+        self._is_run_durable_implemented = False
+        self._is_run_durable_async_implemented = False
 
     @abstractmethod
     def setup(self) -> None:
@@ -63,6 +73,18 @@ class BasePipelineWrapper(ABC):
     async def run_api_async(self):
         msg = "run_api_async not implemented"
         raise NotImplementedError(msg)
+
+    def run_durable(self, context: DurableContext, request: BaseModel):
+        """Run one detached durable execution."""
+        del context, request
+        message = "run_durable not implemented"
+        raise NotImplementedError(message)
+
+    async def run_durable_async(self, context: DurableContext, request: BaseModel):
+        """Asynchronously run one detached durable execution."""
+        del context, request
+        message = "run_durable_async not implemented"
+        raise NotImplementedError(message)
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         """

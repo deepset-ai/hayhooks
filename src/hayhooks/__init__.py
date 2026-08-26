@@ -6,6 +6,7 @@ from typing import Any
 __all__ = [
     "AsyncPipeline",
     "BasePipelineWrapper",
+    "DurableContext",
     "Pipeline",
     "PipelineEvent",
     "SSEStream",
@@ -14,6 +15,7 @@ __all__ = [
     "chat_messages_from_openai_response",
     "coerce_pipeline_inputs",
     "create_app",
+    "current_durable_context",
     "default_on_pipeline_end",
     "default_on_tool_call_end",
     "default_on_tool_call_start",
@@ -29,6 +31,7 @@ __all__ = [
 _EXPORT_MODULES = {
     "AsyncPipeline": "hayhooks.server.utils.haystack_compat",
     "BasePipelineWrapper": "hayhooks.server.utils.base_pipeline_wrapper",
+    "DurableContext": "hayhooks.durable.context",
     "Pipeline": "hayhooks.server.utils.haystack_compat",
     "PipelineEvent": "hayhooks.events",
     "SSEStream": "hayhooks.server.pipelines.sse",
@@ -36,6 +39,7 @@ _EXPORT_MODULES = {
     "async_streaming_generator": "hayhooks.server.pipelines.utils",
     "chat_messages_from_openai_response": "hayhooks.server.pipelines.utils",
     "coerce_pipeline_inputs": "hayhooks.server.pipelines.utils",
+    "current_durable_context": "hayhooks.durable.context",
     "create_app": "hayhooks.server.app",
     "default_on_pipeline_end": "hayhooks.callbacks",
     "default_on_tool_call_end": "hayhooks.callbacks",

@@ -122,6 +122,8 @@ async def deploy_yaml(yaml_request: YamlDeployRequest, request: Request) -> Depl
         raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineAlreadyExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error deploying YAML pipeline: {e!s}") from e
 
@@ -155,5 +157,7 @@ async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Re
         raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineAlreadyExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error deploying pipeline: {e!s}") from e
