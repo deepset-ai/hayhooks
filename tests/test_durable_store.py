@@ -82,13 +82,17 @@ async def test_memory_store_repairs_only_the_stale_lease_member(clock: Clock) ->
     assert store._lease_expiry == {live_member: live_deadline}
 
 
-def test_importing_durable_does_not_load_the_server() -> None:
-    subprocess.run(  # noqa: S603 - fixed interpreter and script
+def test_importing_durable_loads_no_server_or_haystack_modules() -> None:
+    subprocess.run(
         [
             sys.executable,
             "-c",
-            "import sys; import hayhooks.durable; "
-            "assert not any(name == 'hayhooks.server' or name.startswith('hayhooks.server.') for name in sys.modules)",
+            (
+                "import sys; import hayhooks.durable; "
+                "assert not any(name == 'hayhooks.server' or name.startswith('hayhooks.server.') "
+                "for name in sys.modules); "
+                "assert not any(name == 'haystack' or name.startswith('haystack.') for name in sys.modules)"
+            ),
         ],
         check=True,
     )

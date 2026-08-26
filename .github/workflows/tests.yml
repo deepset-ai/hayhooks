@@ -42,7 +42,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - python-version: "3.10"
+            haystack-version: "==3.1.0"
+          - python-version: "3.11"
+            haystack-version: ">=3.1,<4"
+          - python-version: "3.12"
+            haystack-version: ">=3.1,<4"
+          - python-version: "3.13"
+            haystack-version: ">=3.1,<4"
+          - python-version: "3.14"
+            haystack-version: ">=3.1,<4"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -56,8 +66,8 @@ jobs:
       - name: Install Haystack v3 into the test env
         run: |
           hatch env create test
-          hatch -e test env run -- uv pip install --upgrade "haystack-ai>=3"
-          hatch -e test env run -- python -c "import haystack, sys; v = haystack.__version__; print('haystack', v); sys.exit(0 if int(v.split('.')[0]) >= 3 else 'expected Haystack v3+, got ' + v)"
+          hatch -e test env run -- uv pip install --upgrade "haystack-ai${{ matrix.haystack-version }}"
+          hatch -e test env run -- python -c "import haystack; print('haystack', haystack.__version__)"
 
       - name: Run unit tests
         run: hatch run test:unit

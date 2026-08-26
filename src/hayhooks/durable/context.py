@@ -167,6 +167,13 @@ class DurableContext:
         self._resume_input_consumed = True
         return value
 
+    @property
+    def _adapter_checkpoint(self) -> JsonValue:
+        return self._claim.checkpoint.adapter_checkpoint
+
+    def _require_owned(self) -> None:
+        self._claim.require_owned()
+
     async def checkpoint(self, adapter_checkpoint: JsonValue = None) -> None:
         async with self._operation_lock:
             self._claim.require_owned()

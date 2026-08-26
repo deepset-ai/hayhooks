@@ -464,19 +464,27 @@ async def test_runtime_instances_are_isolated_and_empty_start_is_inert(deploymen
 
 
 @pytest.mark.parametrize("loss_mode", ["shutdown", "lease"])
-async def test_thread_work_is_retained_until_exit(deployment_factory, loss_mode: str) -> None:
+@pytest.mark.parametrize("runner_mode", ["sync", "shielded_async"])
+async def test_thread_work_is_retained_until_exit(deployment_factory, loss_mode: str, runner_mode: str) -> None:
     started = threading.Event()
     release = threading.Event()
     contexts: list[DurableContext] = []
 
-    def runner(context: DurableContext, request: Request) -> Result:
+    def run(context: DurableContext, request: Request) -> Result:
         contexts.append(context)
         started.set()
         release.wait()
         return Result(value=request.value)
 
+    async def run_async(context: DurableContext, request: Request) -> Result:
+        task = asyncio.create_task(asyncio.to_thread(run, context, request))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            return await task
+
     deployment = await deployment_factory(
-        runner,
+        run if runner_mode == "sync" else run_async,
         config=RuntimeConfig(
             poll_interval_seconds=0.005,
             shutdown_grace_seconds=0.01,
@@ -488,13 +496,13 @@ async def test_thread_work_is_retained_until_exit(deployment_factory, loss_mode:
     try:
         if loss_mode == "shutdown":
             await deployment.close()
-            assert (await deployment.health())["draining_slots"] == 1
+            counter = "draining_slots" if runner_mode == "sync" else "draining_runs"
+            await wait_for_health(deployment, lambda health: health[counter] == 1)
             release.set()
-            await wait_for_health(deployment, lambda health: health["draining_slots"] == 0)
-            stored = await wait_for_execution(
-                deployment, submitted.control.run_id, lambda value: value.control.terminal
-            )
-            assert stored.control.status is ExecutionStatus.COMPLETED
+            await wait_for_health(deployment, lambda health: health[counter] == 0)
+            stored = await deployment.get(submitted.control.run_id)
+            expected = ExecutionStatus.COMPLETED if runner_mode == "sync" else ExecutionStatus.RUNNING
+            assert stored.control.status is expected
         else:
             contexts[0]._claim.mark_lost()
             await wait_for_health(deployment, lambda health: health["draining_runs"] == 1)

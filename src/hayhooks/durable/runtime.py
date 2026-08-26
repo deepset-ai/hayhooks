@@ -12,7 +12,7 @@ import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TypeAlias, cast
+from typing import Any, TypeAlias, cast
 
 from loguru import logger as log
 from pydantic import BaseModel
@@ -168,7 +168,7 @@ class DurableDeployment:
         self._workers: dict[int, asyncio.Task[None]] = {}
         self._thread_workers: set[asyncio.Task[None]] = set()
         self._draining_workers: set[asyncio.Task[None]] = set()
-        self._draining_runs: set[asyncio.Task[bool]] = set()
+        self._draining_runs: set[asyncio.Future[Any]] = set()
         self._worker_store_error_streaks: dict[str, int] = {}
         self._maintenance_error_streak = 0
         self._maintenance_task: asyncio.Task[None] | None = None
@@ -415,6 +415,22 @@ class DurableDeployment:
                 self._maintenance_error_streak = 0
                 await asyncio.sleep(self.config.poll_interval_seconds)
 
+    def _cancel_application(
+        self,
+        application: asyncio.Future[object],
+        thread_done: asyncio.Event | None,
+    ) -> None:
+        application.cancel()
+        if thread_done is not None and not thread_done.is_set():
+            draining: asyncio.Future[Any] = asyncio.create_task(thread_done.wait())
+        elif not application.done():
+            draining = application
+        else:
+            return
+        self._draining_runs.add(draining)
+        draining.add_done_callback(self._draining_runs.discard)
+        draining.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+
     async def _worker(self, worker_id: str, generation: int) -> None:  # noqa: C901, PLR0912, PLR0915
         self._worker_store_error_streaks[worker_id] = 0
         while self._accepting_claims and generation == self._generation:
@@ -541,19 +557,11 @@ class DurableDeployment:
                                 {application, lease_watch}, return_when=asyncio.FIRST_COMPLETED
                             )
                             if lease_watch in done and claim.lease_lost.is_set():
-                                application.cancel()
-                                if thread_done is not None and not thread_done.is_set():
-                                    drain = asyncio.create_task(thread_done.wait())
-                                    self._draining_runs.add(drain)
-                                    drain.add_done_callback(self._draining_runs.discard)
+                                self._cancel_application(application, thread_done)
                                 raise ExecutionLeaseLostError(f"execution lease for '{control.run_id}' was lost")
                             result = application.result()
                         except asyncio.CancelledError:
-                            application.cancel()
-                            if thread_done is not None and not thread_done.is_set():
-                                drain = asyncio.create_task(thread_done.wait())
-                                self._draining_runs.add(drain)
-                                drain.add_done_callback(self._draining_runs.discard)
+                            self._cancel_application(application, thread_done)
                             raise
                         finally:
                             lease_watch.cancel()

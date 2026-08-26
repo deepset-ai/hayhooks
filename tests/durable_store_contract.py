@@ -20,6 +20,7 @@ from hayhooks.durable.engine import (
     Suspend,
     initial_control,
 )
+from hayhooks.durable.models import CheckpointEnvelope, decode_json
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     ChunkCursorExpiredError,
@@ -40,12 +41,17 @@ REVISION_ERROR = b"revision"
 ATTEMPTS_ERROR = b"attempts"
 
 
+def decode_checkpoint(payload: bytes) -> CheckpointEnvelope:
+    return CheckpointEnvelope.model_validate(decode_json(payload, max_bytes=4_096))
+
+
 def contract_control(
     deployment: str,
     run_id: str = "run_1",
     *,
     idempotency: str = "idem",
     binding: str = "binding",
+    kind: str = "pipeline",
 ):
     return initial_control(
         run_id=run_id,
@@ -54,7 +60,7 @@ def contract_control(
         deployment=deployment,
         definition_revision="v1",
         owner_id="owner",
-        kind="pipeline",
+        kind=kind,
         now_ms=0,
     )
 

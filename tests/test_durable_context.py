@@ -17,7 +17,6 @@ from hayhooks.durable.context import (
     durable_streaming_callback,
 )
 from hayhooks.durable.engine import (
-    Claim,
     ExecutionLeaseLostError,
     ExecutionStatus,
     PayloadKind,
@@ -25,54 +24,9 @@ from hayhooks.durable.engine import (
     RequestCancellation,
     Resume,
 )
-from hayhooks.durable.models import CheckpointEnvelope, ExecutionKind, decode_json, encode_json
-from hayhooks.durable.store import CHUNK_CURSOR_START, MemoryExecutionStore, StoreConfig
-from tests.durable_store_contract import ATTEMPTS_ERROR, REVISION_ERROR, contract_control
-
-
-def decode_checkpoint(payload: bytes) -> CheckpointEnvelope:
-    return CheckpointEnvelope.model_validate(decode_json(payload, max_bytes=4_096))
-
-
-@pytest.fixture
-async def context_factory():
-    store = MemoryExecutionStore(
-        "jobs",
-        config=StoreConfig(lease_commit_safety_ms=10, max_payload_bytes=4_096, max_progress_event_bytes=1_024),
-    )
-    claims = []
-
-    async def create(run_id: str = "run_1", *, submit: bool = True, lease_duration_ms: int = 30_000):
-        if submit:
-            await store.submit(
-                contract_control(
-                    "jobs",
-                    run_id,
-                    idempotency=f"idempotency-{run_id}",
-                    binding=f"binding-{run_id}",
-                ),
-                b"{}",
-            )
-        worker_id = f"worker-{run_id}"
-        plan = await store.claim(Claim(worker_id, 0, lease_duration_ms, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
-        assert plan is not None and plan.next_control.run_id == run_id
-        stored = await store.read(run_id)
-        assert stored is not None
-        checkpoint = (
-            decode_checkpoint(stored.payloads[PayloadKind.CHECKPOINT])
-            if PayloadKind.CHECKPOINT in stored.payloads
-            else CheckpointEnvelope(adapter_kind=ExecutionKind.PIPELINE, adapter_checkpoint=None)
-        )
-        claim = _ClaimedExecution(store, plan.next_control, worker_id, lease_duration_ms, checkpoint)
-        await claim.__aenter__()
-        claims.append(claim)
-        return DurableContext(claim), claim
-
-    yield store, create
-
-    for claim in reversed(claims):
-        await claim.__aexit__(None, None, None)
-        assert claim._heartbeat_task is not None and claim._heartbeat_task.done()
+from hayhooks.durable.models import decode_json, encode_json
+from hayhooks.durable.store import CHUNK_CURSOR_START
+from tests.durable_store_contract import decode_checkpoint
 
 
 async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancellation(context_factory) -> None:

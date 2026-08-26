@@ -44,15 +44,18 @@ Implemented:
   submission gate, retries, health, shutdown, and dynamic runtime lifecycle.
 - [x] Revision/attempt failures receive valid bounded error payloads from the runtime.
 - [x] Cancellation-winning suspension retains its buffered progress.
+- [x] Phase 5 Haystack 3.1 Pipeline/Agent adapter, optional dependencies, and
+  minimum/latest v3 CI coverage.
 
 Current focused verification:
 
 - Ruff and formatting pass for the changed package and tests.
 - `ty` passes for `hayhooks.durable` and the lazy root initializer.
-- 74 focused durable tests pass, including the existing root import compatibility
-  test.
-- The full local non-integration `tests/` run passes: 716 passed, 3 skipped, 16
-  integration tests deselected, 3 expected failures, and 6 expected passes.
+- 93 focused durable tests pass against Haystack 3.1.0; the Haystack 2
+  compatibility environment passes 77 and skips the 17 v3-only cases.
+- The full local non-integration `tests/` run passes in both environments:
+  692 passed and 56 skipped on Haystack 2; 741 passed, 4 skipped, and 3 expected
+  failures on Haystack 3.1.0. Both deselect 16 integration tests.
 
 ## Non-negotiable architecture
 
@@ -416,53 +419,53 @@ Haystack 3.1 APIs.
 
 Dependency work:
 
-- [ ] Add a `durable` optional dependency with `haystack-ai>=3.1,<4` and the
+- [x] Add a `durable` optional dependency with `haystack-ai>=3.1,<4` and the
   supported Redis client range.
-- [ ] Keep the existing non-durable Haystack 2 compatibility environment.
-- [ ] Add a minimum-version CI environment that installs Haystack 3.1.0, plus a
+- [x] Keep the existing non-durable Haystack 2 compatibility environment.
+- [x] Add a minimum-version CI environment that installs Haystack 3.1.0, plus a
   latest-supported Haystack 3 job if CI cost permits.
-- [ ] Fail durable deployment with a targeted installation message when the
+- [x] Fail durable deployment with a targeted installation message when the
   environment is not Haystack 3.1+.
 
 Pipeline adapter in `haystack.py`:
 
-- [ ] Validate that the supplied object is a real Haystack 3.1 `Pipeline`.
-- [ ] Run synchronous Pipeline execution in a shielded thread.
-- [ ] Support declared component checkpoint boundaries with public
+- [x] Validate that the supplied object is a real Haystack 3.1 `Pipeline`.
+- [x] Run synchronous Pipeline execution in a shielded thread.
+- [x] Support one declared component checkpoint boundary per execution with public
   `Breakpoint`, `BreakpointException`, and `PipelineSnapshot` APIs.
-- [ ] Persist the latest snapshot from `PipelineRuntimeError` when present.
-- [ ] On resume, pass an empty input together with the snapshot so completed
+- [x] Persist the latest snapshot from `PipelineRuntimeError` when present.
+- [x] On resume, pass an empty input together with the snapshot so completed
   components are not repeated.
-- [ ] Remove checkpoint boundaries already passed according to snapshot visit
+- [x] Remove a checkpoint boundary already passed according to snapshot visit
   counts.
 
 Agent adapter in `haystack.py`:
 
-- [ ] Validate a real Haystack 3.1 `Agent`.
-- [ ] Install hooks once on the shared Agent; hooks locate the active execution
+- [x] Validate a real Haystack 3.1 `Agent`.
+- [x] Install hooks once on the shared Agent; hooks locate the active execution
   from the `ContextVar`.
-- [ ] Restore persisted state before a run.
-- [ ] Check cancellation before each LLM call.
-- [ ] Checkpoint after tool batches that will continue the Agent loop.
-- [ ] Checkpoint application state on a continuing `on_exit` hook.
-- [ ] Save a final checkpoint after run so recovery does not repeat the final LLM
+- [x] Restore persisted state before a run.
+- [x] Check cancellation before each LLM call.
+- [x] Checkpoint after tool batches that will continue the Agent loop.
+- [x] Checkpoint application state on a continuing `on_exit` hook.
+- [x] Save a final checkpoint after run so recovery does not repeat the final LLM
   call.
-- [ ] Preserve newly constructed per-run live tools and hook context during
+- [x] Preserve newly constructed per-run live tools and hook context during
   restore.
-- [ ] Decode typed resume messages into the restored Agent state.
-- [ ] Use `state.to_dict(skip_keys=["tools", "hook_context"])` directly. Do not
+- [x] Decode typed resume messages into the restored Agent state.
+- [x] Use `state.to_dict(skip_keys=["tools", "hook_context"])` directly. Do not
   port `_without_live_agent_resources` or inspect Haystack's serialized schema.
 
 Adapter tests must use real Haystack 3.1 objects:
 
-- [ ] Pipeline snapshot round trip skips completed components after retry.
-- [ ] Pipeline runtime failure saves its attached snapshot.
-- [ ] Agent custom state and typed resume messages restore.
-- [ ] Agent checkpoints omit live tools/hook context through `skip_keys`.
-- [ ] Agent checkpoint and progress share one store transition.
-- [ ] Agent final checkpoint prevents another LLM call after recovery.
-- [ ] Hooks do nothing during ordinary, non-durable Agent runs.
-- [ ] Sync and async Pipeline/Agent paths obey the same fence behavior.
+- [x] Pipeline snapshot round trip skips completed components after retry.
+- [x] Pipeline runtime failure saves its attached snapshot.
+- [x] Agent custom state and typed resume messages restore.
+- [x] Agent checkpoints omit live tools/hook context through `skip_keys`.
+- [x] Agent checkpoint and progress share one store transition.
+- [x] Agent final checkpoint prevents another LLM call after recovery.
+- [x] Hooks do nothing during ordinary, non-durable Agent runs.
+- [x] Sync and async Pipeline/Agent paths obey the same fence behavior.
 
 Acceptance:
 
