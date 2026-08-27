@@ -1,6 +1,8 @@
 # Durable engine implementation plan
 
-This document is the implementation handoff for the `durable_engine` branch.
+Status: complete; final review and release verification passed.
+
+This document is the implementation record for the `durable_engine` branch.
 It uses `hayhooks_v2` / PR #253 as design evidence, not as a source tree to copy.
 The target is a lean, portable `hayhooks.durable` engine that Hayhooks consumes
 like any other host application.
@@ -8,7 +10,7 @@ like any other host application.
 Long-running A2A execution is explicitly out of scope. Existing request-bound
 A2A behavior must continue working unchanged.
 
-## Current checkpoint
+## Completion checkpoint
 
 Branch and references:
 
@@ -50,18 +52,27 @@ Implemented:
 - [x] Phase 7 portable typed FastAPI REST/SSE adapter.
 - [x] Phase 8 initial Hayhooks integration: typed durable wrapper contract,
   app-owned runtime/store lifecycle, route mounting/removal, and health.
+- [x] Final simplification review: shared polling and deployment lifecycle paths,
+  parametrized lifecycle matrices, and no incidental single-call helpers.
+- [x] Optional host-supplied owner isolation and guarded hot
+  overwrite/undeploy remain the explicit release policies.
+- [x] Failed live-work inspection restarts the old durable deployment before
+  propagating the store error.
+- [x] Phase 8 lifecycle matrix, Phase 9 examples, and Phase 10 documentation,
+  packaging, compatibility, and release audit.
 
 Current focused verification:
 
-- Ruff and formatting pass for the changed package and tests.
-- `ty` passes for `hayhooks.durable` and the lazy root initializer.
-- 120 focused durable tests pass against Haystack 3.1.0; the Haystack 2
-  compatibility environment passes 104 and skips the 17 v3-only cases.
+- Ruff and formatting pass for the project; `ty` passes for `src/hayhooks`.
+- 137 focused durable tests pass against Haystack 3.1, with the inverse
+  unsupported-dependency guard skipped.
 - 9 real-Redis integration tests pass, including optimistic races, retention,
   and process-kill Pipeline checkpoint recovery.
-- The full local non-integration `tests/` run passes in both environments:
-  719 passed and 56 skipped on Haystack 2; 768 passed, 4 skipped, and 3 expected
-  failures on Haystack 3.1.0. Both deselect 25 integration tests.
+- The full local non-integration `tests/` run passes under Haystack 2.31 with
+  722 passed and 70 v3-only skips, and under Haystack 3.1 with 788 passed, 4
+  skipped, and 3 expected failures; both deselect 25 integration tests.
+- Strict MkDocs build, wheel/sdist inspection, and clean-environment wheel
+  imports pass.
 
 ## Non-negotiable architecture
 
@@ -670,8 +681,9 @@ Deployment and route lifecycle:
 - [x] Reject replacement/removal with 409 while queued, running, or waiting work
   remains. This is the first clean policy; do not build cross-revision draining
   until a real rollout requirement demands it.
-- [x] If candidate preparation/publication fails, restart the old deployment and
-  leave its wrapper, routes, files, and runtime association intact.
+- [x] If live-work inspection or candidate preparation/publication fails,
+  restart the old deployment and leave its wrapper, routes, files, and runtime
+  association intact.
 - [x] Prepare a candidate store before publishing its routes; never publish a
   deployment whose store failed initialization.
 
@@ -682,13 +694,14 @@ OpenAI, dashboard, MCP, or registry behavior.
 
 Tests:
 
-- [ ] Startup deployment publishes typed durable routes and runs work.
-- [ ] Two app instances do not share durable runtimes or workers.
+- [x] Startup deployment publishes typed durable routes and runs work.
+- [x] Two app instances do not share durable runtimes or workers.
 - [x] Overwrite binds routes to the new wrapper, models, runner, and revision.
-- [ ] Overwrite/undeploy rejects live queued, running, and waiting work.
-- [x] Failed preparation/publication restores the old deployment.
-- [ ] Durable-to-nondurable overwrite removes all durable routes.
-- [ ] Store initialization failure publishes nothing.
+- [x] Overwrite/undeploy rejects live queued, running, and waiting work.
+- [x] Failed live-work inspection, preparation, or publication restores the old
+  deployment.
+- [x] Durable-to-nondurable overwrite removes all durable routes.
+- [x] Store initialization failure publishes nothing.
 - [x] Existing ordinary run, streaming, MCP, and request-bound A2A tests remain
   unchanged and passing.
 
@@ -706,14 +719,14 @@ support.
 
 Port and simplify from the reference branch:
 
-- [ ] `examples/durable-compose.yaml` with Redis only.
-- [ ] `examples/durable_execution/`: real Pipeline, intentional bounded retry,
+- [x] `examples/durable-compose.yaml` with Redis only.
+- [x] `examples/durable_execution/`: real Pipeline, intentional bounded retry,
   component checkpoint, typed approval wait/resume, cancellation, and restart
   recovery.
-- [ ] `examples/durable_chat_with_website/`: real Pipeline checkpoint before
+- [x] `examples/durable_chat_with_website/`: real Pipeline checkpoint before
   generation, bounded display streaming, reconnect from cursor, concurrent
   execution isolation, and restart recovery.
-- [ ] Keep one concise terminal showcase for concurrent REST durable streams.
+- [x] Keep one concise terminal showcase for concurrent REST durable streams.
   It must use only the durable REST/SSE API.
 
 Do not port:
@@ -740,12 +753,12 @@ Example quality rules:
 
 Tests:
 
-- [ ] Import every example wrapper under Haystack 3.1.
-- [ ] Run the durable execution example with fake/controlled components through
+- [x] Import every example wrapper under Haystack 3.1.
+- [x] Run the durable execution example with fake/controlled components through
   retry, approval, resume, and completion.
-- [ ] Verify a checkpoint prevents completed Pipeline components from rerunning.
-- [ ] Verify concurrent streaming examples do not cross-deliver chunks.
-- [ ] Verify retry/restart reconstructs the final stream/result according to the
+- [x] Verify a checkpoint prevents completed Pipeline components from rerunning.
+- [x] Verify concurrent streaming examples do not cross-deliver chunks.
+- [x] Verify retry/restart reconstructs the final stream/result according to the
   documented attempt semantics.
 
 Acceptance:
@@ -759,51 +772,54 @@ Acceptance:
 
 Documentation:
 
-- [ ] Add a durable-engine guide covering architecture, transition diagram,
+- [x] Add a durable-engine guide covering architecture, transition diagram,
   embedding, authoring, Redis layout, streaming semantics, revision policy,
   at-least-once effects, and operations.
-- [ ] Add an operations page covering controlled rollout, capacity, retention,
+- [x] Add an operations page covering controlled rollout, capacity, retention,
   Redis persistence/TLS/noeviction, recovery, stream load, health, and incident
   response.
-- [ ] Add API and environment-variable references generated from the final
+- [x] Add API and environment-variable references generated from the final
   contract, not copied before names stabilize.
-- [ ] Explicitly state that long-running A2A is not supported in this release and
+- [x] Explicitly state that long-running A2A is not supported in this release and
   remains a later design topic.
-- [ ] Update MkDocs navigation and run strict documentation build.
+- [x] Update MkDocs navigation and run strict documentation build.
 
 CI and packaging:
 
-- [ ] Build wheel/sdist and inspect their contents for the complete durable
+- [x] Build wheel/sdist and inspect their contents for the complete durable
   package and no accidental files.
-- [ ] Install the built wheel into a clean environment and verify portable
+- [x] Install the built wheel into a clean environment and verify portable
   imports before importing Hayhooks server code.
 - [x] Keep the existing Haystack 2 test job for non-durable compatibility.
 - [x] Add Haystack 3.1+ unit/type jobs with the durable extra.
 - [x] Add Redis 6.2 service-backed store and integration tests.
 - [x] Keep process-kill recovery as a bounded smoke test on one representative
   Python version.
-- [ ] Run Ruff, format check, `ty`, unit tests, Redis integration tests, process
+- [x] Run Ruff, format check, `ty`, unit tests, Redis integration tests, process
   recovery, example tests, and strict docs.
 
 Final correctness audit:
 
-- [ ] Reducer is still the sole lifecycle writer.
-- [ ] Memory/Redis shared store contract passes.
-- [ ] Concurrent claim, cancel/checkpoint, resume/checkpoint, and idempotency
+- [x] Reducer is still the sole lifecycle writer.
+- [x] Memory/Redis shared store contract passes.
+- [x] Concurrent claim, cancel/checkpoint, resume/checkpoint, and idempotency
   races pass repeatedly.
-- [ ] Process kill after checkpoint resumes without repeating completed Pipeline
+- [x] Process kill after checkpoint resumes without repeating completed Pipeline
   work.
-- [ ] Terminal TTL and nonterminal capacity remain correct after every terminal
+- [x] Terminal TTL and nonterminal capacity remain correct after every terminal
   path.
-- [ ] Old fences cannot commit after lease recovery or shutdown.
-- [ ] Every public error and log is payload-safe.
-- [ ] Owner mismatches are indistinguishable from missing executions.
-- [ ] Dynamic deployment failure cannot strand or silently replace durable work.
-- [ ] Importing `hayhooks.durable` loads no `hayhooks.server`, A2A, or Redis
+- [x] Old fences cannot commit after lease recovery or shutdown.
+- [x] Every public error and log is payload-safe.
+- [x] Owner mismatches are indistinguishable from missing executions.
+- [x] Dynamic deployment failure cannot strand or silently replace durable work.
+- [x] Importing `hayhooks.durable` loads no `hayhooks.server`, A2A, or Redis
   module unless the corresponding adapter is requested.
 
 Release boundary:
 
+- D1 Option A keeps optional owner isolation supplied by an authenticating host.
+- D2 Option A keeps guarded hot overwrite and undeploy; live work returns 409,
+  and failed live-work inspection or publication restores the prior deployment.
 - Include detached typed execution, Pipeline and Agent checkpoint recovery,
   retries, progress, cancellation, wait/resume, Redis fencing/recovery,
   reattachable SSE chunks, owner-aware REST, health, retention, portable
@@ -813,7 +829,7 @@ Release boundary:
 
 ## Reference-branch extraction map
 
-Use this table to avoid wholesale ports:
+This table records the deliberately narrow extraction boundary:
 
 | Reference file | Use | Do not copy |
 |---|---|---|
@@ -830,30 +846,3 @@ Use this table to avoid wholesale ports:
 | `durable/fastapi.py` | endpoint/SSE behavior and tests | server logger import and host lifecycle ownership |
 | server integration | lifecycle failure cases and route tests | broad unrelated registry/router rewrites |
 | durable examples | REST recovery and streaming scenarios | `a2a_long_running` and all durable A2A code |
-
-## Agent handoff protocol
-
-Every agent implementing a phase should:
-
-1. Read this plan, the current `engine.py`, `store.py`, and tests before editing.
-2. Inspect only the reference files mapped to that phase.
-3. State the exact reducer/store/runtime invariant being implemented.
-4. Reuse the existing protocol and helpers before adding a type or layer.
-5. Add the smallest test that would fail if the invariant regressed.
-6. Run focused Ruff, formatting, type, and tests for the slice.
-7. Run the previous phase's acceptance suite as a regression gate.
-8. Report changed files, tests, known limits, and the next unblocked phase.
-
-Agents must not:
-
-- modify or delete unrelated user changes;
-- copy a reference module wholesale;
-- add A2A long-running behavior;
-- create speculative providers, factories, facades, repositories, or event buses;
-- make storage or HTTP code assign lifecycle state;
-- log durable payloads; or
-- relax validation, fencing, owner isolation, or error handling to reduce code.
-
-When two possible designs both satisfy the contract, choose the one with fewer
-layers and fewer representations of the same state. Add a new abstraction only
-after two real callers require it.

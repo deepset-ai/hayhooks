@@ -80,12 +80,12 @@ class ControlledStore(MemoryExecutionStore):
         worker_revision: str,
         revision_error: bytes,
         attempts_error: bytes,
-    ) -> int:
+    ) -> None:
         if self.maintenance_error is not None:
             error, self.maintenance_error = self.maintenance_error, None
             self.failure_seen.set()
             raise error
-        return await super().maintain(
+        await super().maintain(
             max_run_attempts=max_run_attempts,
             worker_revision=worker_revision,
             revision_error=revision_error,
@@ -136,7 +136,7 @@ async def wait_for_health(
 async def deployment_factory():
     deployments: list[DurableDeployment] = []
 
-    async def create(  # noqa: PLR0913
+    async def create(
         runner=echo_runner,
         *,
         store: MemoryExecutionStore | None = None,

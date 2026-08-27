@@ -389,7 +389,7 @@ class RedisExecutionStore:
         worker_revision: str,
         revision_error: bytes,
         attempts_error: bytes,
-    ) -> int:
+    ) -> None:
         with _redis_errors():
             now_ms = await self._time_ms(self.redis)
             entries = await self.redis.zrangebyscore(
@@ -400,7 +400,6 @@ class RedisExecutionStore:
                 num=MAINTENANCE_BATCH_SIZE,
                 withscores=True,
             )
-            recovered = 0
             for member, raw_deadline in entries:
                 try:
                     run_id, separator, raw_fence = _text(member).rpartition("|")
@@ -425,10 +424,8 @@ class RedisExecutionStore:
                             attempts_error,
                         ),
                     )
-                    recovered += 1
                 except ExecutionNotFoundError:
                     await self.redis.zrem(self.keys.lease_expiry, member)
-            return recovered
 
     async def append_chunk(self, run_id: str, attempt: int, data: bytes) -> None:
         if not self.config.max_stream_chunks:

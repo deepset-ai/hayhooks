@@ -3,6 +3,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from time import sleep
 from typing import Any
 
 import pytest
@@ -159,6 +160,20 @@ async def context_factory():
     for claim in reversed(claims):
         await claim.__aexit__(None, None, None)
         assert claim._heartbeat_task is not None and claim._heartbeat_task.done()
+
+
+@pytest.fixture
+def wait_for_execution():
+    def wait(client: TestClient, path: str, expected: str, *, headers: dict[str, str] | None = None):
+        for _ in range(200):
+            response = client.get(path, headers=headers)
+            assert response.status_code == 200, f"{path} returned {response.status_code}"
+            if response.json()["status"] == expected:
+                return response.json()
+            sleep(0.005)
+        pytest.fail(f"{path} did not reach {expected}")
+
+    return wait
 
 
 def pytest_configure(config):

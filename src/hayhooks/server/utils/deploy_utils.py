@@ -579,6 +579,19 @@ def _remove_pipeline_routes(app: FastAPI, pipeline_name: str) -> None:
         mark_routes_changed()
 
 
+def _quiesce_idle_durable_deployment(deployment: DurableDeployment, app: FastAPI) -> None:
+    future = asyncio.run_coroutine_threadsafe(deployment.quiesce(), app.state.durable_loop)
+    future.result()
+    try:
+        future = asyncio.run_coroutine_threadsafe(deployment.store.operational_counts(), app.state.durable_loop)
+        if future.result()["nonterminal"]:
+            raise HTTPException(status_code=409, detail="durable executions are still active")
+    except Exception:
+        future = asyncio.run_coroutine_threadsafe(deployment.start(), app.state.durable_loop)
+        future.result()
+        raise
+
+
 def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
     pipeline_name: str,
     pipeline_wrapper: BasePipelineWrapper,
@@ -654,6 +667,7 @@ def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
             else pipeline_wrapper.run_durable
         )
         hints = get_type_hints(runner)
+        request_model = hints[tuple(inspect.signature(runner).parameters)[1]]
         return_annotation = hints.get("return")
         result_model = (
             return_annotation
@@ -679,7 +693,7 @@ def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
             pipeline_name,
             pipeline_wrapper.durable_revision or "",
             store,
-            hints["request"],
+            request_model,
             runner,
             kind=adapter.kind,
             result_model=result_model,
@@ -869,16 +883,8 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
 
             if old_deployment is not None and runtime is not None and runtime.started:
                 assert app is not None
-                future = asyncio.run_coroutine_threadsafe(old_deployment.quiesce(), app.state.durable_loop)
-                future.result()
+                _quiesce_idle_durable_deployment(old_deployment, app)
                 old_quiesced = True
-                future = asyncio.run_coroutine_threadsafe(
-                    old_deployment.store.operational_counts(), app.state.durable_loop
-                )
-                if future.result()["nonterminal"]:
-                    future = asyncio.run_coroutine_threadsafe(old_deployment.start(), app.state.durable_loop)
-                    future.result()
-                    raise HTTPException(status_code=409, detail="durable executions are still active")
 
         try:
             if source_files is not None:
@@ -1171,14 +1177,7 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
         if (deployment := metadata.get("durable_deployment")) is not None and app is not None:
             runtime: DurableRuntime = app.state.durable_runtime
             if runtime.started:
-                future = asyncio.run_coroutine_threadsafe(deployment.quiesce(), app.state.durable_loop)
-                future.result()
-                future = asyncio.run_coroutine_threadsafe(deployment.store.operational_counts(), app.state.durable_loop)
-                counts = future.result()
-                if counts["nonterminal"]:
-                    future = asyncio.run_coroutine_threadsafe(deployment.start(), app.state.durable_loop)
-                    future.result()
-                    raise HTTPException(status_code=409, detail="durable executions are still active")
+                _quiesce_idle_durable_deployment(deployment, app)
                 future = asyncio.run_coroutine_threadsafe(runtime.remove(pipeline_name), app.state.durable_loop)
                 future.result()
             else:

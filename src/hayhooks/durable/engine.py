@@ -207,7 +207,6 @@ class Checkpoint:
 class RequestCancellation:
     now_ms: int
     reason: str | None = None
-    progress_events: tuple[bytes, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,7 +237,6 @@ class Resume:
     now_ms: int
     worker_revision: str
     checkpoint: bytes | None = None
-    progress_events: tuple[bytes, ...] = ()
     expected_version: int | None = None
 
 
@@ -393,9 +391,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
                     command.now_ms,
                     cancel_requested_at_ms=command.now_ms,
                     cancel_reason=normalize_cancellation_reason(command.reason),
-                    progress_sequence=control.progress_sequence + len(command.progress_events),
                 ),
-                progress_events=_progress_events(control.progress_sequence, command.progress_events),
             )
         return _terminal(
             _business(
@@ -403,14 +399,12 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
                 command.now_ms,
                 cancel_requested_at_ms=command.now_ms,
                 cancel_reason=normalize_cancellation_reason(command.reason),
-                progress_sequence=control.progress_sequence + len(command.progress_events),
             ),
             command.now_ms,
             ExecutionStatus.CANCELED,
             None,
             None,
             increment_version=False,
-            progress_events=_progress_events(control.progress_sequence, command.progress_events),
         )
     if isinstance(command, ScheduleRetry):
         _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
@@ -493,13 +487,11 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             control,
             command.now_ms,
             status=ExecutionStatus.QUEUED,
-            progress_sequence=control.progress_sequence + len(command.progress_events),
         )
         return TransitionPlan(
             next_control,
             payload_writes=writes,
             payload_deletes=(PayloadKind.WAIT,),
-            progress_events=_progress_events(control.progress_sequence, command.progress_events),
         )
     if isinstance(command, (Complete, Fail)):
         _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)

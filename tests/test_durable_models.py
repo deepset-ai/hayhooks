@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import timezone
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, HttpUrl
 
 from hayhooks.durable.engine import ExecutionPayloadSizeError, ExecutionStatus, PayloadKind, ProgressEvent
 from hayhooks.durable.models import (
@@ -90,15 +90,16 @@ def test_operation_fingerprint_is_canonical_but_preserves_list_order() -> None:
     class SetInput(BaseModel):
         tags: set[str]
         steps: list[int]
+        url: HttpUrl
 
-    first = SetInput(tags={"zeta", "alpha"}, steps=[1, 2])
-    second = SetInput(tags={"alpha", "zeta"}, steps=[1, 2])
+    first = SetInput(tags={"zeta", "alpha"}, steps=[1, 2], url="https://example.com")
+    second = SetInput(tags={"alpha", "zeta"}, steps=[1, 2], url="https://example.com")
     assert operation_fingerprint("jobs", "v1", "owner", first) == operation_fingerprint("jobs", "v1", "owner", second)
     assert operation_fingerprint("jobs", "v1", None, {"a": 1, "b": 2}) == operation_fingerprint(
         "jobs", "v1", None, {"b": 2, "a": 1}
     )
     assert operation_fingerprint("jobs", "v1", "owner", first) != operation_fingerprint(
-        "jobs", "v1", "owner", SetInput(tags=first.tags, steps=[2, 1])
+        "jobs", "v1", "owner", SetInput(tags=first.tags, steps=[2, 1], url=first.url)
     )
 
 

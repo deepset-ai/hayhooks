@@ -49,14 +49,11 @@ async def test_store_enforces_size_recovery_and_ttl(clock: Clock) -> None:
         await store.transition("run_1", Checkpoint(1, "worker", 0, 100, b"too-large"))
 
     clock.now += 100
-    assert (
-        await store.maintain(
-            max_run_attempts=2,
-            worker_revision="v1",
-            revision_error=REVISION_ERROR,
-            attempts_error=ATTEMPTS_ERROR,
-        )
-        == 1
+    await store.maintain(
+        max_run_attempts=2,
+        worker_revision="v1",
+        revision_error=REVISION_ERROR,
+        attempts_error=ATTEMPTS_ERROR,
     )
     reclaimed = await store.claim(Claim("worker", 0, 100, 2, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
     assert reclaimed is not None

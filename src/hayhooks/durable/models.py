@@ -13,6 +13,7 @@ from enum import Enum
 from typing import TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import to_jsonable_python
 from typing_extensions import TypeAliasType
 
 from hayhooks.durable.engine import (
@@ -224,9 +225,9 @@ def project_execution(
 
 def _canonical_json(value: object, *, max_bytes: int) -> JsonValue:
     if isinstance(value, BaseModel):
-        return _canonical_json(value.model_dump(mode="python"), max_bytes=max_bytes)
-    if isinstance(value, Enum):
-        return _canonical_json(value.value, max_bytes=max_bytes)
+        value = value.model_dump(mode="python")
+    elif isinstance(value, Enum):
+        value = value.value
     if value is None or type(value) in (str, int, float, bool):
         _validate_json_value(value)
         return cast(JsonScalar, value)
@@ -240,7 +241,13 @@ def _canonical_json(value: object, *, max_bytes: int) -> JsonValue:
     if isinstance(value, set | frozenset):
         items = [_canonical_json(item, max_bytes=max_bytes) for item in value]
         return sorted(items, key=lambda item: encode_json(item, max_bytes=max_bytes, canonical=True))
-    raise ValueError(f"{type(value).__name__} is not JSON serializable")
+    try:
+        serialized = to_jsonable_python(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{type(value).__name__} is not JSON serializable") from None
+    if serialized is value:
+        raise ValueError(f"{type(value).__name__} is not JSON serializable")
+    return _canonical_json(serialized, max_bytes=max_bytes)
 
 
 def _validate_json_value(value: object) -> None:

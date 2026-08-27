@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from importlib.metadata import version
 from pathlib import Path
-from time import sleep
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -14,11 +15,14 @@ from haystack import Pipeline
 from pydantic import BaseModel
 
 from hayhooks.durable.context import DurableContext
+from hayhooks.durable.engine import Claim, Suspend, initial_control
+from hayhooks.durable.models import encode_json
+from hayhooks.durable.store import ExecutionStoreError, MemoryExecutionStore
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils import deploy_utils
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.utils.deploy_utils import commit_prepared_pipeline, deploy_pipeline_files
+from hayhooks.server.utils.deploy_utils import commit_prepared_pipeline, deploy_pipeline_files, undeploy_pipeline
 from hayhooks.server.utils.models import PreparedPipeline
 from hayhooks.server.utils.module_loader import create_pipeline_wrapper_instance
 from hayhooks.settings import settings
@@ -36,9 +40,9 @@ class DurableWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.pipeline = Pipeline()
 
-    async def run_durable_async(self, context: DurableContext, request: DurableRequest) -> dict[str, int]:
+    async def run_durable_async(self, context: DurableContext, payload: DurableRequest) -> dict[str, int]:
         await context.report_progress("started")
-        return {"value": request.value}
+        return {"value": payload.value}
 
 
 class DurableWrapperV2(DurableWrapper):
@@ -49,21 +53,18 @@ class DurableWrapperV2(DurableWrapper):
         return {"revision": self.durable_revision, "value": request.value}
 
 
-@pytest.fixture(autouse=True)
-def clear_registry():
-    registry.clear()
-    yield
-    registry.clear()
-
-
 @pytest.fixture
 def durable_client(monkeypatch):
     monkeypatch.setattr(settings, "durable_store", "memory")
     pipeline_dir = Path(settings.pipelines_dir) / "durable-job"
+    registry.clear()
     shutil.rmtree(pipeline_dir, ignore_errors=True)
-    with TestClient(create_app()) as client:
-        yield client
-    shutil.rmtree(pipeline_dir, ignore_errors=True)
+    try:
+        with TestClient(create_app()) as client:
+            yield client
+    finally:
+        registry.clear()
+        shutil.rmtree(pipeline_dir, ignore_errors=True)
 
 
 def wrapper_for(wrapper_type: type[BasePipelineWrapper]) -> BasePipelineWrapper:
@@ -71,21 +72,7 @@ def wrapper_for(wrapper_type: type[BasePipelineWrapper]) -> BasePipelineWrapper:
     return create_pipeline_wrapper_instance(module)
 
 
-def wait_for_status(client: TestClient, execution_id: str, status: str) -> dict[str, object]:
-    for _ in range(100):
-        result = client.get(f"/durable-job/executions/{execution_id}")
-        if result.json()["status"] == status:
-            return result.json()
-        sleep(0.005)
-    pytest.fail(f"execution {execution_id} did not reach {status}")
-
-
-def durable_source(revision: str, *, waiting: bool = False) -> str:
-    runner = (
-        'del request\n        await context.suspend({"reason": "test"})\n        return {}'
-        if waiting
-        else 'return {"value": request.value}'
-    )
+def durable_source(revision: str) -> str:
     return f"""\
 from haystack import Pipeline
 from pydantic import BaseModel
@@ -104,17 +91,18 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline = Pipeline()
 
     async def run_durable_async(self, context: DurableContext, request: Request) -> dict:
-        {runner}
+        return {{"value": request.value}}
 """
 
 
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
-def test_hayhooks_mounts_and_runs_a_durable_wrapper(durable_client):
+def test_hayhooks_mounts_and_runs_a_durable_wrapper(durable_client, wait_for_execution):
     commit_prepared_pipeline(PreparedPipeline("durable-job", wrapper_for(DurableWrapper)), app=durable_client.app)
     submitted = durable_client.post("/durable-job/run-durable", json={"value": 7})
     assert submitted.status_code == 202
     execution_id = submitted.json()["execution_id"]
-    assert wait_for_status(durable_client, execution_id, "completed")["result"] == {"value": 7}
+    path = f"/durable-job/executions/{execution_id}"
+    assert wait_for_execution(durable_client, path, "completed")["result"] == {"value": 7}
     assert durable_client.get("/status").json()["durable"]["deployments"]["durable-job"]["healthy"]
     assert durable_client.post("/undeploy/durable-job").status_code == 200
     assert not [
@@ -127,47 +115,163 @@ def test_hayhooks_mounts_and_runs_a_durable_wrapper(durable_client):
 
 
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
-def test_durable_overwrite_replaces_an_idle_deployment(durable_client):
+def test_durable_overwrite_replaces_an_idle_deployment(durable_client, wait_for_execution):
     commit_prepared_pipeline(PreparedPipeline("durable-job", wrapper_for(DurableWrapper)), app=durable_client.app)
     execution_id = durable_client.post("/durable-job/run-durable", json={"value": 7}).json()["execution_id"]
-    wait_for_status(durable_client, execution_id, "completed")
+    wait_for_execution(durable_client, f"/durable-job/executions/{execution_id}", "completed")
 
     commit_prepared_pipeline(
         PreparedPipeline("durable-job", wrapper_for(DurableWrapperV2)), app=durable_client.app, overwrite=True
     )
 
     execution_id = durable_client.post("/durable-job/run-durable", json={"value": 9}).json()["execution_id"]
-    assert wait_for_status(durable_client, execution_id, "completed")["result"] == {"revision": "test-v2", "value": 9}
+    assert wait_for_execution(durable_client, f"/durable-job/executions/{execution_id}", "completed")["result"] == {
+        "revision": "test-v2",
+        "value": 9,
+    }
     assert durable_client.app.state.durable_runtime._deployments["durable-job"].revision == "test-v2"
 
 
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
-def test_durable_overwrite_rejects_live_work_and_preserves_the_old_deployment(durable_client):
-    old_source = durable_source("test-v1", waiting=True)
-    candidate_source = durable_source("test-v2", waiting=True)
+@pytest.mark.parametrize("operation", ["overwrite", "undeploy"])
+@pytest.mark.parametrize("live_status", ["queued", "running", "waiting"])
+def test_dynamic_changes_reject_live_work_and_preserve_the_old_deployment(
+    durable_client, operation: str, live_status: str
+):
+    old_source = durable_source("test-v1")
     deploy_pipeline_files("durable-job", {"pipeline_wrapper.py": old_source}, app=durable_client.app, save_files=True)
     old_wrapper = registry.get("durable-job")
-    execution_id = durable_client.post("/durable-job/run-durable", json={"value": 7}).json()["execution_id"]
-    wait_for_status(durable_client, execution_id, "waiting")
+    deployment = durable_client.app.state.durable_runtime._deployments["durable-job"]
+    loop = durable_client.app.state.durable_loop
+    asyncio.run_coroutine_threadsafe(deployment.quiesce(), loop).result()
+    run_id = f"{operation}-{live_status}"
+    control = initial_control(
+        run_id=run_id,
+        idempotency_digest=run_id,
+        idempotency_binding_digest="binding",
+        deployment="durable-job",
+        definition_revision="test-v1",
+        owner_id=None,
+        kind=deployment.kind.value,
+        now_ms=0,
+    )
+    asyncio.run_coroutine_threadsafe(
+        deployment.store.submit(control, encode_json({"value": 7}, max_bytes=1_024)), loop
+    ).result()
+    if live_status != "queued":
+        claimed = asyncio.run_coroutine_threadsafe(
+            deployment.store.transition(run_id, Claim("matrix", 0, 30_000, 3, "test-v1", b"{}", b"{}")),
+            loop,
+        ).result()
+        if live_status == "waiting":
+            asyncio.run_coroutine_threadsafe(
+                deployment.store.transition(run_id, Suspend(claimed.next_control.fence, "matrix", 0, b"{}", b"{}")),
+                loop,
+            ).result()
 
     with pytest.raises(HTTPException, match="durable executions are still active") as error:
-        deploy_pipeline_files(
-            "durable-job",
-            {"pipeline_wrapper.py": candidate_source},
-            app=durable_client.app,
-            save_files=True,
-            overwrite=True,
-        )
+        if operation == "overwrite":
+            deploy_pipeline_files(
+                "durable-job",
+                {"pipeline_wrapper.py": durable_source("test-v2")},
+                app=durable_client.app,
+                save_files=True,
+                overwrite=True,
+            )
+        else:
+            undeploy_pipeline("durable-job", app=durable_client.app)
 
     assert error.value.status_code == 409
     assert registry.get("durable-job") is old_wrapper
     assert durable_client.app.state.durable_runtime._deployments["durable-job"].revision == "test-v1"
-    assert wait_for_status(durable_client, execution_id, "waiting")["status"] == "waiting"
     assert (Path(settings.pipelines_dir) / "durable-job" / "pipeline_wrapper.py").read_text() == old_source
 
 
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
-def test_durable_publication_failure_restores_the_old_deployment(durable_client, monkeypatch):
+@pytest.mark.parametrize("operation", ["overwrite", "undeploy"])
+def test_dynamic_change_store_failure_restarts_the_old_deployment(durable_client, monkeypatch, operation: str):
+    old_wrapper = wrapper_for(DurableWrapper)
+    commit_prepared_pipeline(PreparedPipeline("durable-job", old_wrapper), app=durable_client.app)
+    deployment = durable_client.app.state.durable_runtime._deployments["durable-job"]
+    monkeypatch.setattr(
+        deployment.store,
+        "operational_counts",
+        AsyncMock(side_effect=ExecutionStoreError("store unavailable")),
+    )
+
+    with pytest.raises(ExecutionStoreError, match="store unavailable"):
+        if operation == "overwrite":
+            commit_prepared_pipeline(
+                PreparedPipeline("durable-job", wrapper_for(DurableWrapperV2)),
+                app=durable_client.app,
+                overwrite=True,
+            )
+        else:
+            undeploy_pipeline("durable-job", app=durable_client.app)
+
+    assert deployment.accepting
+    assert registry.get("durable-job") is old_wrapper
+
+
+@pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
+def test_startup_deploys_durable_work_and_app_runtimes_are_isolated(tmp_path, monkeypatch, wait_for_execution):
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    monkeypatch.setattr(settings, "pipelines_dir", str(tmp_path))
+    pipeline_dir = tmp_path / "durable-job"
+    pipeline_dir.mkdir()
+    (pipeline_dir / "pipeline_wrapper.py").write_text(durable_source("test-v1"))
+    registry.clear()
+    app = create_app()
+    other_app = create_app()
+    try:
+        with TestClient(app) as client, TestClient(other_app):
+            assert app.state.durable_runtime is not other_app.state.durable_runtime
+            assert set(app.state.durable_runtime._deployments) == {"durable-job"}
+            assert not other_app.state.durable_runtime._deployments
+            submitted = client.post("/durable-job/run-durable", json={"value": 7}).json()
+            assert wait_for_execution(client, submitted["links"]["self"], "completed")["result"] == {"value": 7}
+    finally:
+        registry.clear()
+
+
+@pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
+def test_durable_to_nondurable_overwrite_removes_durable_routes(durable_client):
+    class OrdinaryWrapper(BasePipelineWrapper):
+        def setup(self) -> None:
+            self.pipeline = Pipeline()
+
+        def run_api(self, value: int) -> dict[str, int]:
+            return {"value": value}
+
+    commit_prepared_pipeline(PreparedPipeline("durable-job", wrapper_for(DurableWrapper)), app=durable_client.app)
+    commit_prepared_pipeline(
+        PreparedPipeline("durable-job", wrapper_for(OrdinaryWrapper)), app=durable_client.app, overwrite=True
+    )
+
+    assert "durable-job" not in durable_client.app.state.durable_runtime._deployments
+    assert "durable_deployment" not in registry.get_metadata("durable-job")
+    assert durable_client.post("/durable-job/run-durable", json={"value": 1}).status_code == 404
+    assert durable_client.post("/durable-job/run", json={"value": 1}).json() == {"result": {"value": 1}}
+
+
+@pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
+def test_store_initialization_failure_publishes_nothing(durable_client, monkeypatch):
+    monkeypatch.setattr(
+        MemoryExecutionStore,
+        "initialize",
+        AsyncMock(side_effect=ExecutionStoreError("store unavailable")),
+    )
+
+    with pytest.raises(ExecutionStoreError, match="store unavailable"):
+        commit_prepared_pipeline(PreparedPipeline("durable-job", wrapper_for(DurableWrapper)), app=durable_client.app)
+
+    assert registry.get("durable-job") is None
+    assert "durable-job" not in durable_client.app.state.durable_runtime._deployments
+    assert not [route for route in durable_client.app.routes if getattr(route, "path", "").startswith("/durable-job/")]
+
+
+@pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
+def test_durable_publication_failure_restores_the_old_deployment(durable_client, monkeypatch, wait_for_execution):
     old_source = durable_source("test-v1")
     candidate_source = durable_source("test-v2")
     deploy_pipeline_files("durable-job", {"pipeline_wrapper.py": old_source}, app=durable_client.app, save_files=True)
@@ -195,4 +299,6 @@ def test_durable_publication_failure_restores_the_old_deployment(durable_client,
     assert durable_client.app.state.durable_runtime._deployments["durable-job"].revision == "test-v1"
     assert (Path(settings.pipelines_dir) / "durable-job" / "pipeline_wrapper.py").read_text() == old_source
     execution_id = durable_client.post("/durable-job/run-durable", json={"value": 7}).json()["execution_id"]
-    assert wait_for_status(durable_client, execution_id, "completed")["result"] == {"value": 7}
+    assert wait_for_execution(durable_client, f"/durable-job/executions/{execution_id}", "completed")["result"] == {
+        "value": 7
+    }

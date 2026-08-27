@@ -139,7 +139,7 @@ class ExecutionStore(Protocol):
         worker_revision: str,
         revision_error: bytes,
         attempts_error: bytes,
-    ) -> int: ...
+    ) -> None: ...
 
     async def append_chunk(self, run_id: str, attempt: int, data: bytes) -> None: ...
 
@@ -266,9 +266,8 @@ class MemoryExecutionStore:
         worker_revision: str,
         revision_error: bytes,
         attempts_error: bytes,
-    ) -> int:
+    ) -> None:
         now_ms = self._clock()
-        recovered = 0
         for (run_id, fence), deadline in sorted(self._lease_expiry.items(), key=lambda item: item[1])[
             :MAINTENANCE_BATCH_SIZE
         ]:
@@ -287,11 +286,9 @@ class MemoryExecutionStore:
                         attempts_error,
                     ),
                 )
-                recovered += 1
             except ExecutionNotFoundError:
                 self._lease_expiry.pop((run_id, fence), None)
         self._cleanup_terminal(now_ms)
-        return recovered
 
     async def append_chunk(self, run_id: str, attempt: int, data: bytes) -> None:
         if not self.config.max_stream_chunks or run_id not in self._controls:

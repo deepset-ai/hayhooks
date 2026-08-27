@@ -79,6 +79,14 @@ source = "vcs"
 [tool.hatch.build.targets.wheel]
 packages = ["src/hayhooks"]
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/DURABLE_ENGINE_PLAN.md",
+  "/docs/assets/durable-fleet-architecture*.png",
+  "/examples/durable_engine_showcase",
+  "/uv.lock",
+]
+
 [tool.hatch.build.targets.wheel.force-include]
 # .chainlit is a hidden dir excluded by default, so force-include is needed
 "src/hayhooks/server/chainlit_app/.chainlit" = "hayhooks/server/chainlit_app/.chainlit"

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal
@@ -102,23 +101,6 @@ def durable_app_factory() -> Iterator[Callable[..., tuple[FastAPI, DurableDeploy
     yield create
 
 
-def wait_for_status(
-    client: TestClient,
-    path: str,
-    expected: str,
-    *,
-    headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    for _ in range(200):
-        response = client.get(path, headers=headers)
-        assert response.status_code == 200
-        if response.json()["status"] == expected:
-            return response.json()
-        time.sleep(0.005)
-    message = f"execution did not reach {expected}"
-    raise AssertionError(message)
-
-
 def read_sse(
     client: TestClient,
     path: str,
@@ -146,7 +128,7 @@ def read_sse(
     return events, comments, response_headers
 
 
-def test_router_is_typed_prefix_and_root_path_safe(durable_app_factory) -> None:
+def test_router_is_typed_prefix_and_root_path_safe(durable_app_factory, wait_for_execution) -> None:
     app, _ = durable_app_factory(root_path="/root")
     with TestClient(app) as client:
         unscoped_idempotency = client.post(
@@ -160,11 +142,11 @@ def test_router_is_typed_prefix_and_root_path_safe(durable_app_factory) -> None:
         assert submitted.headers["location"].startswith("/root/api/jobs/executions/")
         links = {key: value.removeprefix("/root") for key, value in submitted.json()["links"].items()}
         assert set(links) == {"self", "cancel", "resume", "stream"}
-        waiting = wait_for_status(client, links["self"], "waiting")
+        waiting = wait_for_execution(client, links["self"], "waiting")
         assert waiting["waiting"] == {"kind": "approval", "message": "Continue?"}
         assert client.post(links["resume"], json={"approved": "invalid"}).status_code == 422
         assert client.post(links["resume"], json={"approved": True}).status_code == 202
-        completed = wait_for_status(client, links["self"], "completed")
+        completed = wait_for_execution(client, links["self"], "completed")
         assert completed["result"] == {"value": 1, "owner_id": None}
         assert client.post(links["resume"], json={"approved": True}).status_code == 409
         assert client.post(links["cancel"]).status_code == 200
@@ -208,18 +190,18 @@ def test_owner_mismatch_is_always_hidden(durable_app_factory, method: str, suffi
         assert response.status_code == 404
 
 
-def test_owner_scopes_idempotency_and_invalid_values_fail_closed(durable_app_factory) -> None:
+def test_owner_scopes_idempotency_and_invalid_values_fail_closed(durable_app_factory, wait_for_execution) -> None:
     app, _ = durable_app_factory(owner_id)
     alice = {"X-Owner": "alice", "Idempotency-Key": "same"}
     bob = {"X-Owner": "bob", "Idempotency-Key": "same"}
     with TestClient(app) as client:
         assert client.post("/api/jobs/run-durable", json={"value": 1}).status_code == 500
         submitted = client.post("/api/jobs/run-durable", json={"value": 1}, headers=alice)
-        wait_for_status(client, submitted.json()["links"]["self"], "completed", headers=alice)
+        wait_for_execution(client, submitted.json()["links"]["self"], "completed", headers=alice)
         replay = client.post("/api/jobs/run-durable", json={"value": 1}, headers=alice)
         conflict = client.post("/api/jobs/run-durable", json={"value": 2}, headers=alice)
         independent = client.post("/api/jobs/run-durable", json={"value": 2}, headers=bob)
-        wait_for_status(client, independent.json()["links"]["self"], "completed", headers=bob)
+        wait_for_execution(client, independent.json()["links"]["self"], "completed", headers=bob)
         oversized = client.post(
             "/api/jobs/run-durable",
             json={"value": 1},
@@ -288,8 +270,9 @@ def test_owner_scopes_idempotency_and_invalid_values_fail_closed(durable_app_fac
         pytest.param(0, 64_000, [(1, {"index": 0})], None, ["completed"], [], id="disabled-log"),
     ],
 )
-def test_stream_resume_gap_fencing_and_drain(  # noqa: PLR0913
+def test_stream_resume_gap_fencing_and_drain(
     durable_app_factory,
+    wait_for_execution,
     max_chunks: int,
     chunk_bytes: int,
     chunks: list[tuple[int, object]],
@@ -303,7 +286,7 @@ def test_stream_resume_gap_fencing_and_drain(  # noqa: PLR0913
     )
     with TestClient(app) as client:
         submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
-        completed = wait_for_status(client, submitted["links"]["self"], "completed")
+        completed = wait_for_execution(client, submitted["links"]["self"], "completed")
         for attempt, payload in chunks:
             asyncio.run(
                 deployment.store.append_chunk(
@@ -319,26 +302,30 @@ def test_stream_resume_gap_fencing_and_drain(  # noqa: PLR0913
         assert payloads == expected_payloads
 
 
-def test_chunk_failures_are_display_only_and_midstream_errors_are_framed(durable_app_factory, monkeypatch) -> None:
+def test_chunk_failures_are_display_only_and_midstream_errors_are_framed(
+    durable_app_factory, monkeypatch, wait_for_execution
+) -> None:
     app, deployment = durable_app_factory(max_stream_chunk_bytes=1_024)
     append_chunk = deployment.store.append_chunk
     with TestClient(app) as client:
         monkeypatch.setattr(deployment.store, "append_chunk", AsyncMock(side_effect=ExecutionStoreError("down")))
         dropped = client.post("/api/jobs/run-durable", json={"value": 1, "action": "stream"}).json()
-        assert wait_for_status(client, dropped["links"]["self"], "completed")["attempt"] == 1
+        assert wait_for_execution(client, dropped["links"]["self"], "completed")["attempt"] == 1
         monkeypatch.setattr(deployment.store, "append_chunk", append_chunk)
         oversized = client.post("/api/jobs/run-durable", json={"value": 1, "action": "oversized"}).json()
-        assert wait_for_status(client, oversized["links"]["self"], "completed")["attempt"] == 1
+        assert wait_for_execution(client, oversized["links"]["self"], "completed")["attempt"] == 1
         monkeypatch.setattr(deployment.store, "read_chunks", AsyncMock(side_effect=ExecutionStoreError("down")))
         events, _, _ = read_sse(client, oversized["links"]["stream"])
         assert events == [{"event": "error", "data": '{"detail":"Execution stream interrupted"}'}]
 
 
-def test_admission_and_store_failures_are_service_unavailable(durable_app_factory, monkeypatch) -> None:
+def test_admission_and_store_failures_are_service_unavailable(
+    durable_app_factory, monkeypatch, wait_for_execution
+) -> None:
     app, deployment = durable_app_factory(max_nonterminal=1)
     with TestClient(app) as client:
         first = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"}).json()
-        wait_for_status(client, first["links"]["self"], "waiting")
+        wait_for_execution(client, first["links"]["self"], "waiting")
         deployment.store._payloads[first["execution_id"]][PayloadKind.WAIT] = b"not-json"
         projected_corruption = client.get(first["links"]["self"])
         deployment.store._payloads[first["execution_id"]][PayloadKind.CHECKPOINT] = b"not-json"
@@ -357,11 +344,11 @@ def test_admission_and_store_failures_are_service_unavailable(durable_app_factor
         assert unavailable.json() == {"detail": "Durable execution store is unavailable"}
 
 
-def test_waiting_stream_disconnect_does_not_cancel(durable_app_factory) -> None:
+def test_waiting_stream_disconnect_does_not_cancel(durable_app_factory, wait_for_execution) -> None:
     app, _ = durable_app_factory()
     with TestClient(app) as client:
         submitted = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"}).json()
-        wait_for_status(client, submitted["links"]["self"], "waiting")
+        wait_for_execution(client, submitted["links"]["self"], "waiting")
         messages = []
 
         async def disconnect() -> None:

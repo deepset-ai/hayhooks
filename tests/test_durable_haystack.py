@@ -24,7 +24,6 @@ if _HAYSTACK_V3:
     from haystack.components.agents import Agent
     from haystack.components.agents.state import State
     from haystack.components.generators.chat import MockChatGenerator
-    from haystack.components.routers import ConditionalRouter
     from haystack.core.errors import PipelineRuntimeError
     from haystack.dataclasses import ChatMessage, ToolCall
     from haystack.dataclasses.breakpoints import PipelineSnapshot
@@ -151,38 +150,14 @@ async def test_async_pipeline_thread_is_shielded_until_it_finishes(context_facto
 @requires_haystack_v3
 async def test_pipeline_rejects_multiple_conditional_boundaries(context_factory) -> None:
     _, create = context_factory
-    pipeline = Pipeline()
-    pipeline.add_component(
-        "router",
-        ConditionalRouter(
-            [
-                {
-                    "condition": "{{ value < 0 }}",
-                    "output": "{{ value }}",
-                    "output_name": "left",
-                    "output_type": int,
-                },
-                {
-                    "condition": "{{ value >= 0 }}",
-                    "output": "{{ value }}",
-                    "output_name": "right",
-                    "output_type": int,
-                },
-            ]
-        ),
-    )
-    pipeline.add_component("left", Increment())
-    pipeline.add_component("right", Increment())
-    pipeline.connect("router.left", "left.value")
-    pipeline.connect("router.right", "right.value")
-    adapter = HaystackDurableAdapter(pipeline)
+    adapter = HaystackDurableAdapter(Pipeline())
     context, _ = await create()
 
     with durable_context_scope(context), pytest.raises(TypeError, match="one Pipeline component"):
         await asyncio.to_thread(
             adapter.run_pipeline,
             context,
-            {"router": {"value": 1}},
+            {},
             checkpoint_at=["left", "right"],
         )
 

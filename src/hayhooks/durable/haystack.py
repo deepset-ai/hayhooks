@@ -51,7 +51,7 @@ def _restore_agent_state(context: DurableContext, state: State) -> None:
     state_payload = checkpoint.get("state") if isinstance(checkpoint, dict) else None
     if not isinstance(state_payload, dict):
         return
-    restored = State.from_dict(cast(dict[str, Any], state_payload))
+    restored = State.from_dict(state_payload)
     live = {key: state.data.get(key) for key in ("tools", "hook_context")}
     state.data.clear()
     state.data.update(restored.data)

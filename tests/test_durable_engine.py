@@ -158,16 +158,17 @@ def test_retry_and_lease_recovery_requeue_without_resetting_retry_count(claimed_
     assert recovered.next_control.run_attempt == 2
 
 
-def test_wait_resume_and_progress_preserve_checkpoint_boundary(claimed_control) -> None:
+def test_wait_resume_preserves_checkpoint_boundary(claimed_control) -> None:
     waiting = decide(
         claimed_control,
         Suspend(1, "worker-a", 300, b"checkpoint", b"wait", progress_events=(b"waiting",)),
     )
     assert waiting.next_control.status is ExecutionStatus.WAITING
     assert waiting.lease_index_update and waiting.lease_index_update.deadline_ms is None
-    resumed = decide(waiting.next_control, Resume(400, "rev-1", b"checkpoint", (b"resumed",)))
+    resumed = decide(waiting.next_control, Resume(400, "rev-1", b"checkpoint"))
     assert resumed.next_control.status is ExecutionStatus.QUEUED
-    assert [event.sequence for event in (*waiting.progress_events, *resumed.progress_events)] == [1, 2]
+    assert resumed.next_control.progress_sequence == waiting.next_control.progress_sequence == 1
+    assert not resumed.progress_events
 
 
 def test_terminal_state_is_irreversible_and_payloads_are_exclusive(claimed_control) -> None:
