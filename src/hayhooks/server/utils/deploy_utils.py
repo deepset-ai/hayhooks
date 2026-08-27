@@ -568,8 +568,6 @@ def rebuild_openapi(app: FastAPI) -> None:
 
 
 def _remove_pipeline_routes(app: FastAPI, pipeline_name: str) -> None:
-    if not isinstance(app.routes, list):
-        return
     for route in tuple(app.routes):
         prefix = getattr(getattr(route, "include_context", None), "prefix", None)
         if prefix == f"/{pipeline_name}" or (

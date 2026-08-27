@@ -829,6 +829,7 @@ def test_deploy_pipeline_files_with_async_run_api():
 
 def test_deploy_pipeline_files_without_return_type(test_settings, mocker):
     mock_app = mocker.Mock()
+    mock_app.routes = []
 
     test_file_path = Path("tests/test_files/files/no_return_type/pipeline_wrapper.py")
     files = {"pipeline_wrapper.py": test_file_path.read_text()}

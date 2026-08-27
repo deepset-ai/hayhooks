@@ -274,29 +274,26 @@ class DurableContext:
                     "Dropped a durable display chunk"
                 )
 
-    def run_pipeline(self, data: dict[str, Any], *, checkpoint_at: str | None = None) -> dict[str, Any]:
-        """Run this execution's configured Haystack Pipeline."""
+    def _require_adapter(self) -> Any:
         if self._adapter is None:
             raise RuntimeError("this durable execution has no Haystack adapter")
-        return self._adapter.run_pipeline(self, data, checkpoint_at=checkpoint_at)
+        return self._adapter
+
+    def run_pipeline(self, data: dict[str, Any], *, checkpoint_at: str | None = None) -> dict[str, Any]:
+        """Run this execution's configured Haystack Pipeline."""
+        return self._require_adapter().run_pipeline(self, data, checkpoint_at=checkpoint_at)
 
     async def run_pipeline_async(self, data: dict[str, Any], *, checkpoint_at: str | None = None) -> dict[str, Any]:
         """Asynchronously run this execution's configured Haystack Pipeline."""
-        if self._adapter is None:
-            raise RuntimeError("this durable execution has no Haystack adapter")
-        return await self._adapter.run_pipeline_async(self, data, checkpoint_at=checkpoint_at)
+        return await self._require_adapter().run_pipeline_async(self, data, checkpoint_at=checkpoint_at)
 
     def run_agent(self, *, messages: list[Any], **kwargs: Any) -> dict[str, Any]:
         """Run this execution's configured Haystack Agent."""
-        if self._adapter is None:
-            raise RuntimeError("this durable execution has no Haystack adapter")
-        return self._adapter.run_agent(self, messages=messages, **kwargs)
+        return self._require_adapter().run_agent(self, messages=messages, **kwargs)
 
     async def run_agent_async(self, *, messages: list[Any], **kwargs: Any) -> dict[str, Any]:
         """Asynchronously run this execution's configured Haystack Agent."""
-        if self._adapter is None:
-            raise RuntimeError("this durable execution has no Haystack adapter")
-        return await self._adapter.run_agent_async(self, messages=messages, **kwargs)
+        return await self._require_adapter().run_agent_async(self, messages=messages, **kwargs)
 
     def checkpoint_sync(self, adapter_checkpoint: JsonValue = None) -> None:
         self._sync(self.checkpoint(adapter_checkpoint))
