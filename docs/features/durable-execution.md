@@ -102,6 +102,28 @@ The portable `hayhooks.durable` package accepts an explicit store, deployment,
 and runner and does not import the Hayhooks server. Hosts own runtime startup,
 shutdown, authentication, and Redis client lifetime.
 
+## Polling and recovery
+
+Runnable work and lease expiry use independent polling intervals. An empty
+Redis scheduling index is checked with one sorted-set command and does not
+request Redis time. Redis time remains authoritative whenever an index contains
+a deadline that must be evaluated.
+
+The worker interval bounds ordinary pickup latency while workers are idle. The
+maintenance interval bounds the additional delay between lease expiry and
+recovery. Unexpected local worker-task exits are supervised immediately and do
+not wait for lease maintenance or issue a Redis command. See
+[Durable Operations](../deployment/durable-operations.md#polling-tradeoffs) for
+configuration profiles and command-rate estimates.
+
+Fixed polling is intentionally the correctness and compatibility baseline, not
+a claim that it is the most efficient wake-up mechanism at every scale. The
+empty-index optimization and independent intervals keep that baseline
+inexpensive and predictable. If measured deployment or replica scale justifies
+the added coordination, advisory wake-up notifications can be layered over the
+same sorted-set source of truth. Bounded safety polling must remain so a lost
+notification affects latency, not correctness.
+
 ## Delivery and revisions
 
 Execution is at least once. Fencing blocks stale workers from committing, but a

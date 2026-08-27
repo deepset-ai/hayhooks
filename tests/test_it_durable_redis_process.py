@@ -73,6 +73,7 @@ async def _run_worker(mode: str, redis_url: str, prefix: str, marker: str, run_i
         run,
         config=RuntimeConfig(
             poll_interval_seconds=0.02,
+            maintenance_interval_seconds=0.02,
             shutdown_grace_seconds=0.1,
             lease_duration_ms=300,
             operational_backoff_min_seconds=0.01,

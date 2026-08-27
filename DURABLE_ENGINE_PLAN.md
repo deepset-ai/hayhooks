@@ -2,6 +2,10 @@
 
 Status: complete; final review and release verification passed.
 
+Follow-up Redis polling optimization is tracked in
+[DURABLE_ENGINE_REDIS_POLLING_PLAN.md](DURABLE_ENGINE_REDIS_POLLING_PLAN.md).
+Its Phase 1 is implemented; later advisory-notification phases remain proposed.
+
 This document is the implementation record for the `durable_engine` branch.
 It uses `hayhooks_v2` / PR #253 as design evidence, not as a source tree to copy.
 The target is a lean, portable `hayhooks.durable` engine that Hayhooks consumes

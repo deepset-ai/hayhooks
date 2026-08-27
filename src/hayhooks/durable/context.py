@@ -36,7 +36,7 @@ class DurableExecutionCancelledError(RuntimeError):
 
 
 class _RetryRequestedError(Exception):
-    def __init__(self, message: str, delay: float, progress_events: tuple[bytes, ...]) -> None:
+    def __init__(self, message: str, delay: float | None, progress_events: tuple[bytes, ...]) -> None:
         super().__init__(message)
         self.delay = delay
         self.progress_events = progress_events
@@ -229,8 +229,7 @@ class DurableContext:
     async def retry(self, message: str, *, delay: float | None = None) -> None:
         async with self._operation_lock:
             self._claim.require_owned()
-            delay = 0.0 if delay is None else delay
-            if delay < 0 or not math.isfinite(delay):
+            if delay is not None and (delay < 0 or not math.isfinite(delay)):
                 raise ValueError("retry delay must be a finite non-negative number")
             raise _RetryRequestedError(str(message), delay, tuple(self._pending_progress))
 

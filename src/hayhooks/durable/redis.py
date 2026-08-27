@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import random
 import re
 from collections.abc import Iterator, Mapping
@@ -365,21 +366,19 @@ class RedisExecutionStore:
         if command.lease_duration_ms <= self.config.lease_commit_safety_ms:
             raise ValueError("lease duration must exceed the commit safety margin")
         with _redis_errors():
-            now_ms = await self._time_ms(self.redis)
-            candidates = await self.redis.zrangebyscore(
-                self.keys.runnable,
-                "-inf",
-                now_ms,
-                start=0,
-                num=1,
-            )
-            if not candidates:
+            entries = await self.redis.zrange(self.keys.runnable, 0, 0, withscores=True)
+            if not entries:
                 return None
             try:
-                run_id = _text(candidates[0])
+                member, raw_score = entries[0]
+                run_id = _text(member)
                 validate_run_id(run_id)
-            except (TypeError, UnicodeError, ValueError) as error:
-                raise ExecutionStoreCorruptionError("runnable index contains an invalid execution ID") from error
+                available_at_ms = _index_score_ms(raw_score, "runnable score")
+            except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError) as error:
+                raise ExecutionStoreCorruptionError("runnable index contains an invalid member or score") from error
+            now_ms = await self._time_ms(self.redis)
+            if available_at_ms > now_ms:
+                return None
             return await self._transition(run_id, command, candidate=True)
 
     async def maintain(
@@ -391,26 +390,33 @@ class RedisExecutionStore:
         attempts_error: bytes,
     ) -> None:
         with _redis_errors():
-            now_ms = await self._time_ms(self.redis)
-            entries = await self.redis.zrangebyscore(
+            entries = await self.redis.zrange(
                 self.keys.lease_expiry,
-                "-inf",
-                now_ms,
-                start=0,
-                num=MAINTENANCE_BATCH_SIZE,
+                0,
+                MAINTENANCE_BATCH_SIZE - 1,
                 withscores=True,
             )
+            if not entries:
+                return
+            valid_entries: list[tuple[str | bytes | int, str, int, int]] = []
             for member, raw_deadline in entries:
                 try:
                     run_id, separator, raw_fence = _text(member).rpartition("|")
                     validate_run_id(run_id)
-                    if not separator or int(raw_deadline) != raw_deadline:
+                    if not separator:
                         raise ValueError
                     fence = _nonnegative_int(raw_fence, "fence")
-                    deadline = _nonnegative_int(str(int(raw_deadline)), "lease deadline")
+                    deadline = _index_score_ms(raw_deadline, "lease deadline")
                 except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError):
                     await self.redis.zrem(self.keys.lease_expiry, member)
                     continue
+                valid_entries.append((member, run_id, fence, deadline))
+            if not valid_entries:
+                return
+            now_ms = await self._time_ms(self.redis)
+            for member, run_id, fence, deadline in valid_entries:
+                if deadline > now_ms:
+                    break
                 try:
                     await self.transition(
                         run_id,
@@ -653,6 +659,12 @@ def _nonnegative_int(value: str | bytes | int, name: str) -> int:
     if parsed > _MAX_SAFE_INTEGER:
         raise ExecutionStoreCorruptionError(f"{name} exceeds Redis's safe integer range")
     return parsed
+
+
+def _index_score_ms(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or int(value) != value:
+        raise ExecutionStoreCorruptionError(f"{name} is not an integer millisecond timestamp")
+    return _nonnegative_int(str(int(value)), name)
 
 
 @contextmanager

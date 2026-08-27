@@ -32,6 +32,7 @@ from hayhooks.durable.engine import (
     MAX_CONTROL_SCALAR_BYTES,
     Claim,
     Complete,
+    ExecutionControl,
     ExecutionLeaseLostError,
     ExecutionNotFoundError,
     ExecutionPayloadSizeError,
@@ -70,7 +71,8 @@ class RuntimeConfig:
     """Worker, lease, retry, and operational retry limits."""
 
     worker_concurrency: int = 1
-    poll_interval_seconds: float = 0.25
+    poll_interval_seconds: float = 1.0
+    maintenance_interval_seconds: float = 1.0
     shutdown_grace_seconds: float = 5.0
     lease_duration_ms: int = 30_000
     max_run_attempts: int = 3
@@ -83,6 +85,7 @@ class RuntimeConfig:
     def __post_init__(self) -> None:
         values = (
             self.poll_interval_seconds,
+            self.maintenance_interval_seconds,
             self.shutdown_grace_seconds,
             self.retry_base_delay_seconds,
             self.retry_max_delay_seconds,
@@ -97,8 +100,8 @@ class RuntimeConfig:
             )
         if self.lease_duration_ms < 1:
             raise ValueError("lease_duration_ms must be positive")
-        if self.poll_interval_seconds <= 0 or self.shutdown_grace_seconds < 0:
-            raise ValueError("poll interval must be positive and shutdown grace cannot be negative")
+        if self.poll_interval_seconds <= 0 or self.maintenance_interval_seconds <= 0 or self.shutdown_grace_seconds < 0:
+            raise ValueError("poll and maintenance intervals must be positive; shutdown grace cannot be negative")
         if (
             self.retry_base_delay_seconds < 0
             or self.retry_max_delay_seconds < self.retry_base_delay_seconds
@@ -409,14 +412,19 @@ class DurableDeployment:
             if not self._accepting_claims or slot in self._workers:
                 continue
             worker_id = f"{self._worker_identity}-{slot}"
-            self._workers[slot] = asyncio.create_task(
+            worker = asyncio.create_task(
                 self._worker(worker_id, self._generation),
                 name=f"durable:{self.name}:{slot}",
             )
+            self._workers[slot] = worker
+            worker.add_done_callback(self._worker_stopped)
+
+    def _worker_stopped(self, _worker: asyncio.Task[None]) -> None:
+        """Restore worker capacity immediately without tying supervision to Redis maintenance."""
+        self._ensure_workers()
 
     async def _maintenance(self, generation: int) -> None:
         while self._accepting_claims and generation == self._generation:
-            self._ensure_workers()
             try:
                 await self.store.maintain(
                     max_run_attempts=self.config.max_run_attempts,
@@ -431,7 +439,263 @@ class DurableDeployment:
                 await self._backoff(error, self._maintenance_error_streak, "maintenance")
             else:
                 self._maintenance_error_streak = 0
-                await asyncio.sleep(self.config.poll_interval_seconds)
+                await asyncio.sleep(self.config.maintenance_interval_seconds)
+
+    async def _worker(self, worker_id: str, generation: int) -> None:
+        self._worker_store_error_streaks[worker_id] = 0
+        while self._accepting_claims and generation == self._generation:
+            control = await self._claim_next_execution(worker_id)
+            if control is None:
+                continue
+
+            try:
+                stored = await self._read_claimed_execution(control, worker_id)
+                if stored is None:
+                    continue
+                prepared = await self._prepare_execution(stored, worker_id)
+                if prepared is None:
+                    continue
+                claim, context, request = prepared
+                await self._execute_claim(claim, context, request, worker_id)
+            except asyncio.CancelledError:
+                raise
+            except ExecutionLeaseLostError:
+                continue
+            except ExecutionStoreError as error:
+                await self._backoff_worker(worker_id, error, "transition")
+
+    async def _claim_next_execution(self, worker_id: str) -> ExecutionControl | None:
+        try:
+            claimed = await self.store.claim(
+                Claim(
+                    worker_id,
+                    0,
+                    self.config.lease_duration_ms,
+                    self.config.max_run_attempts,
+                    self.revision,
+                    self._revision_error,
+                    self._attempts_error,
+                )
+            )
+        except ExecutionStoreError as error:
+            await self._backoff_worker(worker_id, error, "claim")
+            return None
+        self._worker_store_error_streaks[worker_id] = 0
+        if claimed is None:
+            await asyncio.sleep(self.config.poll_interval_seconds)
+            return None
+        control = claimed.next_control
+        return control if control.status is ExecutionStatus.RUNNING else None
+
+    async def _read_claimed_execution(
+        self,
+        control: ExecutionControl,
+        worker_id: str,
+    ) -> StoredExecution | None:
+        """Load a claim, releasing it when the post-claim read cannot complete."""
+        try:
+            stored = await self.store.read(control.run_id)
+        except ExecutionStoreError as error:
+            with suppress(ExecutionLeaseLostError, ExecutionNotFoundError, ExecutionStoreError):
+                await self.store.transition(control.run_id, ReleaseClaim(control.fence, worker_id))
+            await self._backoff_worker(worker_id, error, "read")
+            return None
+        if stored is not None:
+            return stored
+        try:
+            await self.store.transition(control.run_id, ReleaseClaim(control.fence, worker_id))
+        except (ExecutionLeaseLostError, ExecutionNotFoundError):
+            pass
+        except ExecutionStoreError as error:
+            await self._backoff_worker(worker_id, error, "release")
+        return None
+
+    async def _prepare_execution(
+        self,
+        stored: StoredExecution,
+        worker_id: str,
+    ) -> tuple[_ClaimedExecution, DurableContext, BaseModel] | None:
+        control = stored.control
+        try:
+            request = self.request_model.model_validate(
+                decode_json(stored.payloads[PayloadKind.INPUT], max_bytes=self.store.config.max_payload_bytes)
+            )
+            checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
+            checkpoint = (
+                CheckpointEnvelope.model_validate(
+                    decode_json(checkpoint_payload, max_bytes=self.store.config.max_payload_bytes)
+                )
+                if checkpoint_payload is not None
+                else CheckpointEnvelope(adapter_kind=self.kind, adapter_checkpoint=None)
+            )
+            if checkpoint.adapter_kind is not self.kind:
+                raise ValueError("checkpoint kind does not match the deployment")
+        except (KeyError, TypeError, ValueError, ExecutionPayloadSizeError) as error:
+            await self.store.transition(
+                control.run_id,
+                Fail(control.fence, worker_id, 0, self._encode_exception(error)),
+            )
+            return None
+
+        claim = _ClaimedExecution(
+            self.store,
+            control,
+            worker_id,
+            self.config.lease_duration_ms,
+            checkpoint,
+        )
+        context = DurableContext(claim)
+        context._adapter = self.adapter
+        return claim, context, request
+
+    async def _execute_claim(
+        self,
+        claim: _ClaimedExecution,
+        context: DurableContext,
+        request: BaseModel,
+        worker_id: str,
+    ) -> None:
+        async with claim:
+            try:
+                if claim.control.cancel_requested_at_ms is not None:
+                    await self._acknowledge_cancellation(claim, context, worker_id)
+                    return
+
+                result = await self._invoke_application(claim, context, request)
+                if self.result_model is not None:
+                    result = self.result_model.model_validate(result).model_dump(mode="json")
+                elif isinstance(result, BaseModel):
+                    result = result.model_dump(mode="json")
+                await claim.transition(
+                    Complete(
+                        claim.control.fence,
+                        worker_id,
+                        0,
+                        encode_json(result, max_bytes=self.store.config.max_payload_bytes),
+                        tuple(context._pending_progress),
+                    )
+                )
+            except _ExecutionSuspendedError:
+                return
+            except DurableExecutionCancelledError:
+                await self._acknowledge_cancellation(claim, context, worker_id)
+            except _RetryRequestedError as error:
+                exponent = min(claim.control.application_retry_count, 30)
+                delay = self.config.retry_base_delay_seconds * (2**exponent) if error.delay is None else error.delay
+                await claim.transition(
+                    ScheduleRetry(
+                        claim.control.fence,
+                        worker_id,
+                        0,
+                        math.ceil(min(delay, self.config.retry_max_delay_seconds) * 1_000),
+                        self.config.max_application_retries,
+                        self._encode_exception(error, retryable=True),
+                        error.progress_events,
+                    )
+                )
+            except ExecutionPayloadSizeError as error:
+                await claim.transition(
+                    Fail(
+                        claim.control.fence,
+                        worker_id,
+                        0,
+                        self._encode_exception(error, code="payload_too_large"),
+                        tuple(context._pending_progress),
+                    )
+                )
+            except (asyncio.CancelledError, ExecutionLeaseLostError, ExecutionStoreError):
+                raise
+            except Exception as error:
+                await claim.transition(
+                    Fail(
+                        claim.control.fence,
+                        worker_id,
+                        0,
+                        self._encode_exception(error),
+                        tuple(context._pending_progress),
+                    )
+                )
+
+    async def _acknowledge_cancellation(
+        self,
+        claim: _ClaimedExecution,
+        context: DurableContext,
+        worker_id: str,
+    ) -> None:
+        """Commit pending progress through the reducer's cancellation-wins rule."""
+        await claim.transition(
+            Complete(
+                claim.control.fence,
+                worker_id,
+                0,
+                b"null",
+                tuple(context._pending_progress),
+            )
+        )
+
+    async def _invoke_application(
+        self,
+        claim: _ClaimedExecution,
+        context: DurableContext,
+        request: BaseModel,
+    ) -> object:
+        thread_done: asyncio.Event | None = None
+        worker_task = asyncio.current_task()
+        with durable_context_scope(context):
+            if self._runner_is_async:
+                application = asyncio.ensure_future(cast(Awaitable[object], self.runner(context, request)))
+            else:
+                thread_done = asyncio.Event()
+                event_loop = asyncio.get_running_loop()
+                thread_result: ThreadFuture[object] = ThreadFuture()
+                thread_result.set_running_or_notify_cancel()
+                application = asyncio.wrap_future(thread_result)
+                active_context = copy_context()
+
+                def run_in_thread(
+                    bound_context: DurableContext = context,
+                    bound_request: BaseModel = request,
+                    bound_loop: asyncio.AbstractEventLoop = event_loop,
+                    bound_completion: asyncio.Event = thread_done,
+                    bound_result: ThreadFuture[object] = thread_result,
+                ) -> None:
+                    try:
+                        bound_result.set_result(self.runner(bound_context, bound_request))
+                    except BaseException as error:
+                        bound_result.set_exception(error)
+                    finally:
+                        with suppress(RuntimeError):
+                            bound_loop.call_soon_threadsafe(bound_completion.set)
+
+                # A daemon thread keeps shutdown bounded; Python cannot safely stop it once running.
+                Thread(
+                    target=active_context.run,
+                    args=(run_in_thread,),
+                    name=f"durable-run:{claim.control.run_id}",
+                    daemon=True,
+                ).start()
+                if worker_task is not None:
+                    self._thread_workers.add(worker_task)
+
+        lease_watch = asyncio.create_task(
+            claim.lease_lost.wait(),
+            name=f"durable-lease-watch:{claim.control.run_id}",
+        )
+        try:
+            done, _ = await asyncio.wait({application, lease_watch}, return_when=asyncio.FIRST_COMPLETED)
+            if lease_watch in done and claim.lease_lost.is_set():
+                self._cancel_application(application, thread_done)
+                raise ExecutionLeaseLostError(f"execution lease for '{claim.control.run_id}' was lost")
+            return application.result()
+        except asyncio.CancelledError:
+            self._cancel_application(application, thread_done)
+            raise
+        finally:
+            lease_watch.cancel()
+            with suppress(asyncio.CancelledError):
+                await lease_watch
+            if worker_task is not None:
+                self._thread_workers.discard(worker_task)
 
     def _cancel_application(
         self,
@@ -449,224 +713,9 @@ class DurableDeployment:
         draining.add_done_callback(self._draining_runs.discard)
         draining.add_done_callback(lambda done: None if done.cancelled() else done.exception())
 
-    async def _worker(self, worker_id: str, generation: int) -> None:  # noqa: C901, PLR0912, PLR0915
-        self._worker_store_error_streaks[worker_id] = 0
-        while self._accepting_claims and generation == self._generation:
-            try:
-                claimed = await self.store.claim(
-                    Claim(
-                        worker_id,
-                        0,
-                        self.config.lease_duration_ms,
-                        self.config.max_run_attempts,
-                        self.revision,
-                        self._revision_error,
-                        self._attempts_error,
-                    )
-                )
-            except asyncio.CancelledError:
-                raise
-            except ExecutionStoreError as error:
-                self._worker_store_error_streaks[worker_id] += 1
-                await self._backoff(error, self._worker_store_error_streaks[worker_id], "claim")
-                continue
-            self._worker_store_error_streaks[worker_id] = 0
-            if claimed is None:
-                await asyncio.sleep(self.config.poll_interval_seconds)
-                continue
-            control = claimed.next_control
-            if control.status is not ExecutionStatus.RUNNING:
-                continue
-            try:
-                stored = await self.store.read(control.run_id)
-            except ExecutionStoreError as error:
-                with suppress(ExecutionLeaseLostError, ExecutionNotFoundError, ExecutionStoreError):
-                    await self.store.transition(control.run_id, ReleaseClaim(control.fence, worker_id))
-                self._worker_store_error_streaks[worker_id] += 1
-                await self._backoff(error, self._worker_store_error_streaks[worker_id], "read")
-                continue
-            if stored is None:
-                try:
-                    await self.store.transition(control.run_id, ReleaseClaim(control.fence, worker_id))
-                except ExecutionNotFoundError:
-                    pass
-                except ExecutionStoreError as error:
-                    self._worker_store_error_streaks[worker_id] += 1
-                    await self._backoff(error, self._worker_store_error_streaks[worker_id], "release")
-                continue
-
-            try:
-                request_payload = stored.payloads[PayloadKind.INPUT]
-                request = self.request_model.model_validate(
-                    decode_json(request_payload, max_bytes=self.store.config.max_payload_bytes)
-                )
-                checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
-                checkpoint = (
-                    CheckpointEnvelope.model_validate(
-                        decode_json(checkpoint_payload, max_bytes=self.store.config.max_payload_bytes)
-                    )
-                    if checkpoint_payload is not None
-                    else CheckpointEnvelope(adapter_kind=self.kind, adapter_checkpoint=None)
-                )
-                if checkpoint.adapter_kind is not self.kind:
-                    raise ValueError("checkpoint kind does not match the deployment")
-            except (KeyError, TypeError, ValueError, ExecutionPayloadSizeError) as error:
-                try:
-                    await self.store.transition(
-                        control.run_id,
-                        Fail(control.fence, worker_id, 0, self._encode_exception(error)),
-                    )
-                except ExecutionStoreError as store_error:
-                    self._worker_store_error_streaks[worker_id] += 1
-                    await self._backoff(store_error, self._worker_store_error_streaks[worker_id], "transition")
-                continue
-
-            claim = _ClaimedExecution(
-                self.store,
-                stored.control,
-                worker_id,
-                self.config.lease_duration_ms,
-                checkpoint,
-            )
-            context = DurableContext(claim)
-            context._adapter = self.adapter
-            try:
-                async with claim:
-                    try:
-                        if claim.control.cancel_requested_at_ms is not None:
-                            await claim.transition(Complete(claim.control.fence, worker_id, 0, b"null"))
-                            continue
-
-                        thread_done: asyncio.Event | None = None
-                        worker_task = asyncio.current_task()
-                        application: asyncio.Future[object]
-                        with durable_context_scope(context):
-                            if self._runner_is_async:
-                                application = asyncio.ensure_future(
-                                    cast(Awaitable[object], self.runner(context, request))
-                                )
-                            else:
-                                thread_done = asyncio.Event()
-                                event_loop = asyncio.get_running_loop()
-                                thread_result: ThreadFuture[object] = ThreadFuture()
-                                thread_result.set_running_or_notify_cancel()
-                                application = asyncio.wrap_future(thread_result)
-                                active_context = copy_context()
-
-                                def run_in_thread(
-                                    bound_context: DurableContext = context,
-                                    bound_request: BaseModel = request,
-                                    bound_loop: asyncio.AbstractEventLoop = event_loop,
-                                    bound_completion: asyncio.Event = thread_done,
-                                    bound_result: ThreadFuture[object] = thread_result,
-                                ) -> None:
-                                    try:
-                                        bound_result.set_result(self.runner(bound_context, bound_request))
-                                    except BaseException as error:
-                                        bound_result.set_exception(error)
-                                    finally:
-                                        with suppress(RuntimeError):
-                                            bound_loop.call_soon_threadsafe(bound_completion.set)
-
-                                Thread(
-                                    target=active_context.run,
-                                    args=(run_in_thread,),
-                                    name=f"durable-run:{control.run_id}",
-                                    daemon=True,
-                                ).start()
-                                if worker_task is not None:
-                                    self._thread_workers.add(worker_task)
-                        lease_watch = asyncio.create_task(
-                            claim.lease_lost.wait(),
-                            name=f"durable-lease-watch:{control.run_id}",
-                        )
-                        try:
-                            done, _ = await asyncio.wait(
-                                {application, lease_watch}, return_when=asyncio.FIRST_COMPLETED
-                            )
-                            if lease_watch in done and claim.lease_lost.is_set():
-                                self._cancel_application(application, thread_done)
-                                raise ExecutionLeaseLostError(f"execution lease for '{control.run_id}' was lost")
-                            result = application.result()
-                        except asyncio.CancelledError:
-                            self._cancel_application(application, thread_done)
-                            raise
-                        finally:
-                            lease_watch.cancel()
-                            with suppress(asyncio.CancelledError):
-                                await lease_watch
-                            if worker_task is not None:
-                                self._thread_workers.discard(worker_task)
-
-                        if self.result_model is not None:
-                            result = self.result_model.model_validate(result).model_dump(mode="json")
-                        elif isinstance(result, BaseModel):
-                            result = result.model_dump(mode="json")
-                        result_payload = encode_json(result, max_bytes=self.store.config.max_payload_bytes)
-                        await claim.transition(
-                            Complete(
-                                claim.control.fence,
-                                worker_id,
-                                0,
-                                result_payload,
-                                tuple(context._pending_progress),
-                            )
-                        )
-                    except _ExecutionSuspendedError:
-                        pass
-                    except DurableExecutionCancelledError:
-                        await claim.transition(
-                            Complete(
-                                claim.control.fence,
-                                worker_id,
-                                0,
-                                b"null",
-                                tuple(context._pending_progress),
-                            )
-                        )
-                    except _RetryRequestedError as error:
-                        exponent = min(claim.control.application_retry_count, 30)
-                        delay = error.delay or self.config.retry_base_delay_seconds * (2**exponent)
-                        await claim.transition(
-                            ScheduleRetry(
-                                claim.control.fence,
-                                worker_id,
-                                0,
-                                math.ceil(min(delay, self.config.retry_max_delay_seconds) * 1_000),
-                                self.config.max_application_retries,
-                                self._encode_exception(error, retryable=True),
-                                error.progress_events,
-                            )
-                        )
-                    except ExecutionPayloadSizeError as error:
-                        await claim.transition(
-                            Fail(
-                                claim.control.fence,
-                                worker_id,
-                                0,
-                                self._encode_exception(error, code="payload_too_large"),
-                                tuple(context._pending_progress),
-                            )
-                        )
-                    except (asyncio.CancelledError, ExecutionLeaseLostError, ExecutionStoreError):
-                        raise
-                    except Exception as error:
-                        await claim.transition(
-                            Fail(
-                                claim.control.fence,
-                                worker_id,
-                                0,
-                                self._encode_exception(error),
-                                tuple(context._pending_progress),
-                            )
-                        )
-            except asyncio.CancelledError:
-                raise
-            except ExecutionLeaseLostError:
-                continue
-            except ExecutionStoreError as error:
-                self._worker_store_error_streaks[worker_id] += 1
-                await self._backoff(error, self._worker_store_error_streaks[worker_id], "transition")
+    async def _backoff_worker(self, worker_id: str, error: ExecutionStoreError, operation: str) -> None:
+        self._worker_store_error_streaks[worker_id] += 1
+        await self._backoff(error, self._worker_store_error_streaks[worker_id], operation)
 
     def _encode_error(
         self,

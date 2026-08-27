@@ -54,6 +54,9 @@ class ControlledStore(MemoryExecutionStore):
         self.read_error: BaseException | None = None
         self.maintenance_error: BaseException | None = None
         self.failure_seen = asyncio.Event()
+        self.claim_calls = 0
+        self.maintenance_calls = 0
+        self.second_claim_seen = asyncio.Event()
 
     async def initialize(self) -> None:
         self.initialize_calls += 1
@@ -65,6 +68,9 @@ class ControlledStore(MemoryExecutionStore):
         return await super().submit(control, input_payload)
 
     async def claim(self, command):
+        self.claim_calls += 1
+        if self.claim_calls >= 2:
+            self.second_claim_seen.set()
         if self.claim_error is not None:
             error, self.claim_error = self.claim_error, None
             self.failure_seen.set()
@@ -86,6 +92,7 @@ class ControlledStore(MemoryExecutionStore):
         revision_error: bytes,
         attempts_error: bytes,
     ) -> None:
+        self.maintenance_calls += 1
         if self.maintenance_error is not None:
             error, self.maintenance_error = self.maintenance_error, None
             self.failure_seen.set()
@@ -186,6 +193,7 @@ async def deployment_factory():
     [
         pytest.param({"worker_concurrency": 0}, id="workers"),
         pytest.param({"poll_interval_seconds": float("nan")}, id="finite"),
+        pytest.param({"maintenance_interval_seconds": 0}, id="maintenance"),
         pytest.param({"retry_base_delay_seconds": 2, "retry_max_delay_seconds": 1}, id="retry"),
         pytest.param({"operational_backoff_min_seconds": 0}, id="backoff"),
     ],
@@ -287,6 +295,31 @@ async def test_retry_delay_and_application_budget(deployment_factory) -> None:
         2,
         True,
     )
+
+
+async def test_explicit_zero_retry_delay_is_immediate(deployment_factory) -> None:
+    attempts = 0
+
+    async def runner(context: DurableContext, request: Request) -> Result:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await context.retry("now", delay=0)
+        return Result(value=request.value)
+
+    deployment = await deployment_factory(
+        runner,
+        config=RuntimeConfig(
+            poll_interval_seconds=0.005,
+            lease_duration_ms=300,
+            retry_base_delay_seconds=60,
+            retry_max_delay_seconds=60,
+        ),
+    )
+    submitted = await deployment.submit({"value": 1})
+
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    assert (stored.control.status, stored.control.run_attempt, attempts) == (ExecutionStatus.COMPLETED, 2, 2)
 
 
 async def test_failed_post_claim_read_releases_without_consuming_attempt(deployment_factory) -> None:
@@ -432,7 +465,12 @@ async def test_worker_slots_restart(deployment_factory, exit_mode: str) -> None:
         store.claim_error = RuntimeError("worker bug")
     deployment = await deployment_factory(
         store=store,
-        config=RuntimeConfig(worker_concurrency=2, poll_interval_seconds=0.005, lease_duration_ms=300),
+        config=RuntimeConfig(
+            worker_concurrency=2,
+            poll_interval_seconds=0.005,
+            maintenance_interval_seconds=60,
+            lease_duration_ms=300,
+        ),
     )
     workers = set(deployment._workers.values())
     if exit_mode == "cancel":
@@ -442,6 +480,21 @@ async def test_worker_slots_restart(deployment_factory, exit_mode: str) -> None:
         lambda health: health["running_slots"] == 2 and bool(set(deployment._workers.values()) - workers),
     )
     assert set(deployment._workers) == {0, 1}
+
+
+async def test_worker_and_maintenance_loops_use_independent_intervals(deployment_factory) -> None:
+    store = ControlledStore("jobs")
+    await deployment_factory(
+        store=store,
+        config=RuntimeConfig(
+            poll_interval_seconds=0.001,
+            maintenance_interval_seconds=60,
+            lease_duration_ms=300,
+        ),
+    )
+
+    await asyncio.wait_for(store.second_claim_seen.wait(), timeout=1)
+    assert store.maintenance_calls == 1
 
 
 async def test_runtime_instances_are_isolated_and_empty_start_is_inert(deployment_factory) -> None:

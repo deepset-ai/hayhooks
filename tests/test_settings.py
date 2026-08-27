@@ -50,6 +50,30 @@ def test_env_var_prefix(monkeypatch):
     assert settings.port == 5678
 
 
+def test_durable_polling_defaults_and_environment(monkeypatch):
+    monkeypatch.delenv("HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS", raising=False)
+    defaults = AppSettings()
+    assert defaults.durable_poll_interval_seconds == 1.0
+    assert defaults.durable_maintenance_interval_seconds == 1.0
+
+    monkeypatch.setenv("HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS", "0.25")
+    monkeypatch.setenv("HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS", "2")
+    configured = AppSettings()
+    assert configured.durable_poll_interval_seconds == 0.25
+    assert configured.durable_maintenance_interval_seconds == 2.0
+
+
+def test_durable_polling_settings_construct_runtime_config(monkeypatch):
+    monkeypatch.setattr("hayhooks.server.app.settings.durable_poll_interval_seconds", 0.25)
+    monkeypatch.setattr("hayhooks.server.app.settings.durable_maintenance_interval_seconds", 2.0)
+
+    app = create_app()
+
+    assert app.state.durable_runtime_config.poll_interval_seconds == 0.25
+    assert app.state.durable_runtime_config.maintenance_interval_seconds == 2.0
+
+
 def test_cors():
     default_settings = AppSettings()
     assert default_settings.cors_allow_origins == ["*"]

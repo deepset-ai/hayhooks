@@ -329,6 +329,7 @@ def create_app() -> FastAPI:
     app.state.durable_runtime_config = RuntimeConfig(
         worker_concurrency=settings.durable_worker_concurrency,
         poll_interval_seconds=settings.durable_poll_interval_seconds,
+        maintenance_interval_seconds=settings.durable_maintenance_interval_seconds,
         shutdown_grace_seconds=settings.durable_shutdown_grace_seconds,
         lease_duration_ms=settings.durable_lease_duration_ms,
         max_run_attempts=settings.durable_max_run_attempts,

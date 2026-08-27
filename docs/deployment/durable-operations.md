@@ -46,6 +46,46 @@ Lease duration must exceed the commit safety margin and comfortably cover Redis
 latency and scheduler pauses. A short lease recovers faster but raises false
 lease-loss risk. Application retry and run-attempt budgets are separate.
 
+## Polling tradeoffs
+
+Worker pickup and lease maintenance are configured independently. The balanced
+defaults are one second for both:
+
+```bash
+export HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS=1
+export HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS=1
+```
+
+For empty scheduling indexes, each scan uses one Redis sorted-set command and
+does not call `TIME`. Approximate empty-idle scheduling traffic is therefore:
+
+```text
+commands/second = deployments * (
+    worker_concurrency / worker_interval
+    + 1 / maintenance_interval
+)
+```
+
+Choose intervals from the latency requirements of the deployment rather than
+using a shorter value preemptively:
+
+| Use case | Worker interval | Maintenance interval | Tradeoff |
+|---|---:|---:|---|
+| Balanced default | `1s` | `1s` | Up to one second for ordinary pickup and one additional second after lease expiry |
+| Interactive pickup | `0.25s` | `1s` | Faster queued-work pickup with four times the idle worker scans |
+| Background or batch work | `2s` | `2s` | Lower Redis traffic with up to two seconds of pickup and post-expiry delay |
+| Redis-sensitive, recovery-tolerant work | `2s` | `5s` | Lowest fixed maintenance traffic; use only when five seconds of additional recovery delay is acceptable |
+| Faster expired-lease recovery | `1s` | `0.25s` | More maintenance traffic; useful with deliberately short leases |
+
+The intervals are upper bounds added by polling; average delay under steady
+arrival is usually about half the configured interval. After a process crash,
+recovery can take the remaining lease duration plus up to one maintenance
+interval. Keep maintenance short relative to customized short leases.
+
+Maintenance cadence does not supervise local worker capacity. Hayhooks restarts
+an unexpectedly stopped worker task immediately through local task supervision,
+without waiting for the next Redis maintenance scan.
+
 ## Health and recovery
 
 `GET /status` includes durable deployment health, configured/running/draining
