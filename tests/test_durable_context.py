@@ -29,6 +29,12 @@ from hayhooks.durable.store import CHUNK_CURSOR_START
 from tests.durable_store_contract import decode_checkpoint
 
 
+def test_root_exports_durable_streaming_callback() -> None:
+    from hayhooks import durable_streaming_callback as public_callback
+
+    assert public_callback is durable_streaming_callback
+
+
 async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancellation(context_factory) -> None:
     store, create = context_factory
     context, _ = await create()

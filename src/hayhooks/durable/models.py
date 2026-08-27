@@ -35,7 +35,10 @@ _SENSITIVE_NAME = (
 _REDACTIONS = (
     (re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;&]+"), r"\1<redacted>"),
     (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"), r"\1<redacted>"),
-    (re.compile(rf'(?i)(["\']{_SENSITIVE_NAME}["\']\s*:\s*)["\'][^"\']*["\']'), r'\1"<redacted>"'),
+    (
+        re.compile(rf"""(?i)((?:["']?{_SENSITIVE_NAME}["']?)\s*[:=]\s*)(["'])(?:\\.|(?!\2)[\s\S])*(?:\2|$)"""),
+        r"\1\2<redacted>\2",
+    ),
     (re.compile(rf"(?i)({_SENSITIVE_NAME})\s*[:=]\s*[^\s,;&]+"), r"\1=<redacted>"),
 )
 

@@ -19,9 +19,10 @@ from hayhooks.durable.engine import (
     RUN_ID_PATTERN,
     ExecutionNotFoundError,
     ExecutionPayloadSizeError,
+    ExecutionStatus,
     InvalidExecutionTransitionError,
 )
-from hayhooks.durable.models import ExecutionResult, decode_json, project_execution
+from hayhooks.durable.models import ExecutionResult, JsonValue, decode_json, project_execution
 from hayhooks.durable.runtime import DurableDeployment
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
@@ -107,13 +108,18 @@ def _project(
         for key in ("self", "cancel", "resume", "stream")
     }
     try:
-        return response_model.model_validate(
-            project_execution(
-                stored,
-                links=links,
-                max_payload_bytes=deployment.store.config.max_payload_bytes,
-            ).model_dump(mode="python")
+        public = project_execution(
+            stored,
+            links=links,
+            max_payload_bytes=deployment.store.config.max_payload_bytes,
         )
+        if (
+            deployment.result_model is not None
+            and stored.control.definition_revision == deployment.revision
+            and stored.control.status is ExecutionStatus.COMPLETED
+        ):
+            deployment.result_model.model_validate(public.result)
+        return response_model.model_validate(public.model_dump(mode="python"))
     except (ExecutionPayloadSizeError, OSError, OverflowError, TypeError, ValueError) as error:
         raise ExecutionStoreCorruptionError("stored execution cannot be projected") from error  # noqa: EM101
 
@@ -213,7 +219,7 @@ def create_durable_router(  # noqa: C901, PLR0915
         response_model = create_model(
             f"{''.join(character for character in deployment.name.title() if character.isalnum())}ExecutionResult",
             __base__=ExecutionResult,
-            result=(deployment.result_model | None, None),
+            result=(deployment.result_model | JsonValue, None),
         )
     route_names = {
         key: f"hayhooks.durable.{deployment.name}.{key}" for key in ("submit", "self", "cancel", "resume", "stream")

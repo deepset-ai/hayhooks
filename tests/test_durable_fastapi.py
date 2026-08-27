@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Any, Literal
 from unittest.mock import AsyncMock
 
@@ -34,6 +35,14 @@ class ResumeInput(BaseModel):
     approved: bool
 
 
+class LegacyResult(BaseModel):
+    old: int
+
+
+class CurrentResult(BaseModel):
+    new: str
+
+
 async def run_job(context: DurableContext, request: JobRequest) -> JobResult:
     resume_input = context.resume_input
     if request.action == "wait" and resume_input is None:
@@ -45,6 +54,10 @@ async def run_job(context: DurableContext, request: JobRequest) -> JobResult:
         await context.stream_chunk({"blob": "x" * 100_000})
     approved = resume_input is None or ResumeInput.model_validate(resume_input).approved
     return JobResult(value=request.value if approved else -1, owner_id=context.owner_id)
+
+
+async def run_legacy(_context: DurableContext, _request: JobRequest) -> LegacyResult:
+    return LegacyResult(old=1)
 
 
 def owner_id(request: Request) -> str:
@@ -162,6 +175,64 @@ def test_router_is_typed_prefix_and_root_path_safe(durable_app_factory, wait_for
     assert "JobsExecutionResult" in str(paths["/api/jobs/run-durable"]["post"]["responses"])
     assert "JobResult" in str(openapi["components"]["schemas"]["JobsExecutionResult"])
     assert "ResumeInput" in str(paths["/api/jobs/executions/{execution_id}/resume"]["post"]["requestBody"])
+
+
+def test_terminal_result_remains_readable_after_result_schema_revision() -> None:
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    legacy = DurableDeployment(
+        "jobs",
+        "v1",
+        store,
+        JobRequest,
+        run_legacy,
+        result_model=LegacyResult,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+
+    async def complete_legacy_execution() -> str:
+        await legacy.start()
+        try:
+            submitted = await legacy.submit({"value": 1})
+            for _ in range(200):
+                stored = await store.read(submitted.control.run_id)
+                if stored is not None and stored.control.terminal:
+                    return submitted.control.run_id
+                await asyncio.sleep(0.005)
+            raise AssertionError
+        finally:
+            await legacy.close()
+
+    execution_id = asyncio.run(complete_legacy_execution())
+    current = DurableDeployment(
+        "jobs",
+        "v2",
+        store,
+        JobRequest,
+        run_job,
+        result_model=CurrentResult,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        await current.start()
+        try:
+            yield
+        finally:
+            await current.close()
+
+    app = FastAPI(lifespan=lifespan)
+    app.include_router(create_durable_router(current, owner_id_dependency=None), prefix="/jobs")
+    with TestClient(app) as client:
+        response = client.get(f"/jobs/executions/{execution_id}")
+        assert response.status_code == 200
+        assert response.json()["result"] == {"old": 1}
+
+        store._controls[execution_id] = replace(
+            store._controls[execution_id],
+            definition_revision="v2",
+        )
+        assert client.get(f"/jobs/executions/{execution_id}").status_code == 503
 
 
 @pytest.mark.parametrize(

@@ -191,3 +191,16 @@ def test_error_messages_are_redacted_and_bounded() -> None:
     bounded = PersistedError(type="RuntimeError", message="💥" * 2_000)
     assert len(bounded.message) <= 2_000
     assert len(bounded.message.encode()) <= 4_096
+
+
+@pytest.mark.parametrize(
+    ("message", "secret"),
+    [
+        pytest.param("password='two words secret'", "two words secret", id="quoted-assignment"),
+        pytest.param(r'{"password":"abc\"SUPERSECRET"}', "SUPERSECRET", id="escaped-json-quote"),
+    ],
+)
+def test_error_redaction_consumes_the_full_quoted_value(message: str, secret: str) -> None:
+    redacted = PersistedError(type="RuntimeError", message=message).message
+    assert secret not in redacted
+    assert "<redacted>" in redacted

@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
+import textwrap
 import threading
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -512,3 +517,65 @@ async def test_thread_work_is_retained_until_exit(deployment_factory, loss_mode:
             assert stored.control.status is ExecutionStatus.RUNNING
     finally:
         release.set()
+
+
+def test_shutdown_grace_bounds_event_loop_teardown_for_sync_runner() -> None:
+    source_root = Path(__file__).parents[1] / "src"
+    subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                """
+                import asyncio
+                import threading
+
+                from pydantic import BaseModel
+
+                from hayhooks.durable.context import DurableContext
+                from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
+                from hayhooks.durable.store import MemoryExecutionStore, StoreConfig
+
+
+                class Request(BaseModel):
+                    value: int
+
+
+                started = threading.Event()
+                blocked = threading.Event()
+
+
+                def run(_context: DurableContext, request: Request) -> Request:
+                    started.set()
+                    blocked.wait()
+                    return request
+
+
+                async def main() -> None:
+                    deployment = DurableDeployment(
+                        "jobs",
+                        "v1",
+                        MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10)),
+                        Request,
+                        run,
+                        result_model=Request,
+                        config=RuntimeConfig(
+                            poll_interval_seconds=0.005,
+                            shutdown_grace_seconds=0.01,
+                            lease_duration_ms=300,
+                        ),
+                    )
+                    await deployment.start()
+                    await deployment.submit({"value": 1})
+                    assert await asyncio.to_thread(started.wait, 1)
+                    await deployment.close()
+
+
+                asyncio.run(main())
+                """
+            ),
+        ],
+        check=True,
+        env={**os.environ, "PYTHONPATH": str(source_root)},
+        timeout=3,
+    )

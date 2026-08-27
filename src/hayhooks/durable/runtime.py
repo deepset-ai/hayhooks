@@ -10,8 +10,11 @@ import math
 import random
 import secrets
 from collections.abc import Awaitable, Callable
+from concurrent.futures import Future as ThreadFuture
 from contextlib import suppress
+from contextvars import copy_context
 from dataclasses import dataclass
+from threading import Thread
 from typing import Any, TypeAlias, cast
 
 from loguru import logger as log
@@ -545,23 +548,32 @@ class DurableDeployment:
                             else:
                                 thread_done = asyncio.Event()
                                 event_loop = asyncio.get_running_loop()
-                                completion = thread_done
+                                thread_result: ThreadFuture[object] = ThreadFuture()
+                                thread_result.set_running_or_notify_cancel()
+                                application = asyncio.wrap_future(thread_result)
+                                active_context = copy_context()
 
                                 def run_in_thread(
                                     bound_context: DurableContext = context,
                                     bound_request: BaseModel = request,
                                     bound_loop: asyncio.AbstractEventLoop = event_loop,
-                                    bound_completion: asyncio.Event = completion,
-                                ) -> object:
+                                    bound_completion: asyncio.Event = thread_done,
+                                    bound_result: ThreadFuture[object] = thread_result,
+                                ) -> None:
                                     try:
-                                        return self.runner(bound_context, bound_request)
+                                        bound_result.set_result(self.runner(bound_context, bound_request))
+                                    except BaseException as error:
+                                        bound_result.set_exception(error)
                                     finally:
-                                        bound_loop.call_soon_threadsafe(bound_completion.set)
+                                        with suppress(RuntimeError):
+                                            bound_loop.call_soon_threadsafe(bound_completion.set)
 
-                                application = asyncio.create_task(
-                                    asyncio.to_thread(run_in_thread),
+                                Thread(
+                                    target=active_context.run,
+                                    args=(run_in_thread,),
                                     name=f"durable-run:{control.run_id}",
-                                )
+                                    daemon=True,
+                                ).start()
                                 if worker_task is not None:
                                     self._thread_workers.add(worker_task)
                         lease_watch = asyncio.create_task(

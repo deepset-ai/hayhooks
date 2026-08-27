@@ -38,6 +38,7 @@ from hayhooks.durable.engine import (
 CHUNK_CURSOR_START = "0-0"
 MAINTENANCE_BATCH_SIZE = 100
 MAX_CHUNK_READ_BYTES = 4_000_000
+MAX_CHUNK_READ_COUNT = 1_000
 _CHUNK_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
 _MAX_CURSOR_PART = 2**64 - 1
 _LEASE_COMMANDS = (ReleaseClaim, Heartbeat, Checkpoint, ScheduleRetry, Suspend, Complete, Fail)
@@ -381,7 +382,14 @@ def parse_chunk_cursor(value: str) -> tuple[int, int]:
 
 def chunk_read_count(config: StoreConfig) -> int:
     """Return the shared bounded chunk page size."""
-    return max(1, MAX_CHUNK_READ_BYTES // config.max_stream_chunk_bytes)
+    return max(
+        1,
+        min(
+            MAX_CHUNK_READ_COUNT,
+            config.max_stream_chunks or 1,
+            MAX_CHUNK_READ_BYTES // config.max_stream_chunk_bytes,
+        ),
+    )
 
 
 def runnable_score(control: ExecutionControl) -> int:
