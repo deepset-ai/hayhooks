@@ -88,8 +88,6 @@ class ControlledStore(MemoryExecutionStore):
         self,
         *,
         max_run_attempts: int,
-        worker_revision: str,
-        revision_error: bytes,
         attempts_error: bytes,
     ) -> None:
         self.maintenance_calls += 1
@@ -99,8 +97,6 @@ class ControlledStore(MemoryExecutionStore):
             raise error
         await super().maintain(
             max_run_attempts=max_run_attempts,
-            worker_revision=worker_revision,
-            revision_error=revision_error,
             attempts_error=attempts_error,
         )
 
@@ -333,20 +329,7 @@ async def test_failed_post_claim_read_releases_without_consuming_attempt(deploym
     assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.COMPLETED, 1)
 
 
-@pytest.mark.parametrize(
-    ("revision", "run_attempt", "max_payload_bytes", "code"),
-    [
-        pytest.param("old", 0, 128, None, id="revision-bounded-fallback"),
-        pytest.param("v1", 1, 1_000_000, "run_attempts_exhausted", id="attempt-budget"),
-    ],
-)
-async def test_incompatible_claims_fail_without_running_application(
-    deployment_factory,
-    revision: str,
-    run_attempt: int,
-    max_payload_bytes: int,
-    code: str | None,
-) -> None:
+async def test_exhausted_claim_fails_without_running_application(deployment_factory) -> None:
     calls = 0
 
     async def runner(_context: DurableContext, _request: Request) -> Result:
@@ -356,7 +339,7 @@ async def test_incompatible_claims_fail_without_running_application(
 
     store = MemoryExecutionStore(
         "jobs",
-        config=StoreConfig(lease_commit_safety_ms=10, max_payload_bytes=max_payload_bytes),
+        config=StoreConfig(lease_commit_safety_ms=10),
     )
     control = replace(
         initial_control(
@@ -364,12 +347,12 @@ async def test_incompatible_claims_fail_without_running_application(
             idempotency_digest="idem",
             idempotency_binding_digest="binding",
             deployment="jobs",
-            definition_revision=revision,
+            definition_revision="v1",
             owner_id=None,
             kind="pipeline",
             now_ms=0,
         ),
-        run_attempt=run_attempt,
+        run_attempt=1,
     )
     await store.submit(control, b'{"value":1}')
     deployment = await deployment_factory(
@@ -379,9 +362,11 @@ async def test_incompatible_claims_fail_without_running_application(
     )
 
     stored = await wait_for_execution(deployment, control.run_id, lambda value: value.control.terminal)
-    error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=max_payload_bytes))
+    error = PersistedError.model_validate(
+        decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=store.config.max_payload_bytes)
+    )
     assert stored.control.status is ExecutionStatus.FAILED
-    assert (calls, error.code) == (0, code)
+    assert (calls, error.code) == (0, "run_attempts_exhausted")
 
 
 async def test_typed_resume_reconstructs_waiting_execution(deployment_factory) -> None:
@@ -420,6 +405,27 @@ async def test_oversized_output_becomes_a_bounded_failure(deployment_factory) ->
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
     error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=256))
     assert (stored.control.status, error.code) == (ExecutionStatus.FAILED, "payload_too_large")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(RuntimeError("password=runtime-secret"), id="application"),
+        pytest.param(ValueError("https://example.test/?token=query-secret"), id="validation"),
+    ],
+)
+async def test_exception_details_are_not_persisted(deployment_factory, error: Exception) -> None:
+    async def runner(_context: DurableContext, _request: Request) -> Result:
+        raise error
+
+    deployment = await deployment_factory(runner)
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    payload = stored.payloads[PayloadKind.ERROR]
+    persisted = PersistedError.model_validate(decode_json(payload, max_bytes=1_000))
+
+    assert persisted.message == "Durable execution failed"
+    assert b"runtime-secret" not in payload and b"query-secret" not in payload
 
 
 async def test_quiesce_waits_for_admitted_submission_and_rejects_later_work(deployment_factory) -> None:

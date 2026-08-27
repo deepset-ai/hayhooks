@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -18,7 +19,7 @@ from pydantic import BaseModel
 from hayhooks.durable import DurableContext, create_durable_router
 from hayhooks.durable.engine import PayloadKind
 from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
-from hayhooks.durable.store import ExecutionStoreError, MemoryExecutionStore, StoreConfig
+from hayhooks.durable.store import ExecutionStoreError, MemoryExecutionStore, StoreConfig, StreamChunk
 
 
 class JobRequest(BaseModel):
@@ -141,15 +142,48 @@ def read_sse(
     return events, comments, response_headers
 
 
+def seed_stream_chunks(
+    store: MemoryExecutionStore,
+    run_id: str,
+    chunks: list[tuple[int, object]],
+) -> None:
+    """Seed retained display history without pretending a terminal worker still owns a lease."""
+    if not store.config.max_stream_chunks:
+        return
+    encoded = [
+        StreamChunk(
+            f"0-{index}",
+            attempt,
+            payload if isinstance(payload, bytes) else json.dumps(payload, separators=(",", ":")).encode(),
+        )
+        for index, (attempt, payload) in enumerate(chunks, start=1)
+    ]
+    store._chunks[run_id] = deque(encoded, maxlen=store.config.max_stream_chunks)
+
+
 def test_router_is_typed_prefix_and_root_path_safe(durable_app_factory, wait_for_execution) -> None:
     app, _ = durable_app_factory(root_path="/root")
     with TestClient(app) as client:
-        unscoped_idempotency = client.post(
+        idempotent = client.post(
             "/api/jobs/run-durable",
             json={"value": 1},
             headers={"Idempotency-Key": "predictable"},
         )
-        assert unscoped_idempotency.status_code == 422
+        assert idempotent.status_code == 202
+        wait_for_execution(client, idempotent.json()["links"]["self"], "completed")
+        replay = client.post(
+            "/api/jobs/run-durable",
+            json={"value": 1},
+            headers={"Idempotency-Key": "predictable"},
+        )
+        conflict = client.post(
+            "/api/jobs/run-durable",
+            json={"value": 2},
+            headers={"Idempotency-Key": "predictable"},
+        )
+        assert replay.status_code == 200 and replay.headers["idempotent-replay"] == "true"
+        assert replay.json()["execution_id"] == idempotent.json()["execution_id"]
+        assert conflict.status_code == 409
         submitted = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"})
         assert submitted.status_code == 202
         assert submitted.headers["location"].startswith("/root/api/jobs/executions/")
@@ -172,8 +206,8 @@ def test_router_is_typed_prefix_and_root_path_safe(durable_app_factory, wait_for
     openapi = app.openapi()
     paths = openapi["paths"]
     assert "JobRequest" in str(paths["/api/jobs/run-durable"]["post"]["requestBody"])
-    assert "JobsExecutionResult" in str(paths["/api/jobs/run-durable"]["post"]["responses"])
-    assert "JobResult" in str(openapi["components"]["schemas"]["JobsExecutionResult"])
+    assert "ExecutionResult" in str(paths["/api/jobs/run-durable"]["post"]["responses"])
+    assert "JobsExecutionResult" not in openapi["components"]["schemas"]
     assert "ResumeInput" in str(paths["/api/jobs/executions/{execution_id}/resume"]["post"]["requestBody"])
 
 
@@ -358,14 +392,7 @@ def test_stream_resume_gap_fencing_and_drain(
     with TestClient(app) as client:
         submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
         completed = wait_for_execution(client, submitted["links"]["self"], "completed")
-        for attempt, payload in chunks:
-            asyncio.run(
-                deployment.store.append_chunk(
-                    completed["execution_id"],
-                    attempt,
-                    payload if isinstance(payload, bytes) else json.dumps(payload, separators=(",", ":")).encode(),
-                )
-            )
+        seed_stream_chunks(deployment.store, completed["execution_id"], chunks)
         headers = {"Last-Event-ID": cursor} if cursor is not None else None
         events, _, _ = read_sse(client, submitted["links"]["stream"], headers=headers)
         payloads = [json.loads(event["data"])["payload"] for event in events if event["event"] == "chunk"]

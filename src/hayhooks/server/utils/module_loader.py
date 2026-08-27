@@ -62,11 +62,10 @@ def unload_pipeline_modules(pipeline_name: str) -> None:
     Args:
         pipeline_name: Name of the pipeline to unload
     """
-    module_names = [pipeline_name, f"{pipeline_name}.pipeline_wrapper"]
-    for mod_name in module_names:
-        if mod_name in sys.modules:
-            log.debug("Removing module '{}' from sys.modules", mod_name)
-            del sys.modules[mod_name]
+    module_names = [name for name in sys.modules if name == pipeline_name or name.startswith(f"{pipeline_name}.")]
+    for module_name in module_names:
+        log.debug("Removing module '{}' from sys.modules", module_name)
+        del sys.modules[module_name]
 
 
 def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelineWrapper:

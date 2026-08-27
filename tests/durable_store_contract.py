@@ -37,7 +37,6 @@ CONTRACT_CONFIG = StoreConfig(
     max_stream_chunks=3,
     max_stream_chunk_bytes=64,
 )
-REVISION_ERROR = b"revision"
 ATTEMPTS_ERROR = b"attempts"
 
 
@@ -84,13 +83,13 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     assert snapshot is not None and snapshot.payloads[PayloadKind.INPUT] == b"input"
     assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
 
-    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert claimed is not None and claimed.next_control.status is ExecutionStatus.RUNNING
     released = await store.transition(control.run_id, ReleaseClaim(claimed.next_control.fence, "worker"))
     assert released.next_control.run_attempt == 0
     assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
 
-    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert claimed is not None
     heartbeat = await store.transition(
         control.run_id,
@@ -101,7 +100,13 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
 
     before_chunks = await store.read(control.run_id)
     for index in range(4):
-        await store.append_chunk(control.run_id, 1, str(index).encode())
+        await store.append_chunk(
+            control.run_id,
+            claimed.next_control.run_attempt,
+            claimed.next_control.fence,
+            "worker",
+            str(index).encode(),
+        )
     after_chunks = await store.read(control.run_id)
     assert before_chunks is not None and after_chunks is not None
     assert after_chunks.control.version == before_chunks.control.version
@@ -127,7 +132,7 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     assert suspended.next_control.status is ExecutionStatus.WAITING
     resumed = await store.transition(control.run_id, Resume(0, "v1", b"resumed"))
     assert resumed.next_control.status is ExecutionStatus.QUEUED
-    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert claimed is not None
     await store.transition(control.run_id, RequestCancellation(0, "stop"))
     terminal = await store.transition(
@@ -139,3 +144,24 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     assert snapshot is not None
     assert not ({PayloadKind.RESULT, PayloadKind.ERROR, PayloadKind.WAIT} & snapshot.payloads.keys())
     assert await store.operational_counts() == {"nonterminal": 0, "runnable": 0, "lease_expiry": 0}
+
+
+async def assert_revision_routing_contract(store: ExecutionStore) -> None:
+    """Workers claim only executions for the revision they can run."""
+    old = contract_control(store.deployment, "run_a_old", idempotency="old", binding="old")
+    new = replace(
+        contract_control(store.deployment, "run_b_new", idempotency="new", binding="new"),
+        definition_revision="v2",
+    )
+    await store.submit(old, b"input")
+    await store.submit(new, b"input")
+
+    new_claim = await store.claim(Claim("worker-v2", 0, 500, 3, "v2", ATTEMPTS_ERROR))
+    assert new_claim is not None
+    assert (new_claim.next_control.run_id, new_claim.next_control.status) == ("run_b_new", ExecutionStatus.RUNNING)
+    old_snapshot = await store.read(old.run_id)
+    assert old_snapshot is not None and old_snapshot.control.status is ExecutionStatus.QUEUED
+
+    old_claim = await store.claim(Claim("worker-v1", 0, 500, 3, "v1", ATTEMPTS_ERROR))
+    assert old_claim is not None
+    assert (old_claim.next_control.run_id, old_claim.next_control.status) == ("run_a_old", ExecutionStatus.RUNNING)

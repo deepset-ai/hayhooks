@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -899,9 +900,6 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                     if path.exists():
                         path.replace(backup_dir / path.name)
                 save_pipeline_files(prepared.name, source_files, settings.pipelines_dir)
-                if "pipeline_wrapper.py" in source_files:
-                    module = load_pipeline_module(prepared.name, dir_path=pipelines_dir / prepared.name)
-                    prepared.wrapper = create_pipeline_wrapper_instance(module)
 
             if old_wrapper is not None:
                 log.bind(pipeline_name=prepared.name).debug("Clearing existing pipeline '{}'", prepared.name)
@@ -1015,15 +1013,49 @@ def deploy_pipeline_files(
             }
         ),
     ):
-        prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=False)
-        return commit_prepared_pipeline(
-            prepared,
-            app=app,
-            overwrite=overwrite,
-            _defer_openapi_rebuild=_defer_openapi_rebuild,
-            cleanup_files_on_overwrite=overwrite and not save_files,
-            source_files=files if save_files else None,
-        )
+        if not save_files:
+            prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=False)
+            return commit_prepared_pipeline(
+                prepared,
+                app=app,
+                overwrite=overwrite,
+                _defer_openapi_rebuild=_defer_openapi_rebuild,
+                cleanup_files_on_overwrite=overwrite,
+            )
+
+        pipelines_dir = Path(settings.pipelines_dir)
+        pipelines_dir.mkdir(parents=True, exist_ok=True)
+        backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
+        old_modules = {
+            name: module
+            for name, module in sys.modules.items()
+            if name == pipeline_name or name.startswith(f"{pipeline_name}.")
+        }
+        for path in (
+            pipelines_dir / pipeline_name,
+            pipelines_dir / f"{pipeline_name}.yml",
+            pipelines_dir / f"{pipeline_name}.yaml",
+        ):
+            if path.exists():
+                path.replace(backup_dir / path.name)
+        try:
+            prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=True)
+            return commit_prepared_pipeline(
+                prepared,
+                app=app,
+                overwrite=overwrite,
+                _defer_openapi_rebuild=_defer_openapi_rebuild,
+                cleanup_files_on_overwrite=False,
+            )
+        except BaseException:
+            remove_pipeline_files(pipeline_name, settings.pipelines_dir)
+            for path in backup_dir.iterdir():
+                path.replace(pipelines_dir / path.name)
+            unload_pipeline_modules(pipeline_name)
+            sys.modules.update(old_modules)
+            raise
+        finally:
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def deploy_pipeline_yaml(

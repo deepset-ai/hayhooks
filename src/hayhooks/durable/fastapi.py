@@ -13,7 +13,6 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
 from loguru import logger as log
-from pydantic import create_model
 
 from hayhooks.durable.engine import (
     RUN_ID_PATTERN,
@@ -22,7 +21,7 @@ from hayhooks.durable.engine import (
     ExecutionStatus,
     InvalidExecutionTransitionError,
 )
-from hayhooks.durable.models import ExecutionResult, JsonValue, decode_json, project_execution
+from hayhooks.durable.models import ExecutionResult, decode_json, project_execution
 from hayhooks.durable.runtime import DurableDeployment
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
@@ -205,7 +204,7 @@ async def _stream_events(  # noqa: PLR0913
         yield _sse("error", '{"detail":"Execution stream interrupted"}')
 
 
-def create_durable_router(  # noqa: C901, PLR0915
+def create_durable_router(  # noqa: C901
     deployment: DurableDeployment,
     *,
     owner_id_dependency: OwnerIdDependency | None,
@@ -215,12 +214,6 @@ def create_durable_router(  # noqa: C901, PLR0915
     owner_dependency = owner_id_dependency or _unscoped_owner
     enforce_owner = owner_id_dependency is not None
     response_model = ExecutionResult
-    if deployment.result_model is not None:
-        response_model = create_model(
-            f"{''.join(character for character in deployment.name.title() if character.isalnum())}ExecutionResult",
-            __base__=ExecutionResult,
-            result=(deployment.result_model | JsonValue, None),
-        )
     route_names = {
         key: f"hayhooks.durable.{deployment.name}.{key}" for key in ("submit", "self", "cancel", "resume", "stream")
     }
@@ -234,11 +227,6 @@ def create_durable_router(  # noqa: C901, PLR0915
     ) -> ExecutionResult:
         owner = _validated_owner(owner_id, enforce_owner=enforce_owner)
         if idempotency_key is not None:
-            if not enforce_owner:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Idempotency-Key requires an owner dependency",
-                )
             try:
                 valid_key = len(idempotency_key.encode()) <= _MAX_HEADER_BYTES
             except UnicodeError:

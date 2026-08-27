@@ -186,6 +186,19 @@ async def test_missing_execution_marks_claim_lost(context_factory) -> None:
     assert claim.lease_lost.is_set()
 
 
+async def test_stream_chunk_propagates_store_detected_lease_loss(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+
+    async def reject_stale_chunk(*_args) -> None:
+        raise ExecutionLeaseLostError
+
+    monkeypatch.setattr(store, "append_chunk", reject_stale_chunk)
+    with pytest.raises(ExecutionLeaseLostError):
+        await context.stream_chunk({"chunk": 1})
+    assert claim.lease_lost.is_set()
+
+
 async def test_retry_request_carries_buffered_progress(context_factory) -> None:
     _, create = context_factory
     context, _ = await create()

@@ -265,7 +265,16 @@ class DurableContext:
             if callable(converter):
                 payload = converter()
             data = encode_json(payload, max_bytes=self._claim.store.config.max_stream_chunk_bytes)
-            await self._claim.store.append_chunk(self.execution_id, self.attempt, data)
+            await self._claim.store.append_chunk(
+                self.execution_id,
+                self.attempt,
+                self._claim.control.fence,
+                self._claim.worker_id,
+                data,
+            )
+        except ExecutionLeaseLostError:
+            self._claim.mark_lost()
+            raise
         except Exception as error:
             if not self._chunk_drop_reported:
                 self._chunk_drop_reported = True
@@ -331,6 +340,7 @@ class DurableContext:
     ) -> CheckpointEnvelope:
         return CheckpointEnvelope.model_validate(
             {
+                "schema_version": self._claim.checkpoint.schema_version,
                 "adapter_kind": self._claim.checkpoint.adapter_kind,
                 "adapter_checkpoint": (
                     self._claim.checkpoint.adapter_checkpoint if adapter_checkpoint is None else adapter_checkpoint

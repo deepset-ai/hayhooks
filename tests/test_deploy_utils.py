@@ -17,6 +17,7 @@ from hayhooks.durable.context import DurableContext
 from hayhooks.server.exceptions import PipelineFilesError, PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
+from hayhooks.server.utils import deploy_utils
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
     _register_prepared_pipeline,
@@ -692,6 +693,16 @@ def test_deploy_pipeline_files_without_saving(test_settings, mocker):
     # Verify FastAPI routes were set up
     assert mock_app.add_api_route.called
     assert mock_app.setup.called
+
+
+def test_saved_file_deploy_calls_wrapper_setup_once(mocker) -> None:
+    pipeline_name = "setup_once"
+    source = Path("tests/test_files/files/no_chat/pipeline_wrapper.py").read_text()
+    create_wrapper = mocker.spy(deploy_utils, "create_pipeline_wrapper_instance")
+
+    deploy_pipeline_files(pipeline_name, {"pipeline_wrapper.py": source}, save_files=True)
+
+    assert create_wrapper.call_count == 1
 
 
 def test_deploy_pipeline_files_without_adding_api_route(test_settings, mocker):

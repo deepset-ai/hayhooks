@@ -141,11 +141,14 @@ Durable wrappers add these typed routes under their pipeline prefix:
 | `POST` | `/{pipeline_name}/executions/{execution_id}/resume` | Validate resume input and requeue waiting work |
 | `GET` | `/{pipeline_name}/executions/{execution_id}/stream` | Reattachable SSE chunks and terminal event |
 
-The submit and resume request schemas and terminal result schema come from the
-wrapper's Pydantic annotations and appear in OpenAPI. A projection includes
-status, attempt, sequence, progress, public wait data, result or sanitized
-error, timestamps, and links. It never exposes input, checkpoints, application
-state, lease/fence data, ownership, or idempotency material.
+The submit and resume request schemas come from the wrapper's Pydantic
+annotations and appear in OpenAPI. The execution projection keeps `result` as
+JSON so results written by an older immutable revision remain readable; the
+active revision still validates new results before committing them. A
+projection includes status, attempt, sequence, progress, public wait data,
+result or sanitized error, timestamps, and links. It never exposes input,
+checkpoints, application state, lease/fence data, ownership, or idempotency
+material.
 
 Status codes:
 

@@ -6,11 +6,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TypeAlias, cast
+from typing import Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import to_jsonable_python
@@ -23,24 +22,11 @@ from hayhooks.durable.engine import (
     PayloadKind,
     normalize_cancellation_reason,
 )
-from hayhooks.durable.store import StoredExecution
+from hayhooks.durable.store import StoredExecution, validate_stored_execution
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue = TypeAliasType("JsonValue", JsonScalar | list["JsonValue"] | dict[str, "JsonValue"])
 DEFAULT_MAX_JSON_BYTES = 1_000_000
-_SENSITIVE_NAME = (
-    r"(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|authorization|bearer|password|passwd|secret|"
-    r"client[_ -]?secret)"
-)
-_REDACTIONS = (
-    (re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;&]+"), r"\1<redacted>"),
-    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"), r"\1<redacted>"),
-    (
-        re.compile(rf"""(?i)((?:["']?{_SENSITIVE_NAME}["']?)\s*[:=]\s*)(["'])(?:\\.|(?!\2)[\s\S])*(?:\2|$)"""),
-        r"\1\2<redacted>\2",
-    ),
-    (re.compile(rf"(?i)({_SENSITIVE_NAME})\s*[:=]\s*[^\s,;&]+"), r"\1=<redacted>"),
-)
 
 
 class ExecutionKind(str, Enum):
@@ -53,6 +39,7 @@ class CheckpointEnvelope(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    schema_version: Literal[1]
     adapter_kind: ExecutionKind
     adapter_checkpoint: JsonValue
     application_state: dict[str, JsonValue] = Field(default_factory=dict)
@@ -79,10 +66,7 @@ class PersistedError(BaseModel):
     @field_validator("message", mode="before")
     @classmethod
     def _bound_message(cls, value: object) -> str:
-        message = str(value)
-        for pattern, replacement in _REDACTIONS:
-            message = pattern.sub(replacement, message)
-        return normalize_cancellation_reason(message) or ""
+        return normalize_cancellation_reason(str(value)) or ""
 
 
 class ExecutionProgress(BaseModel):
@@ -177,6 +161,7 @@ def project_execution(
     max_payload_bytes: int = DEFAULT_MAX_JSON_BYTES,
 ) -> ExecutionResult:
     """Decode the public subset of one stored execution snapshot."""
+    validate_stored_execution(stored)
     payloads = stored.payloads
     result = (
         decode_json(payloads[PayloadKind.RESULT], max_bytes=max_payload_bytes)

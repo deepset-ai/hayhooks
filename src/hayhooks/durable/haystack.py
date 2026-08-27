@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 from contextvars import ContextVar
 from importlib.metadata import PackageNotFoundError, version
@@ -11,6 +10,7 @@ from typing import Any, cast
 
 from haystack.lazy_imports import LazyImport
 
+from hayhooks.durable._threading import start_daemon_thread
 from hayhooks.durable.context import DurableContext, current_durable_context
 from hayhooks.durable.models import ExecutionKind, JsonValue
 
@@ -259,15 +259,13 @@ class HaystackDurableAdapter:
         *,
         checkpoint_at: str | None = None,
     ) -> dict[str, Any]:
-        """Run the synchronous Pipeline in a cancellation-shielded thread."""
+        """Run the synchronous Pipeline without letting its thread block shutdown."""
         context._require_owned()
-        task = asyncio.create_task(asyncio.to_thread(self.run_pipeline, context, data, checkpoint_at=checkpoint_at))
-        while True:
-            try:
-                return await asyncio.shield(task)
-            except asyncio.CancelledError:
-                if task.done():
-                    return task.result()
+        result, _ = start_daemon_thread(
+            lambda: self.run_pipeline(context, data, checkpoint_at=checkpoint_at),
+            name=f"durable-pipeline:{context.execution_id}",
+        )
+        return await result
 
     def run_agent(self, context: DurableContext, *, messages: list[Any], **kwargs: Any) -> dict[str, Any]:
         """Run or recover a synchronous Agent execution."""

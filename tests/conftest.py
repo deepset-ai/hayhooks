@@ -21,7 +21,7 @@ from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
 from hayhooks.settings import settings
-from tests.durable_store_contract import ATTEMPTS_ERROR, REVISION_ERROR, contract_control, decode_checkpoint
+from tests.durable_store_contract import ATTEMPTS_ERROR, contract_control, decode_checkpoint
 
 
 class _RecordedSpan(Span):
@@ -141,14 +141,18 @@ async def context_factory():
                 b"{}",
             )
         worker_id = f"worker-{run_id}"
-        plan = await store.claim(Claim(worker_id, 0, lease_duration_ms, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
+        plan = await store.claim(Claim(worker_id, 0, lease_duration_ms, 3, "v1", ATTEMPTS_ERROR))
         assert plan is not None and plan.next_control.run_id == run_id
         stored = await store.read(run_id)
         assert stored is not None
         checkpoint = (
             decode_checkpoint(stored.payloads[PayloadKind.CHECKPOINT])
             if PayloadKind.CHECKPOINT in stored.payloads
-            else CheckpointEnvelope(adapter_kind=ExecutionKind(stored.control.kind), adapter_checkpoint=None)
+            else CheckpointEnvelope(
+                schema_version=1,
+                adapter_kind=ExecutionKind(stored.control.kind),
+                adapter_checkpoint=None,
+            )
         )
         claim = _ClaimedExecution(store, plan.next_control, worker_id, lease_duration_ms, checkpoint)
         await claim.__aenter__()

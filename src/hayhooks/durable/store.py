@@ -18,6 +18,7 @@ from hayhooks.durable.engine import (
     Complete,
     ExecutionCommand,
     ExecutionControl,
+    ExecutionLeaseLostError,
     ExecutionNotFoundError,
     ExecutionPayloadSizeError,
     ExecutionStatus,
@@ -32,6 +33,7 @@ from hayhooks.durable.engine import (
     Suspend,
     TransitionPlan,
     decide,
+    require_owned,
     submission_plan,
 )
 
@@ -74,11 +76,11 @@ class StoreConfig:
 
     lease_commit_safety_ms: int = 1_500
     terminal_ttl_seconds: int = 604_800
-    max_nonterminal_executions: int = 0
+    max_nonterminal_executions: int = 1_000
     max_payload_bytes: int = 1_000_000
     max_progress_events: int = 100
     max_progress_event_bytes: int = 8_192
-    max_stream_chunks: int = 10_000
+    max_stream_chunks: int = 100
     max_stream_chunk_bytes: int = 64_000
 
     def __post_init__(self) -> None:
@@ -137,12 +139,10 @@ class ExecutionStore(Protocol):
         self,
         *,
         max_run_attempts: int,
-        worker_revision: str,
-        revision_error: bytes,
         attempts_error: bytes,
     ) -> None: ...
 
-    async def append_chunk(self, run_id: str, attempt: int, data: bytes) -> None: ...
+    async def append_chunk(self, run_id: str, attempt: int, fence: int, worker_id: str, data: bytes) -> None: ...
 
     async def read_chunks(self, run_id: str, after: str) -> tuple[StreamChunk, ...]: ...
 
@@ -209,11 +209,13 @@ class MemoryExecutionStore:
         control = self._controls.get(run_id)
         if control is None:
             return None
-        return StoredExecution(
+        stored = StoredExecution(
             control,
             dict(self._payloads.get(run_id, {})),
             tuple(self._progress.get(run_id, ())),
         )
+        validate_stored_execution(stored)
+        return stored
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         current = self._controls.get(run_id)
@@ -244,7 +246,11 @@ class MemoryExecutionStore:
         if command.lease_duration_ms <= self.config.lease_commit_safety_ms:
             raise ValueError("lease duration must exceed the commit safety margin")
         now_ms = self._clock()
-        due = ((score, run_id) for run_id, score in self._runnable.items() if score <= now_ms)
+        due = (
+            (score, run_id)
+            for run_id, score in self._runnable.items()
+            if score <= now_ms and self._controls[run_id].definition_revision == command.worker_revision
+        )
         try:
             run_id = min(due)[1]
         except ValueError:
@@ -264,8 +270,6 @@ class MemoryExecutionStore:
         self,
         *,
         max_run_attempts: int,
-        worker_revision: str,
-        revision_error: bytes,
         attempts_error: bytes,
     ) -> None:
         now_ms = self._clock()
@@ -282,8 +286,6 @@ class MemoryExecutionStore:
                         fence,
                         deadline,
                         max_run_attempts,
-                        worker_revision,
-                        revision_error,
                         attempts_error,
                     ),
                 )
@@ -291,12 +293,16 @@ class MemoryExecutionStore:
                 self._lease_expiry.pop((run_id, fence), None)
         self._cleanup_terminal(now_ms)
 
-    async def append_chunk(self, run_id: str, attempt: int, data: bytes) -> None:
-        if not self.config.max_stream_chunks or run_id not in self._controls:
+    async def append_chunk(self, run_id: str, attempt: int, fence: int, worker_id: str, data: bytes) -> None:
+        if not self.config.max_stream_chunks:
             return
         if attempt < 0:
             raise ValueError("stream chunk attempt cannot be negative")
         validate_payload_size("stream chunk", data, self.config.max_stream_chunk_bytes)
+        control = self._controls.get(run_id)
+        if control is None or control.run_attempt != attempt:
+            raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
+        require_owned(control, fence, worker_id, self._clock(), self.config.lease_commit_safety_ms)
         self._chunk_sequence += 1
         chunks = self._chunks.setdefault(run_id, deque(maxlen=self.config.max_stream_chunks))
         chunks.append(StreamChunk(f"0-{self._chunk_sequence}", attempt, data))
@@ -414,6 +420,27 @@ def validate_transition_plan(plan: TransitionPlan, config: StoreConfig) -> None:
         validate_payload_size(write.kind.value, write.data, config.max_payload_bytes)
     for event in plan.progress_events:
         validate_payload_size("progress event", event.data, config.max_progress_event_bytes)
+
+
+def validate_stored_execution(stored: StoredExecution) -> None:
+    """Reject payload snapshots that contradict their authoritative lifecycle state."""
+    status = stored.control.status
+    required = {PayloadKind.INPUT}
+    if status is ExecutionStatus.COMPLETED:
+        required.add(PayloadKind.RESULT)
+    elif status is ExecutionStatus.FAILED:
+        required.add(PayloadKind.ERROR)
+    elif status is ExecutionStatus.WAITING:
+        required.update((PayloadKind.CHECKPOINT, PayloadKind.WAIT))
+    if missing := required - stored.payloads.keys():
+        names = ", ".join(sorted(kind.value for kind in missing))
+        raise ExecutionStoreCorruptionError(f"{status.value} execution is missing required payload: {names}")
+    if PayloadKind.RESULT in stored.payloads and status is not ExecutionStatus.COMPLETED:
+        raise ExecutionStoreCorruptionError("result payload contradicts execution status")
+    if PayloadKind.ERROR in stored.payloads and status in (ExecutionStatus.COMPLETED, ExecutionStatus.CANCELED):
+        raise ExecutionStoreCorruptionError("error payload contradicts execution status")
+    if PayloadKind.WAIT in stored.payloads and status is not ExecutionStatus.WAITING:
+        raise ExecutionStoreCorruptionError("wait payload contradicts execution status")
 
 
 def validate_payload_size(label: str, payload: bytes, limit: int) -> None:

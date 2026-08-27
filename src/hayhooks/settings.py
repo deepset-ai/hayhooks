@@ -117,11 +117,11 @@ class AppSettings(BaseSettings):
     durable_redis_url: str = "redis://localhost:6379/0"
     durable_redis_key_prefix: str = "hayhooks:durable"
     durable_terminal_ttl_seconds: int = Field(default=604_800, gt=0)
-    durable_max_nonterminal_executions: int = Field(default=0, ge=0)
+    durable_max_nonterminal_executions: int = Field(default=1_000, ge=0)
     durable_max_payload_bytes: int = Field(default=1_000_000, gt=0)
     durable_max_progress_events: int = Field(default=100, gt=0)
     durable_max_progress_event_bytes: int = Field(default=8_192, gt=0)
-    durable_max_stream_chunks: int = Field(default=10_000, ge=0)
+    durable_max_stream_chunks: int = Field(default=100, ge=0)
     durable_max_stream_chunk_bytes: int = Field(default=64_000, gt=0)
     durable_worker_concurrency: int = Field(default=1, gt=0)
     durable_poll_interval_seconds: float = Field(default=1.0, gt=0)

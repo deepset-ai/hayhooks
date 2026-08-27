@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import timezone
 
 import pytest
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, ValidationError
 
 from hayhooks.durable.engine import ExecutionPayloadSizeError, ExecutionStatus, PayloadKind, ProgressEvent
 from hayhooks.durable.models import (
@@ -33,6 +33,7 @@ def json_payload(value: object) -> bytes:
         pytest.param({"question": "hello"}, id="input"),
         pytest.param(
             CheckpointEnvelope(
+                schema_version=1,
                 adapter_kind=ExecutionKind.PIPELINE,
                 adapter_checkpoint={"snapshot": [1, 2]},
                 application_state={"step": 2},
@@ -59,6 +60,26 @@ def json_payload(value: object) -> bytes:
 )
 def test_payload_round_trip(value) -> None:
     assert decode_json(encode_json(value, max_bytes=4_096), max_bytes=4_096) == value
+
+
+def test_checkpoint_schema_version_is_explicit() -> None:
+    checkpoint = CheckpointEnvelope(schema_version=1, adapter_kind=ExecutionKind.PIPELINE, adapter_checkpoint=None)
+    assert checkpoint.model_dump(mode="json")["schema_version"] == 1
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        pytest.param({"adapter_kind": "pipeline", "adapter_checkpoint": None}, id="missing"),
+        pytest.param(
+            {"schema_version": 2, "adapter_kind": "pipeline", "adapter_checkpoint": None},
+            id="unsupported",
+        ),
+    ],
+)
+def test_checkpoint_schema_version_is_strict(invalid: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        CheckpointEnvelope.model_validate(invalid)
 
 
 @pytest.mark.parametrize(
@@ -170,37 +191,19 @@ def test_projection_decodes_result_payload() -> None:
         updated_at_ms=2_000,
     )
     public = project_execution(
-        StoredExecution(control, {PayloadKind.RESULT: json_payload({"answer": 42})}, ()),
+        StoredExecution(
+            control,
+            {
+                PayloadKind.INPUT: json_payload({"question": "hidden"}),
+                PayloadKind.RESULT: json_payload({"answer": 42}),
+            },
+            (),
+        ),
     )
     assert public.result == {"answer": 42}
 
 
-def test_error_messages_are_redacted_and_bounded() -> None:
-    error = PersistedError(
-        type="RuntimeError",
-        message=(
-            "Authorization: Bearer auth-token password=hunter2 "
-            'https://example.test/?api_key=query-secret&token=other {"client_secret":"json-secret"}'
-        ),
-    )
-    for secret in ("auth-token", "hunter2", "query-secret", "other", "json-secret"):
-        assert secret not in error.message
-    assert "<redacted>" in error.message
-    assert PersistedError(type="Error", message="password=direct-secret").message == "password=<redacted>"
-
+def test_error_messages_are_bounded() -> None:
     bounded = PersistedError(type="RuntimeError", message="💥" * 2_000)
     assert len(bounded.message) <= 2_000
     assert len(bounded.message.encode()) <= 4_096
-
-
-@pytest.mark.parametrize(
-    ("message", "secret"),
-    [
-        pytest.param("password='two words secret'", "two words secret", id="quoted-assignment"),
-        pytest.param(r'{"password":"abc\"SUPERSECRET"}', "SUPERSECRET", id="escaped-json-quote"),
-    ],
-)
-def test_error_redaction_consumes_the_full_quoted_value(message: str, secret: str) -> None:
-    redacted = PersistedError(type="RuntimeError", message=message).message
-    assert secret not in redacted
-    assert "<redacted>" in redacted

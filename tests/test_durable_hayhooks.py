@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import sys
 from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -98,11 +99,15 @@ class PipelineWrapper(BasePipelineWrapper):
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
 def test_hayhooks_mounts_and_runs_a_durable_wrapper(durable_client, wait_for_execution):
     commit_prepared_pipeline(PreparedPipeline("durable-job", wrapper_for(DurableWrapper)), app=durable_client.app)
-    submitted = durable_client.post("/durable-job/run-durable", json={"value": 7})
+    headers = {"Idempotency-Key": "retry-after-response-loss"}
+    submitted = durable_client.post("/durable-job/run-durable", json={"value": 7}, headers=headers)
     assert submitted.status_code == 202
     execution_id = submitted.json()["execution_id"]
     path = f"/durable-job/executions/{execution_id}"
     assert wait_for_execution(durable_client, path, "completed")["result"] == {"value": 7}
+    replay = durable_client.post("/durable-job/run-durable", json={"value": 7}, headers=headers)
+    assert replay.status_code == 200 and replay.headers["idempotent-replay"] == "true"
+    assert replay.json()["execution_id"] == execution_id
     assert durable_client.get("/status").json()["durable"]["deployments"]["durable-job"]["healthy"]
     assert durable_client.post("/undeploy/durable-job").status_code == 200
     assert not [
@@ -160,7 +165,7 @@ def test_dynamic_changes_reject_live_work_and_preserve_the_old_deployment(
     ).result()
     if live_status != "queued":
         claimed = asyncio.run_coroutine_threadsafe(
-            deployment.store.transition(run_id, Claim("matrix", 0, 30_000, 3, "test-v1", b"{}", b"{}")),
+            deployment.store.transition(run_id, Claim("matrix", 0, 30_000, 3, "test-v1", b"{}")),
             loop,
         ).result()
         if live_status == "waiting":
@@ -276,6 +281,8 @@ def test_durable_publication_failure_restores_the_old_deployment(durable_client,
     candidate_source = durable_source("test-v2")
     deploy_pipeline_files("durable-job", {"pipeline_wrapper.py": old_source}, app=durable_client.app, save_files=True)
     old_wrapper = registry.get("durable-job")
+    module_names = ("durable-job", "durable-job.pipeline_wrapper")
+    old_modules = {name: sys.modules[name] for name in module_names}
     original = deploy_utils.add_pipeline_api_route
 
     def fail_candidate(app, pipeline_name, pipeline_wrapper, **kwargs):
@@ -296,6 +303,7 @@ def test_durable_publication_failure_restores_the_old_deployment(durable_client,
         )
 
     assert registry.get("durable-job") is old_wrapper
+    assert {name: sys.modules[name] for name in module_names} == old_modules
     assert durable_client.app.state.durable_runtime._deployments["durable-job"].revision == "test-v1"
     assert (Path(settings.pipelines_dir) / "durable-job" / "pipeline_wrapper.py").read_text() == old_source
     execution_id = durable_client.post("/durable-job/run-durable", json={"value": 7}).json()["execution_id"]

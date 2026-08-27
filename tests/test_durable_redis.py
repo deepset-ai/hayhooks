@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from hayhooks.durable.engine import Claim
+from hayhooks.durable.engine import Claim, ExecutionStatus
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys, decode_control, encode_control
 from hayhooks.durable.store import ExecutionStoreCorruptionError, ExecutionStoreError
-from tests.durable_store_contract import ATTEMPTS_ERROR, REVISION_ERROR, contract_control
+from tests.durable_store_contract import ATTEMPTS_ERROR, contract_control
 
 
 def test_redis_keys_are_private_cluster_safe_and_strict() -> None:
     keys = RedisKeys("tenant:durable", "unsafe deployment/name")
     generated = (
         keys.runnable,
+        keys.runnable_revision("v1"),
         keys.lease_expiry,
         keys.capacity,
         keys.control("run_1"),
@@ -57,7 +59,16 @@ def test_control_codec_rejects_corruption(mutate) -> None:
 
 def test_control_codec_round_trip() -> None:
     control = contract_control("jobs")
-    assert decode_control(encode_control(control), expected_run_id=control.run_id) == control
+    encoded = encode_control(control)
+    assert encoded["schema_version"] == "1"
+    assert decode_control(encoded, expected_run_id=control.run_id) == control
+
+
+def test_control_codec_rejects_an_unsupported_schema_version() -> None:
+    encoded = encode_control(contract_control("jobs"))
+    encoded["schema_version"] = "2"
+    with pytest.raises(ExecutionStoreCorruptionError, match="schema version"):
+        decode_control(encoded, expected_run_id="run_1")
 
 
 def test_redis_store_rejects_text_decoding_clients() -> None:
@@ -81,11 +92,9 @@ async def test_empty_scheduling_indexes_do_not_request_redis_time() -> None:
     redis.zrange.return_value = []
     store = RedisExecutionStore(redis, "jobs")
 
-    claimed = await store.claim(Claim("worker", 0, 30_000, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
+    claimed = await store.claim(Claim("worker", 0, 30_000, 3, "v1", ATTEMPTS_ERROR))
     await store.maintain(
         max_run_attempts=3,
-        worker_revision="v1",
-        revision_error=REVISION_ERROR,
         attempts_error=ATTEMPTS_ERROR,
     )
 
@@ -102,14 +111,12 @@ async def test_future_scheduling_scores_use_redis_time_and_are_not_processed() -
     store._transition = AsyncMock()  # type: ignore[method-assign]
 
     redis.zrange.return_value = [(b"run_1", 2_000.0)]
-    claimed = await store.claim(Claim("worker", 0, 30_000, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
+    claimed = await store.claim(Claim("worker", 0, 30_000, 3, "v1", ATTEMPTS_ERROR))
     assert claimed is None
 
     redis.zrange.return_value = [(b"run_1|1", 2_000.0)]
     await store.maintain(
         max_run_attempts=3,
-        worker_revision="v1",
-        revision_error=REVISION_ERROR,
         attempts_error=ATTEMPTS_ERROR,
     )
 
@@ -125,7 +132,7 @@ async def test_invalid_runnable_scores_report_corruption(score: float) -> None:
     store = RedisExecutionStore(redis, "jobs")
 
     with pytest.raises(ExecutionStoreCorruptionError, match="runnable index"):
-        await store.claim(Claim("worker", 0, 30_000, 3, "v1", REVISION_ERROR, ATTEMPTS_ERROR))
+        await store.claim(Claim("worker", 0, 30_000, 3, "v1", ATTEMPTS_ERROR))
     redis.time.assert_not_awaited()
 
 
@@ -137,8 +144,6 @@ async def test_invalid_lease_entries_are_removed_without_requesting_time() -> No
 
     await store.maintain(
         max_run_attempts=3,
-        worker_revision="v1",
-        revision_error=REVISION_ERROR,
         attempts_error=ATTEMPTS_ERROR,
     )
 
@@ -150,12 +155,26 @@ async def test_chunk_append_is_bounded_and_sets_a_rolling_ttl() -> None:
     pipe = MagicMock()
     pipe.__aenter__ = AsyncMock(return_value=pipe)
     pipe.__aexit__ = AsyncMock(return_value=None)
+    pipe.watch = AsyncMock()
+    pipe.hgetall = AsyncMock(
+        return_value=encode_control(
+            replace(
+                contract_control("jobs"),
+                status=ExecutionStatus.RUNNING,
+                fence=1,
+                run_attempt=2,
+                lease_owner="worker",
+                lease_expires_at_ms=30_000,
+            )
+        )
+    )
+    pipe.time = AsyncMock(return_value=(1, 0))
     pipe.execute = AsyncMock(return_value=[])
     redis = MagicMock(connection_pool=None)
     redis.pipeline.return_value = pipe
     store = RedisExecutionStore(redis, "jobs")
 
-    await store.append_chunk("run_1", 2, b"chunk")
+    await store.append_chunk("run_1", 2, 1, "worker", b"chunk")
 
     pipe.xadd.assert_called_once_with(
         store.keys.chunks("run_1"),

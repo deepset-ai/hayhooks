@@ -18,6 +18,10 @@ work exists. It never runs an old checkpoint under a new revision.
 
 ## Redis
 
+- The built-in Hayhooks URL configuration uses a standalone
+  `redis.asyncio.Redis` client. Redis Cluster and Sentinel topologies are not
+  validated by this integration; a future platform host can inject and test a
+  compatible client through the portable store API.
 - Enable persistence appropriate for the recovery objective (AOF, RDB, or both)
   and test restore from backup.
 - Use a TLS Redis URL and authenticated network path outside a trusted local
@@ -34,13 +38,20 @@ The terminal TTL applies to control, payloads, progress, chunks, and idempotency
 bindings. Size it for inspection needs and Redis capacity; increasing it does
 not improve in-flight durability.
 
+Control hashes and checkpoint envelopes carry an explicit storage schema
+version. Unsupported versions fail closed as store corruption instead of being
+interpreted with a newer runtime. Records written by an earlier prototype that
+did not carry a schema version are not auto-migrated; drain or migrate them
+before upgrading a Redis namespace to this release.
+
 ## Capacity and stream load
 
 `HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS` is the admission ceiling per
-deployment; `0` is unlimited. Worker concurrency controls claims, not accepted
-queue size. Stream chunk count and byte limits bound display history per
-execution. Reduce them before scaling SSE fan-out if display replay consumes too
-much memory or bandwidth.
+deployment and defaults to `1000`; `0` explicitly opts into unlimited
+admission. Worker concurrency controls claims, not accepted queue size. Stream
+chunk count and byte limits bound display history per execution. Reduce them
+before scaling SSE fan-out if display replay consumes too much memory or
+bandwidth.
 
 Lease duration must exceed the commit safety margin and comfortably cover Redis
 latency and scheduler pauses. A short lease recovers faster but raises false
@@ -94,9 +105,16 @@ counts. Alert on unhealthy deployments, a growing nonterminal count, repeated
 store errors, or sustained draining work.
 
 After process loss, another worker recovers an expired lease and requeues or
-fails the execution according to revision and attempt rules. Old fences cannot
-commit. Clients inspect the execution again and reconnect SSE with their last
-cursor; they do not resubmit unless no execution was created.
+fails the execution according to attempt rules. Revision-specific runnable
+indexes ensure only a worker serving the pinned revision can claim it. Old
+fences cannot commit. Clients inspect the execution again and reconnect SSE with
+their last cursor; they do not resubmit unless no execution was created.
+
+Future platform hosts may run multiple revisions during a rollout. Claiming is
+revision-safe, but a resume request must still be routed to the replica serving
+the execution's pinned revision so that it uses the matching resume schema.
+Hayhooks' dynamic deployment path avoids this requirement by rejecting a
+revision change while live work exists.
 
 ## Incident checklist
 

@@ -64,6 +64,12 @@ def test_durable_polling_defaults_and_environment(monkeypatch):
     assert configured.durable_maintenance_interval_seconds == 2.0
 
 
+def test_durable_capacity_defaults_are_finite() -> None:
+    defaults = AppSettings()
+    assert defaults.durable_max_nonterminal_executions == 1_000
+    assert defaults.durable_max_stream_chunks == 100
+
+
 def test_durable_polling_settings_construct_runtime_config(monkeypatch):
     monkeypatch.setattr("hayhooks.server.app.settings.durable_poll_interval_seconds", 0.25)
     monkeypatch.setattr("hayhooks.server.app.settings.durable_maintenance_interval_seconds", 2.0)

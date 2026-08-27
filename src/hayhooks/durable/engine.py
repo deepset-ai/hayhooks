@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 RUN_ID_PATTERN = r"[A-Za-z0-9_-]{1,128}"
+STORAGE_SCHEMA_VERSION = 1
 MAX_CONTROL_SCALAR_BYTES = 4_096
 MAX_CANCELLATION_REASON_LENGTH = 2_000
 _RUN_ID_RE = re.compile(f"{RUN_ID_PATTERN}\\Z")
@@ -85,6 +86,7 @@ class ExecutionControl:
     definition_revision: str
     owner_id: str | None
     kind: str
+    schema_version: int = STORAGE_SCHEMA_VERSION
     status: ExecutionStatus = ExecutionStatus.QUEUED
     version: int = 1
     fence: int = 0
@@ -99,8 +101,10 @@ class ExecutionControl:
     created_at_ms: int = 0
     updated_at_ms: int = 0
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> None:  # noqa: C901
         validate_run_id(self.run_id)
+        if self.schema_version != STORAGE_SCHEMA_VERSION:
+            raise ValueError(f"unsupported durable storage schema version {self.schema_version}")
         for name in (
             "idempotency_digest",
             "idempotency_binding_digest",
@@ -171,7 +175,6 @@ class Claim:
     lease_duration_ms: int
     max_run_attempts: int
     worker_revision: str
-    revision_error: bytes
     attempts_error: bytes
 
 
@@ -266,8 +269,6 @@ class RecoverExpiredLease:
     indexed_fence: int
     indexed_deadline_ms: int
     max_run_attempts: int
-    worker_revision: str
-    revision_error: bytes
     attempts_error: bytes
 
 
@@ -334,7 +335,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         if control.cancel_requested_at_ms is not None:
             return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
         if control.definition_revision != command.worker_revision:
-            return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.revision_error)
+            raise InvalidExecutionTransitionError("definition revision is incompatible")
         if control.run_attempt >= command.max_run_attempts:
             return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error)
         deadline = command.now_ms + command.lease_duration_ms
@@ -350,7 +351,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
         return TransitionPlan(next_control, lease_index_update=LeaseIndexUpdate(deadline, next_control.fence))
     if isinstance(command, ReleaseClaim):
-        _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         next_control = _business(
             control,
             command.now_ms,
@@ -361,14 +362,14 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
         return TransitionPlan(next_control, lease_index_update=LeaseIndexUpdate(None, control.fence))
     if isinstance(command, Heartbeat):
-        _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         deadline = command.now_ms + command.lease_duration_ms
         return TransitionPlan(
             replace(control, lease_expires_at_ms=deadline),
             lease_index_update=LeaseIndexUpdate(deadline, control.fence),
         )
     if isinstance(command, Checkpoint):
-        _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         next_control = _business(
             control,
             command.now_ms,
@@ -407,7 +408,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             increment_version=False,
         )
     if isinstance(command, ScheduleRetry):
-        _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         progress_events = _progress_events(control.progress_sequence, command.progress_events)
         if control.cancel_requested_at_ms is not None:
             return _terminal(
@@ -445,7 +446,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             lease_index_update=LeaseIndexUpdate(None, control.fence),
         )
     if isinstance(command, Suspend):
-        _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         progress_events = _progress_events(control.progress_sequence, command.progress_events)
         if control.cancel_requested_at_ms is not None:
             return _terminal(
@@ -494,7 +495,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             payload_deletes=(PayloadKind.WAIT,),
         )
     if isinstance(command, (Complete, Fail)):
-        _owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         completed = isinstance(command, Complete)
         progress_events = _progress_events(control.progress_sequence, command.progress_events)
         if control.cancel_requested_at_ms is not None:
@@ -527,8 +528,6 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             return TransitionPlan(control)
         if control.cancel_requested_at_ms is not None:
             return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
-        if control.definition_revision != command.worker_revision:
-            return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.revision_error)
         if control.run_attempt >= command.max_run_attempts:
             return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error)
         next_control = _business(
@@ -582,7 +581,13 @@ def _terminal(
     )
 
 
-def _owned(control: ExecutionControl, fence: int, worker_id: str, now_ms: int, safety_margin_ms: int) -> None:
+def require_owned(
+    control: ExecutionControl,
+    fence: int,
+    worker_id: str,
+    now_ms: int,
+    safety_margin_ms: int,
+) -> None:
     if (
         control.status is not ExecutionStatus.RUNNING
         or control.fence != fence

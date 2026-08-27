@@ -92,7 +92,9 @@ execution projection.
 ## Ownership and embedding
 
 Hayhooks uses unscoped bearer-ID access: possession of the random execution ID
-grants access, and caller-provided idempotency keys are rejected. A standalone
+grants access. Caller-provided idempotency keys support safe submission retries
+and act as bearer secrets in this mode, so generate them with the same entropy
+and confidentiality as execution IDs. A standalone
 FastAPI host can pass `owner_id_dependency` to `create_durable_router`. The host
 authenticates the request and returns a stable, non-empty owner ID; the router
 then scopes inspect, cancel, resume, stream, and idempotency to that owner while
@@ -132,9 +134,9 @@ external write idempotent with a key derived from the execution ID and logical
 step.
 
 Queued, running, and waiting executions are pinned to their immutable wrapper
-revision. Hayhooks rejects overwrite or undeploy with `409` while such work
-exists. It does not drain work across revisions or force-delete live durable
-state.
+revision, and workers claim only their own revision. Hayhooks rejects dynamic
+overwrite or undeploy with `409` while such work exists. It does not
+force-delete live durable state.
 
 Long-running A2A execution, A2A task persistence, push delivery, and A2A resume
 are not supported in this release. Existing A2A execution remains request-bound.

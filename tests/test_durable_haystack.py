@@ -124,7 +124,7 @@ async def test_pipeline_failure_snapshot_resumes_without_repeating_completed_com
 
 
 @requires_haystack_v3
-async def test_async_pipeline_thread_is_shielded_until_it_finishes(context_factory, monkeypatch) -> None:
+async def test_async_pipeline_cancellation_returns_before_its_thread_finishes(context_factory, monkeypatch) -> None:
     _, create = context_factory
     adapter = HaystackDurableAdapter(Pipeline())
     context, _ = await create()
@@ -139,12 +139,14 @@ async def test_async_pipeline_thread_is_shielded_until_it_finishes(context_facto
     monkeypatch.setattr(adapter, "run_pipeline", blocking_run)
     task = asyncio.create_task(adapter.run_pipeline_async(context, {}))
     assert await asyncio.to_thread(started.wait, 1)
-    for _ in range(2):
+    try:
         task.cancel()
-        await asyncio.sleep(0)
-        assert not task.done()
-    release.set()
-    assert await task == {"done": True}
+        done, _ = await asyncio.wait({task}, timeout=0.05)
+        assert task in done and task.cancelled()
+    finally:
+        release.set()
+        if not task.done():
+            await task
 
 
 @requires_haystack_v3

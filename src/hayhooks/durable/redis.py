@@ -22,9 +22,11 @@ except ImportError as error:  # pragma: no cover - exercised by packaging checks
 
 from hayhooks.durable.engine import (
     MAX_CONTROL_SCALAR_BYTES,
+    STORAGE_SCHEMA_VERSION,
     Claim,
     ExecutionCommand,
     ExecutionControl,
+    ExecutionLeaseLostError,
     ExecutionNotFoundError,
     ExecutionStatus,
     Heartbeat,
@@ -34,6 +36,7 @@ from hayhooks.durable.engine import (
     RecoverExpiredLease,
     TransitionPlan,
     decide,
+    require_owned,
     submission_plan,
     validate_run_id,
 )
@@ -55,6 +58,7 @@ from hayhooks.durable.store import (
     parse_chunk_cursor,
     runnable_score,
     validate_payload_size,
+    validate_stored_execution,
     validate_transition_plan,
 )
 
@@ -68,6 +72,7 @@ _OPTIONAL_CONTROL_FIELDS = {
     "cancel_reason",
 }
 _INTEGER_CONTROL_FIELDS = {
+    "schema_version",
     "version",
     "fence",
     "run_attempt",
@@ -105,6 +110,10 @@ class RedisKeys:
     @property
     def runnable(self) -> str:
         return f"{self.base}:runnable"
+
+    def runnable_revision(self, revision: str) -> str:
+        digest = hashlib.sha256(b"hayhooks-durable:revision:" + revision.encode()).hexdigest()
+        return f"{self.base}:runnable:{digest}"
 
     @property
     def lease_expiry(self) -> str:
@@ -165,6 +174,12 @@ def decode_control(values: Mapping[str | bytes, str | bytes | int], *, expected_
         raise ExecutionStoreCorruptionError(f"control Hash has missing or unknown fields: {details}")
     if any(len(value.encode()) > MAX_CONTROL_SCALAR_BYTES for value in decoded.values()):
         raise ExecutionStoreCorruptionError("control Hash contains an oversized value")
+    try:
+        schema_version = _nonnegative_int(decoded["schema_version"], "schema version")
+    except ExecutionStoreCorruptionError as error:
+        raise ExecutionStoreCorruptionError("control Hash has an invalid schema version") from error
+    if schema_version != STORAGE_SCHEMA_VERSION:
+        raise ExecutionStoreCorruptionError(f"control Hash has unsupported schema version {schema_version}")
     try:
         status = ExecutionStatus(decoded["status"])
     except ValueError as error:
@@ -351,7 +366,9 @@ class RedisExecutionStore:
                             )
                         ):
                             raise ExecutionStoreCorruptionError("progress sequence contradicts control state")
-                        return StoredExecution(control, payloads, tuple(progress))
+                        stored = StoredExecution(control, payloads, tuple(progress))
+                        validate_stored_execution(stored)
+                        return stored
                     except WatchError:
                         await self._backoff(attempt)
         raise ExecutionContentionError("read transaction retry budget exhausted")
@@ -366,7 +383,12 @@ class RedisExecutionStore:
         if command.lease_duration_ms <= self.config.lease_commit_safety_ms:
             raise ValueError("lease duration must exceed the commit safety margin")
         with _redis_errors():
-            entries = await self.redis.zrange(self.keys.runnable, 0, 0, withscores=True)
+            entries = await self.redis.zrange(
+                self.keys.runnable_revision(command.worker_revision),
+                0,
+                0,
+                withscores=True,
+            )
             if not entries:
                 return None
             try:
@@ -385,8 +407,6 @@ class RedisExecutionStore:
         self,
         *,
         max_run_attempts: int,
-        worker_revision: str,
-        revision_error: bytes,
         attempts_error: bytes,
     ) -> None:
         with _redis_errors():
@@ -425,31 +445,51 @@ class RedisExecutionStore:
                             fence,
                             deadline,
                             max_run_attempts,
-                            worker_revision,
-                            revision_error,
                             attempts_error,
                         ),
                     )
                 except ExecutionNotFoundError:
                     await self.redis.zrem(self.keys.lease_expiry, member)
 
-    async def append_chunk(self, run_id: str, attempt: int, data: bytes) -> None:
+    async def append_chunk(self, run_id: str, attempt: int, fence: int, worker_id: str, data: bytes) -> None:
         if not self.config.max_stream_chunks:
             return
         validate_run_id(run_id)
         if not 0 <= attempt <= _MAX_SAFE_INTEGER:
             raise ValueError("stream chunk attempt must be a non-negative safe integer")
         validate_payload_size("stream chunk", data, self.config.max_stream_chunk_bytes)
+        control_key = self.keys.control(run_id)
         with _redis_errors():
-            async with self.redis.pipeline(transaction=False) as pipe:
-                pipe.xadd(
-                    self.keys.chunks(run_id),
-                    {"attempt": attempt, "data": data},
-                    maxlen=self.config.max_stream_chunks,
-                    approximate=False,
-                )
-                pipe.expire(self.keys.chunks(run_id), self.config.terminal_ttl_seconds)
-                await pipe.execute()
+            for transaction_attempt in range(self._transaction_retries):
+                async with self.redis.pipeline(transaction=True) as pipe:
+                    try:
+                        await pipe.watch(control_key)
+                        values = await pipe.hgetall(control_key)
+                        if not values:
+                            raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
+                        control = decode_control(values, expected_run_id=run_id)
+                        if control.deployment != self.deployment or control.run_attempt != attempt:
+                            raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
+                        require_owned(
+                            control,
+                            fence,
+                            worker_id,
+                            await self._time_ms(pipe),
+                            self.config.lease_commit_safety_ms,
+                        )
+                        pipe.multi()
+                        pipe.xadd(
+                            self.keys.chunks(run_id),
+                            {"attempt": attempt, "data": data},
+                            maxlen=self.config.max_stream_chunks,
+                            approximate=False,
+                        )
+                        pipe.expire(self.keys.chunks(run_id), self.config.terminal_ttl_seconds)
+                        await pipe.execute()
+                        return
+                    except WatchError:
+                        await self._backoff(transaction_attempt)
+        raise ExecutionContentionError("stream chunk transaction retry budget exhausted")
 
     async def read_chunks(self, run_id: str, after: str) -> tuple[StreamChunk, ...]:
         validate_run_id(run_id)
@@ -511,16 +551,19 @@ class RedisExecutionStore:
         candidate: bool = False,
     ) -> TransitionPlan | None:
         control_key = self.keys.control(run_id)
+        candidate_key = self.keys.runnable_revision(command.worker_revision) if isinstance(command, Claim) else None
         for attempt in range(self._transaction_retries):
             async with self.redis.pipeline(transaction=True) as pipe:
                 try:
-                    await pipe.watch(control_key, *((self.keys.runnable,) if candidate else ()))
+                    await pipe.watch(control_key, *((candidate_key,) if candidate_key is not None else ()))
                     values = await pipe.hgetall(control_key)
                     if not values:
                         if not candidate:
                             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
                         pipe.multi()
                         pipe.zrem(self.keys.runnable, run_id)
+                        assert candidate_key is not None
+                        pipe.zrem(candidate_key, run_id)
                         await pipe.execute()
                         return None
                     current = decode_control(values, expected_run_id=run_id)
@@ -534,8 +577,14 @@ class RedisExecutionStore:
                             raise
                         pipe.multi()
                         pipe.zrem(self.keys.runnable, run_id)
+                        assert candidate_key is not None
+                        pipe.zrem(candidate_key, run_id)
                         if current.status is ExecutionStatus.QUEUED:
                             pipe.zadd(self.keys.runnable, {run_id: runnable_score(current)})
+                            pipe.zadd(
+                                self.keys.runnable_revision(current.definition_revision),
+                                {run_id: runnable_score(current)},
+                            )
                         await pipe.execute()
                         return None
                     validate_transition_plan(plan, self.config)
@@ -609,8 +658,13 @@ class RedisExecutionStore:
             pipe.ltrim(self.keys.progress(control.run_id), -self.config.max_progress_events, -1)
 
         pipe.zrem(self.keys.runnable, control.run_id)
+        pipe.zrem(self.keys.runnable_revision(current.definition_revision), control.run_id)
         if control.status is ExecutionStatus.QUEUED:
             pipe.zadd(self.keys.runnable, {control.run_id: runnable_score(control)})
+            pipe.zadd(
+                self.keys.runnable_revision(control.definition_revision),
+                {control.run_id: runnable_score(control)},
+            )
         if (lease := plan.lease_index_update) is not None:
             member = RedisKeys.lease_member(control.run_id, lease.fence)
             if lease.deadline_ms is None:

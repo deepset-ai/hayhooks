@@ -27,7 +27,6 @@ from hayhooks.durable.engine import (
     submission_plan,
 )
 
-REVISION_ERROR = b"revision"
 ATTEMPTS_ERROR = b"attempts"
 
 
@@ -47,7 +46,7 @@ def control(**changes: object):
 
 
 def claim(current, *, now_ms: int = 200):
-    return decide(current, Claim("worker-a", now_ms, 500, 3, "rev-1", REVISION_ERROR, ATTEMPTS_ERROR))
+    return decide(current, Claim("worker-a", now_ms, 500, 3, "rev-1", ATTEMPTS_ERROR))
 
 
 @pytest.fixture
@@ -57,6 +56,7 @@ def claimed_control():
 
 def test_submission_is_an_initial_control_and_input_only() -> None:
     plan = submission_plan(control(), b"input")
+    assert plan.next_control.schema_version == 1
     assert plan.next_control.version == 1
     assert plan.payload_writes[0].kind is PayloadKind.INPUT
     assert plan.lease_index_update is None
@@ -116,7 +116,7 @@ def test_cancellation_wins_every_owned_outcome(claimed_control) -> None:
         assert terminal.payload_deletes == (PayloadKind.RESULT, PayloadKind.ERROR, PayloadKind.WAIT)
         assert [event.data for event in terminal.progress_events] == [b"progress"]
     released = decide(canceled, ReleaseClaim(1, "worker-a", 300)).next_control
-    reclaimed = decide(released, Claim("worker-b", 301, 500, 3, "rev-2", REVISION_ERROR, ATTEMPTS_ERROR))
+    reclaimed = decide(released, Claim("worker-b", 301, 500, 3, "rev-2", ATTEMPTS_ERROR))
     assert reclaimed.next_control.status is ExecutionStatus.CANCELED
 
 
@@ -148,8 +148,6 @@ def test_retry_and_lease_recovery_requeue_without_resetting_retry_count(claimed_
             next_claim.fence,
             next_claim.lease_expires_at_ms or 0,
             3,
-            "rev-1",
-            REVISION_ERROR,
             ATTEMPTS_ERROR,
         ),
     )
@@ -178,21 +176,22 @@ def test_terminal_state_is_irreversible_and_payloads_are_exclusive(claimed_contr
     with pytest.raises(InvalidExecutionTransitionError):
         decide(
             completed.next_control,
-            Claim("worker-a", 400, 500, 3, "rev-1", REVISION_ERROR, ATTEMPTS_ERROR),
+            Claim("worker-a", 400, 500, 3, "rev-1", ATTEMPTS_ERROR),
         )
     failed = decide(claimed_control, Fail(1, "worker-a", 300, b"error"))
     assert failed.payload_deletes == (PayloadKind.RESULT, PayloadKind.WAIT)
 
 
 def test_revision_mismatch_never_grants_a_fence() -> None:
-    plan = decide(control(), Claim("worker-a", 200, 500, 3, "rev-2", REVISION_ERROR, ATTEMPTS_ERROR))
-    assert plan.next_control.status is ExecutionStatus.FAILED
-    assert plan.next_control.fence == 0
+    current = control()
+    with pytest.raises(InvalidExecutionTransitionError, match="revision"):
+        decide(current, Claim("worker-a", 200, 500, 3, "rev-2", ATTEMPTS_ERROR))
+    assert current.status is ExecutionStatus.QUEUED and current.fence == 0
 
 
 def test_stale_lease_index_is_removed_without_changing_control() -> None:
     current = control()
-    plan = decide(current, RecoverExpiredLease(200, 1, 100, 3, "rev-1", REVISION_ERROR, ATTEMPTS_ERROR))
+    plan = decide(current, RecoverExpiredLease(200, 1, 100, 3, ATTEMPTS_ERROR))
     assert plan.next_control == current
     assert plan.lease_index_update and plan.lease_index_update.deadline_ms is None
 
@@ -201,13 +200,11 @@ def test_stale_lease_index_is_removed_without_changing_control() -> None:
     ("changes", "expected"),
     [
         pytest.param({"cancel_requested_at_ms": 250}, ExecutionStatus.CANCELED, id="canceled"),
-        pytest.param({"definition_revision": "rev-2"}, ExecutionStatus.FAILED, id="revision"),
+        pytest.param({"definition_revision": "rev-2"}, ExecutionStatus.QUEUED, id="revision"),
         pytest.param({"run_attempt": 3}, ExecutionStatus.FAILED, id="attempts"),
     ],
 )
-def test_expired_lease_recovery_honors_cancellation_revision_and_attempt_budget(
-    changes, expected, claimed_control
-) -> None:
+def test_expired_lease_recovery_honors_cancellation_and_attempt_budget(changes, expected, claimed_control) -> None:
     current = replace(claimed_control, **changes)
     recovered = decide(
         current,
@@ -216,8 +213,6 @@ def test_expired_lease_recovery_honors_cancellation_revision_and_attempt_budget(
             current.fence,
             current.lease_expires_at_ms or 0,
             3,
-            "rev-1",
-            REVISION_ERROR,
             ATTEMPTS_ERROR,
         ),
     )

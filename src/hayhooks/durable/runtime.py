@@ -10,16 +10,14 @@ import math
 import random
 import secrets
 from collections.abc import Awaitable, Callable
-from concurrent.futures import Future as ThreadFuture
 from contextlib import suppress
-from contextvars import copy_context
 from dataclasses import dataclass
-from threading import Thread
 from typing import Any, TypeAlias, cast
 
 from loguru import logger as log
 from pydantic import BaseModel
 
+from hayhooks.durable._threading import start_daemon_thread
 from hayhooks.durable.context import (
     DurableContext,
     DurableExecutionCancelledError,
@@ -159,11 +157,6 @@ class DurableDeployment:
         self._fallback_error = encode_json(
             PersistedError(type="Error", message="").model_dump(mode="json"),
             max_bytes=store.config.max_payload_bytes,
-        )
-        self._revision_error = self._encode_error(
-            "DefinitionRevisionError",
-            "definition revision is incompatible",
-            code="definition_revision",
         )
         self._attempts_error = self._encode_error(
             "RunAttemptsExhaustedError",
@@ -428,8 +421,6 @@ class DurableDeployment:
             try:
                 await self.store.maintain(
                     max_run_attempts=self.config.max_run_attempts,
-                    worker_revision=self.revision,
-                    revision_error=self._revision_error,
                     attempts_error=self._attempts_error,
                 )
             except asyncio.CancelledError:
@@ -473,7 +464,6 @@ class DurableDeployment:
                     self.config.lease_duration_ms,
                     self.config.max_run_attempts,
                     self.revision,
-                    self._revision_error,
                     self._attempts_error,
                 )
             )
@@ -526,7 +516,7 @@ class DurableDeployment:
                     decode_json(checkpoint_payload, max_bytes=self.store.config.max_payload_bytes)
                 )
                 if checkpoint_payload is not None
-                else CheckpointEnvelope(adapter_kind=self.kind, adapter_checkpoint=None)
+                else CheckpointEnvelope(schema_version=1, adapter_kind=self.kind, adapter_checkpoint=None)
             )
             if checkpoint.adapter_kind is not self.kind:
                 raise ValueError("checkpoint kind does not match the deployment")
@@ -645,35 +635,10 @@ class DurableDeployment:
             if self._runner_is_async:
                 application = asyncio.ensure_future(cast(Awaitable[object], self.runner(context, request)))
             else:
-                thread_done = asyncio.Event()
-                event_loop = asyncio.get_running_loop()
-                thread_result: ThreadFuture[object] = ThreadFuture()
-                thread_result.set_running_or_notify_cancel()
-                application = asyncio.wrap_future(thread_result)
-                active_context = copy_context()
-
-                def run_in_thread(
-                    bound_context: DurableContext = context,
-                    bound_request: BaseModel = request,
-                    bound_loop: asyncio.AbstractEventLoop = event_loop,
-                    bound_completion: asyncio.Event = thread_done,
-                    bound_result: ThreadFuture[object] = thread_result,
-                ) -> None:
-                    try:
-                        bound_result.set_result(self.runner(bound_context, bound_request))
-                    except BaseException as error:
-                        bound_result.set_exception(error)
-                    finally:
-                        with suppress(RuntimeError):
-                            bound_loop.call_soon_threadsafe(bound_completion.set)
-
-                # A daemon thread keeps shutdown bounded; Python cannot safely stop it once running.
-                Thread(
-                    target=active_context.run,
-                    args=(run_in_thread,),
+                application, thread_done = start_daemon_thread(
+                    lambda: self.runner(context, request),
                     name=f"durable-run:{claim.control.run_id}",
-                    daemon=True,
-                ).start()
+                )
                 if worker_task is not None:
                     self._thread_workers.add(worker_task)
 
@@ -743,7 +708,12 @@ class DurableDeployment:
         retryable: bool = False,
         code: str | None = None,
     ) -> bytes:
-        return self._encode_error(type(error).__name__, str(error), retryable=retryable, code=code)
+        return self._encode_error(
+            type(error).__name__,
+            "Durable execution failed",
+            retryable=retryable,
+            code=code,
+        )
 
     async def _backoff(self, error: BaseException, streak: int, operation: str) -> None:
         ceiling = min(
