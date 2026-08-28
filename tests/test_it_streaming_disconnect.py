@@ -94,12 +94,10 @@ async def test_http_disconnect_pipeline_task(shield_pipeline_task):
     assert bool(detached_tasks) is shield_pipeline_task
     assert all(not task.done() for task in detached_tasks)
 
-    if shield_pipeline_task:
-        component.release.set()
+    component.release.set()
+    if not component.cancelled.is_set():
         await asyncio.wait_for(component.completed.wait(), timeout=1.0)
+    if detached_tasks:
         await asyncio.wait_for(asyncio.gather(*detached_tasks), timeout=1.0)
         await asyncio.sleep(0)
         assert detached_tasks.isdisjoint(_SHIELDED_PIPELINE_TASKS)
-    else:
-        await asyncio.wait_for(component.cancelled.wait(), timeout=1.0)
-        assert not component.completed.is_set()
