@@ -206,6 +206,25 @@ def remove_pipeline_files(pipeline_name: str, pipelines_dir: str) -> None:
         (pipelines_path / f"{pipeline_name}{ext}").unlink(missing_ok=True)
 
 
+def _restore_pipeline_files(pipeline_name: str, pipelines_dir: str, backup_dir: Path) -> None:
+    """Best-effort rollback that retains any backup files it cannot restore."""
+    clog = log.bind(pipeline_name=pipeline_name, backup_dir=str(backup_dir))
+    try:
+        remove_pipeline_files(pipeline_name, pipelines_dir)
+    except BaseException as error:
+        clog.bind(exception_type=type(error).__name__).error("Failed to remove candidate pipeline files")
+    try:
+        paths = tuple(backup_dir.iterdir())
+    except BaseException as error:
+        clog.bind(exception_type=type(error).__name__).error("Failed to read pipeline backup")
+        return
+    for path in paths:
+        try:
+            path.replace(Path(pipelines_dir) / path.name)
+        except BaseException as error:
+            clog.bind(exception_type=type(error).__name__, path=str(path)).error("Failed to restore pipeline backup")
+
+
 def handle_pipeline_exceptions() -> Callable:
     """
     Decorator factory that wraps pipeline run methods and processes unexpected exceptions.
@@ -727,18 +746,31 @@ def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                     rebuild_openapi(app)
     except BaseException:
         if app:
-            _remove_pipeline_routes(app, pipeline_name)
+            try:
+                _remove_pipeline_routes(app, pipeline_name)
+            except BaseException as error:
+                clog.bind(exception_type=type(error).__name__).error("Failed to remove candidate pipeline routes")
         registry.remove(pipeline_name)
         if durable_deployment is not None and app is not None:
             runtime = app.state.durable_runtime
             try:
                 if runtime.started:
-                    future = asyncio.run_coroutine_threadsafe(runtime.remove(pipeline_name), app.state.durable_loop)
+                    future = asyncio.run_coroutine_threadsafe(
+                        runtime.remove(pipeline_name, close=False), app.state.durable_loop
+                    )
                     future.result()
                 else:
                     runtime.discard(pipeline_name)
             except KeyError:
                 pass
+            except BaseException as error:
+                clog.bind(exception_type=type(error).__name__).error("Failed to detach candidate durable deployment")
+            if runtime.started:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(durable_deployment.close(), app.state.durable_loop)
+                    future.result()
+                except BaseException as error:
+                    clog.bind(exception_type=type(error).__name__).error("Failed to close candidate durable deployment")
         raise
 
     return {"name": pipeline_name}
@@ -876,6 +908,7 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
         old_detached = False
         old_removed = False
         backup_dir: Path | None = None
+        rolled_back = False
 
         if old_wrapper is not None:
             if not overwrite:
@@ -928,39 +961,74 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                 _defer_openapi_rebuild=_defer_openapi_rebuild,
             )
         except BaseException:
+            rolled_back = True
             if backup_dir is not None:
-                remove_pipeline_files(prepared.name, settings.pipelines_dir)
-                for path in backup_dir.iterdir():
-                    path.replace(Path(settings.pipelines_dir) / path.name)
+                _restore_pipeline_files(prepared.name, settings.pipelines_dir, backup_dir)
 
-            if old_detached and runtime is not None:
+            old_published = not old_removed
+            if old_removed and old_wrapper is not None:
+                try:
+                    registry.add(prepared.name, old_wrapper, metadata=old_metadata)
+                except BaseException as error:
+                    log.bind(pipeline_name=prepared.name, exception_type=type(error).__name__).error(
+                        "Failed to restore pipeline registry publication"
+                    )
+                    old_published = False
+                else:
+                    old_published = True
+                if app:
+                    try:
+                        add_pipeline_api_route(
+                            app, prepared.name, old_wrapper, _defer_openapi_rebuild=_defer_openapi_rebuild
+                        )
+                        if old_deployment is not None:
+                            app.include_router(
+                                create_durable_router(old_deployment, owner_id_dependency=None),
+                                prefix=f"/{prepared.name}",
+                            )
+                            if not _defer_openapi_rebuild:
+                                rebuild_openapi(app)
+                    except BaseException as error:
+                        log.bind(pipeline_name=prepared.name, exception_type=type(error).__name__).error(
+                            "Failed to restore pipeline routes"
+                        )
+                        old_published = False
+
+            if old_detached and runtime is not None and old_published:
                 assert app is not None
                 assert old_deployment is not None
-                if runtime.started:
-                    future = asyncio.run_coroutine_threadsafe(runtime.install(old_deployment), app.state.durable_loop)
-                    future.result()
-                else:
-                    runtime.add(old_deployment)
-            elif old_quiesced and old_deployment is not None and app is not None:
-                future = asyncio.run_coroutine_threadsafe(old_deployment.start(), app.state.durable_loop)
-                future.result()
-
-            if old_removed and old_wrapper is not None:
-                registry.add(prepared.name, old_wrapper, metadata=old_metadata)
-                if app:
-                    add_pipeline_api_route(
-                        app, prepared.name, old_wrapper, _defer_openapi_rebuild=_defer_openapi_rebuild
-                    )
-                    if old_deployment is not None:
-                        app.include_router(
-                            create_durable_router(old_deployment, owner_id_dependency=None), prefix=f"/{prepared.name}"
+                try:
+                    if runtime.started:
+                        future = asyncio.run_coroutine_threadsafe(
+                            runtime.install(old_deployment), app.state.durable_loop
                         )
-                        if not _defer_openapi_rebuild:
-                            rebuild_openapi(app)
+                        future.result()
+                    else:
+                        runtime.add(old_deployment)
+                except BaseException as error:
+                    log.bind(pipeline_name=prepared.name, exception_type=type(error).__name__).error(
+                        "Failed to restore durable deployment"
+                    )
+            elif old_quiesced and old_deployment is not None and app is not None and old_published:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(old_deployment.start(), app.state.durable_loop)
+                    future.result()
+                except BaseException as error:
+                    log.bind(pipeline_name=prepared.name, exception_type=type(error).__name__).error(
+                        "Failed to reactivate durable deployment"
+                    )
             raise
         finally:
             if backup_dir is not None:
-                shutil.rmtree(backup_dir, ignore_errors=True)
+                if rolled_back:
+                    try:
+                        backup_dir.rmdir()
+                    except OSError:
+                        log.bind(pipeline_name=prepared.name, backup_dir=str(backup_dir)).error(
+                            "Retaining incomplete pipeline backup"
+                        )
+                else:
+                    shutil.rmtree(backup_dir, ignore_errors=True)
 
         if old_detached and old_deployment is not None and app is not None:
             future = asyncio.run_coroutine_threadsafe(old_deployment.close(), app.state.durable_loop)
@@ -1036,6 +1104,7 @@ def deploy_pipeline_files(
         pipelines_dir = Path(settings.pipelines_dir)
         pipelines_dir.mkdir(parents=True, exist_ok=True)
         backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
+        rolled_back = False
         for path in (
             pipelines_dir / pipeline_name,
             pipelines_dir / f"{pipeline_name}.yml",
@@ -1053,14 +1122,21 @@ def deploy_pipeline_files(
                 cleanup_files_on_overwrite=False,
             )
         except BaseException:
-            remove_pipeline_files(pipeline_name, settings.pipelines_dir)
-            for path in backup_dir.iterdir():
-                path.replace(pipelines_dir / path.name)
+            rolled_back = True
+            _restore_pipeline_files(pipeline_name, settings.pipelines_dir, backup_dir)
             unload_pipeline_modules(pipeline_name)
             sys.modules.update(old_modules)
             raise
         finally:
-            shutil.rmtree(backup_dir, ignore_errors=True)
+            if rolled_back:
+                try:
+                    backup_dir.rmdir()
+                except OSError:
+                    log.bind(pipeline_name=pipeline_name, backup_dir=str(backup_dir)).error(
+                        "Retaining incomplete pipeline backup"
+                    )
+            else:
+                shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def deploy_pipeline_yaml(

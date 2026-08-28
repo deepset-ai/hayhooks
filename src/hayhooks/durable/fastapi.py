@@ -145,6 +145,13 @@ async def _stream_events(  # noqa: PLR0913
     try:
         yield _SSE_HEARTBEAT
         while True:
+            stored = await deployment.get(
+                execution_id,
+                owner_id=owner_id,
+                enforce_owner=enforce_owner,
+                allow_revision_mismatch=True,
+            )
+            visible_attempt = max(visible_attempt, stored.control.run_attempt)
             try:
                 chunks = await deployment.store.read_chunks(execution_id, cursor)
             except ChunkCursorExpiredError:
@@ -153,13 +160,6 @@ async def _stream_events(  # noqa: PLR0913
                 continue
 
             if chunks:
-                stored = await deployment.get(
-                    execution_id,
-                    owner_id=owner_id,
-                    enforce_owner=enforce_owner,
-                    allow_revision_mismatch=True,
-                )
-                visible_attempt = max(visible_attempt, stored.control.run_attempt)
                 for chunk in chunks:
                     cursor = chunk.cursor
                     if chunk.attempt < visible_attempt:
@@ -185,13 +185,6 @@ async def _stream_events(  # noqa: PLR0913
                     continue
             else:
                 quiet += 1
-                stored = await deployment.get(
-                    execution_id,
-                    owner_id=owner_id,
-                    enforce_owner=enforce_owner,
-                    allow_revision_mismatch=True,
-                )
-                visible_attempt = max(visible_attempt, stored.control.run_attempt)
 
             if stored.control.terminal:
                 public = _project(request, deployment, route_names, stored, response_model)

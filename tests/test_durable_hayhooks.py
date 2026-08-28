@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from hayhooks.durable.context import DurableContext
 from hayhooks.durable.engine import Claim, Suspend, initial_control
 from hayhooks.durable.models import encode_json
+from hayhooks.durable.runtime import DurableDeployment
 from hayhooks.durable.store import ExecutionStoreError, MemoryExecutionStore
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
@@ -66,6 +67,19 @@ def durable_client(monkeypatch):
     finally:
         registry.clear()
         shutil.rmtree(pipeline_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def reject_candidate_routes(monkeypatch):
+    original = deploy_utils.add_pipeline_api_route
+
+    def fail_candidate(app, pipeline_name, pipeline_wrapper, **kwargs):
+        if pipeline_wrapper.durable_revision == "test-v2":
+            message = "route publication failed"
+            raise RuntimeError(message)
+        return original(app, pipeline_name, pipeline_wrapper, **kwargs)
+
+    monkeypatch.setattr(deploy_utils, "add_pipeline_api_route", fail_candidate)
 
 
 def wrapper_for(wrapper_type: type[BasePipelineWrapper]) -> BasePipelineWrapper:
@@ -294,7 +308,7 @@ def test_store_initialization_failure_publishes_nothing(durable_client, monkeypa
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
 @pytest.mark.parametrize("save_files", [True, False])
 def test_durable_publication_failure_restores_the_old_deployment(
-    durable_client, monkeypatch, wait_for_execution, save_files: bool
+    durable_client, reject_candidate_routes, wait_for_execution, save_files: bool
 ):
     old_source = durable_source("test-v1")
     candidate_source = durable_source("test-v2")
@@ -302,16 +316,6 @@ def test_durable_publication_failure_restores_the_old_deployment(
     old_wrapper = registry.get("durable-job")
     module_names = ("durable-job", "durable-job.pipeline_wrapper")
     old_modules = {name: sys.modules[name] for name in module_names}
-    original = deploy_utils.add_pipeline_api_route
-
-    def fail_candidate(app, pipeline_name, pipeline_wrapper, **kwargs):
-        if pipeline_wrapper.durable_revision == "test-v2":
-            message = "route publication failed"
-            raise RuntimeError(message)
-        return original(app, pipeline_name, pipeline_wrapper, **kwargs)
-
-    monkeypatch.setattr(deploy_utils, "add_pipeline_api_route", fail_candidate)
-
     with pytest.raises(RuntimeError, match="route publication failed"):
         deploy_pipeline_files(
             "durable-job",
@@ -329,3 +333,98 @@ def test_durable_publication_failure_restores_the_old_deployment(
     assert wait_for_execution(durable_client, f"/durable-job/executions/{execution_id}", "completed")["result"] == {
         "value": 7
     }
+
+
+@pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
+def test_candidate_close_failure_does_not_block_publication_rollback(
+    durable_client, monkeypatch, reject_candidate_routes, wait_for_execution
+):
+    old_wrapper = wrapper_for(DurableWrapper)
+    commit_prepared_pipeline(PreparedPipeline("durable-job", old_wrapper), app=durable_client.app)
+    original_close = DurableDeployment.close
+
+    async def close_then_fail(deployment):
+        await original_close(deployment)
+        if deployment.revision == "test-v2":
+            message = "candidate close failed"
+            raise RuntimeError(message)
+
+    monkeypatch.setattr(DurableDeployment, "close", close_then_fail)
+
+    with pytest.raises(RuntimeError, match="route publication failed"):
+        commit_prepared_pipeline(
+            PreparedPipeline("durable-job", wrapper_for(DurableWrapperV2)),
+            app=durable_client.app,
+            overwrite=True,
+        )
+
+    assert registry.get("durable-job") is old_wrapper
+    execution_id = durable_client.post("/durable-job/run-durable", json={"value": 7}).json()["execution_id"]
+    assert wait_for_execution(durable_client, f"/durable-job/executions/{execution_id}", "completed")["result"] == {
+        "value": 7
+    }
+
+
+@pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
+def test_file_cleanup_failure_does_not_block_publication_rollback(
+    durable_client, monkeypatch, reject_candidate_routes, wait_for_execution
+):
+    old_source = durable_source("test-v1")
+    deploy_pipeline_files("durable-job", {"pipeline_wrapper.py": old_source}, app=durable_client.app, save_files=True)
+    old_wrapper = registry.get("durable-job")
+    original_remove = deploy_utils.remove_pipeline_files
+
+    def remove_then_fail(pipeline_name, pipelines_dir):
+        original_remove(pipeline_name, pipelines_dir)
+        message = "file cleanup failed"
+        raise OSError(message)
+
+    monkeypatch.setattr(deploy_utils, "remove_pipeline_files", remove_then_fail)
+
+    with pytest.raises(RuntimeError, match="route publication failed"):
+        commit_prepared_pipeline(
+            PreparedPipeline("durable-job", wrapper_for(DurableWrapperV2)),
+            app=durable_client.app,
+            overwrite=True,
+            source_files={"pipeline_wrapper.py": durable_source("test-v2")},
+        )
+
+    assert registry.get("durable-job") is old_wrapper
+    assert (Path(settings.pipelines_dir) / "durable-job" / "pipeline_wrapper.py").read_text() == old_source
+    execution_id = durable_client.post("/durable-job/run-durable", json={"value": 7}).json()["execution_id"]
+    assert wait_for_execution(durable_client, f"/durable-job/executions/{execution_id}", "completed")["result"] == {
+        "value": 7
+    }
+
+
+@pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
+def test_rollback_republishes_before_reactivating_the_old_deployment(
+    durable_client, monkeypatch, reject_candidate_routes
+):
+    old_wrapper = wrapper_for(DurableWrapper)
+    commit_prepared_pipeline(PreparedPipeline("durable-job", old_wrapper), app=durable_client.app)
+    old_deployment = durable_client.app.state.durable_runtime._deployments["durable-job"]
+    original_start = DurableDeployment.start
+    reactivated = False
+
+    async def assert_publication_then_start(deployment):
+        nonlocal reactivated
+        if deployment is old_deployment:
+            assert registry.get("durable-job") is old_wrapper
+            assert any(
+                getattr(getattr(route, "include_context", None), "prefix", None) == "/durable-job"
+                for route in durable_client.app.routes
+            )
+            reactivated = True
+        await original_start(deployment)
+
+    monkeypatch.setattr(DurableDeployment, "start", assert_publication_then_start)
+
+    with pytest.raises(RuntimeError, match="route publication failed"):
+        commit_prepared_pipeline(
+            PreparedPipeline("durable-job", wrapper_for(DurableWrapperV2)),
+            app=durable_client.app,
+            overwrite=True,
+        )
+
+    assert reactivated

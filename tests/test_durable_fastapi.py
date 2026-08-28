@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
@@ -398,6 +399,43 @@ def test_stream_resume_gap_fencing_and_drain(
         payloads = [json.loads(event["data"])["payload"] for event in events if event["event"] == "chunk"]
         assert [event["event"] for event in events] == expected_events
         assert payloads == expected_payloads
+
+
+def test_stream_drains_chunk_committed_immediately_before_terminal(durable_app_factory, monkeypatch) -> None:
+    app, deployment = durable_app_factory()
+    chunk_written = threading.Event()
+    release_runner = threading.Event()
+
+    async def controlled_run(context: DurableContext, request: JobRequest) -> JobResult:
+        await context.stream_chunk({"index": 0})
+        chunk_written.set()
+        await asyncio.to_thread(release_runner.wait)
+        return JobResult(value=request.value, owner_id=context.owner_id)
+
+    deployment.runner = controlled_run
+    read_chunks = deployment.store.read_chunks
+    missed_once = False
+
+    async def miss_once(run_id: str, cursor: str):
+        nonlocal missed_once
+        if not missed_once:
+            missed_once = True
+            release_runner.set()
+            for _ in range(200):
+                stored = await deployment.store.read(run_id)
+                if stored is not None and stored.control.terminal:
+                    return []
+                await asyncio.sleep(0.005)
+            raise AssertionError("execution did not complete")
+        return await read_chunks(run_id, cursor)
+
+    monkeypatch.setattr(deployment.store, "read_chunks", miss_once)
+    with TestClient(app) as client:
+        submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
+        assert chunk_written.wait(timeout=1)
+        events, _, _ = read_sse(client, submitted["links"]["stream"])
+
+    assert [event["event"] for event in events] == ["chunk", "completed"]
 
 
 def test_chunk_failures_are_display_only_and_midstream_errors_are_framed(
