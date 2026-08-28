@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from haystack.dataclasses import ByteStream
 
-from examples.durable_fastapi import app as durable_fastapi
 from examples.durable_streams import _http_url
 from hayhooks.durable.engine import ExecutionStatus, PayloadKind
 from hayhooks.durable.haystack import HaystackDurableAdapter
@@ -40,6 +39,8 @@ async def wait_for_execution(deployment: DurableDeployment, run_id: str, expecte
 
 
 def test_standalone_fastapi_example_exposes_typed_durable_routes() -> None:
+    from examples.durable_fastapi import app as durable_fastapi
+
     openapi = durable_fastapi.app.openapi()
     paths = openapi["paths"]
     prefix = "/jobs/document-analysis"
@@ -49,6 +50,8 @@ def test_standalone_fastapi_example_exposes_typed_durable_routes() -> None:
 
 
 async def test_standalone_fastapi_example_waits_resumes_and_runs_pipeline() -> None:
+    from examples.durable_fastapi import app as durable_fastapi
+
     name = "standalone_fastapi_example"
     adapter = HaystackDurableAdapter(durable_fastapi.build_pipeline())
     deployment = DurableDeployment(
