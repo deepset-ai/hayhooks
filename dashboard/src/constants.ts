@@ -13,6 +13,10 @@ export const DEFAULT_DASHBOARD_CONFIG: DashboardConfig = {
 export const TAG_PRIORITY = [
   "hayhooks.pipeline.name",
   "hayhooks.transport",
+  "hayhooks.durable.execution_id",
+  "hayhooks.durable.attempt",
+  "hayhooks.durable.kind",
+  "hayhooks.durable.definition_revision",
   "hayhooks.route",
   "hayhooks.openai.operation",
   "hayhooks.openai.stream_requested",
@@ -21,6 +25,7 @@ export const TAG_PRIORITY = [
   "hayhooks.response.streaming",
   "hayhooks.payload.values",
   "hayhooks.payload.has_files",
+  "hayhooks.checkpoint",
   "hayhooks.success",
   "hayhooks.error.type",
   "hayhooks.http.status_code",
@@ -35,6 +40,10 @@ export const TAG_PRIORITY = [
 export const TAG_LABELS: Record<string, string> = {
   "hayhooks.pipeline.name": "pipeline",
   "hayhooks.transport": "transport",
+  "hayhooks.durable.execution_id": "execution",
+  "hayhooks.durable.attempt": "attempt",
+  "hayhooks.durable.kind": "durable kind",
+  "hayhooks.durable.definition_revision": "revision",
   "hayhooks.openai.operation": "openai op",
   "hayhooks.openai.stream_requested": "stream",
   "hayhooks.openai.execution_mode": "exec mode",
@@ -50,12 +59,16 @@ export const TAG_LABELS: Record<string, string> = {
   "hayhooks.route": "route",
   "hayhooks.payload.values": "payload values",
   "hayhooks.payload.has_files": "has files",
+  "hayhooks.checkpoint": "checkpoint",
   "service.name": "service",
   serviceName: "service",
 }
 
 export const SUMMARY_TAG_KEYS = new Set([
   "hayhooks.transport",
+  "hayhooks.durable.execution_id",
+  "hayhooks.durable.attempt",
+  "hayhooks.checkpoint",
   "hayhooks.success",
   "hayhooks.error.type",
 ])
@@ -85,6 +98,11 @@ export const KIND_STYLE: Record<TraceKind, { label: string; badge: string; borde
     label: "mcp",
     badge: "bg-kind-mcp-soft text-kind-mcp border-kind-mcp-border",
     border: "border-l-kind-mcp",
+  },
+  durable: {
+    label: "durable",
+    badge: "bg-haystack-green/10 text-haystack-green border-haystack-green/25",
+    border: "border-l-haystack-green",
   },
   other: {
     label: "trace",

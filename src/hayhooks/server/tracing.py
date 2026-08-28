@@ -41,6 +41,7 @@ SPAN_PIPELINE_DEPLOY_COMMIT = "hayhooks.pipeline.deploy.commit"
 SPAN_PIPELINE_UNDEPLOY = "hayhooks.pipeline.undeploy"
 SPAN_PIPELINE_RUN = "hayhooks.pipeline.run"
 SPAN_PIPELINE_STARTUP_DEPLOY = "hayhooks.pipeline.startup.deploy"
+SPAN_DURABLE_ATTEMPT = "hayhooks.durable.attempt"
 SPAN_OPENAI_RUN = "hayhooks.openai.run"
 SPAN_OPENAI_FILE_UPLOAD = "hayhooks.openai.file_upload"
 SPAN_MCP_LIST_TOOLS = "hayhooks.mcp.list_tools"
@@ -56,6 +57,7 @@ _TAG_ELAPSED_MS = "hayhooks.elapsed_ms"
 _TAG_HTTP_STATUS = "hayhooks.http.status_code"
 _TAG_RESPONSE_STREAMING = "hayhooks.response.streaming"
 _TAG_RESPONSE_STREAM_TYPE = "hayhooks.response.stream_type"
+_TAG_CHECKPOINT = "hayhooks.checkpoint"
 
 _FASTAPI_STATE_FLAG = "_hayhooks_fastapi_instrumented"
 _STARLETTE_STATE_FLAG = "_hayhooks_starlette_instrumented"
@@ -122,6 +124,14 @@ def _span_correlation_data(span: Span | None) -> dict[str, str]:
     return normalize_trace_correlation_data(correlation_data) if correlation_data else {}
 
 
+def _is_checkpoint_exception(exc: BaseException) -> bool:
+    exception_type = type(exc)
+    return (exception_type.__name__ == "BreakpointException" and exception_type.__module__.startswith("haystack.")) or (
+        exception_type.__name__ == "_ExecutionSuspendedError"
+        and exception_type.__module__ == "hayhooks.durable.context"
+    )
+
+
 def _record_live_span_outcome(
     *,
     trace_id: str,
@@ -131,8 +141,10 @@ def _record_live_span_outcome(
 ) -> None:
     elapsed_ms = int((monotonic() - started) * 1000)
     tags: dict[str, Any] = {_TAG_ELAPSED_MS: elapsed_ms}
-    if exc is None:
+    if exc is None or _is_checkpoint_exception(exc):
         tags[_TAG_SUCCESS] = True
+        if exc is not None:
+            tags[_TAG_CHECKPOINT] = True
     else:
         tags[_TAG_SUCCESS] = False
         tags[_TAG_ERROR_TYPE] = type(exc).__name__
@@ -642,9 +654,12 @@ class _OperationTrace:
 
         try:
             live_tags: dict[str, Any]
-            if exc is None:
+            if exc is None or _is_checkpoint_exception(exc):
                 _mark_success(span)
                 live_tags = {_TAG_SUCCESS: True}
+                if exc is not None:
+                    span.set_tag(_TAG_CHECKPOINT, value=True)
+                    live_tags[_TAG_CHECKPOINT] = True
             elif isinstance(exc, HTTPException):
                 _mark_http_exception(span, exc)
                 live_tags = {
