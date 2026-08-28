@@ -33,6 +33,7 @@ from hayhooks.server.pipelines.models import (
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.tracing import (
+    SPAN_DURABLE_ATTEMPT,
     SPAN_PIPELINE_DEPLOY,
     SPAN_PIPELINE_DEPLOY_COMMIT,
     SPAN_PIPELINE_DEPLOY_PREPARE,
@@ -612,6 +613,41 @@ def _quiesce_idle_durable_deployment(deployment: DurableDeployment, app: FastAPI
         raise
 
 
+def _trace_durable_runner(
+    pipeline_name: str,
+    revision: str,
+    kind: str,
+    runner: Callable,
+) -> Callable:
+    def trace_tags(context: Any) -> dict[str, Any]:
+        return build_trace_tags(
+            {
+                "hayhooks.transport": "durable",
+                "hayhooks.pipeline.name": pipeline_name,
+                "hayhooks.durable.execution_id": context.execution_id,
+                "hayhooks.durable.attempt": context.attempt,
+                "hayhooks.durable.kind": kind,
+                "hayhooks.durable.definition_revision": revision,
+            }
+        )
+
+    if inspect.iscoroutinefunction(runner):
+
+        @wraps(runner)
+        async def traced_async(context: Any, request: BaseModel) -> object:
+            with trace_operation(SPAN_DURABLE_ATTEMPT, tags=trace_tags(context)):
+                return await runner(context, request)
+
+        return traced_async
+
+    @wraps(runner)
+    def traced_sync(context: Any, request: BaseModel) -> object:
+        with trace_operation(SPAN_DURABLE_ATTEMPT, tags=trace_tags(context)):
+            return runner(context, request)
+
+    return traced_sync
+
+
 def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
     pipeline_name: str,
     pipeline_wrapper: BasePipelineWrapper,
@@ -714,7 +750,12 @@ def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
             pipeline_wrapper.durable_revision or "",
             store,
             request_model,
-            runner,
+            _trace_durable_runner(
+                pipeline_name,
+                pipeline_wrapper.durable_revision or "",
+                adapter.kind.value,
+                runner,
+            ),
             kind=adapter.kind,
             result_model=result_model,
             resume_model=pipeline_wrapper.durable_resume_model,
