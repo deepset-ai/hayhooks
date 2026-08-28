@@ -65,6 +65,22 @@ async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancell
         await context.check_cancelled()
 
 
+async def test_progress_buffer_keeps_only_configured_history(context_factory) -> None:
+    store, create = context_factory
+    context, _ = await create()
+    limit = store.config.max_progress_events
+    for value in range(limit + 1):
+        await context.report_progress(str(value))
+
+    assert len(context._pending_progress) == limit
+    await context.checkpoint()
+    stored = await store.read(context.execution_id)
+    assert stored is not None
+    assert [decode_json(event.data, max_bytes=1_024)["message"] for event in stored.progress] == [
+        str(value) for value in range(1, limit + 1)
+    ]
+
+
 async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context_factory) -> None:
     store, create = context_factory
     context, _ = await create()

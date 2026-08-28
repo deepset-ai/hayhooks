@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from hayhooks.durable.fastapi import create_durable_router
 from hayhooks.durable.haystack import HaystackDurableAdapter
 from hayhooks.durable.runtime import DurableDeployment, DurableRuntime
-from hayhooks.durable.store import MemoryExecutionStore
+from hayhooks.durable.store import ExecutionStore, MemoryExecutionStore
 from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
 from hayhooks.server.logger import log, log_elapsed
 from hayhooks.server.pipelines.models import (
@@ -223,6 +223,18 @@ def _restore_pipeline_files(pipeline_name: str, pipelines_dir: str, backup_dir: 
             path.replace(Path(pipelines_dir) / path.name)
         except BaseException as error:
             clog.bind(exception_type=type(error).__name__, path=str(path)).error("Failed to restore pipeline backup")
+
+
+def _cleanup_pipeline_backup(pipeline_name: str, backup_dir: Path | None, rolled_back: bool) -> None:
+    if backup_dir is None:
+        return
+    if not rolled_back:
+        shutil.rmtree(backup_dir, ignore_errors=True)
+        return
+    try:
+        backup_dir.rmdir()
+    except OSError:
+        log.bind(pipeline_name=pipeline_name, backup_dir=str(backup_dir)).error("Retaining incomplete pipeline backup")
 
 
 def handle_pipeline_exceptions() -> Callable:
@@ -619,6 +631,7 @@ def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
     extra_metadata: dict[str, Any] | None = None,
     *,
     _defer_openapi_rebuild: bool = False,
+    durable_store: ExecutionStore | None = None,
 ) -> dict[str, str]:
     """
     Register a prepared pipeline wrapper and optionally add its API route.
@@ -632,6 +645,7 @@ def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
         extra_metadata: Additional metadata fields (e.g., streaming_components for YAML).
         _defer_openapi_rebuild: Forward to ``add_pipeline_api_route`` to skip per-pipeline
             OpenAPI rebuild during batch operations.
+        durable_store: Existing store to preserve across a durable revision replacement.
 
     Returns:
         A dictionary containing the deployed pipeline name, e.g. {"name": pipeline_name}.
@@ -694,21 +708,23 @@ def _register_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
             if isinstance(return_annotation, type) and issubclass(return_annotation, BaseModel)
             else None
         )
-        if settings.durable_store == "memory":
-            store = MemoryExecutionStore(pipeline_name, config=app.state.durable_store_config)
-        else:
-            from hayhooks.durable.redis import RedisExecutionStore
+        store = durable_store
+        if store is None:
+            if settings.durable_store == "memory":
+                store = MemoryExecutionStore(pipeline_name, config=app.state.durable_store_config)
+            else:
+                from hayhooks.durable.redis import RedisExecutionStore
 
-            if not hasattr(app.state, "durable_redis"):
-                from redis.asyncio import Redis
+                if not hasattr(app.state, "durable_redis"):
+                    from redis.asyncio import Redis
 
-                app.state.durable_redis = Redis.from_url(settings.durable_redis_url, decode_responses=False)
-            store = RedisExecutionStore(
-                app.state.durable_redis,
-                pipeline_name,
-                config=app.state.durable_store_config,
-                key_prefix=settings.durable_redis_key_prefix,
-            )
+                    app.state.durable_redis = Redis.from_url(settings.durable_redis_url, decode_responses=False)
+                store = RedisExecutionStore(
+                    app.state.durable_redis,
+                    pipeline_name,
+                    config=app.state.durable_store_config,
+                    key_prefix=settings.durable_redis_key_prefix,
+                )
         durable_deployment = DurableDeployment(
             pipeline_name,
             pipeline_wrapper.durable_revision or "",
@@ -959,6 +975,7 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                 app=app,
                 extra_metadata=prepared.extra_metadata,
                 _defer_openapi_rebuild=_defer_openapi_rebuild,
+                durable_store=old_deployment.store if old_deployment is not None else None,
             )
         except BaseException:
             rolled_back = True
@@ -1019,16 +1036,7 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                     )
             raise
         finally:
-            if backup_dir is not None:
-                if rolled_back:
-                    try:
-                        backup_dir.rmdir()
-                    except OSError:
-                        log.bind(pipeline_name=prepared.name, backup_dir=str(backup_dir)).error(
-                            "Retaining incomplete pipeline backup"
-                        )
-                else:
-                    shutil.rmtree(backup_dir, ignore_errors=True)
+            _cleanup_pipeline_backup(prepared.name, backup_dir, rolled_back)
 
         if old_detached and old_deployment is not None and app is not None:
             future = asyncio.run_coroutine_threadsafe(old_deployment.close(), app.state.durable_loop)
@@ -1081,62 +1089,59 @@ def deploy_pipeline_files(
             }
         ),
     ):
+        if registry.get(pipeline_name) is not None and not overwrite:
+            msg = f"Pipeline '{pipeline_name}' already exists"
+            raise PipelineAlreadyExistsError(msg)
+        old_metadata = registry.get_metadata(pipeline_name)
+        old_deployment = cast(DurableDeployment | None, (old_metadata or {}).get("durable_deployment"))
+        old_quiesced = False
+        if old_deployment is not None and app is not None and app.state.durable_runtime.started:
+            _quiesce_idle_durable_deployment(old_deployment, app)
+            old_quiesced = True
+
         old_modules = {
             name: module
             for name, module in sys.modules.items()
             if name == pipeline_name or name.startswith(f"{pipeline_name}.")
         }
-        if not save_files:
-            try:
-                prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=False)
-                return commit_prepared_pipeline(
-                    prepared,
-                    app=app,
-                    overwrite=overwrite,
-                    _defer_openapi_rebuild=_defer_openapi_rebuild,
-                    cleanup_files_on_overwrite=overwrite,
-                )
-            except BaseException:
-                unload_pipeline_modules(pipeline_name)
-                sys.modules.update(old_modules)
-                raise
-
-        pipelines_dir = Path(settings.pipelines_dir)
-        pipelines_dir.mkdir(parents=True, exist_ok=True)
-        backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
+        backup_dir: Path | None = None
         rolled_back = False
-        for path in (
-            pipelines_dir / pipeline_name,
-            pipelines_dir / f"{pipeline_name}.yml",
-            pipelines_dir / f"{pipeline_name}.yaml",
-        ):
-            if path.exists():
-                path.replace(backup_dir / path.name)
+        commit_started = False
         try:
-            prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=True)
+            if save_files:
+                pipelines_dir = Path(settings.pipelines_dir)
+                pipelines_dir.mkdir(parents=True, exist_ok=True)
+                backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
+                for path in (
+                    pipelines_dir / pipeline_name,
+                    pipelines_dir / f"{pipeline_name}.yml",
+                    pipelines_dir / f"{pipeline_name}.yaml",
+                ):
+                    if path.exists():
+                        path.replace(backup_dir / path.name)
+            prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=save_files)
+            commit_started = True
             return commit_prepared_pipeline(
                 prepared,
                 app=app,
                 overwrite=overwrite,
                 _defer_openapi_rebuild=_defer_openapi_rebuild,
-                cleanup_files_on_overwrite=False,
+                cleanup_files_on_overwrite=overwrite and not save_files,
             )
         except BaseException:
-            rolled_back = True
-            _restore_pipeline_files(pipeline_name, settings.pipelines_dir, backup_dir)
+            if backup_dir is not None:
+                rolled_back = True
+                _restore_pipeline_files(pipeline_name, settings.pipelines_dir, backup_dir)
             unload_pipeline_modules(pipeline_name)
             sys.modules.update(old_modules)
+            if old_quiesced and not commit_started:
+                assert app is not None
+                assert old_deployment is not None
+                future = asyncio.run_coroutine_threadsafe(old_deployment.start(), app.state.durable_loop)
+                future.result()
             raise
         finally:
-            if rolled_back:
-                try:
-                    backup_dir.rmdir()
-                except OSError:
-                    log.bind(pipeline_name=pipeline_name, backup_dir=str(backup_dir)).error(
-                        "Retaining incomplete pipeline backup"
-                    )
-            else:
-                shutil.rmtree(backup_dir, ignore_errors=True)
+            _cleanup_pipeline_backup(pipeline_name, backup_dir, rolled_back)
 
 
 def deploy_pipeline_yaml(

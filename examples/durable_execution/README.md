@@ -32,3 +32,7 @@ Restart Hayhooks after the `checkpoint` progress event to exercise recovery.
 The `prepare` component is not repeated after its saved boundary. Execution is
 at least once: any real external write should use an idempotency key such as
 `f"{context.execution_id}:publish"`.
+
+`report_progress` keeps only the newest
+`HAYHOOKS_DURABLE_MAX_PROGRESS_EVENTS` entries while buffering and after they
+are persisted, so frequent progress reporting remains bounded.

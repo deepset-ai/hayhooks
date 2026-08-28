@@ -120,7 +120,7 @@ local development or tests.
 | `HAYHOOKS_DURABLE_TERMINAL_TTL_SECONDS` | `604800` | Terminal record and idempotency retention |
 | `HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS` | `1000` | Admission ceiling per deployment; `0` opts into unlimited admission |
 | `HAYHOOKS_DURABLE_MAX_PAYLOAD_BYTES` | `1000000` | Maximum encoded input/checkpoint/result/error/wait payload |
-| `HAYHOOKS_DURABLE_MAX_PROGRESS_EVENTS` | `100` | Retained progress events per execution |
+| `HAYHOOKS_DURABLE_MAX_PROGRESS_EVENTS` | `100` | Buffered and retained progress events per execution |
 | `HAYHOOKS_DURABLE_MAX_PROGRESS_EVENT_BYTES` | `8192` | Maximum encoded progress event |
 | `HAYHOOKS_DURABLE_MAX_STREAM_CHUNKS` | `100` | Retained SSE display chunks; `0` disables chunks |
 | `HAYHOOKS_DURABLE_MAX_STREAM_CHUNK_BYTES` | `64000` | Maximum encoded display chunk |

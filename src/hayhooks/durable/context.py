@@ -215,6 +215,7 @@ class DurableContext:
                     max_bytes=self._claim.store.config.max_progress_event_bytes,
                 )
             )
+            del self._pending_progress[: -self._claim.store.config.max_progress_events]
 
     async def check_cancelled(self) -> None:
         self._claim.require_owned()

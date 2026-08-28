@@ -135,8 +135,10 @@ step.
 
 Queued, running, and waiting executions are pinned to their immutable wrapper
 revision, and workers claim only their own revision. Hayhooks rejects dynamic
-overwrite or undeploy with `409` while such work exists. It does not
-force-delete live durable state.
+overwrite or undeploy with `409` while such work exists. The overwrite check
+runs before candidate files or modules are prepared for file-based wrappers,
+and an idle replacement keeps terminal results readable until their configured
+TTL. Hayhooks does not force-delete live durable state.
 
 Long-running A2A execution, A2A task persistence, push delivery, and A2A resume
 are not supported in this release. Existing A2A execution remains request-bound.

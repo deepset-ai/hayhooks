@@ -14,7 +14,9 @@ is intentionally process-local and is only suitable for development and tests.
 5. Drain live work before overwriting or undeploying a durable wrapper.
 
 Hayhooks rejects a dynamic change with `409` while queued, running, or waiting
-work exists. It never runs an old checkpoint under a new revision.
+work exists. For file-based wrappers, this gate runs before candidate source is
+loaded or persisted, so the rejected deployment cannot affect the active
+revision. Hayhooks never runs an old checkpoint under a new revision.
 
 ## Redis
 
@@ -49,9 +51,10 @@ before upgrading a Redis namespace to this release.
 `HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS` is the admission ceiling per
 deployment and defaults to `1000`; `0` explicitly opts into unlimited
 admission. Worker concurrency controls claims, not accepted queue size. Stream
-chunk count and byte limits bound display history per execution. Reduce them
-before scaling SSE fan-out if display replay consumes too much memory or
-bandwidth.
+chunk count and byte limits bound display history per execution. Progress count
+and byte limits bound both the worker's pending progress buffer and retained
+progress history. Reduce them before scaling SSE fan-out if replay consumes too
+much memory or bandwidth.
 
 Lease duration must exceed the commit safety margin and comfortably cover Redis
 latency and scheduler pauses. A short lease recovers faster but raises false

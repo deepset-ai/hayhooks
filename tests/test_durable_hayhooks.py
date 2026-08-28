@@ -7,7 +7,7 @@ import shutil
 import sys
 from importlib.metadata import version
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -158,6 +158,7 @@ def test_durable_overwrite_replaces_an_idle_deployment(durable_client, wait_for_
     commit_prepared_pipeline(
         PreparedPipeline("durable-job", wrapper_for(DurableWrapperV2)), app=durable_client.app, overwrite=True
     )
+    assert durable_client.get(f"/durable-job/executions/{execution_id}").json()["result"] == {"value": 7}
 
     execution_id = durable_client.post("/durable-job/run-durable", json={"value": 9}).json()["execution_id"]
     assert wait_for_execution(durable_client, f"/durable-job/executions/{execution_id}", "completed")["result"] == {
@@ -171,7 +172,7 @@ def test_durable_overwrite_replaces_an_idle_deployment(durable_client, wait_for_
 @pytest.mark.parametrize("operation", ["overwrite", "undeploy"])
 @pytest.mark.parametrize("live_status", ["queued", "running", "waiting"])
 def test_dynamic_changes_reject_live_work_and_preserve_the_old_deployment(
-    durable_client, operation: str, live_status: str
+    durable_client, monkeypatch, operation: str, live_status: str
 ):
     old_source = durable_source("test-v1")
     deploy_pipeline_files("durable-job", {"pipeline_wrapper.py": old_source}, app=durable_client.app, save_files=True)
@@ -204,6 +205,8 @@ def test_dynamic_changes_reject_live_work_and_preserve_the_old_deployment(
                 loop,
             ).result()
 
+    prepare_candidate = Mock(wraps=deploy_utils.prepare_pipeline_files)
+    monkeypatch.setattr(deploy_utils, "prepare_pipeline_files", prepare_candidate)
     with pytest.raises(HTTPException, match="durable executions are still active") as error:
         if operation == "overwrite":
             deploy_pipeline_files(
@@ -220,6 +223,7 @@ def test_dynamic_changes_reject_live_work_and_preserve_the_old_deployment(
     assert registry.get("durable-job") is old_wrapper
     assert durable_client.app.state.durable_runtime._deployments["durable-job"].revision == "test-v1"
     assert (Path(settings.pipelines_dir) / "durable-job" / "pipeline_wrapper.py").read_text() == old_source
+    assert not prepare_candidate.called
 
 
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
