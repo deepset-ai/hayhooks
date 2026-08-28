@@ -19,6 +19,7 @@ nav:
     - YAML Pipeline Deployment: concepts/yaml-pipeline-deployment.md
     - Agent Deployment: concepts/agent-deployment.md
   - Features:
+    - Durable Execution: features/durable-execution.md
     - OpenAI Compatibility: features/openai-compatibility.md
     - MCP Support: features/mcp-support.md
     - A2A Support: features/a2a-support.md
@@ -36,8 +37,10 @@ nav:
     - Production Best Practices: guides/production-best-practices.md
   - Deployment:
     - Deployment Guidelines: deployment/deployment_guidelines.md
+    - Durable Operations: deployment/durable-operations.md
   - Examples:
     - Examples Overview: examples/overview.md
+    - Standalone FastAPI Durable Engine: examples/durable-fastapi.md
     - Chat with Website: examples/chat-with-website.md
     - RAG System: examples/rag-system.md
     - Async Operations: examples/async-operations.md
@@ -107,6 +110,7 @@ plugins:
           - concepts/agent-deployment.md: Learn how to deploy Haystack Agents with Hayhooks.
           - concepts/yaml-pipeline-deployment.md: Define and deploy Haystack Pipelines from YAML.
         Features:
+          - features/durable-execution.md: Run checkpointed Pipeline and Agent work beyond request lifetime.
           - features/openai-compatibility.md: Use Hayhooks with OpenAI-compatible clients.
           - features/mcp-support.md: Using Hayhooks as an MCP Server for Haystack Pipelines and Agents.
           - features/a2a-support.md: Exposing Haystack Pipelines and Agents over the A2A protocol.
@@ -124,8 +128,10 @@ plugins:
           - guides/production-best-practices.md: Production hardening recommendations for Hayhooks.
         Deployment:
           - deployment/deployment_guidelines.md: Follow best practices for production deployments.
+          - deployment/durable-operations.md: Operate Redis-backed durable execution safely.
         Examples:
           - examples/overview.md: Explore the examples shipped with Hayhooks.
+          - examples/durable-fastapi.md: Embed Redis-backed durable Haystack execution in another FastAPI application.
           - examples/chat-with-website.md: Build a Haystack website-aware chat assistant.
           - examples/rag-system.md: Assemble a Haystack RAG system with Hayhooks.
           - examples/async-operations.md: Run asynchronous operations with Haystack Pipelines and Agents.

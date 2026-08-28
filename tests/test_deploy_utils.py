@@ -11,10 +11,13 @@ import pytest
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from haystack import Pipeline
+from pydantic import BaseModel
 
+from hayhooks.durable.context import DurableContext
 from hayhooks.server.exceptions import PipelineFilesError, PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.pipelines import registry
 from hayhooks.server.pipelines.sse import SSEStream
+from hayhooks.server.utils import deploy_utils
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
     _register_prepared_pipeline,
@@ -586,9 +589,66 @@ def test_create_pipeline_wrapper_instance_missing_methods():
     with pytest.raises(
         PipelineWrapperError,
         match=re.escape(
-            "At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, run_response, or run_response_async must be implemented"
+            "At least one of run_api, run_api_async, run_chat_completion, "
+            "run_chat_completion_async, run_response, or run_response_async must be implemented"
         ),
     ):
+        create_pipeline_wrapper_instance(module)
+
+
+class DurableRequest(BaseModel):
+    value: int
+
+
+@pytest.mark.parametrize(
+    ("revision", "methods", "error"),
+    [
+        ("v1", ("sync",), None),
+        (None, ("sync",), "durable wrappers require a non-empty durable_revision"),
+        ("v1", ("sync", "async"), "exactly one of run_durable or run_durable_async must be implemented"),
+    ],
+)
+def test_create_pipeline_wrapper_instance_validates_durable_contract(revision, methods, error):
+    def setup(self):
+        self.pipeline = Pipeline()
+
+    def run_durable(self, context: DurableContext, request: DurableRequest) -> dict:
+        del self, context, request
+        return {}
+
+    async def run_durable_async(self, context: DurableContext, request: DurableRequest) -> dict:
+        del self, context, request
+        return {}
+
+    attributes = {"setup": setup, "durable_revision": revision}
+    if "sync" in methods:
+        attributes["run_durable"] = run_durable
+    if "async" in methods:
+        attributes["run_durable_async"] = run_durable_async
+    module = type("Module", (), {"PipelineWrapper": type("DurableWrapper", (BasePipelineWrapper,), attributes)})
+
+    if error is not None:
+        with pytest.raises(PipelineWrapperError, match=error):
+            create_pipeline_wrapper_instance(module)
+    else:
+        wrapper = create_pipeline_wrapper_instance(module)
+        assert wrapper._is_run_durable_implemented
+
+
+def test_create_pipeline_wrapper_instance_rejects_keyword_only_durable_parameters():
+    class DurableWrapper(BasePipelineWrapper):
+        durable_revision = "v1"
+
+        def setup(self):
+            self.pipeline = Pipeline()
+
+        async def run_durable_async(self, *, context: DurableContext, request: DurableRequest) -> dict:
+            del context, request
+            return {}
+
+    module = type("Module", (), {"PipelineWrapper": DurableWrapper})
+
+    with pytest.raises(PipelineWrapperError, match="positional arguments"):
         create_pipeline_wrapper_instance(module)
 
 
@@ -650,6 +710,16 @@ def test_deploy_pipeline_files_without_saving(test_settings, mocker):
     # Verify FastAPI routes were set up
     assert mock_app.add_api_route.called
     assert mock_app.setup.called
+
+
+def test_saved_file_deploy_calls_wrapper_setup_once(mocker) -> None:
+    pipeline_name = "setup_once"
+    source = Path("tests/test_files/files/no_chat/pipeline_wrapper.py").read_text()
+    create_wrapper = mocker.spy(deploy_utils, "create_pipeline_wrapper_instance")
+
+    deploy_pipeline_files(pipeline_name, {"pipeline_wrapper.py": source}, save_files=True)
+
+    assert create_wrapper.call_count == 1
 
 
 def test_deploy_pipeline_files_without_adding_api_route(test_settings, mocker):
@@ -787,6 +857,7 @@ def test_deploy_pipeline_files_with_async_run_api():
 
 def test_deploy_pipeline_files_without_return_type(test_settings, mocker):
     mock_app = mocker.Mock()
+    mock_app.routes = []
 
     test_file_path = Path("tests/test_files/files/no_return_type/pipeline_wrapper.py")
     files = {"pipeline_wrapper.py": test_file_path.read_text()}

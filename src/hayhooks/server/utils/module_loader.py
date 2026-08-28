@@ -6,16 +6,22 @@ enabling relative imports and proper sys.modules registration for tracing librar
 """
 
 import importlib.util
+import inspect
 import sys
 import traceback
 from pathlib import Path
 from types import ModuleType
-from typing import NoReturn
+from typing import NoReturn, get_type_hints
 
+from pydantic import BaseModel
+
+from hayhooks.durable.context import DurableContext
 from hayhooks.server.exceptions import PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.logger import log
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.settings import settings
+
+_DURABLE_PARAMETER_COUNT = 2
 
 
 def load_pipeline_module(pipeline_name: str, dir_path: Path | str) -> ModuleType:
@@ -56,11 +62,10 @@ def unload_pipeline_modules(pipeline_name: str) -> None:
     Args:
         pipeline_name: Name of the pipeline to unload
     """
-    module_names = [pipeline_name, f"{pipeline_name}.pipeline_wrapper"]
-    for mod_name in module_names:
-        if mod_name in sys.modules:
-            log.debug("Removing module '{}' from sys.modules", mod_name)
-            del sys.modules[mod_name]
+    module_names = [name for name in sys.modules if name == pipeline_name or name.startswith(f"{pipeline_name}.")]
+    for module_name in module_names:
+        log.debug("Removing module '{}' from sys.modules", module_name)
+        del sys.modules[module_name]
 
 
 def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelineWrapper:
@@ -254,6 +259,8 @@ def _set_method_implementation_flags(pipeline_wrapper: BasePipelineWrapper) -> N
         ("_is_run_response_implemented", "run_response"),
         ("_is_run_response_async_implemented", "run_response_async"),
         ("_is_run_file_upload_implemented", "run_file_upload"),
+        ("_is_run_durable_implemented", "run_durable"),
+        ("_is_run_durable_async_implemented", "run_durable_async"),
     ]
 
     for attr_name, method_name in methods_to_check:
@@ -304,12 +311,56 @@ def _validate_run_methods(pipeline_wrapper: BasePipelineWrapper) -> None:
             pipeline_wrapper._is_run_chat_completion_async_implemented,
             pipeline_wrapper._is_run_response_implemented,
             pipeline_wrapper._is_run_response_async_implemented,
+            pipeline_wrapper._is_run_durable_implemented,
+            pipeline_wrapper._is_run_durable_async_implemented,
         ]
     )
 
     if not has_run_method:
         msg = (
             "At least one of run_api, run_api_async, run_chat_completion, "
-            "run_chat_completion_async, run_response, or run_response_async must be implemented"
+            "run_chat_completion_async, run_response, or run_response_async must be implemented; "
+            "durable wrappers may implement run_durable or run_durable_async"
         )
         raise PipelineWrapperError(msg)
+
+    if not (pipeline_wrapper._is_run_durable_implemented or pipeline_wrapper._is_run_durable_async_implemented):
+        return
+    if pipeline_wrapper._is_run_durable_implemented == pipeline_wrapper._is_run_durable_async_implemented:
+        message = "exactly one of run_durable or run_durable_async must be implemented"
+        raise PipelineWrapperError(message)
+    if not isinstance(pipeline_wrapper.durable_revision, str) or not pipeline_wrapper.durable_revision.strip():
+        message = "durable wrappers require a non-empty durable_revision"
+        raise PipelineWrapperError(message)
+    if pipeline_wrapper.durable_resume_model is not None and (
+        not isinstance(pipeline_wrapper.durable_resume_model, type)
+        or not issubclass(pipeline_wrapper.durable_resume_model, BaseModel)
+    ):
+        message = "durable_resume_model must be a Pydantic model class or None"
+        raise PipelineWrapperError(message)
+
+    method = (
+        pipeline_wrapper.run_durable_async
+        if pipeline_wrapper._is_run_durable_async_implemented
+        else pipeline_wrapper.run_durable
+    )
+    signature = inspect.signature(method)
+    if len(signature.parameters) != _DURABLE_PARAMETER_COUNT or any(
+        parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        for parameter in signature.parameters.values()
+    ):
+        message = "durable methods require exactly two positional arguments: context and request"
+        raise PipelineWrapperError(message)
+    try:
+        hints = get_type_hints(method)
+    except (NameError, TypeError) as error:
+        message = "durable method annotations must resolve"
+        raise PipelineWrapperError(message) from error
+    parameters = tuple(signature.parameters)
+    if hints.get(parameters[0]) is not DurableContext:
+        message = "the durable context parameter must be annotated DurableContext"
+        raise PipelineWrapperError(message)
+    request_model = hints.get(parameters[1])
+    if not isinstance(request_model, type) or not issubclass(request_model, BaseModel):
+        message = "the durable request parameter must be a Pydantic model"
+        raise PipelineWrapperError(message)

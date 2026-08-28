@@ -1,25 +1,12 @@
-from hayhooks.callbacks import default_on_pipeline_end, default_on_tool_call_end, default_on_tool_call_start
-from hayhooks.events import PipelineEvent
-from hayhooks.server.app import create_app, run_app
-from hayhooks.server.logger import log
-from hayhooks.server.pipelines.sse import SSEStream
-from hayhooks.server.pipelines.utils import (
-    async_streaming_generator,
-    chat_messages_from_openai_response,
-    coerce_pipeline_inputs,
-    get_input_files,
-    get_last_user_input_text,
-    get_last_user_message,
-    is_user_message,
-    streaming_generator,
-)
-from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.utils.haystack_compat import AsyncPipeline, Pipeline
-from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
+"""Public Hayhooks API, loaded on first use."""
+
+from importlib import import_module
+from typing import Any
 
 __all__ = [
     "AsyncPipeline",
     "BasePipelineWrapper",
+    "DurableContext",
     "Pipeline",
     "PipelineEvent",
     "SSEStream",
@@ -28,9 +15,11 @@ __all__ = [
     "chat_messages_from_openai_response",
     "coerce_pipeline_inputs",
     "create_app",
+    "current_durable_context",
     "default_on_pipeline_end",
     "default_on_tool_call_end",
     "default_on_tool_call_start",
+    "durable_streaming_callback",
     "get_input_files",
     "get_last_user_input_text",
     "get_last_user_message",
@@ -39,3 +28,39 @@ __all__ = [
     "run_app",
     "streaming_generator",
 ]
+
+_EXPORT_MODULES = {
+    "AsyncPipeline": "hayhooks.server.utils.haystack_compat",
+    "BasePipelineWrapper": "hayhooks.server.utils.base_pipeline_wrapper",
+    "DurableContext": "hayhooks.durable.context",
+    "Pipeline": "hayhooks.server.utils.haystack_compat",
+    "PipelineEvent": "hayhooks.events",
+    "SSEStream": "hayhooks.server.pipelines.sse",
+    "YAMLPipelineWrapper": "hayhooks.server.utils.yaml_pipeline_wrapper",
+    "async_streaming_generator": "hayhooks.server.pipelines.utils",
+    "chat_messages_from_openai_response": "hayhooks.server.pipelines.utils",
+    "coerce_pipeline_inputs": "hayhooks.server.pipelines.utils",
+    "current_durable_context": "hayhooks.durable.context",
+    "durable_streaming_callback": "hayhooks.durable.context",
+    "create_app": "hayhooks.server.app",
+    "default_on_pipeline_end": "hayhooks.callbacks",
+    "default_on_tool_call_end": "hayhooks.callbacks",
+    "default_on_tool_call_start": "hayhooks.callbacks",
+    "get_input_files": "hayhooks.server.pipelines.utils",
+    "get_last_user_input_text": "hayhooks.server.pipelines.utils",
+    "get_last_user_message": "hayhooks.server.pipelines.utils",
+    "is_user_message": "hayhooks.server.pipelines.utils",
+    "log": "hayhooks.server.logger",
+    "run_app": "hayhooks.server.app",
+    "streaming_generator": "hayhooks.server.pipelines.utils",
+}
+
+
+def __getattr__(name: str) -> Any:
+    try:
+        module_name = _EXPORT_MODULES[name]
+    except KeyError:
+        raise AttributeError(name) from None
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value

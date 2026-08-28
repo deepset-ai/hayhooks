@@ -129,6 +129,41 @@ Execute a deployed pipeline.
 }
 ```
 
+### Durable Execution
+
+Durable wrappers add these typed routes under their pipeline prefix:
+
+| Method | Route | Result |
+|---|---|---|
+| `POST` | `/{pipeline_name}/run-durable` | Submit and return `202`, `Location`, execution ID, and links |
+| `GET` | `/{pipeline_name}/executions/{execution_id}` | Inspect the authoritative execution projection |
+| `POST` | `/{pipeline_name}/executions/{execution_id}/cancel` | Request cooperative cancellation |
+| `POST` | `/{pipeline_name}/executions/{execution_id}/resume` | Validate resume input and requeue waiting work |
+| `GET` | `/{pipeline_name}/executions/{execution_id}/stream` | Reattachable SSE chunks and terminal event |
+
+The submit and resume request schemas come from the wrapper's Pydantic
+annotations and appear in OpenAPI. The execution projection keeps `result` as
+JSON so results written by an older immutable revision remain readable; the
+active revision still validates new results before committing them. A
+projection includes status, attempt, sequence, progress, public wait data,
+result or sanitized error, timestamps, and links. It never exposes input,
+checkpoints, application state, lease/fence data, ownership, or idempotency
+material.
+
+Status codes:
+
+- `200`: inspection, terminal replay, or terminal cancellation result;
+- `202`: accepted submission, cancellation request, or resume;
+- `404`: missing execution or owner mismatch;
+- `409`: idempotency, revision, resume-state, or live deployment conflict;
+- `422`: request, resume, header, cursor, or payload validation failure;
+- `503`: admission closed or durable store unavailable.
+
+SSE accepts `Last-Event-ID`. Events are `chunk`, optional `gap`, and one
+terminal `completed`, `failed`, or `canceled` event. See
+[Durable Execution](../features/durable-execution.md) for semantics and
+ownership modes.
+
 ### OpenAI Compatibility
 
 #### Chat Completion

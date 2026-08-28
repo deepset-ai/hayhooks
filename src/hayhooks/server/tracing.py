@@ -641,9 +641,10 @@ class _OperationTrace:
             return
 
         try:
+            live_tags: dict[str, Any]
             if exc is None:
                 _mark_success(span)
-                live_tags: dict[str, Any] = {_TAG_SUCCESS: True}
+                live_tags = {_TAG_SUCCESS: True}
             elif isinstance(exc, HTTPException):
                 _mark_http_exception(span, exc)
                 live_tags = {

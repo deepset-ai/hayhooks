@@ -3,6 +3,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from time import sleep
 from typing import Any
 
 import pytest
@@ -11,11 +12,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from haystack.tracing import Span, Tracer, disable_tracing, enable_tracing
 
+from hayhooks.durable.context import DurableContext, _ClaimedExecution
+from hayhooks.durable.engine import Claim, PayloadKind
+from hayhooks.durable.models import CheckpointEnvelope, ExecutionKind
+from hayhooks.durable.store import MemoryExecutionStore, StoreConfig
 from hayhooks.server.app import create_app
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
 from hayhooks.settings import settings
+from tests.durable_store_contract import ATTEMPTS_ERROR, contract_control, decode_checkpoint
 
 
 class _RecordedSpan(Span):
@@ -38,7 +44,9 @@ class _RecordedSpan(Span):
 class _RecordingTracer(Tracer):
     def __init__(self) -> None:
         self.spans: list[_RecordedSpan] = []
-        self._active_spans: ContextVar[tuple[_RecordedSpan, ...]] = ContextVar("_recording_tracer_active_spans", default=())
+        self._active_spans: ContextVar[tuple[_RecordedSpan, ...]] = ContextVar(
+            "_recording_tracer_active_spans", default=()
+        )
         self._next_id = 1
 
     @contextmanager
@@ -104,6 +112,72 @@ def caplog(caplog: LogCaptureFixture):
     )
     yield caplog
     log.remove(handler_id)
+
+
+@pytest.fixture
+async def context_factory():
+    store = MemoryExecutionStore(
+        "jobs",
+        config=StoreConfig(lease_commit_safety_ms=10, max_payload_bytes=4_096, max_progress_event_bytes=1_024),
+    )
+    claims = []
+
+    async def create(
+        run_id: str = "run_1",
+        *,
+        submit: bool = True,
+        lease_duration_ms: int = 30_000,
+        kind: ExecutionKind = ExecutionKind.PIPELINE,
+    ):
+        if submit:
+            await store.submit(
+                contract_control(
+                    "jobs",
+                    run_id,
+                    idempotency=f"idempotency-{run_id}",
+                    binding=f"binding-{run_id}",
+                    kind=kind.value,
+                ),
+                b"{}",
+            )
+        worker_id = f"worker-{run_id}"
+        plan = await store.claim(Claim(worker_id, 0, lease_duration_ms, 3, "v1", ATTEMPTS_ERROR))
+        assert plan is not None and plan.next_control.run_id == run_id
+        stored = await store.read(run_id)
+        assert stored is not None
+        checkpoint = (
+            decode_checkpoint(stored.payloads[PayloadKind.CHECKPOINT])
+            if PayloadKind.CHECKPOINT in stored.payloads
+            else CheckpointEnvelope(
+                schema_version=1,
+                adapter_kind=ExecutionKind(stored.control.kind),
+                adapter_checkpoint=None,
+            )
+        )
+        claim = _ClaimedExecution(store, plan.next_control, worker_id, lease_duration_ms, checkpoint)
+        await claim.__aenter__()
+        claims.append(claim)
+        return DurableContext(claim), claim
+
+    yield store, create
+
+    for claim in reversed(claims):
+        await claim.__aexit__(None, None, None)
+        assert claim._heartbeat_task is not None and claim._heartbeat_task.done()
+
+
+@pytest.fixture
+def wait_for_execution():
+    def wait(client: TestClient, path: str, expected: str, *, headers: dict[str, str] | None = None):
+        for _ in range(200):
+            response = client.get(path, headers=headers)
+            assert response.status_code == 200, f"{path} returned {response.status_code}"
+            if response.json()["status"] == expected:
+                return response.json()
+            sleep(0.005)
+        pytest.fail(f"{path} did not reach {expected}")
+
+    return wait
 
 
 def pytest_configure(config):

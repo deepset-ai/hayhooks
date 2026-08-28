@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from hayhooks.server.pipelines.registry import registry
@@ -9,6 +9,7 @@ router = APIRouter()
 class StatusResponse(BaseModel):
     status: str = Field(description="The current status of the system, 'Up!' when operational")
     pipelines: list[str] = Field(description="List of all available pipeline names")
+    durable: dict[str, object] = Field(description="Durable deployment health and bounded store counts")
 
     model_config = {
         "json_schema_extra": {"description": "Response model for the system status and available pipelines"}
@@ -30,9 +31,10 @@ class PipelineStatusResponse(BaseModel):
     summary="Get status of all pipelines",
     description="Returns the system status and a list of all available pipelines.",
 )
-async def status_all() -> StatusResponse:
+async def status_all(request: Request) -> StatusResponse:
     pipelines = registry.get_names()
-    return StatusResponse(status="Up!", pipelines=pipelines)
+    durable = await request.app.state.durable_runtime.health()
+    return StatusResponse(status="Up!" if durable["healthy"] else "Degraded", pipelines=pipelines, durable=durable)
 
 
 @router.get(
