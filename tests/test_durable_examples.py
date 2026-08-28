@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from haystack.dataclasses import ByteStream
 
+from examples.durable_fastapi import app as durable_fastapi
 from examples.durable_streams import _http_url
 from hayhooks.durable.engine import ExecutionStatus, PayloadKind
 from hayhooks.durable.haystack import HaystackDurableAdapter
@@ -36,6 +37,54 @@ async def wait_for_execution(deployment: DurableDeployment, run_id: str, expecte
             return stored
         await asyncio.sleep(0.005)
     raise AssertionError(f"execution did not reach {expected.value}")
+
+
+def test_standalone_fastapi_example_exposes_typed_durable_routes() -> None:
+    openapi = durable_fastapi.app.openapi()
+    paths = openapi["paths"]
+    prefix = "/jobs/document-analysis"
+    assert "DocumentRequest" in str(paths[f"{prefix}/run-durable"]["post"]["requestBody"])
+    assert "Approval" in str(paths[f"{prefix}/executions/{{execution_id}}/resume"]["post"]["requestBody"])
+    assert openapi["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
+
+
+async def test_standalone_fastapi_example_waits_resumes_and_runs_pipeline() -> None:
+    name = "standalone_fastapi_example"
+    adapter = HaystackDurableAdapter(durable_fastapi.build_pipeline())
+    deployment = DurableDeployment(
+        name,
+        durable_fastapi.DEPLOYMENT_REVISION,
+        MemoryExecutionStore(name, config=StoreConfig(lease_commit_safety_ms=10)),
+        durable_fastapi.DocumentRequest,
+        durable_fastapi.run_document_analysis,
+        result_model=durable_fastapi.AnalysisResult,
+        resume_model=durable_fastapi.Approval,
+        adapter=adapter,
+        kind=adapter.kind,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=500),
+    )
+
+    try:
+        await deployment.start()
+        submitted = await deployment.submit(
+            {
+                "document_id": "document-42",
+                "text": "One durable pipeline, one durable result.",
+                "require_approval": True,
+            }
+        )
+        run_id = submitted.control.run_id
+        waiting = await wait_for_execution(deployment, run_id, ExecutionStatus.WAITING)
+        assert json.loads(waiting.payloads[PayloadKind.WAIT])["kind"] == "approval"
+        await deployment.resume(run_id, {"approved": True})
+        completed = await wait_for_execution(deployment, run_id, ExecutionStatus.COMPLETED)
+        assert json.loads(completed.payloads[PayloadKind.RESULT]) == {
+            "document_id": "document-42",
+            "word_count": 6,
+            "unique_terms": 4,
+        }
+    finally:
+        await deployment.close()
 
 
 async def test_durable_execution_example_retries_resumes_and_skips_checkpointed_work() -> None:

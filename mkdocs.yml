@@ -40,6 +40,7 @@ nav:
     - Durable Operations: deployment/durable-operations.md
   - Examples:
     - Examples Overview: examples/overview.md
+    - Standalone FastAPI Durable Engine: examples/durable-fastapi.md
     - Chat with Website: examples/chat-with-website.md
     - RAG System: examples/rag-system.md
     - Async Operations: examples/async-operations.md
@@ -130,6 +131,7 @@ plugins:
           - deployment/durable-operations.md: Operate Redis-backed durable execution safely.
         Examples:
           - examples/overview.md: Explore the examples shipped with Hayhooks.
+          - examples/durable-fastapi.md: Embed Redis-backed durable Haystack execution in another FastAPI application.
           - examples/chat-with-website.md: Build a Haystack website-aware chat assistant.
           - examples/rag-system.md: Assemble a Haystack RAG system with Hayhooks.
           - examples/async-operations.md: Run asynchronous operations with Haystack Pipelines and Agents.
