@@ -22,6 +22,7 @@ from hayhooks.durable.runtime import DurableDeployment
 from hayhooks.durable.store import ExecutionStoreError, MemoryExecutionStore
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.tracing import SPAN_DURABLE_ATTEMPT
 from hayhooks.server.utils import deploy_utils
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import commit_prepared_pipeline, deploy_pipeline_files, undeploy_pipeline
@@ -111,7 +112,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
 
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
-def test_hayhooks_mounts_and_runs_a_durable_wrapper(durable_client, wait_for_execution):
+def test_hayhooks_mounts_and_runs_a_durable_wrapper(durable_client, wait_for_execution, recording_tracer):
     commit_prepared_pipeline(PreparedPipeline("durable-job", wrapper_for(DurableWrapper)), app=durable_client.app)
     headers = {"Idempotency-Key": "retry-after-response-loss"}
     submitted = durable_client.post("/durable-job/run-durable", json={"value": 7}, headers=headers)
@@ -119,6 +120,17 @@ def test_hayhooks_mounts_and_runs_a_durable_wrapper(durable_client, wait_for_exe
     execution_id = submitted.json()["execution_id"]
     path = f"/durable-job/executions/{execution_id}"
     assert wait_for_execution(durable_client, path, "completed")["result"] == {"value": 7}
+    attempt_span = next(span for span in recording_tracer.spans if span.operation_name == SPAN_DURABLE_ATTEMPT)
+    assert attempt_span.tags == {
+        "hayhooks.transport": "durable",
+        "hayhooks.pipeline.name": "durable-job",
+        "hayhooks.durable.execution_id": execution_id,
+        "hayhooks.durable.attempt": 1,
+        "hayhooks.durable.kind": "pipeline",
+        "hayhooks.durable.definition_revision": "test-v1",
+        "hayhooks.success": True,
+        "hayhooks.elapsed_ms": attempt_span.tags["hayhooks.elapsed_ms"],
+    }
     replay = durable_client.post("/durable-job/run-durable", json={"value": 7}, headers=headers)
     assert replay.status_code == 200 and replay.headers["idempotent-replay"] == "true"
     assert replay.json()["execution_id"] == execution_id
