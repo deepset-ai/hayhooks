@@ -888,7 +888,7 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                 old_quiesced = True
 
         try:
-            if source_files is not None:
+            if source_files is not None or (old_wrapper is not None and cleanup_files_on_overwrite):
                 pipelines_dir = Path(settings.pipelines_dir)
                 pipelines_dir.mkdir(parents=True, exist_ok=True)
                 backup_dir = Path(tempfile.mkdtemp(prefix=f".{prepared.name}-", dir=pipelines_dir))
@@ -899,6 +899,8 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                 ):
                     if path.exists():
                         path.replace(backup_dir / path.name)
+
+            if source_files is not None:
                 save_pipeline_files(prepared.name, source_files, settings.pipelines_dir)
 
             if old_wrapper is not None:
@@ -917,8 +919,6 @@ def commit_prepared_pipeline(  # noqa: C901, PLR0912, PLR0915
                 old_removed = True
                 if app:
                     _remove_pipeline_routes(app, prepared.name)
-                if cleanup_files_on_overwrite and source_files is None:
-                    remove_pipeline_files(prepared.name, settings.pipelines_dir)
 
             result = _register_prepared_pipeline(
                 pipeline_name=prepared.name,
@@ -1013,24 +1013,29 @@ def deploy_pipeline_files(
             }
         ),
     ):
-        if not save_files:
-            prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=False)
-            return commit_prepared_pipeline(
-                prepared,
-                app=app,
-                overwrite=overwrite,
-                _defer_openapi_rebuild=_defer_openapi_rebuild,
-                cleanup_files_on_overwrite=overwrite,
-            )
-
-        pipelines_dir = Path(settings.pipelines_dir)
-        pipelines_dir.mkdir(parents=True, exist_ok=True)
-        backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
         old_modules = {
             name: module
             for name, module in sys.modules.items()
             if name == pipeline_name or name.startswith(f"{pipeline_name}.")
         }
+        if not save_files:
+            try:
+                prepared = prepare_pipeline_files(pipeline_name, files=files, save_files=False)
+                return commit_prepared_pipeline(
+                    prepared,
+                    app=app,
+                    overwrite=overwrite,
+                    _defer_openapi_rebuild=_defer_openapi_rebuild,
+                    cleanup_files_on_overwrite=overwrite,
+                )
+            except BaseException:
+                unload_pipeline_modules(pipeline_name)
+                sys.modules.update(old_modules)
+                raise
+
+        pipelines_dir = Path(settings.pipelines_dir)
+        pipelines_dir.mkdir(parents=True, exist_ok=True)
+        backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
         for path in (
             pipelines_dir / pipeline_name,
             pipelines_dir / f"{pipeline_name}.yml",

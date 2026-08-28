@@ -345,8 +345,11 @@ def _validate_run_methods(pipeline_wrapper: BasePipelineWrapper) -> None:
         else pipeline_wrapper.run_durable
     )
     signature = inspect.signature(method)
-    if len(signature.parameters) != _DURABLE_PARAMETER_COUNT:
-        message = "durable methods require exactly (context, request) parameters"
+    if len(signature.parameters) != _DURABLE_PARAMETER_COUNT or any(
+        parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        for parameter in signature.parameters.values()
+    ):
+        message = "durable methods require exactly two positional arguments: context and request"
         raise PipelineWrapperError(message)
     try:
         hints = get_type_hints(method)

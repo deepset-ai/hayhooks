@@ -17,6 +17,7 @@ class _BlockingStreamingComponent:
     def __init__(self) -> None:
         self.release = asyncio.Event()
         self.completed = asyncio.Event()
+        self.cancelled = asyncio.Event()
 
     @component.output_types(result=str)
     def run(self, streaming_callback: Any | None = None) -> dict[str, str]:
@@ -25,7 +26,11 @@ class _BlockingStreamingComponent:
     @component.output_types(result=str)
     async def run_async(self, streaming_callback: Any | None = None) -> dict[str, str]:
         await streaming_callback(StreamingChunk(content="first", index=0))
-        await self.release.wait()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
         self.completed.set()
         return {"result": "done"}
 
@@ -89,9 +94,12 @@ async def test_http_disconnect_pipeline_task(shield_pipeline_task):
     assert bool(detached_tasks) is shield_pipeline_task
     assert all(not task.done() for task in detached_tasks)
 
-    component.release.set()
-    await asyncio.wait_for(component.completed.wait(), timeout=1.0)
-    if detached_tasks:
+    if shield_pipeline_task:
+        component.release.set()
+        await asyncio.wait_for(component.completed.wait(), timeout=1.0)
         await asyncio.wait_for(asyncio.gather(*detached_tasks), timeout=1.0)
         await asyncio.sleep(0)
         assert detached_tasks.isdisjoint(_SHIELDED_PIPELINE_TASKS)
+    else:
+        await asyncio.wait_for(component.cancelled.wait(), timeout=1.0)
+        assert not component.completed.is_set()

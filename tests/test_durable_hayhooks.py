@@ -120,6 +120,22 @@ def test_hayhooks_mounts_and_runs_a_durable_wrapper(durable_client, wait_for_exe
 
 
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
+def test_deploy_response_points_to_durable_endpoint(durable_client):
+    response = durable_client.post(
+        "/deploy_files",
+        json={
+            "name": "durable-job",
+            "files": {"pipeline_wrapper.py": durable_source("test-v1")},
+            "save_files": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["endpoint"] == "/durable-job/run-durable"
+    assert durable_client.post(response.json()["endpoint"], json={"value": 7}).status_code == 202
+
+
+@pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
 def test_durable_overwrite_replaces_an_idle_deployment(durable_client, wait_for_execution):
     commit_prepared_pipeline(PreparedPipeline("durable-job", wrapper_for(DurableWrapper)), app=durable_client.app)
     execution_id = durable_client.post("/durable-job/run-durable", json={"value": 7}).json()["execution_id"]
@@ -276,7 +292,10 @@ def test_store_initialization_failure_publishes_nothing(durable_client, monkeypa
 
 
 @pytest.mark.skipif(not _HAYSTACK_V3, reason="Hayhooks durable wrappers require Haystack 3.1+")
-def test_durable_publication_failure_restores_the_old_deployment(durable_client, monkeypatch, wait_for_execution):
+@pytest.mark.parametrize("save_files", [True, False])
+def test_durable_publication_failure_restores_the_old_deployment(
+    durable_client, monkeypatch, wait_for_execution, save_files: bool
+):
     old_source = durable_source("test-v1")
     candidate_source = durable_source("test-v2")
     deploy_pipeline_files("durable-job", {"pipeline_wrapper.py": old_source}, app=durable_client.app, save_files=True)
@@ -298,7 +317,7 @@ def test_durable_publication_failure_restores_the_old_deployment(durable_client,
             "durable-job",
             {"pipeline_wrapper.py": candidate_source},
             app=durable_client.app,
-            save_files=True,
+            save_files=save_files,
             overwrite=True,
         )
 

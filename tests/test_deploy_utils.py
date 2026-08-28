@@ -635,6 +635,23 @@ def test_create_pipeline_wrapper_instance_validates_durable_contract(revision, m
         assert wrapper._is_run_durable_implemented
 
 
+def test_create_pipeline_wrapper_instance_rejects_keyword_only_durable_parameters():
+    class DurableWrapper(BasePipelineWrapper):
+        durable_revision = "v1"
+
+        def setup(self):
+            self.pipeline = Pipeline()
+
+        async def run_durable_async(self, *, context: DurableContext, request: DurableRequest) -> dict:
+            del context, request
+            return {}
+
+    module = type("Module", (), {"PipelineWrapper": DurableWrapper})
+
+    with pytest.raises(PipelineWrapperError, match="positional arguments"):
+        create_pipeline_wrapper_instance(module)
+
+
 def test_register_prepared_pipeline_does_not_call_setup():
     """Registering a prepared wrapper must not call setup()."""
     setup_call_count = 0
