@@ -484,7 +484,6 @@ class RedisExecutionStore:
                             maxlen=self.config.max_stream_chunks,
                             approximate=False,
                         )
-                        pipe.expire(self.keys.chunks(run_id), self.config.terminal_ttl_seconds)
                         await pipe.execute()
                         return
                     except WatchError:

@@ -151,7 +151,7 @@ async def test_invalid_lease_entries_are_removed_without_requesting_time() -> No
     redis.time.assert_not_awaited()
 
 
-async def test_chunk_append_is_bounded_and_sets_a_rolling_ttl() -> None:
+async def test_chunk_append_is_bounded_without_expiring_live_work() -> None:
     pipe = MagicMock()
     pipe.__aenter__ = AsyncMock(return_value=pipe)
     pipe.__aexit__ = AsyncMock(return_value=None)
@@ -182,5 +182,5 @@ async def test_chunk_append_is_bounded_and_sets_a_rolling_ttl() -> None:
         maxlen=store.config.max_stream_chunks,
         approximate=False,
     )
-    pipe.expire.assert_called_once_with(store.keys.chunks("run_1"), store.config.terminal_ttl_seconds)
+    pipe.expire.assert_not_called()
     pipe.execute.assert_awaited_once()
