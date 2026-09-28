@@ -143,6 +143,13 @@ python-version = "3.10"
 [tool.ty.rules]
 unused-ignore-comment = "warn"
 
+[[tool.ty.overrides]]
+include = ["src/hayhooks/server/tracing.py"]
+
+[tool.ty.overrides.rules]
+# Optional tracing imports resolve only when their extras are installed.
+unused-ignore-comment = "ignore"
+
 [tool.ty.src]
 exclude = ["tests/**/*"]
 
