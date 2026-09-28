@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any
 
-from fastapi.concurrency import run_in_threadpool
 from haystack.lazy_imports import LazyImport
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -26,6 +25,7 @@ from hayhooks.server.tracing import (
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
+    _execute_pipeline_run,
     deploy_pipeline_files_async,
     deploy_pipelines,  # noqa: F401  (re-exported; historically lived in this module)
     undeploy_pipeline_async,
@@ -140,10 +140,7 @@ async def run_pipeline_as_tool(name: str, arguments: dict[str, Any]) -> list["Te
             msg = f"Pipeline '{name}' not found"
             raise ValueError(msg)
 
-        if pipeline_wrapper._is_run_api_async_implemented:
-            result = await pipeline_wrapper.run_api_async(**arguments)
-        else:
-            result = await run_in_threadpool(pipeline_wrapper.run_api, **arguments)
+        result = await _execute_pipeline_run(pipeline_wrapper, arguments)
 
         log.trace("Pipeline '{}' returned result: {}", name, result)
 
