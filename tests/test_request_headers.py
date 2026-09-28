@@ -70,15 +70,16 @@ def wrapper_source(method, stream=False, files=False):
     prefix = "async " if is_async else ""
     delay = "await asyncio.sleep(0.01)" if is_async else "time.sleep(0.01)"
     return_type = ("AsyncGenerator" if is_async else "Generator") if stream else "str"
+    header_value = "headers.get('Authorization', 'missing') if headers is not None else 'no-context'"
     result = (
-        f"        {prefix}def chunks():\n            {delay}\n            yield token\n        return chunks()\n"
+        f"        {prefix}def chunks():\n            {delay}\n"
+        f"            yield {header_value}\n        return chunks()\n"
         if stream
-        else "        return token\n"
+        else f"        return {header_value}\n"
     )
     return BASE_SOURCE + (
         f"    {prefix}def {method}(self, {arguments}, *, headers: Headers | None = None) -> {return_type}:\n"
-        f"        {delay}\n"
-        "        token = headers.get('Authorization', 'missing') if headers is not None else 'no-context'\n" + result
+        f"        {delay}\n" + result
     )
 
 
@@ -93,8 +94,13 @@ def request_for(method, stream=False, prefix="/v1"):
 
 @pytest.mark.parametrize("method", METHODS)
 @pytest.mark.parametrize("stream", [False, True])
-async def test_headers_are_request_local_through_execution_and_streaming(headers_client, method, stream):
-    deploy(headers_client, wrapper_source(method, stream))
+@pytest.mark.parametrize("postponed", [False, True])
+async def test_headers_are_request_local_through_execution_and_streaming(headers_client, method, stream, postponed):
+    source = wrapper_source(method, stream)
+    deploy(headers_client, "from __future__ import annotations\n" + source if postponed else source)
+    if method.startswith("run_api"):
+        schema = headers_client.get("/openapi.json").json()["components"]["schemas"]["headers_testRunRequest"]
+        assert set(schema["properties"]) == {"query"}
     url, body = request_for(method, stream)
     tokens = ["Bearer alice-test", "Bearer bob-test", None]
     async with AsyncClient(transport=ASGITransport(app=headers_client.app), base_url="http://test") as client:
@@ -121,8 +127,10 @@ def test_openai_aliases_forward_headers(headers_client, method):
 
 
 @pytest.mark.parametrize("method", ["run_api", "run_api_async"])
-def test_multipart_headers_are_injected_outside_the_form(headers_client, method):
-    deploy(headers_client, wrapper_source(method, files=True))
+@pytest.mark.parametrize("postponed", [False, True])
+def test_multipart_headers_are_injected_outside_the_form(headers_client, method, postponed):
+    source = wrapper_source(method, files=True)
+    deploy(headers_client, "from __future__ import annotations\n" + source if postponed else source)
     response = headers_client.post(
         "/headers_test/run",
         data={"query": "hi", "headers": "body-spoof"},
@@ -136,10 +144,8 @@ def test_multipart_headers_are_injected_outside_the_form(headers_client, method)
 @pytest.mark.parametrize("method", ["run_api", "run_api_async"])
 @pytest.mark.skipif(importlib.util.find_spec("mcp") is None, reason="MCP is not installed")
 @pytest.mark.mcp
-async def test_injected_headers_stay_out_of_schemas_and_mcp_arguments(headers_client, method):
+async def test_injected_headers_stay_out_of_mcp_schema_and_arguments(headers_client, method):
     deploy(headers_client, wrapper_source(method))
-    schema = headers_client.get("/openapi.json").json()["components"]["schemas"]["headers_testRunRequest"]
-    assert set(schema["properties"]) == {"query"}
     tools = await list_pipelines_as_tools()
     assert set(tools[0].inputSchema["properties"]) == {"query"}
     result = await run_pipeline_as_tool("headers_test", {"query": "hi"})
@@ -199,9 +205,20 @@ def test_legacy_openai_signatures_do_not_receive_headers(headers_client, extra, 
 
 
 @pytest.mark.parametrize("method", ["run_api", "run_api_async"])
-@pytest.mark.skipif(importlib.util.find_spec("mcp") is None, reason="MCP is not installed")
-@pytest.mark.mcp
-async def test_regular_headers_body_field_keeps_its_schema_and_value(headers_client, method):
+@pytest.mark.parametrize(
+    "transport",
+    [
+        "http",
+        pytest.param(
+            "mcp",
+            marks=[
+                pytest.mark.mcp,
+                pytest.mark.skipif(importlib.util.find_spec("mcp") is None, reason="MCP is not installed"),
+            ],
+        ),
+    ],
+)
+async def test_regular_headers_body_field_keeps_its_schema_and_value(headers_client, method, transport):
     prefix = "async " if method.endswith("_async") else ""
     deploy(
         headers_client,
@@ -211,16 +228,21 @@ async def test_regular_headers_body_field_keeps_its_schema_and_value(headers_cli
             "        return headers['authorization']\n"
         ),
     )
-    response = headers_client.post(
-        "/headers_test/run",
-        json={"headers": {"authorization": "body-value"}},
-        headers={"Authorization": "transport-value"},
-    )
-    assert response.json() == {"result": "body-value"}
-    tools = await list_pipelines_as_tools()
-    assert tools[0].inputSchema["required"] == ["headers"]
-    result = await run_pipeline_as_tool("headers_test", {"headers": {"authorization": "tool-value"}})
-    assert result[0].text == "tool-value"
+    if transport == "http":
+        schema = headers_client.get("/openapi.json").json()["components"]["schemas"]["headers_testRunRequest"]
+        assert schema["required"] == ["headers"]
+        response = headers_client.post(
+            "/headers_test/run",
+            json={"headers": {"authorization": "body-value"}},
+            headers={"Authorization": "transport-value"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {"result": "body-value"}
+    else:
+        tools = await list_pipelines_as_tools()
+        assert tools[0].inputSchema["required"] == ["headers"]
+        result = await run_pipeline_as_tool("headers_test", {"headers": {"authorization": "tool-value"}})
+        assert result[0].text == "tool-value"
 
 
 @pytest.mark.parametrize(

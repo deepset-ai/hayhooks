@@ -30,6 +30,44 @@ class PipelineWrapper(BasePipelineWrapper):
         return result["llm"]["replies"][0]
 ```
 
+## Request headers
+
+To access HTTP request headers, explicitly declare `headers: Headers | None = None`
+on any of `run_api`, `run_chat_completion`, `run_response`, or their async variants:
+
+```python
+from fastapi import HTTPException
+from starlette.datastructures import Headers
+
+def run_api(self, query: str, *, headers: Headers | None = None) -> str:
+    authorization = headers.get("authorization") if headers is not None else None
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization is required")
+    # Application code: validate the credential or forward it only to your trusted service.
+    return self.answer(query, authorization=authorization)
+```
+
+Import `Headers` at runtime, including when using postponed annotations. The
+parameter must accept keyword arguments and have the annotation `Headers | None`
+and default `None`; invalid declarations fail during deployment. Headers are
+request-local and available throughout streaming. Lookups are case-insensitive.
+The OpenAI-compatible endpoints receive a header dictionary from
+`fastapi-openai-compat`, so repeated values for a header are not preserved there.
+
+The injected parameter is excluded from the `/run` JSON or multipart body and from
+OpenAPI and MCP input schemas. A body field cannot override it. Existing application
+parameters named `headers` with other types (such as `dict[str, str]`) keep their
+normal behavior. Declaring only `**kwargs` does not enable injection.
+
+A2A, MCP and direct calls do not automatically supply HTTP headers, so the default
+is `None`. MCP tool arguments cannot populate the injected parameter. Wrappers
+that require authentication must handle missing credentials explicitly. Receiving
+headers does not itself authenticate the caller.
+
+Do not store caller credentials on the shared wrapper instance, echo them in
+responses, or include them in logs or traces. Hayhooks keeps injected headers out
+of its automatic `/run` payload logs and trace tags.
+
 ## Required Methods
 
 ### setup()
@@ -112,44 +150,6 @@ def setup(self) -> None:
 !!! tip "Consider YAML-only deployment"
     If your pipeline is simple and doesn't need custom logic, consider using [YAML Pipeline Deployment](yaml-pipeline-deployment.md) instead, which doesn't require a wrapper at all.
 
-### Request headers
-
-To access HTTP request headers, explicitly declare `headers: Headers | None = None`
-on any of `run_api`, `run_chat_completion`, `run_response`, or their async variants:
-
-```python
-from fastapi import HTTPException
-from starlette.datastructures import Headers
-
-def run_api(self, query: str, *, headers: Headers | None = None) -> str:
-    authorization = headers.get("authorization") if headers is not None else None
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Authorization is required")
-    # Validate the credential or forward it only to the intended trusted service.
-    return self.answer(query, authorization=authorization)
-```
-
-Import `Headers` at runtime, including when using postponed annotations. The
-parameter must accept keyword arguments and have the annotation `Headers | None`
-and default `None`; invalid declarations fail during deployment. Headers are
-request-local and available throughout streaming. Lookups are case-insensitive.
-The OpenAI-compatible endpoints receive a header dictionary from
-`fastapi-openai-compat`, so repeated values for a header are not preserved there.
-
-The injected parameter is excluded from the `/run` JSON or multipart body and from
-OpenAPI and MCP input schemas. A body field cannot override it. Existing application
-parameters named `headers` with other types (such as `dict[str, str]`) keep their
-normal behavior. Declaring only `**kwargs` does not enable injection.
-
-A2A, MCP and direct calls do not automatically supply HTTP headers, so the default
-is `None`. MCP tool arguments cannot populate the injected parameter. Wrappers
-that require authentication must handle missing credentials explicitly. Receiving
-headers does not itself authenticate the caller.
-
-Do not store caller credentials on the shared wrapper instance, echo them in
-responses, or include them in logs or traces. Hayhooks keeps injected headers out
-of its automatic `/run` payload logs and trace tags.
-
 ### run_api()
 
 The `run_api()` method is called for each API request to the `{pipeline_name}/run` endpoint.
@@ -169,7 +169,8 @@ def run_api(self, urls: list[str], question: str) -> str:
 
 **Input argument rules:**
 
-- Arguments must be JSON-serializable
+- Body arguments must be JSON-serializable, except [file uploads](#file-upload-support)
+- The typed [`headers` parameter](#request-headers) is injected separately from the body
 - Use proper type hints (`list[str]`, `int | None`, etc.)
 - Default values are supported
 - Complex types like `dict[str, Any]` are allowed
