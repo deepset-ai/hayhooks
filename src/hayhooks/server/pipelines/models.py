@@ -7,6 +7,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, create_model
 
 from hayhooks.server.exceptions import PipelineWrapperError
+from hayhooks.server.utils.request_headers import accepts_request_headers
 from hayhooks.server.utils.yaml_utils import InputResolution, OutputResolution
 
 
@@ -70,10 +71,13 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
     """
 
     params = inspect.signature(func).parameters
+    inject_headers = accepts_request_headers(func)
     param_docs = {p.arg_name: p.description for p in docstring.params}
 
     fields: dict[str, Any] = {}
     for name, param in params.items():
+        if name == "headers" and inject_headers:
+            continue
         default_value = ... if param.default == param.empty else param.default
         description = param_docs.get(name) or f"Parameter '{name}'"
         field_info = Field(default=default_value, description=description)

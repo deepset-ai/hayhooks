@@ -4,6 +4,16 @@ from typing import Any
 
 
 class BasePipelineWrapper(ABC):
+    """
+    Base class for deployed pipelines.
+
+    The run_api, run_chat_completion and run_response methods, including their async
+    variants, can declare ``headers: Headers | None = None`` to receive HTTP request
+    headers. Import ``Headers`` from ``starlette.datastructures`` at runtime. Header
+    lookup is case-insensitive; A2A, MCP and direct calls use the default of None.
+    Ordinary dict parameters and **kwargs do not opt in to header injection.
+    """
+
     # Class attribute to skip MCP listing of the pipeline
     # If True, the pipeline will not be listed as an MCP tool
     # Even if it has a description and a request model

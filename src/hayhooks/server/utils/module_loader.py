@@ -15,6 +15,7 @@ from typing import NoReturn
 from hayhooks.server.exceptions import PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.logger import log
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.request_headers import accepts_request_headers
 from hayhooks.settings import settings
 
 
@@ -241,7 +242,7 @@ class _PipelineModuleLoader:
 
 def _set_method_implementation_flags(pipeline_wrapper: BasePipelineWrapper) -> None:
     """
-    Set implementation flags for all supported run methods.
+    Set implementation flags and validate request-header declarations on supported run methods.
 
     Args:
         pipeline_wrapper: The wrapper instance to annotate with flags.
@@ -258,6 +259,8 @@ def _set_method_implementation_flags(pipeline_wrapper: BasePipelineWrapper) -> N
 
     for attr_name, method_name in methods_to_check:
         is_implemented = _is_method_overridden(pipeline_wrapper, method_name)
+        if is_implemented and method_name != "run_file_upload":
+            accepts_request_headers(getattr(pipeline_wrapper, method_name))
         setattr(pipeline_wrapper, attr_name, is_implemented)
         log.debug("pipeline_wrapper.{}: {}", attr_name, is_implemented)
 
