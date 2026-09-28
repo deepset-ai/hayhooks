@@ -37,7 +37,7 @@ dependencies = [
   "pydantic-settings",
   "python-dotenv",
   "docstring-parser",
-  "fastapi-openai-compat>=1.3.0",
+  "fastapi-openai-compat>=1.4.0",
 ]
 
 [project.optional-dependencies]
@@ -76,8 +76,6 @@ source = "vcs"
 packages = ["src/hayhooks"]
 
 [tool.hatch.build.targets.wheel.force-include]
-# .chainlit is a hidden dir excluded by default, so force-include is needed
-"src/hayhooks/server/chainlit_app/.chainlit" = "hayhooks/server/chainlit_app/.chainlit"
 # Bundle dashboard source files so --with-tracing-dashboard can build locally at runtime.
 "dashboard/index.html" = "hayhooks/dashboard/index.html"
 "dashboard/components.json" = "hayhooks/dashboard/components.json"

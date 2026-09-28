@@ -18,7 +18,7 @@ Both APIs are available simultaneously. A pipeline wrapper can implement one or 
 
 To access caller credentials or other HTTP headers, declare the optional typed
 [`headers` parameter](../concepts/pipeline-wrapper.md#request-headers) on your wrapper method.
-This requires `fastapi-openai-compat>=1.3.0`, which Hayhooks declares as a dependency.
+This requires `fastapi-openai-compat>=1.4.0`, which Hayhooks declares as a dependency.
 
 ## Key Features
 
