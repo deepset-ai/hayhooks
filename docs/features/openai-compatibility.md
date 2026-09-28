@@ -16,6 +16,10 @@ Hayhooks supports two OpenAI API surfaces:
 
 Both APIs are available simultaneously. A pipeline wrapper can implement one or both.
 
+To access caller credentials or other HTTP headers, declare the optional typed
+[`headers` parameter](../concepts/pipeline-wrapper.md#request-headers) on your wrapper method.
+This requires `fastapi-openai-compat>=1.4.0`, which Hayhooks declares as a dependency.
+
 ## Key Features
 
 - **Automatic Endpoint Generation**: OpenAI-compatible endpoints are created automatically

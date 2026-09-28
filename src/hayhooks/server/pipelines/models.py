@@ -7,54 +7,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, create_model
 
 from hayhooks.server.exceptions import PipelineWrapperError
-from hayhooks.server.utils.yaml_utils import InputResolution, OutputResolution
-
-
-def get_request_model_from_resolved_io(
-    pipeline_name: str, declared_inputs: dict[str, InputResolution]
-) -> type[BaseModel]:
-    """
-    Create a flat Pydantic request model from declared inputs resolved by yaml_utils.
-
-    Args:
-        pipeline_name: Name of the pipeline used for model naming.
-        declared_inputs: Mapping of declared input name to InputResolution.
-
-    Returns:
-        A Pydantic model with top-level fields matching declared input names.
-    """
-    fields: dict[str, Any] = {}
-
-    for input_name, resolution in declared_inputs.items():
-        input_type = resolution.type
-        default_value = ... if resolution.required else None
-        fields[input_name] = (input_type, default_value)
-
-    return create_model(f"{pipeline_name.capitalize()}RunRequest", **fields)
-
-
-def get_response_model_from_resolved_io(
-    pipeline_name: str, declared_outputs: dict[str, OutputResolution]
-) -> type[BaseModel]:
-    """
-    Create a flat Pydantic response model from declared outputs resolved by yaml_utils.
-
-    Args:
-        pipeline_name: Name of the pipeline used for model naming.
-        declared_outputs: Mapping of declared output name to OutputResolution.
-
-    Returns:
-        A Pydantic model with top-level fields matching declared output names.
-    """
-    fields: dict[str, Any] = {}
-
-    for output_name, resolution in declared_outputs.items():
-        output_type = resolution.type
-        fields[output_name] = (output_type, ...)
-
-    return create_model(
-        f"{pipeline_name.capitalize()}RunResponse", result=(dict, Field(..., description="Pipeline result"))
-    )
+from hayhooks.server.utils.request_headers import accepts_request_headers
 
 
 def create_request_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:
@@ -69,11 +22,14 @@ def create_request_model_from_callable(func: Callable, model_name: str, docstrin
         Pydantic model class for request
     """
 
-    params = inspect.signature(func).parameters
+    params = inspect.signature(func, eval_str=True).parameters
+    inject_headers = accepts_request_headers(func)
     param_docs = {p.arg_name: p.description for p in docstring.params}
 
     fields: dict[str, Any] = {}
     for name, param in params.items():
+        if name == "headers" and inject_headers:
+            continue
         default_value = ... if param.default == param.empty else param.default
         description = param_docs.get(name) or f"Parameter '{name}'"
         field_info = Field(default=default_value, description=description)
@@ -113,7 +69,7 @@ def create_response_model_from_callable(
         Pydantic model class for response, or None for streaming/file responses.
     """
 
-    return_type = inspect.signature(func).return_annotation
+    return_type = inspect.signature(func, eval_str=True).return_annotation
 
     if return_type is inspect.Signature.empty:
         msg = f"Pipeline wrapper is missing a return type for '{func.__name__}' method"  # ty: ignore[unresolved-attribute]
@@ -154,7 +110,7 @@ def get_response_class_from_callable(func: Callable) -> type[Response] | None:
         * ``None`` for normal JSON endpoints (the caller should omit the ``response_class``
           kwarg so FastAPI uses its default ``JSONResponse``).
     """
-    return_type = inspect.signature(func).return_annotation
+    return_type = inspect.signature(func, eval_str=True).return_annotation
 
     if return_type is inspect.Signature.empty:
         return None

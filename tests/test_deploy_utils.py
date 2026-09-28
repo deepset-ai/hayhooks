@@ -449,37 +449,6 @@ def test_create_response_model_no_docstring():
 
 
 @pytest.mark.parametrize(
-    "return_type",
-    [
-        Response,
-        FileResponse,
-        StreamingResponse,
-        Generator,
-        AsyncGenerator,
-        Generator[str, None, None],
-        AsyncGenerator[str, None],
-    ],
-    ids=[
-        "Response",
-        "FileResponse",
-        "StreamingResponse",
-        "Generator",
-        "AsyncGenerator",
-        "Generator[str, None, None]",
-        "AsyncGenerator[str, None]",
-    ],
-)
-def test_create_response_model_returns_none_for_non_json_types(return_type):
-    func = lambda: None  # noqa: E731
-    func.__annotations__["return"] = return_type
-
-    docstring = docstring_parser.parse("")
-    result = create_response_model_from_callable(func, "Test", docstring)
-
-    assert result is None
-
-
-@pytest.mark.parametrize(
     ("return_type", "expected_class"),
     [
         (Response, Response),
@@ -489,24 +458,21 @@ def test_create_response_model_returns_none_for_non_json_types(return_type):
         (AsyncGenerator, StreamingResponse),
         (Generator[str, None, None], StreamingResponse),
         (AsyncGenerator[str, None], StreamingResponse),
-    ],
-    ids=[
-        "Response",
-        "FileResponse",
-        "StreamingResponse",
-        "Generator",
-        "AsyncGenerator",
-        "Generator[str, None, None]",
-        "AsyncGenerator[str, None]",
+        ("Response", Response),
+        ("FileResponse", FileResponse),
+        ("StreamingResponse", StreamingResponse),
+        ("Generator", StreamingResponse),
+        ("AsyncGenerator", StreamingResponse),
+        ("Generator[str, None, None]", StreamingResponse),
+        ("AsyncGenerator[str, None]", StreamingResponse),
     ],
 )
-def test_get_response_class_for_non_json_types(return_type, expected_class):
+def test_non_json_return_types_skip_response_models_and_select_response_class(return_type, expected_class):
     func = lambda: None  # noqa: E731
     func.__annotations__["return"] = return_type
 
-    result = get_response_class_from_callable(func)
-
-    assert result is expected_class
+    assert create_response_model_from_callable(func, "Test", docstring_parser.parse("")) is None
+    assert get_response_class_from_callable(func) is expected_class
 
 
 def test_get_response_class_returns_none_for_json_types():
@@ -586,7 +552,8 @@ def test_create_pipeline_wrapper_instance_missing_methods():
     with pytest.raises(
         PipelineWrapperError,
         match=re.escape(
-            "At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, run_response, or run_response_async must be implemented"
+            "At least one of run_api, run_api_async, run_chat_completion, run_chat_completion_async, "
+            "run_response, or run_response_async must be implemented"
         ),
     ):
         create_pipeline_wrapper_instance(module)

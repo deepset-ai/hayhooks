@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Any, cast
 
 import docstring_parser
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from starlette.datastructures import Headers
 
 from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
 from hayhooks.server.logger import log, log_elapsed
@@ -46,6 +47,7 @@ from hayhooks.server.utils.module_loader import (
     load_pipeline_module,
     unload_pipeline_modules,
 )
+from hayhooks.server.utils.request_headers import accepts_request_headers
 from hayhooks.server.utils.streaming_response_utils import _streaming_response_from_result
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
 from hayhooks.settings import DeployConcurrencyPolicy, settings
@@ -233,10 +235,20 @@ def handle_pipeline_exceptions() -> Callable:
 async def _execute_pipeline_run(
     pipeline_wrapper: BasePipelineWrapper,
     payload: dict[str, Any],
+    *,
+    headers: Headers | None = None,
 ) -> Any:
+    method = (
+        pipeline_wrapper.run_api_async if pipeline_wrapper._is_run_api_async_implemented else pipeline_wrapper.run_api
+    )
+    if accepts_request_headers(method):
+        if "headers" in payload:
+            msg = "Request headers cannot be supplied as pipeline arguments"
+            raise ValueError(msg)
+        payload = {**payload, "headers": headers}
     if pipeline_wrapper._is_run_api_async_implemented:
-        return await pipeline_wrapper.run_api_async(**payload)
-    return await run_in_threadpool(pipeline_wrapper.run_api, **payload)
+        return await method(**payload)
+    return await run_in_threadpool(method, **payload)
 
 
 _SENSITIVE_KEY_PATTERNS = {
@@ -330,18 +342,19 @@ async def _execute_pipeline_run_with_tracing(
     pipeline_wrapper: BasePipelineWrapper,
     payload: dict[str, Any],
     *,
+    headers: Headers,
     trace_tags: dict[str, Any],
     is_streaming_response: bool,
 ) -> Any:
     if is_streaming_response:
         try:
-            return await _execute_pipeline_run(pipeline_wrapper, payload)
+            return await _execute_pipeline_run(pipeline_wrapper, payload, headers=headers)
         except BaseException:
             with trace_operation(SPAN_PIPELINE_RUN, tags=trace_tags):
                 raise
 
     with trace_operation(SPAN_PIPELINE_RUN, tags=trace_tags):
-        return await _execute_pipeline_run(pipeline_wrapper, payload)
+        return await _execute_pipeline_run(pipeline_wrapper, payload, headers=headers)
 
 
 def _trace_streaming_run_result(result: Any, trace_tags: dict[str, Any]) -> Any:
@@ -405,7 +418,7 @@ def create_run_endpoint_handler(
     )
     is_streaming_response = get_response_class_from_callable(run_method) is StreamingResponse
 
-    async def _handle_request(run_req: BaseModel) -> Response | BaseModel:
+    async def _handle_request(run_req: BaseModel, request: Request) -> Response | BaseModel:
         payload = run_req.model_dump()
         trace_tags = _build_run_trace_tags(pipeline_name, payload)
 
@@ -414,6 +427,7 @@ def create_run_endpoint_handler(
         result = await _execute_pipeline_run_with_tracing(
             pipeline_wrapper,
             payload,
+            headers=request.headers,
             trace_tags=trace_tags,
             is_streaming_response=is_streaming_response,
         )
@@ -449,13 +463,17 @@ def create_run_endpoint_handler(
 
     @handle_pipeline_exceptions()
     async def run_endpoint_with_files(
+        request: Request,
         run_req: request_model = Form(..., media_type="multipart/form-data"),  # ty: ignore[invalid-type-form] # noqa: B008
     ) -> response_model:  # ty: ignore[invalid-type-form]
-        return await _handle_request(run_req)
+        return await _handle_request(run_req, request)
 
     @handle_pipeline_exceptions()
-    async def run_endpoint_without_files(run_req: request_model) -> response_model:  # ty: ignore[invalid-type-form]
-        return await _handle_request(run_req)
+    async def run_endpoint_without_files(
+        request: Request,
+        run_req: request_model,  # ty: ignore[invalid-type-form]
+    ) -> response_model:  # ty: ignore[invalid-type-form]
+        return await _handle_request(run_req, request)
 
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
 

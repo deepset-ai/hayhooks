@@ -14,6 +14,7 @@ from fastapi_openai_compat import (
     create_responses_router,
 )
 from haystack.dataclasses import StreamingChunk
+from starlette.datastructures import Headers
 
 from hayhooks.server.logger import log
 from hayhooks.server.pipelines.registry import registry
@@ -27,6 +28,7 @@ from hayhooks.server.tracing import (
     trace_sync_stream,
 )
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.request_headers import accepts_request_headers
 
 
 @dataclass(frozen=True)
@@ -105,14 +107,21 @@ def _select_execution_mode(wrapper: BasePipelineWrapper, dispatch: _OpenAIDispat
 
 
 async def _invoke_pipeline_method(
-    wrapper: BasePipelineWrapper, *, mode: str, method_name: str, model: str, call_kwargs: dict[str, Any]
+    wrapper: BasePipelineWrapper,
+    *,
+    mode: str,
+    method_name: str,
+    call_kwargs: dict[str, Any],
+    headers: dict[str, str] | None,
 ) -> Any:
     """Invoke the resolved pipeline method in either async or threadpool-sync mode."""
     method = getattr(wrapper, method_name)
-    log.debug("Using {} ({}) for model: {}", method_name, mode, model)
+    if accepts_request_headers(method):
+        call_kwargs = {**call_kwargs, "headers": Headers(headers) if headers is not None else None}
+    log.debug("Using {} ({}) for model: {}", method_name, mode, call_kwargs["model"])
     if mode == "async":
-        return await method(model=model, **call_kwargs)
-    return await run_in_threadpool(method, model=model, **call_kwargs)
+        return await method(**call_kwargs)
+    return await run_in_threadpool(method, **call_kwargs)
 
 
 def _wrap_string_as_streaming(text: str) -> Generator[StreamingChunk, None, None]:
@@ -140,9 +149,11 @@ async def _run_pipeline_method(
     model: str,
     kwargs: dict[str, Any],
     body: dict[str, Any],
+    headers: dict[str, str] | None,
 ) -> str | Generator | AsyncGenerator:
     """Shared dispatch logic for chat completions and responses endpoints."""
     stream_requested = bool(body.get("stream", False))
+    call_kwargs = {"model": model, **kwargs, "body": body}
     trace_tags = build_trace_tags(
         {
             "hayhooks.transport": "openai",
@@ -156,7 +167,7 @@ async def _run_pipeline_method(
             wrapper = _resolve_pipeline_wrapper(model)
             mode, method_name = _select_execution_mode(wrapper, dispatch)
             result = await _invoke_pipeline_method(
-                wrapper, mode=mode, method_name=method_name, model=model, call_kwargs={**kwargs, "body": body}
+                wrapper, mode=mode, method_name=method_name, call_kwargs=call_kwargs, headers=headers
             )
             normalized_result = await _normalize_result(result, stream_requested=stream_requested)
         except BaseException:
@@ -184,21 +195,25 @@ async def _run_pipeline_method(
         mode, method_name = _select_execution_mode(wrapper, dispatch)
         span.set_tag("hayhooks.openai.execution_mode", mode)
         result = await _invoke_pipeline_method(
-            wrapper, mode=mode, method_name=method_name, model=model, call_kwargs={**kwargs, "body": body}
+            wrapper, mode=mode, method_name=method_name, call_kwargs=call_kwargs, headers=headers
         )
         return await _normalize_result(result, stream_requested=stream_requested)
 
 
 async def _run_completion(
-    model: str, messages: list[dict[str, Any]], body: dict[str, Any]
+    model: str, messages: list[dict[str, Any]], body: dict[str, Any], headers: dict[str, str] | None = None
 ) -> str | Generator | AsyncGenerator:
-    return await _run_pipeline_method(_CHAT_COMPLETION_DISPATCH, model=model, kwargs={"messages": messages}, body=body)
+    return await _run_pipeline_method(
+        _CHAT_COMPLETION_DISPATCH, model=model, kwargs={"messages": messages}, body=body, headers=headers
+    )
 
 
 async def _run_response(
-    model: str, input_items: list[dict[str, Any]], body: dict[str, Any]
+    model: str, input_items: list[dict[str, Any]], body: dict[str, Any], headers: dict[str, str] | None = None
 ) -> str | Generator | AsyncGenerator:
-    return await _run_pipeline_method(_RESPONSE_DISPATCH, model=model, kwargs={"input_items": input_items}, body=body)
+    return await _run_pipeline_method(
+        _RESPONSE_DISPATCH, model=model, kwargs={"input_items": input_items}, body=body, headers=headers
+    )
 
 
 def _find_file_upload_wrapper() -> BasePipelineWrapper | None:

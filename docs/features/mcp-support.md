@@ -129,7 +129,11 @@ For each deployed pipeline, Hayhooks will:
 - Parse **`run_api` method docstring**:
   - If you use Google-style or reStructuredText-style docstrings, use the first line as MCP Tool `description` and the rest as `parameters` (if present)
   - Each parameter description will be used as the `description` of the corresponding Pydantic model field (if present)
-- Generate a Pydantic model from the `inputSchema` using the **`run_api` method arguments as fields**
+- Generate the `inputSchema` from the **`run_api` method arguments**, excluding the optional typed [`headers` parameter](../concepts/pipeline-wrapper.md#request-headers)
+
+MCP calls leave the typed `headers` parameter at `None`, including over HTTP transports.
+Supplying it as a tool argument is rejected. Ordinary application fields named `headers`
+(for example, `headers: dict[str, str]`) remain normal tool arguments.
 
 **Example:**
 

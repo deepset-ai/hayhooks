@@ -16,18 +16,21 @@ from hayhooks.server.utils.streaming_response_utils import _streaming_response_f
 class _BlockingStreamingComponent:
     def __init__(self) -> None:
         self.release = asyncio.Event()
-        self.completed = asyncio.Event()
+        self.finished = asyncio.Event()
 
     @component.output_types(result=str)
     def run(self, streaming_callback: Any | None = None) -> dict[str, str]:
-        raise AssertionError("The async pipeline must call run_async")
+        msg = "The async pipeline must call run_async"
+        raise AssertionError(msg)
 
     @component.output_types(result=str)
     async def run_async(self, streaming_callback: Any | None = None) -> dict[str, str]:
-        await streaming_callback(StreamingChunk(content="first", index=0))
-        await self.release.wait()
-        self.completed.set()
-        return {"result": "done"}
+        try:
+            await streaming_callback(StreamingChunk(content="first", index=0))
+            await self.release.wait()
+            return {"result": "done"}
+        finally:
+            self.finished.set()
 
 
 async def _disconnect_after_first_chunk(app: FastAPI) -> None:
@@ -88,9 +91,12 @@ async def test_http_disconnect_pipeline_task(shield_pipeline_task):
 
     assert bool(detached_tasks) is shield_pipeline_task
     assert all(not task.done() for task in detached_tasks)
+    if shield_pipeline_task:
+        assert not component.finished.is_set()
 
     component.release.set()
-    await asyncio.wait_for(component.completed.wait(), timeout=1.0)
+    # Haystack may either complete the component or cancel it with the pipeline task.
+    await asyncio.wait_for(component.finished.wait(), timeout=1.0)
     if detached_tasks:
         await asyncio.wait_for(asyncio.gather(*detached_tasks), timeout=1.0)
         await asyncio.sleep(0)
