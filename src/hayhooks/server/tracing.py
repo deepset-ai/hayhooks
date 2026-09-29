@@ -642,6 +642,7 @@ class _OperationTrace:
 
         live_tags: dict[str, Any] = {}
         try:
+            live_tags: dict[str, Any]
             if exc is None:
                 _mark_success(span)
                 live_tags = {_TAG_SUCCESS: True}

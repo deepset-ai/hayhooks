@@ -107,6 +107,39 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=serialized
 export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 ```
 
+## Durable Execution
+
+Redis is the production default. Set `HAYHOOKS_DURABLE_STORE=memory` only for
+local development or tests.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `HAYHOOKS_DURABLE_STORE` | `redis` | `redis` or process-local `memory` storage |
+| `HAYHOOKS_DURABLE_REDIS_URL` | `redis://localhost:6379/0` | Binary standalone Redis client URL |
+| `HAYHOOKS_DURABLE_REDIS_KEY_PREFIX` | `hayhooks:durable` | Private Redis key namespace |
+| `HAYHOOKS_DURABLE_TERMINAL_TTL_SECONDS` | `604800` | Terminal record and idempotency retention |
+| `HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS` | `1000` | Admission ceiling per deployment; `0` opts into unlimited admission |
+| `HAYHOOKS_DURABLE_MAX_PAYLOAD_BYTES` | `1000000` | Maximum encoded input/checkpoint/result/error/wait payload |
+| `HAYHOOKS_DURABLE_MAX_PROGRESS_EVENTS` | `100` | Buffered and retained progress events per execution |
+| `HAYHOOKS_DURABLE_MAX_PROGRESS_EVENT_BYTES` | `8192` | Maximum encoded progress event |
+| `HAYHOOKS_DURABLE_MAX_STREAM_CHUNKS` | `100` | Retained SSE display chunks; `0` disables chunks |
+| `HAYHOOKS_DURABLE_MAX_STREAM_CHUNK_BYTES` | `64000` | Maximum encoded display chunk |
+| `HAYHOOKS_DURABLE_WORKER_CONCURRENCY` | `1` | Worker slots per durable deployment and process |
+| `HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS` | `1.0` | Maximum ordinary pickup delay while an idle worker is polling |
+| `HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS` | `1.0` | Maximum additional expired-lease recovery delay |
+| `HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS` | `5.0` | Grace period for worker shutdown |
+| `HAYHOOKS_DURABLE_LEASE_DURATION_MS` | `30000` | Fenced claim lease duration |
+| `HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS` | `1500` | Minimum lease time remaining for owned commits |
+| `HAYHOOKS_DURABLE_MAX_RUN_ATTEMPTS` | `3` | Claim attempts including crash recovery |
+| `HAYHOOKS_DURABLE_MAX_APPLICATION_RETRIES` | `2` | Retries explicitly requested by application code |
+| `HAYHOOKS_DURABLE_RETRY_BASE_DELAY_SECONDS` | `1.0` | Default exponential retry base delay |
+| `HAYHOOKS_DURABLE_RETRY_MAX_DELAY_SECONDS` | `60.0` | Default retry delay ceiling |
+
+See [Durable Operations](../deployment/durable-operations.md) before changing
+polling, leases, retention, capacity, or Redis persistence. Worker polling and
+lease maintenance are independent: lowering one does not make the other run
+more frequently.
+
 ## MCP
 
 ### HAYHOOKS_MCP_HOST

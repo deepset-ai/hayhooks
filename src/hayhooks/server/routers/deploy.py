@@ -9,6 +9,7 @@ from hayhooks.server.exceptions import (
     PipelineWrapperError,
     PipelineYamlError,
 )
+from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_files_async, deploy_pipeline_yaml_async
 
 router = APIRouter()
@@ -122,6 +123,8 @@ async def deploy_yaml(yaml_request: YamlDeployRequest, request: Request) -> Depl
         raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineAlreadyExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error deploying YAML pipeline: {e!s}") from e
 
@@ -146,7 +149,14 @@ async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Re
             save_files=pipeline_files_request.save_files,
             overwrite=pipeline_files_request.overwrite,
         )
-        return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
+        pipeline_wrapper = registry.get(result["name"])
+        is_durable_only = bool(
+            pipeline_wrapper
+            and (pipeline_wrapper._is_run_durable_implemented or pipeline_wrapper._is_run_durable_async_implemented)
+            and not (pipeline_wrapper._is_run_api_implemented or pipeline_wrapper._is_run_api_async_implemented)
+        )
+        endpoint = f"/{result['name']}/{'run-durable' if is_durable_only else 'run'}"
+        return DeployResponse(name=result["name"], success=True, endpoint=endpoint)
     except PipelineFilesError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     except PipelineModuleLoadError as e:
@@ -155,5 +165,7 @@ async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Re
         raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineAlreadyExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error deploying pipeline: {e!s}") from e

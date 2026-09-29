@@ -111,6 +111,29 @@ class AppSettings(BaseSettings):
     # startup_deploy_strategy is "parallel"). Defaults to 4.
     startup_deploy_workers: int = Field(default=4, gt=0, le=32)
 
+    # Durable execution. Redis is deliberately the production default; memory
+    # storage is useful only when explicitly selected for local development/tests.
+    durable_store: Literal["redis", "memory"] = "redis"
+    durable_redis_url: str = "redis://localhost:6379/0"
+    durable_redis_key_prefix: str = "hayhooks:durable"
+    durable_terminal_ttl_seconds: int = Field(default=604_800, gt=0)
+    durable_max_nonterminal_executions: int = Field(default=1_000, ge=0)
+    durable_max_payload_bytes: int = Field(default=1_000_000, gt=0)
+    durable_max_progress_events: int = Field(default=100, gt=0)
+    durable_max_progress_event_bytes: int = Field(default=8_192, gt=0)
+    durable_max_stream_chunks: int = Field(default=100, ge=0)
+    durable_max_stream_chunk_bytes: int = Field(default=64_000, gt=0)
+    durable_worker_concurrency: int = Field(default=1, gt=0)
+    durable_poll_interval_seconds: float = Field(default=1.0, gt=0)
+    durable_maintenance_interval_seconds: float = Field(default=1.0, gt=0)
+    durable_shutdown_grace_seconds: float = Field(default=5.0, ge=0)
+    durable_lease_duration_ms: int = Field(default=30_000, gt=0)
+    durable_lease_commit_safety_ms: int = Field(default=1_500, ge=0)
+    durable_max_run_attempts: int = Field(default=3, gt=0)
+    durable_max_application_retries: int = Field(default=2, ge=0)
+    durable_retry_base_delay_seconds: float = Field(default=1.0, ge=0)
+    durable_retry_max_delay_seconds: float = Field(default=60.0, ge=0)
+
     # CORS Settings
     cors_allow_origins: list[str] = ["*"]
     cors_allow_methods: list[str] = ["*"]
