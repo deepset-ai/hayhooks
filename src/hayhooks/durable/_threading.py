@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from concurrent.futures import Future as ThreadFuture
 from contextlib import suppress
@@ -11,6 +12,11 @@ from threading import Thread
 from typing import TypeVar
 
 _T = TypeVar("_T")
+
+
+def is_async_callable(function: object) -> bool:
+    """Whether calling ``function`` returns a coroutine, including objects with an async ``__call__``."""
+    return inspect.iscoroutinefunction(function) or inspect.iscoroutinefunction(type(function).__call__)
 
 
 def start_daemon_thread(function: Callable[[], _T], *, name: str) -> tuple[asyncio.Future[_T], asyncio.Future[None]]:
@@ -26,10 +32,6 @@ def start_daemon_thread(function: Callable[[], _T], *, name: str) -> tuple[async
     result.set_running_or_notify_cancel()
     active_context = copy_context()
 
-    def mark_exited() -> None:
-        if not exited.done():
-            exited.set_result(None)
-
     def run() -> None:
         try:
             result.set_result(function())
@@ -37,7 +39,7 @@ def start_daemon_thread(function: Callable[[], _T], *, name: str) -> tuple[async
             result.set_exception(error)
         finally:
             with suppress(RuntimeError):
-                loop.call_soon_threadsafe(mark_exited)
+                loop.call_soon_threadsafe(exited.set_result, None)
 
     Thread(target=active_context.run, args=(run,), name=name, daemon=True).start()
     return asyncio.wrap_future(result), exited

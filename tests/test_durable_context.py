@@ -125,13 +125,8 @@ async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context
     persisted = await store.read(context.execution_id)
     assert persisted is not None
     reconstructed = DurableContext(
-        _ClaimedExecution(
-            store,
-            persisted.control,
-            claim.worker_id,
-            claim.lease_duration_ms,
-            decode_checkpoint(persisted.payloads[PayloadKind.CHECKPOINT]),
-        )
+        _ClaimedExecution(store, persisted.control, claim.worker_id, claim.lease_duration_ms),
+        decode_checkpoint(persisted.payloads[PayloadKind.CHECKPOINT]),
     )
     assert reconstructed.resume_input == {"approved": True}
 

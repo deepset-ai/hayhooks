@@ -598,10 +598,7 @@ def add_pipeline_api_route(
         requires_files=requires_files,
     )
 
-    # Clear existing pipeline run route if it exists
-    for route in app.routes:
-        if isinstance(route, APIRoute) and route.path == f"/{pipeline_name}/run":
-            app.routes.remove(route)
+    _remove_pipeline_routes(app, pipeline_name)
 
     # Build the route kwargs. response_class is only set for non-JSON endpoints
     # (e.g. FileResponse for file downloads, StreamingResponse for generators) so that

@@ -7,7 +7,7 @@ import asyncio
 import math
 import time
 from collections import deque
-from collections.abc import Callable, Coroutine, Iterator, Mapping
+from collections.abc import Callable, Coroutine, Iterator, Mapping, MutableSet
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -52,6 +52,12 @@ class _ExecutionSuspendedError(Exception):
     pass
 
 
+def _track(bucket: MutableSet[Any], future: asyncio.Future[Any]) -> None:
+    """Keep ``future`` in ``bucket`` until it is done."""
+    bucket.add(future)
+    future.add_done_callback(bucket.discard)
+
+
 class _ClaimedExecution:
     """Fenced store handle, heartbeat, chunk flusher, and engine threads owned by one runtime worker."""
 
@@ -61,24 +67,22 @@ class _ClaimedExecution:
         control: ExecutionControl,
         worker_id: str,
         lease_duration_ms: int,
-        checkpoint: CheckpointEnvelope,
     ) -> None:
         heartbeat_interval = max(0.01, lease_duration_ms / 3_000)
         safe_duration = (lease_duration_ms - store.config.lease_commit_safety_ms) / 1_000
         if control.status is not ExecutionStatus.RUNNING or control.lease_owner != worker_id:
             raise ValueError("a claimed execution requires its running control and lease owner")
-        if checkpoint.adapter_kind.value != control.kind:
-            raise ValueError("checkpoint kind does not match the claimed execution")
         if safe_duration <= heartbeat_interval:
             raise ValueError("lease duration must leave more than one safe heartbeat interval")
         self.store = store
         self.control = control
         self.worker_id = worker_id
         self.lease_duration_ms = lease_duration_ms
-        self.checkpoint = checkpoint
         self.lease_lost = asyncio.Event()
         self.event_loop = asyncio.get_running_loop()
         self.application: asyncio.Future[object] | None = None
+        # Set once by close(): cancellation is then a shutdown, and must not be requested twice.
+        self.stopping = False
         # Exit futures of the engine threads still running this execution.
         self.threads: set[asyncio.Future[None]] = set()
         self._heartbeat_interval = heartbeat_interval
@@ -91,15 +95,16 @@ class _ClaimedExecution:
         self._tasks: tuple[asyncio.Task[None], ...] = ()
         self._finished = False
 
-    async def __aenter__(self) -> _ClaimedExecution:
+    async def start(self) -> None:
+        """Confirm the lease, then keep it alive and flush chunks in the background."""
         await self.transition(Heartbeat(self.control.fence, self.worker_id, 0, self.lease_duration_ms))
         self._tasks = (
             asyncio.create_task(self._heartbeat_loop(), name=f"durable-heartbeat:{self.control.run_id}"),
             asyncio.create_task(self._flush_loop(), name=f"durable-chunks:{self.control.run_id}"),
         )
-        return self
 
-    async def __aexit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+    async def stop(self) -> None:
+        """Stop owning the claim; a release must run before this, which rejects later transitions."""
         self._finished = True
         for task in self._tasks:
             task.cancel()
@@ -150,8 +155,7 @@ class _ClaimedExecution:
         """Run synchronous work in a daemon thread tracked until it exits, not just until it returns."""
         self.require_owned()
         result, exited = start_daemon_thread(function, name=name)
-        self.threads.add(exited)
-        exited.add_done_callback(self.threads.discard)
+        _track(self.threads, exited)
         return result
 
     def buffer_chunk(self, data: bytes) -> None:
@@ -206,10 +210,13 @@ class _ClaimedExecution:
 class DurableContext:
     """Checkpoint, progress, cancellation, suspension, retry, and streaming controls."""
 
-    def __init__(self, claim: _ClaimedExecution) -> None:
+    def __init__(self, claim: _ClaimedExecution, checkpoint: CheckpointEnvelope) -> None:
+        if checkpoint.adapter_kind.value != claim.control.kind:
+            raise ValueError("checkpoint kind does not match the claimed execution")
         self._claim = claim
-        self._state = claim.checkpoint.application_state.copy()
-        self._resume_input = claim.checkpoint.resume_input
+        self._checkpoint = checkpoint
+        self._state = checkpoint.application_state.copy()
+        self._resume_input = checkpoint.resume_input
         self._resume_input_consumed = False
         self._pending_progress: list[bytes] = []
         self._operation_lock = asyncio.Lock()
@@ -240,7 +247,7 @@ class DurableContext:
 
     @property
     def _adapter_checkpoint(self) -> JsonValue:
-        return self._claim.checkpoint.adapter_checkpoint
+        return self._checkpoint.adapter_checkpoint
 
     def _require_owned(self) -> None:
         self._claim.require_owned()
@@ -262,7 +269,7 @@ class DurableContext:
                     tuple(self._pending_progress),
                 )
             )
-            self._claim.checkpoint = snapshot
+            self._checkpoint = snapshot
             del self._pending_progress[: len(plan.progress_events)]
 
     async def report_progress(
@@ -328,7 +335,7 @@ class DurableContext:
                     tuple(self._pending_progress),
                 )
             )
-            self._claim.checkpoint = snapshot
+            self._checkpoint = snapshot
             self._state = snapshot.application_state.copy()
             del self._pending_progress[: len(plan.progress_events)]
             raise _ExecutionSuspendedError
@@ -404,10 +411,10 @@ class DurableContext:
     ) -> CheckpointEnvelope:
         return CheckpointEnvelope.model_validate(
             {
-                "schema_version": self._claim.checkpoint.schema_version,
-                "adapter_kind": self._claim.checkpoint.adapter_kind,
+                "schema_version": self._checkpoint.schema_version,
+                "adapter_kind": self._checkpoint.adapter_kind,
                 "adapter_checkpoint": (
-                    self._claim.checkpoint.adapter_checkpoint if adapter_checkpoint is None else adapter_checkpoint
+                    self._checkpoint.adapter_checkpoint if adapter_checkpoint is None else adapter_checkpoint
                 ),
                 "application_state": dict(self._state if application_state is None else application_state),
                 "resume_input": None if self._resume_input_consumed else self._resume_input,

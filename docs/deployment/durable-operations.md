@@ -266,9 +266,10 @@ pinned revision so that it uses the matching resume schema.
 
 ## Shutdown handoff
 
-At the end of the shutdown grace, `close()` requests cancellation of async work.
-Once that work stops, it releases its claim: the run is queued again at once,
-without spending a run attempt, and a pending cancellation ends it `canceled`.
+At the end of the shutdown grace, `close()` cancels async work and waits up to
+another grace period for it to stop. Work that stops releases its claim: the run
+is queued again at once, without spending a run attempt, and a pending
+cancellation ends it `canceled`.
 Thread-backed work keeps its claim
 until it exits, as does async work that suppresses cancellation or awaits cleanup;
 `wait_drained()` waits for that retained work. On hosts that kill processes

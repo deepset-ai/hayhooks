@@ -126,7 +126,8 @@ def test_partial_backup_failure_restores_only_moved_sources(app, pipelines_dir, 
 
     def fail_yaml_backup(path, target):
         if path == yaml_file:
-            raise OSError("backup rename failed")
+            message = "backup rename failed"
+            raise OSError(message)
         return replace(path, target)
 
     monkeypatch.setattr(Path, "replace", fail_yaml_backup)

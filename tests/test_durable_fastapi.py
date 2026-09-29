@@ -473,10 +473,10 @@ def test_only_close_ends_blocked_streams(
         deployment.name,
         deployment.revision,
         deployment.store,
-        JobRequest,
-        run_job,
-        result_model=JobResult,
-        resume_model=ResumeInput,
+        deployment.request_model,
+        deployment.runner,
+        result_model=deployment.result_model,
+        resume_model=deployment.resume_model,
         config=deployment.config,
     )
     with TestClient(app) as client:

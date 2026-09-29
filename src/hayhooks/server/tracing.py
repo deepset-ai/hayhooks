@@ -12,7 +12,6 @@ This module centralizes:
 
 from __future__ import annotations
 
-import inspect
 import os
 import traceback
 from collections.abc import AsyncGenerator, Callable, Generator, Iterator, Mapping
@@ -29,6 +28,7 @@ from haystack.lazy_imports import LazyImport
 from haystack.tracing import Span, Tracer, enable_tracing, is_tracing_enabled, tracer
 from haystack.tracing.tracer import NullTracer
 
+from hayhooks.durable._threading import is_async_callable
 from hayhooks.server.logger import log, normalize_trace_correlation_data
 from hayhooks.server.utils.live_trace_buffer import record_live_span_finish, record_live_span_start
 from hayhooks.settings import settings
@@ -813,8 +813,7 @@ def trace_durable_runner(
             }
         )
 
-    # Matches DurableDeployment, which also treats a callable object with an async __call__ as async.
-    if inspect.iscoroutinefunction(runner) or inspect.iscoroutinefunction(type(runner).__call__):
+    if is_async_callable(runner):
 
         @wraps(runner)
         async def traced_async(context: Any, request: Any) -> object:

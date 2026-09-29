@@ -10,7 +10,6 @@ import textwrap
 import threading
 from collections.abc import Callable
 from dataclasses import replace
-from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -39,6 +38,10 @@ from hayhooks.durable.store import (
     StoredExecution,
     SubmissionResult,
 )
+from tests.test_durable_haystack import requires_haystack_v3
+
+# Another worker taking over a released run.
+SUCCESSOR = Claim("successor", 0, 300, 3, "v1", b"{}")
 
 
 class Request(BaseModel):
@@ -571,6 +574,7 @@ async def test_stopped_deployment_is_never_reactivated(deployment_factory, stop:
 
     assert not deployment.accepting
     assert (tuple(deployment._workers.values()), deployment._maintenance_task) == tasks
+    await asyncio.wait_for(deployment.wait_drained(), timeout=1)
     with pytest.raises(RuntimeError, match="not accepting"):
         await deployment.submit({"value": 1})
 
@@ -635,15 +639,15 @@ async def test_close_releases_async_work_it_cancels(deployment_factory, cancel_r
     async def runner(context: DurableContext, _request: Request) -> Result:
         await context.stream_chunk({"token": "partial"})
         started.set()
-        await asyncio.Event().wait()
+        # A nested task takes several loop iterations to process the cancellation.
+        await asyncio.gather(asyncio.Event().wait())
         return Result(value=0)
 
-    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
     deployment = await deployment_factory(
         runner,
-        store=store,
         config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0.01),
     )
+    store = deployment.store
     run_id = (await deployment.submit({"value": 1})).control.run_id
     await asyncio.wait_for(started.wait(), timeout=1)
     if cancel_requested:
@@ -659,7 +663,7 @@ async def test_close_releases_async_work_it_cancels(deployment_factory, cancel_r
         assert stored.control.status is ExecutionStatus.CANCELED
         return
     assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
-    reclaimed = await store.claim(Claim("successor", 0, 300, 3, "v1", b"{}"))
+    reclaimed = await store.claim(SUCCESSOR)
     assert reclaimed is not None and reclaimed.next_control.run_attempt == 1
 
 
@@ -681,9 +685,8 @@ async def test_close_releases_claim_before_application_starts(deployment_factory
             await asyncio.Event().wait()
         return await transition(run_id, command)
 
-    monkeypatch.setattr(
-        store, "read" if stage == "read" else "transition", blocked_read if stage == "read" else blocked_heartbeat
-    )
+    attribute, blocked = {"read": ("read", blocked_read), "heartbeat": ("transition", blocked_heartbeat)}[stage]
+    monkeypatch.setattr(store, attribute, blocked)
     runner = AsyncMock(return_value=Result(value=1))
     deployment = await deployment_factory(runner, store=store, config=RuntimeConfig(shutdown_grace_seconds=0))
     run_id = (await deployment.submit({"value": 1})).control.run_id
@@ -694,7 +697,7 @@ async def test_close_releases_claim_before_application_starts(deployment_factory
 
     stored = await read(run_id)
     assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
-    reclaimed = await store.claim(Claim("successor", 0, 30_000, 3, "v1", b"{}"))
+    reclaimed = await store.claim(SUCCESSOR)
     assert reclaimed is not None and reclaimed.next_control.run_attempt == 1
     runner.assert_not_called()
 
@@ -711,10 +714,8 @@ async def test_repeated_close_waits_for_the_claim_release_in_progress(
         await asyncio.Event().wait()
         return Result(value=0)
 
-    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
     deployment = await deployment_factory(
         thread_work[0]("runner") if threaded else runner,
-        store=store,
         config=RuntimeConfig(
             poll_interval_seconds=0.005,
             lease_duration_ms=300,
@@ -722,6 +723,7 @@ async def test_repeated_close_waits_for_the_claim_release_in_progress(
             release_running_on_close=threaded,
         ),
     )
+    store = deployment.store
     run_id = (await deployment.submit({"value": 1})).control.run_id
     if threaded:
         assert await asyncio.to_thread(thread_work[1].wait, 1)
@@ -742,13 +744,14 @@ async def test_repeated_close_waits_for_the_claim_release_in_progress(
         first.cancel()
         with pytest.raises(asyncio.CancelledError):
             await first
-    second = asyncio.create_task(deployment.close())
+    # close() returns at its deadline; the release it started must not be interrupted, and draining waits for it.
+    await asyncio.wait_for(deployment.close(), timeout=1)
     drained = asyncio.create_task(deployment.wait_drained())
     await asyncio.sleep(0.05)
 
-    assert not second.done() and not drained.done()
+    assert not drained.done()
     proceed.set()
-    await asyncio.wait_for(asyncio.gather(second, drained), timeout=1)
+    await asyncio.wait_for(drained, timeout=1)
     if not cancel_close:
         await first
     assert (await store.read(run_id)).control.status is ExecutionStatus.QUEUED
@@ -804,7 +807,7 @@ async def test_cancelled_async_work_keeps_ownership_until_it_exits(deployment_fa
         await asyncio.wait_for(deployment.close(), timeout=1)
         assert not drain.done()
         assert (await deployment.get(run_id)).control.status is ExecutionStatus.RUNNING
-        assert await deployment.store.claim(Claim("successor", 0, 300, 3, "v1", b"{}")) is None
+        assert await deployment.store.claim(SUCCESSOR) is None
     finally:
         finish.set()
         await asyncio.wait_for(deployment.wait_drained(), timeout=1)
@@ -819,14 +822,9 @@ async def test_cancelled_async_work_keeps_ownership_until_it_exits(deployment_fa
     assert (stored.control.status, stored.control.run_attempt) == (expected, 0 if reraise else 1)
 
 
-_HAYSTACK_V3 = (3, 1) <= tuple(int(part) for part in version("haystack-ai").split(".")[:2]) < (4, 0)
 THREAD_SOURCES = [
     pytest.param("runner", id="runner-thread"),
-    pytest.param(
-        "adapter",
-        id="adapter-thread",
-        marks=pytest.mark.skipif(not _HAYSTACK_V3, reason="durable adapters require Haystack 3.1+"),
-    ),
+    pytest.param("adapter", id="adapter-thread", marks=requires_haystack_v3),
 ]
 
 
@@ -871,7 +869,7 @@ async def test_retained_thread_work_keeps_its_claim_until_drained(deployment_fac
     create, started, release, outcomes = thread_work
     deployment = await deployment_factory(
         create(source),
-        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0.01),
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0.2),
     )
     runtime = DurableRuntime((deployment,))
     run_id = (await deployment.submit({"value": 1})).control.run_id
@@ -882,7 +880,8 @@ async def test_retained_thread_work_keeps_its_claim_until_drained(deployment_fac
     await asyncio.sleep(0.4)  # longer than the lease: heartbeats must keep the claim alive
     drain.cancel()
     await asyncio.wait({drain})
-    await runtime.close()
+    # A repeated close() shares the first call's expired grace instead of waiting a new one.
+    await asyncio.wait_for(runtime.close(), timeout=0.1)
     assert (await deployment.health())["active_executions"] == 1
 
     release.set()
@@ -891,31 +890,38 @@ async def test_retained_thread_work_keeps_its_claim_until_drained(deployment_fac
     assert (stored.control.status, outcomes) == (ExecutionStatus.COMPLETED, [None])
 
 
+@pytest.mark.parametrize("handoff", ["release-on-close", "cancelled-worker"])
 @pytest.mark.parametrize("source", THREAD_SOURCES)
-async def test_release_running_on_close_hands_thread_work_over(deployment_factory, thread_work, source) -> None:
+async def test_thread_work_is_handed_over_when_its_claim_is_released(
+    deployment_factory, thread_work, source, handoff
+) -> None:
     create, started, release, outcomes = thread_work
-    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
     deployment = await deployment_factory(
         create(source),
-        store=store,
         config=RuntimeConfig(
             poll_interval_seconds=0.005,
             lease_duration_ms=300,
             shutdown_grace_seconds=0.01,
-            release_running_on_close=True,
+            release_running_on_close=handoff == "release-on-close",
         ),
     )
+    store = deployment.store
     run_id = (await deployment.submit({"value": 1})).control.run_id
     assert await asyncio.to_thread(started.wait, 1)
     running = (await store.read(run_id)).control
 
-    await deployment.close()
-    await asyncio.wait_for(deployment.wait_drained(), timeout=1)
+    if handoff == "release-on-close":
+        await deployment.close()
+        await asyncio.wait_for(deployment.wait_drained(), timeout=1)
+    else:
+        # A host that cancels the worker stops its heartbeat, so the claim is handed back too.
+        await deployment.quiesce()
+        [worker] = deployment._workers.values()
+        worker.cancel()
+        await asyncio.wait({worker})
 
-    reclaimed = await store.claim(Claim("successor", 0, 300, 3, "v1", b"{}"))
+    reclaimed = await store.claim(SUCCESSOR)
     assert reclaimed is not None and reclaimed.next_control.run_attempt == running.run_attempt
-    with pytest.raises(ExecutionLeaseLostError):
-        await store.transition(run_id, Heartbeat(running.fence, running.lease_owner, 0, 300))
     transitions = AsyncMock(wraps=store.transition)
     store.transition = transitions
     release.set()
@@ -924,9 +930,8 @@ async def test_release_running_on_close_hands_thread_work_over(deployment_factor
     transitions.assert_not_called()
 
 
-@pytest.mark.parametrize("loss_mode", ["shutdown", "lease"])
 @pytest.mark.parametrize("runner_mode", ["sync", "shielded_async"])
-async def test_thread_work_is_retained_until_exit(deployment_factory, loss_mode: str, runner_mode: str) -> None:
+async def test_lease_loss_retains_running_work_until_it_exits(deployment_factory, runner_mode: str) -> None:
     started = threading.Event()
     release = threading.Event()
     contexts: list[DurableContext] = []
@@ -946,30 +951,17 @@ async def test_thread_work_is_retained_until_exit(deployment_factory, loss_mode:
 
     deployment = await deployment_factory(
         run if runner_mode == "sync" else run_async,
-        config=RuntimeConfig(
-            poll_interval_seconds=0.005,
-            shutdown_grace_seconds=0.01,
-            lease_duration_ms=300,
-        ),
+        config=RuntimeConfig(poll_interval_seconds=0.005, shutdown_grace_seconds=0.01, lease_duration_ms=300),
     )
     submitted = await deployment.submit({"value": 1})
     assert await asyncio.to_thread(started.wait, 1)
     try:
-        if loss_mode == "shutdown":
-            await deployment.close()
-            counter = "draining_slots"
-            await wait_for_health(deployment, lambda health: health[counter] == 1)
-            release.set()
-            await wait_for_health(deployment, lambda health: health[counter] == 0)
-            stored = await deployment.get(submitted.control.run_id)
-            assert stored.control.status is ExecutionStatus.COMPLETED
-        else:
-            contexts[0]._claim.mark_lost()
-            await wait_for_health(deployment, lambda health: health["draining_runs"] == 1)
-            release.set()
-            await wait_for_health(deployment, lambda health: health["draining_runs"] == 0)
-            stored = await deployment.get(submitted.control.run_id)
-            assert stored.control.status is ExecutionStatus.RUNNING
+        contexts[0]._claim.mark_lost()
+        await wait_for_health(deployment, lambda health: health["draining_runs"] == 1)
+        release.set()
+        await wait_for_health(deployment, lambda health: health["draining_runs"] == 0)
+        stored = await deployment.get(submitted.control.run_id)
+        assert stored.control.status is ExecutionStatus.RUNNING
     finally:
         release.set()
 

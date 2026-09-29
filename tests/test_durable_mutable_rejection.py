@@ -218,7 +218,7 @@ def test_server_startup_fails_on_durable_wrapper(
     if patch is not None:
         # The patched loop step raises instead, so a skipped error cannot be masked by the real wrapper.
         shutil.rmtree(pipelines_dir / "durable")
-        (pipelines_dir / "calc.yml").write_text(Path("tests/test_files/yaml/sample_calc_pipeline.yml").read_text())
+        shutil.copy(Path(__file__).parent / "test_files/yaml/sample_calc_pipeline.yml", pipelines_dir / "calc.yml")
         monkeypatch.setattr(f"hayhooks.server.app.{patch}", _raise_mode_error)
     ready = False
 
