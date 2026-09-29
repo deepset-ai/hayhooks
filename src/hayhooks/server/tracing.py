@@ -12,11 +12,13 @@ This module centralizes:
 
 from __future__ import annotations
 
+import inspect
 import os
 import traceback
-from collections.abc import AsyncGenerator, Generator, Iterator, Mapping
+from collections.abc import AsyncGenerator, Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token, copy_context
+from functools import wraps
 from time import monotonic, time
 from typing import Any
 from uuid import uuid4
@@ -792,3 +794,38 @@ def trace_operation(
         raise
     else:
         operation.finish()
+
+
+def trace_durable_runner(
+    pipeline_name: str, revision: str, kind: str, runner: Callable[..., Any]
+) -> Callable[..., Any]:
+    """Wrap a durable runner so each attempt emits one span, keeping the runner sync or async."""
+
+    def trace_tags(context: Any) -> dict[str, Any]:
+        return build_trace_tags(
+            {
+                "hayhooks.transport": "durable",
+                "hayhooks.pipeline.name": pipeline_name,
+                "hayhooks.durable.execution_id": context.execution_id,
+                "hayhooks.durable.attempt": context.attempt,
+                "hayhooks.durable.kind": kind,
+                "hayhooks.durable.definition_revision": revision,
+            }
+        )
+
+    # Matches DurableDeployment, which also treats a callable object with an async __call__ as async.
+    if inspect.iscoroutinefunction(runner) or inspect.iscoroutinefunction(type(runner).__call__):
+
+        @wraps(runner)
+        async def traced_async(context: Any, request: Any) -> object:
+            with trace_operation(SPAN_DURABLE_ATTEMPT, tags=trace_tags(context)):
+                return await runner(context, request)
+
+        return traced_async
+
+    @wraps(runner)
+    def traced_sync(context: Any, request: Any) -> object:
+        with trace_operation(SPAN_DURABLE_ATTEMPT, tags=trace_tags(context)):
+            return runner(context, request)
+
+    return traced_sync

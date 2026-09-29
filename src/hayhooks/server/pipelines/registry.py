@@ -2,6 +2,7 @@ from typing import Any
 
 from hayhooks.server.exceptions import PipelineNotFoundError
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+from hayhooks.server.utils.module_loader import reject_durable_wrapper
 
 
 class _PipelineRegistry:
@@ -32,6 +33,7 @@ class _PipelineRegistry:
         Raises:
             ValueError: If a pipeline with the same name already exists.
             TypeError: If pipeline_wrapper is not a BasePipelineWrapper instance.
+            PipelineModeError: If pipeline_wrapper is durable.
         """
         if metadata is None:
             metadata = {}
@@ -43,6 +45,8 @@ class _PipelineRegistry:
         if not isinstance(pipeline_wrapper, BasePipelineWrapper):
             msg = f"Expected BasePipelineWrapper instance, got {type(pipeline_wrapper).__name__}"
             raise TypeError(msg)
+
+        reject_durable_wrapper(pipeline_wrapper)
 
         self._pipelines[name] = pipeline_wrapper
         self._metadata[name] = metadata

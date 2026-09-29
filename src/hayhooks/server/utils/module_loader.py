@@ -16,7 +16,7 @@ from typing import NoReturn, get_type_hints
 from pydantic import BaseModel
 
 from hayhooks.durable.context import DurableContext
-from hayhooks.server.exceptions import PipelineModuleLoadError, PipelineWrapperError
+from hayhooks.server.exceptions import PipelineModeError, PipelineModuleLoadError, PipelineWrapperError
 from hayhooks.server.logger import log
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.request_headers import accepts_request_headers
@@ -69,19 +69,25 @@ def unload_pipeline_modules(pipeline_name: str) -> None:
         del sys.modules[module_name]
 
 
-def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelineWrapper:
+def create_pipeline_wrapper_instance(pipeline_module: ModuleType, *, allow_durable: bool = True) -> BasePipelineWrapper:
     """
     Instantiate a `PipelineWrapper` from a loaded module and verify supported methods.
 
     Args:
         pipeline_module: The loaded module exposing a `PipelineWrapper` class.
+        allow_durable: Whether the caller can host durable wrappers. When ``False``, a durable
+            wrapper is rejected before its ``setup()`` runs and again after it.
 
     Returns:
         An initialized PipelineWrapper instance with capability flags set.
 
     Raises:
+        PipelineModeError: If the wrapper is durable and ``allow_durable`` is ``False``.
         PipelineWrapperError: If instantiation or setup fails, or if no supported run methods are implemented.
     """
+    if not allow_durable:
+        reject_durable_wrapper(pipeline_module.PipelineWrapper)
+
     try:
         pipeline_wrapper = pipeline_module.PipelineWrapper()
     except Exception as e:
@@ -97,6 +103,9 @@ def create_pipeline_wrapper_instance(pipeline_module: ModuleType) -> BasePipelin
         if settings.show_tracebacks:
             error_msg += f"\n{traceback.format_exc()}"
         raise PipelineWrapperError(error_msg) from e
+
+    if not allow_durable:
+        reject_durable_wrapper(pipeline_wrapper)
 
     # Set implementation flags for each supported method
     _set_method_implementation_flags(pipeline_wrapper)
@@ -272,12 +281,26 @@ def _set_method_implementation_flags(pipeline_wrapper: BasePipelineWrapper) -> N
         log.debug("pipeline_wrapper.{}: {}", attr_name, is_implemented)
 
 
-def _is_method_overridden(pipeline_wrapper: BasePipelineWrapper, method_name: str) -> bool:
+def reject_durable_wrapper(pipeline_wrapper: BasePipelineWrapper | type[BasePipelineWrapper]) -> None:
+    """
+    Reject a wrapper class or instance that implements a durable run method.
+
+    Raises:
+        PipelineModeError: If ``run_durable`` or ``run_durable_async`` is overridden.
+    """
+    if _is_method_overridden(pipeline_wrapper, "run_durable") or _is_method_overridden(
+        pipeline_wrapper, "run_durable_async"
+    ):
+        msg = "Durable pipeline wrappers cannot be deployed through live deployment"
+        raise PipelineModeError(msg)
+
+
+def _is_method_overridden(pipeline_wrapper: BasePipelineWrapper | type[BasePipelineWrapper], method_name: str) -> bool:
     """
     Check if a method is overridden in the wrapper compared to the base class.
 
     Args:
-        pipeline_wrapper: The wrapper instance to check.
+        pipeline_wrapper: The wrapper instance or class to check.
         method_name: The method name to check (e.g., "run_api").
 
     Returns:

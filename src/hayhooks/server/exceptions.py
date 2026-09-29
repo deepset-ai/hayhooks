@@ -10,6 +10,14 @@ class PipelineWrapperError(Exception):
     pass
 
 
+class PipelineModeError(PipelineWrapperError):
+    """Exception for wrappers whose execution mode the deployment path does not support."""
+
+
+class PipelineRollbackError(Exception):
+    """Exception for a failed deployment that could not restore the pipeline it replaced."""
+
+
 class PipelineYamlError(Exception):
     """Exception for errors loading pipeline YAML."""
 

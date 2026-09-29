@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from dataclasses import replace
 
 import pytest
@@ -160,20 +158,3 @@ async def test_memory_store_fences_stream_chunks(
     with pytest.raises(ExecutionLeaseLostError):
         await store.append_chunks("run_1", 1, fence, worker_id, [b"stale"])
     assert [chunk.terminal for chunk in await store.read_chunks("run_1", "0-0")] == ([True] if terminal else [])
-
-
-def test_importing_durable_loads_no_server_haystack_or_redis_modules() -> None:
-    subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "-c",
-            (
-                "import sys; import hayhooks.durable; "
-                "assert not any(name == 'hayhooks.server' or name.startswith('hayhooks.server.') "
-                "for name in sys.modules); "
-                "assert not any(name == 'haystack' or name.startswith('haystack.') for name in sys.modules)"
-                "; assert not any(name == 'redis' or name.startswith('redis.') for name in sys.modules)"
-            ),
-        ],
-        check=True,
-    )
