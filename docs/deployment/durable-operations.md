@@ -63,26 +63,64 @@ lease-loss risk. Application retry and run-attempt budgets are separate.
 
 ## Redis traffic
 
-Measured on Redis 8.6.3 for one 40-second streaming agent run (6 LLM turns of
-250 tokens, 5 tool calls, each with a cancellation check, a progress event, and
-a checkpoint) with one SSE viewer, a 20 KB input, and a 30 KB checkpoint:
+Measured on 2026-09-29 with `scripts/benchmark_durable_redis.py`, comparing
+`3e4509ed` (the engine before the Redis protocol changes) with `000f388b`
+(including the corruption preflight and viewer cleanup fixes). This synthetic
+runner uses the real runtime and SSE generator: six turns of 250 Haystack
+`StreamingChunk` objects paced over 40 seconds, five simulated tool boundaries,
+11 cancellation checks, six checkpoints, and five progress events. It has one
+SSE viewer, approximately 20 KB of input, 30 KB of checkpoint state, and a 5 KB
+result. Every run asserts delivery of all 1,500 chunks and the completion event.
 
-| Per run | Before | Now |
-|---|---:|---:|
-| Client commands | 14,392 | 1,307 |
-| Round trips | 8,034 | 862 |
-| Commands executed by Redis, including inside scripts | 14,385 | 4,147 |
-| Bytes on the wire | 24.4 MB | 0.84 MB |
-| Idle cost per deployment and process | 2 commands/s | 0.4 commands/s |
+Redis 8.6.3 results below are per-metric medians of three runs, using Python
+3.13.13, redis-py 8.1.0, Haystack 3.1.0, and a warm Lua script cache:
 
-These measurements precede the key-type preflight checks described below,
-which add reads inside scripts without adding client commands or round trips.
+| Per run | Before | After | Reduction |
+|---|---:|---:|---:|
+| Client commands | 13,695 | 1,279 | 90.7% |
+| Client exchanges (a pipeline counts once) | 7,783 | 846 | 89.1% |
+| Server commands, including inside Lua, excluding INFO probes | 13,693 | 4,154 | 69.7% |
+| RESP request + response bytes | 21.81 MB | 1.40 MB | 93.6% |
 
-Most of the remaining round trips are the roughly 400 chunk flushes (one every
-100 ms while tokens stream) and the matching viewer wake-ups. Public reads skip
-the input and checkpoint, so an inspection transfers only control, progress,
-and the public result, error, or wait payload. Redis 6.2 and Valkey 9.1 measure
-within a few commands of these numbers.
+Client commands ranged from 13,689–13,705 before and 1,276–1,280 after;
+exchange counts ranged from 7,781–7,786 and 844–847. Bytes use decimal MB and
+exclude TCP/IP headers. Exchanges are counted client sends, not a latency
+measurement. These results measure Redis traffic for this workload; application
+throughput and latency depend on workload, network, server, and viewer count.
+
+Single-run checks on the same host, with Redis 6.2 and Valkey in Docker:
+
+| Server | Client commands, before → after | Exchanges, before → after | RESP MB, before → after |
+|---|---:|---:|---:|
+| Redis 6.2.24 | 13,616 → 1,264 | 7,752 → 836 | 21.37 → 1.40 |
+| Valkey 9.1.2 | 13,599 → 1,265 | 7,745 → 837 | 21.36 → 1.40 |
+
+Scheduling changes the number of flushes and viewer wake-ups. Roughly 390 chunk
+flushes and their viewer reads account for most remaining exchanges. Public
+inspection skips input and checkpoint payloads; resume still reads them
+internally. The steady idle floor with one worker falls from 2 to 0.4 commands/s
+at the default intervals, excluding startup (20 versus 4 empty-index commands
+observed over a 10-second sampling window).
+
+To reproduce, start an isolated Redis server on localhost port 16479 with
+persistence disabled. From the repository root, using a Python environment
+with `hayhooks[durable]` and the versions above installed:
+
+```bash
+git worktree add --detach /tmp/hayhooks-redis-before 3e4509ed
+# Warm the current scripts before collecting measurements.
+PYTHONPATH=src python scripts/benchmark_durable_redis.py --duration 2
+for run in 1 2 3; do
+  PYTHONPATH=/tmp/hayhooks-redis-before/src python scripts/benchmark_durable_redis.py
+  PYTHONPATH=src python scripts/benchmark_durable_redis.py
+done
+```
+
+Use `--port` for another isolated Redis or Valkey instance. Server counts come
+from `INFO commandstats`, so other clients must not use that instance during
+measurement. A local TCP proxy counts RESP bytes in both directions; client
+instrumentation counts command batches. The benchmark removes only its own
+random key namespace afterward.
 
 Chunk appends, heartbeats, and owned transitions are each one Lua script call;
 an owned transition first reads control and Redis time in one pipelined round
@@ -108,15 +146,17 @@ so these checks reject corrupt targets before changing execution state.
 
 Streaming callbacks never wait on Redis. `stream_chunk` appends to a
 per-execution buffer bounded by `HAYHOOKS_DURABLE_MAX_STREAM_CHUNKS`, dropping
-the oldest entries, and one flusher sends the buffer through the chunk script at
-least every 100 ms. The buffer is flushed before the execution completes,
+the oldest entries. One flusher sleeps for 100 ms between flushes, then sends
+the buffer through the chunk script. Redis latency and scheduler delays add to
+that interval. The buffer is flushed before the execution completes,
 fails, suspends, schedules a retry, or releases its claim, so final chunks are
 visible before the terminal event. Delivery is best-effort: a failed flush
 drops those chunks without failing the execution.
 
-SSE viewers block on the chunk stream with `XREAD` instead of polling, so the
-flush interval is the display latency and an idle viewer issues no commands
-between flushes. Every terminal transition appends a marker entry that ends
+SSE viewers block on the chunk stream with `XREAD` instead of polling. Chunk
+delivery follows the next successful flush and viewer read. While blocked, a
+viewer sends no new commands until entries arrive or the 15-second timeout
+expires. Every terminal transition appends a marker entry that ends
 open streams, including cancellation of queued or waiting work, exhausted
 recovery, and deployments with chunk persistence disabled. After 15 seconds
 without entries, a stream sends a keepalive comment and reads control once, so
@@ -173,8 +213,9 @@ commands/second = deployments * processes * (
 )
 ```
 
-With the defaults that is 0.4 commands per second, or about 35,000 per day, per
-deployment and process. Shorter intervals trade Redis traffic for latency:
+With one worker and the default intervals, that is 0.4 commands per second, or
+about 35,000 per day, per deployment and process, excluding startup. Shorter
+intervals trade Redis traffic for latency:
 
 | Use case | Worker interval | Maintenance interval | Tradeoff |
 |---|---:|---:|---|
