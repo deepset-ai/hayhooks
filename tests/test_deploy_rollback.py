@@ -116,6 +116,33 @@ def test_file_cleanup_failure_does_not_block_rollback(app, pipelines_dir, monkey
     assert_old_pipeline_restored(app, pipelines_dir, old_wrapper)
 
 
+@pytest.mark.parametrize("source", ["files", "yaml"])
+def test_partial_backup_failure_restores_only_moved_sources(app, pipelines_dir, monkeypatch, source) -> None:
+    old_wrapper = registry.get("demo")
+    old_module = sys.modules["demo.pipeline_wrapper"]
+    yaml_file = pipelines_dir / "demo.yml"
+    yaml_file.write_text(SAMPLE_YAML)
+    replace = Path.replace
+
+    def fail_yaml_backup(path, target):
+        if path == yaml_file:
+            raise OSError("backup rename failed")
+        return replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", fail_yaml_backup)
+    with pytest.raises(OSError, match="backup rename failed"):
+        if source == "files":
+            deploy_utils.deploy_pipeline_files(
+                "demo", {"pipeline_wrapper.py": CANDIDATE_SOURCE}, app=app, overwrite=True
+            )
+        else:
+            deploy_utils.deploy_pipeline_yaml("demo", SAMPLE_YAML, app=app, overwrite=True)
+
+    assert sys.modules["demo.pipeline_wrapper"] is old_module
+    assert yaml_file.read_text() == SAMPLE_YAML
+    assert_old_pipeline_restored(app, pipelines_dir, old_wrapper)
+
+
 def test_failed_restore_raises_rollback_error_chained_from_the_original(app, monkeypatch) -> None:
     fail_route_additions(monkeypatch, "candidate route failed", "restore route failed")
 

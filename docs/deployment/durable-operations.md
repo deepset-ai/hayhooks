@@ -266,10 +266,12 @@ pinned revision so that it uses the matching resume schema.
 
 ## Shutdown handoff
 
-At the end of the shutdown grace, `close()` cancels async work and releases its
-claim: the run is queued again at once, without spending a run attempt, and a
-pending cancellation ends it `canceled`. Thread-backed work keeps its claim
-until it exits, and `wait_drained()` waits for it. On hosts that kill processes
+At the end of the shutdown grace, `close()` requests cancellation of async work.
+Once that work stops, it releases its claim: the run is queued again at once,
+without spending a run attempt, and a pending cancellation ends it `canceled`.
+Thread-backed work keeps its claim
+until it exits, as does async work that suppresses cancellation or awaits cleanup;
+`wait_drained()` waits for that retained work. On hosts that kill processes
 shortly after SIGTERM, set `RuntimeConfig(release_running_on_close=True)` so
 those claims are released too; see
 [Hosts with short kill deadlines](../features/durable-execution.md#hosts-with-short-kill-deadlines)

@@ -244,11 +244,13 @@ shows the complete integration.
   still runs, so a host that owns a shared Redis client awaits `wait_drained()`
   after `close()`, even when `close()` raised, and only then closes the client.
   Cancelling that wait does not cancel the work, and the wait can be repeated.
-- **Stopped work is handed back.** Async work that `close()` cancels at the end
-  of the grace releases its claim: its buffered chunks are flushed, and the run
-  returns to the queue at once, without spending a run attempt, so another
+- **Stopped work is handed back.** Async work that stops in response to
+  cancellation at the end of the grace releases its claim: its buffered chunks
+  are flushed, and the run returns to the queue at once, without spending a run attempt, so another
   process can claim it immediately. Progress since the last checkpoint is lost,
   as after a crash. A pending cancellation wins, and the run ends `canceled`.
+  A coroutine that suppresses cancellation or awaits cleanup keeps its claim,
+  heartbeats, and context access until it exits; `wait_drained()` waits for it.
 - **Thread-backed work keeps its claim.** Python cannot interrupt a thread, so
   a synchronous runner, or a Pipeline thread started by `run_pipeline_async`,
   keeps its claim, heartbeats, and Redis access after `close()`, and

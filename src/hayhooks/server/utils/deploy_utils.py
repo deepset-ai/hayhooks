@@ -215,23 +215,31 @@ def _backup_pipeline_files(pipeline_name: str) -> Path:
     pipelines_dir = Path(settings.pipelines_dir)
     pipelines_dir.mkdir(parents=True, exist_ok=True)
     backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
-    for path in (
-        pipelines_dir / pipeline_name,
-        pipelines_dir / f"{pipeline_name}.yml",
-        pipelines_dir / f"{pipeline_name}.yaml",
-    ):
-        if path.exists():
-            path.replace(backup_dir / path.name)
+    try:
+        for path in (
+            pipelines_dir / pipeline_name,
+            pipelines_dir / f"{pipeline_name}.yml",
+            pipelines_dir / f"{pipeline_name}.yaml",
+        ):
+            if path.exists():
+                path.replace(backup_dir / path.name)
+    except BaseException:
+        _restore_pipeline_files(pipeline_name, str(pipelines_dir), backup_dir, remove_candidate=False)
+        _cleanup_pipeline_backup(pipeline_name, backup_dir, rolled_back=True)
+        raise
     return backup_dir
 
 
-def _restore_pipeline_files(pipeline_name: str, pipelines_dir: str, backup_dir: Path) -> None:
+def _restore_pipeline_files(
+    pipeline_name: str, pipelines_dir: str, backup_dir: Path, *, remove_candidate: bool = True
+) -> None:
     """Best-effort rollback that retains any backup files it cannot restore."""
     clog = log.bind(pipeline_name=pipeline_name, backup_dir=str(backup_dir))
-    try:
-        remove_pipeline_files(pipeline_name, pipelines_dir)
-    except BaseException as error:
-        clog.bind(exception_type=type(error).__name__).error("Failed to remove candidate pipeline files")
+    if remove_candidate:
+        try:
+            remove_pipeline_files(pipeline_name, pipelines_dir)
+        except BaseException as error:
+            clog.bind(exception_type=type(error).__name__).error("Failed to remove candidate pipeline files")
     try:
         paths = tuple(backup_dir.iterdir())
     except BaseException as error:

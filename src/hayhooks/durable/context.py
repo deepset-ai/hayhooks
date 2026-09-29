@@ -78,6 +78,7 @@ class _ClaimedExecution:
         self.checkpoint = checkpoint
         self.lease_lost = asyncio.Event()
         self.event_loop = asyncio.get_running_loop()
+        self.application: asyncio.Future[object] | None = None
         # Exit futures of the engine threads still running this execution.
         self.threads: set[asyncio.Future[None]] = set()
         self._heartbeat_interval = heartbeat_interval
