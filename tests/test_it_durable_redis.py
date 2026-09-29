@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from redis.asyncio import ConnectionPool, Redis
 from redis.asyncio.client import Pipeline
 
+from hayhooks.durable import DurableContext, create_durable_router
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -29,12 +30,12 @@ from hayhooks.durable.engine import (
     Resume,
     Suspend,
 )
-from hayhooks.durable import DurableContext, create_durable_router
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys
 from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     PUBLIC_PAYLOAD_KINDS,
+    ChunkCursorExpiredError,
     ExecutionAdmissionError,
     ExecutionStoreCorruptionError,
     ExecutionStoreError,
@@ -346,6 +347,43 @@ async def test_changed_control_snapshot_retries_from_a_fresh_read(redis_store, m
     )
 
 
+@pytest.mark.parametrize(
+    "key", ["chunks", "progress", "runnable", "revision", "lease_expiry", "capacity-fraction", "capacity-leading-zero"]
+)
+async def test_corrupt_commit_targets_leave_every_key_unchanged(redis_store, key: str) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    if key.startswith("capacity-"):
+        await redis.hset(store.keys.capacity, "nonterminal", "1.5" if key == "capacity-fraction" else "01")
+    else:
+        target = {
+            "chunks": store.keys.chunks("run_1"),
+            "progress": store.keys.progress("run_1"),
+            "runnable": store.keys.runnable,
+            "revision": store.keys.runnable_revision("v1"),
+            "lease_expiry": store.keys.lease_expiry,
+        }[key]
+        await redis.set(target, b"wrong type")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionStoreError):
+        await store.transition("run_1", Complete(control.fence, "worker", 0, b"done", (b"progress",)))
+
+    assert await dump_keys(redis, store) == before
+
+
+async def test_heartbeat_rejects_a_corrupt_lease_index_without_renewing(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await redis.set(store.keys.lease_expiry, b"wrong type")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionStoreError):
+        await store.transition("run_1", Heartbeat(control.fence, "worker", 0, 20_000))
+
+    assert await dump_keys(redis, store) == before
+
+
 async def test_claim_ignores_unrelated_submissions_during_its_commit(redis_store, monkeypatch) -> None:
     _, store = redis_store
     await store.submit(contract_control("jobs"), b"input")
@@ -420,7 +458,7 @@ async def test_hot_paths_cost_one_round_trip(redis_store, round_trips) -> None:
     await asyncio.sleep(0.1)
     await store.append_chunks("run_1", 1, control.fence, "worker", [b"three"])
     assert [chunk.data for chunk in await waiting] == [b"three"]
-    wake_up = [("XRANGE", store.keys.chunks("run_1")), ("XREAD",)]
+    wake_up = [("XREAD",), ("XRANGE", store.keys.chunks("run_1"))]
     assert round_trips == [wake_up, wake_up, [("EVALSHA",)]]
 
     round_trips.clear()
@@ -470,14 +508,37 @@ async def test_blocking_reads_use_only_the_viewer_client(redis_store) -> None:
         await viewing.append_chunks("run_1", 1, control.fence, "worker", [b"chunk"])
         assert [chunk.data for chunk in await blocked] == [b"chunk"]
 
-        cancelled = asyncio.create_task(viewing.wait_chunks("run_1", (await blocked)[0].cursor, 5))
+        deployment = DurableDeployment("jobs", "v1", viewing, SSERequest, lambda _context, _request: None)
+        cancelled = asyncio.create_task(deployment.wait_chunks("run_1", (await blocked)[0].cursor, 5))
         await asyncio.sleep(0.05)
         cancelled.cancel()
         with pytest.raises(asyncio.CancelledError):
             await cancelled
+        await deployment.close()
+        assert await viewer.ping()
         assert await viewing.wait_chunks("run_1", CHUNK_CURSOR_START, 0.05) == await blocked
     finally:
         await viewer.aclose()
+
+
+async def test_wait_detects_history_trimmed_while_blocked(redis_store) -> None:
+    _, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b"old"])
+    cursor = (await store.read_chunks("run_1", CHUNK_CURSOR_START))[-1].cursor
+    waiting = asyncio.create_task(store.wait_chunks("run_1", cursor, 5))
+    await asyncio.sleep(0.05)
+
+    await store.append_chunks(
+        "run_1",
+        1,
+        control.fence,
+        "worker",
+        [str(index).encode() for index in range(2 * store.config.max_stream_chunks)],
+    )
+
+    with pytest.raises(ChunkCursorExpiredError):
+        await waiting
 
 
 async def test_commits_beyond_the_lua_argument_limit(redis_store) -> None:

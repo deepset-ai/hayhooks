@@ -181,7 +181,7 @@ class DurableContext:
 
     def __init__(self, claim: _ClaimedExecution) -> None:
         self._claim = claim
-        self._state = dict(claim.checkpoint.application_state)
+        self._state = claim.checkpoint.application_state.copy()
         self._resume_input = claim.checkpoint.resume_input
         self._resume_input_consumed = False
         self._pending_progress: list[bytes] = []
@@ -299,7 +299,7 @@ class DurableContext:
                 )
             )
             self._claim.checkpoint = snapshot
-            self._state = dict(snapshot.application_state)
+            self._state = snapshot.application_state.copy()
             del self._pending_progress[: len(plan.progress_events)]
             raise _ExecutionSuspendedError
 

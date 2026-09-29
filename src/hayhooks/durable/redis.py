@@ -134,6 +134,8 @@ if not now then
   return false
 end
 local deadline = string.format('%d', now + tonumber(ARGV[4]))
+-- A script error does not roll back writes, so validate the index before renewing control.
+redis.call('ZCARD', KEYS[2])
 redis.call('HSET', KEYS[1], 'lease_expires_at_ms', deadline)
 redis.call('ZADD', KEYS[2], deadline, ARGV[5])
 return redis.call('HGETALL', KEYS[1])
@@ -162,8 +164,25 @@ end
 if ARGV[1] ~= '' and not owned_now(KEYS[1], ARGV[1], ARGV[2], ARGV[3]) then
   return -1
 end
-if ARGV[4] == '1' and (tonumber(redis.call('HGET', KEYS[2], 'nonterminal')) or 0) < 1 then
-  return -2
+if ARGV[4] == '1' then
+  local capacity = redis.call('HGET', KEYS[2], 'nonterminal')
+  if not capacity or not string.match(capacity, '^[1-9]%d*$') or tonumber(capacity) > 2^53 - 1 then
+    return -2
+  end
+end
+-- Check each type-sensitive target before any mutation: Redis scripts have no rollback.
+-- HGETALL and HGET above already validate the control and capacity hashes.
+local checks = {RPUSH = 'LLEN', ZADD = 'ZCARD', ZREM = 'ZCARD', XADD = 'XLEN'}
+local checked = {}
+local probe = cursor
+while probe <= #ARGV do
+  local check = checks[ARGV[probe + 1]]
+  local key = KEYS[tonumber(ARGV[probe + 2])]
+  if check and not checked[key] then
+    redis.call(check, key)
+    checked[key] = true
+  end
+  probe = probe + 3 + tonumber(ARGV[probe])
 end
 while cursor <= #ARGV do
   local count = tonumber(ARGV[cursor])
@@ -560,10 +579,11 @@ class RedisExecutionStore:
         key = self.keys.chunks(run_id)
         with _redis_errors():
             async with self.viewer.pipeline(transaction=False) as pipe:
+                pipe.xread({key: after}, count=chunk_read_count(self.config), block=math.ceil(timeout * 1_000))
+                # Commands after a blocked XREAD run when it wakes, covering trimming during the wait.
                 if after != CHUNK_CURSOR_START:
                     pipe.xrange(key, min=after, max=after)
-                pipe.xread({key: after}, count=chunk_read_count(self.config), block=math.ceil(timeout * 1_000))
-                *cursor_check, streams = await pipe.execute()
+                streams, *cursor_check = await pipe.execute()
         if cursor_check and not cursor_check[0]:
             raise ChunkCursorExpiredError(after)
         return self._decode_chunks(streams[0][1] if streams else ())
@@ -669,7 +689,7 @@ class RedisExecutionStore:
             if outcome == _LEASE_LOST:
                 raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
             if outcome == _CAPACITY_UNDERFLOW:
-                raise ExecutionStoreCorruptionError("nonterminal execution counter would underflow")
+                raise ExecutionStoreCorruptionError("nonterminal execution counter is invalid or would underflow")
             if (
                 plan is not None
                 and current is not None

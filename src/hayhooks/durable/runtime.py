@@ -325,11 +325,12 @@ class DurableDeployment:
             return None
         wait = asyncio.create_task(self.store.wait_chunks(run_id, after, timeout))
         self._chunk_waits.add(wait)
+        wait.add_done_callback(self._chunk_waits.discard)
         try:
             await asyncio.wait({wait})
         finally:
             wait.cancel()
-            self._chunk_waits.discard(wait)
+            await asyncio.gather(wait, return_exceptions=True)
         return None if wait.cancelled() else wait.result()
 
     async def cancel(

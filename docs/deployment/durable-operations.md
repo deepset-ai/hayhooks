@@ -75,6 +75,9 @@ a checkpoint) with one SSE viewer, a 20 KB input, and a 30 KB checkpoint:
 | Bytes on the wire | 24.4 MB | 0.84 MB |
 | Idle cost per deployment and process | 2 commands/s | 0.4 commands/s |
 
+These measurements precede the key-type preflight checks described below,
+which add reads inside scripts without adding client commands or round trips.
+
 Most of the remaining round trips are the roughly 400 chunk flushes (one every
 100 ms while tokens stream) and the matching viewer wake-ups. Public reads skip
 the input and checkpoint, so an inspection transfers only control, progress,
@@ -96,6 +99,11 @@ committing cannot write after its lease expired or after another worker claimed
 the execution: the commit is rejected with nothing written. A changed snapshot
 is retried from a fresh read within the transaction retry budget.
 
+Before applying a transition, the script also checks the affected Redis key
+types and validates any capacity decrement. Heartbeats check the lease index
+before renewing control. Redis script errors do not roll back earlier writes,
+so these checks reject corrupt targets before changing execution state.
+
 ## Streaming
 
 Streaming callbacks never wait on Redis. `stream_chunk` appends to a
@@ -113,6 +121,9 @@ open streams, including cancellation of queued or waiting work, exhausted
 recovery, and deployments with chunk persistence disabled. After 15 seconds
 without entries, a stream sends a keepalive comment and reads control once, so
 it still ends on a terminal execution whose marker was lost.
+
+The cursor check follows the blocking read in the same pipeline, so history
+trimmed while a viewer waits produces a `gap` event as well.
 
 Each open viewer holds one Redis connection for up to 15 seconds. A portable
 host that serves SSE must pass a separate `viewer_client` to
