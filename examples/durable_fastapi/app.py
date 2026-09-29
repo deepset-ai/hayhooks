@@ -136,10 +136,14 @@ def owner_id(
     return hashlib.sha256(credentials.credentials.encode()).hexdigest()
 
 
-redis = Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=False)
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis = Redis.from_url(redis_url, decode_responses=False)
+# Blocking SSE reads use their own pool, so a surge of viewers cannot starve worker heartbeats.
+viewers = Redis.from_url(redis_url, decode_responses=False, max_connections=100)
 store = RedisExecutionStore(
     redis,
     DEPLOYMENT_NAME,
+    viewer_client=viewers,
     key_prefix=os.getenv("DURABLE_REDIS_KEY_PREFIX", "hayhooks:durable"),
 )
 pipeline = build_pipeline()
@@ -166,6 +170,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         await runtime.close()
+        await viewers.aclose()
         await redis.aclose()
 
 

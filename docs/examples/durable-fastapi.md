@@ -8,9 +8,12 @@ isolation, idempotent submission, SSE, and health reporting.
 
 ## Integration shape
 
-The application creates one Redis client, store, Haystack adapter, deployment,
-and runtime. FastAPI's lifespan starts workers only after Redis initialization
-succeeds and closes both workers and the client during shutdown.
+The application creates a worker Redis client, a separate viewer client for
+blocking SSE reads, a store, a Haystack adapter, a deployment, and a runtime.
+FastAPI's lifespan starts workers only after Redis initialization succeeds and
+closes workers, open streams, and both clients during shutdown. Size the viewer
+client's `max_connections` for the expected number of concurrent stream
+viewers: each open viewer holds one of its connections.
 
 ```python
 from contextlib import asynccontextmanager
@@ -27,7 +30,8 @@ from hayhooks.durable.haystack import HaystackDurableAdapter
 from hayhooks.durable.redis import RedisExecutionStore
 
 redis = Redis.from_url("redis://localhost:6379/0", decode_responses=False)
-store = RedisExecutionStore(redis, "document-analysis")
+viewers = Redis.from_url("redis://localhost:6379/0", decode_responses=False, max_connections=100)
+store = RedisExecutionStore(redis, "document-analysis", viewer_client=viewers)
 adapter = HaystackDurableAdapter(pipeline)
 deployment = DurableDeployment(
     "document-analysis",
@@ -51,6 +55,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         await runtime.close()
+        await viewers.aclose()
         await redis.aclose()
 
 

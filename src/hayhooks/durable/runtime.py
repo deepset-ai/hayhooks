@@ -58,6 +58,7 @@ from hayhooks.durable.store import (
     ExecutionStoreCorruptionError,
     ExecutionStoreError,
     StoredExecution,
+    StreamChunk,
     SubmissionResult,
 )
 
@@ -69,8 +70,8 @@ class RuntimeConfig:
     """Worker, lease, retry, and operational retry limits."""
 
     worker_concurrency: int = 1
-    poll_interval_seconds: float = 1.0
-    maintenance_interval_seconds: float = 1.0
+    poll_interval_seconds: float = 5.0
+    maintenance_interval_seconds: float = 5.0
     shutdown_grace_seconds: float = 5.0
     lease_duration_ms: int = 30_000
     max_run_attempts: int = 3
@@ -167,6 +168,10 @@ class DurableDeployment:
             type(runner).__call__
         )
         self._submission_condition = asyncio.Condition()
+        # Local submissions and shutdown wake idle workers before their next poll.
+        self._work_available = asyncio.Event()
+        self._chunk_waits: set[asyncio.Task[tuple[StreamChunk, ...]]] = set()
+        self._active_claims = 0
         self._admitted_submissions = 0
         self._accepting_submissions = False
         self._accepting_claims = False
@@ -216,14 +221,20 @@ class DurableDeployment:
             self._accepting_submissions = False
             self._accepting_claims = False
             self._generation += 1
+            self._work_available.set()
             await self._submission_condition.wait_for(lambda: self._admitted_submissions == 0)
 
     async def close(self) -> None:
-        """Stop maintenance and workers, retaining thread-backed work until it exits."""
+        """End open streams, stop maintenance and workers, and retain thread-backed work until it exits."""
         if self._closed:
             return
         await self.quiesce()
         self._closed = True
+        # Streams end without a terminal event so clients resume from their cursor, possibly elsewhere.
+        waits = tuple(self._chunk_waits)
+        for wait in waits:
+            wait.cancel()
+        await asyncio.gather(*waits, return_exceptions=True)
         if self._maintenance_task is not None:
             self._maintenance_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -282,7 +293,9 @@ class DurableDeployment:
                 raise RuntimeError(f"durable deployment '{self.name}' is not accepting submissions")
             self._admitted_submissions += 1
         try:
-            return await self.store.submit(control, input_payload)
+            submission = await self.store.submit(control, input_payload)
+            self._work_available.set()
+            return submission
         finally:
             async with self._submission_condition:
                 self._admitted_submissions -= 1
@@ -297,21 +310,27 @@ class DurableDeployment:
         enforce_owner: bool = True,
         allow_revision_mismatch: bool = False,
     ) -> StoredExecution:
-        """Read one execution after deployment, owner, and revision checks."""
-        stored = await self.store.read(run_id)
-        if (
-            stored is None
-            or stored.control.deployment != self.name
-            or (enforce_owner and stored.control.owner_id != owner_id)
-        ):
-            raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
-        if (
-            not allow_revision_mismatch
-            and not stored.control.terminal
-            and stored.control.definition_revision != self.revision
-        ):
-            raise InvalidExecutionTransitionError("execution definition revision is incompatible")
-        return stored
+        """Read one execution's public snapshot after deployment, owner, and revision checks."""
+        return self._authorize(
+            run_id,
+            await self.store.read_public(run_id),
+            owner_id=owner_id,
+            enforce_owner=enforce_owner,
+            allow_revision_mismatch=allow_revision_mismatch,
+        )
+
+    async def wait_chunks(self, run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...] | None:
+        """Wait for stream entries after ``after``; ``None`` once this deployment closes."""
+        if self._closed:
+            return None
+        wait = asyncio.create_task(self.store.wait_chunks(run_id, after, timeout))
+        self._chunk_waits.add(wait)
+        try:
+            await asyncio.wait({wait})
+        finally:
+            wait.cancel()
+            self._chunk_waits.discard(wait)
+        return None if wait.cancelled() else wait.result()
 
     async def cancel(
         self,
@@ -334,7 +353,13 @@ class DurableDeployment:
         enforce_owner: bool = True,
     ) -> TransitionPlan:
         """Validate resume input and atomically requeue a waiting execution."""
-        stored = await self.get(run_id, owner_id=owner_id, enforce_owner=enforce_owner)
+        stored = self._authorize(
+            run_id,
+            await self.store.read(run_id),
+            owner_id=owner_id,
+            enforce_owner=enforce_owner,
+            allow_revision_mismatch=False,
+        )
         if stored.control.status is not ExecutionStatus.WAITING:
             raise InvalidExecutionTransitionError("only waiting executions can resume")
         try:
@@ -353,7 +378,7 @@ class DurableDeployment:
         checkpoint = CheckpointEnvelope.model_validate(
             {**checkpoint.model_dump(mode="json"), "resume_input": resume_input}
         )
-        return await self.store.transition(
+        plan = await self.store.transition(
             run_id,
             Resume(
                 0,
@@ -362,9 +387,16 @@ class DurableDeployment:
                 expected_version=stored.control.version,
             ),
         )
+        self._work_available.set()
+        return plan
 
     async def health(self) -> dict[str, object]:
-        """Return local worker state plus bounded store counts."""
+        """
+        Return local worker state plus bounded store counts.
+
+        ``active_executions`` counts claims this process still runs, including
+        retained thread-backed work, so hosts can report durable work as busy.
+        """
         running = sum(not worker.done() for worker in self._workers.values())
         maintenance_running = self._maintenance_task is not None and not self._maintenance_task.done()
         worker_error_streak = max(self._worker_store_error_streaks.values(), default=0)
@@ -381,6 +413,7 @@ class DurableDeployment:
             "running_slots": running,
             "draining_slots": sum(not worker.done() for worker in self._draining_workers),
             "draining_runs": sum(not run.done() for run in self._draining_runs),
+            "active_executions": self._active_claims + sum(not run.done() for run in self._draining_runs),
             "maintenance_running": maintenance_running,
             "accepting": self.accepting,
             "store_error_streak": max(worker_error_streak, self._maintenance_error_streak),
@@ -391,6 +424,29 @@ class DurableDeployment:
             health["healthy"] = False
             health["operational_error"] = type(error).__name__
         return health
+
+    def _authorize(
+        self,
+        run_id: str,
+        stored: StoredExecution | None,
+        *,
+        owner_id: str | None,
+        enforce_owner: bool,
+        allow_revision_mismatch: bool,
+    ) -> StoredExecution:
+        if (
+            stored is None
+            or stored.control.deployment != self.name
+            or (enforce_owner and stored.control.owner_id != owner_id)
+        ):
+            raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
+        if (
+            not allow_revision_mismatch
+            and not stored.control.terminal
+            and stored.control.definition_revision != self.revision
+        ):
+            raise InvalidExecutionTransitionError("execution definition revision is incompatible")
+        return stored
 
     def _ensure_workers(self) -> None:
         for slot, worker in tuple(self._workers.items()):
@@ -419,10 +475,11 @@ class DurableDeployment:
     async def _maintenance(self, generation: int) -> None:
         while self._accepting_claims and generation == self._generation:
             try:
-                await self.store.maintain(
+                if await self.store.maintain(
                     max_run_attempts=self.config.max_run_attempts,
                     attempts_error=self._attempts_error,
-                )
+                ):
+                    self._work_available.set()
             except asyncio.CancelledError:
                 raise
             except ExecutionStoreError as error:
@@ -439,6 +496,7 @@ class DurableDeployment:
             if control is None:
                 continue
 
+            self._active_claims += 1
             try:
                 stored = await self._read_claimed_execution(control, worker_id)
                 if stored is None:
@@ -454,6 +512,8 @@ class DurableDeployment:
                 continue
             except ExecutionStoreError as error:
                 await self._backoff_worker(worker_id, error, "transition")
+            finally:
+                self._active_claims -= 1
 
     async def _claim_next_execution(self, worker_id: str) -> ExecutionControl | None:
         try:
@@ -472,7 +532,10 @@ class DurableDeployment:
             return None
         self._worker_store_error_streaks[worker_id] = 0
         if claimed is None:
-            await asyncio.sleep(self.config.poll_interval_seconds)
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._work_available.wait(), self.config.poll_interval_seconds)
+            # Consume the wake-up here, so one that arrived while every worker was busy is not lost.
+            self._work_available.clear()
             return None
         control = claimed.next_control
         return control if control.status is ExecutionStatus.RUNNING else None
@@ -570,19 +633,7 @@ class DurableDeployment:
             except DurableExecutionCancelledError:
                 await self._acknowledge_cancellation(claim, context, worker_id)
             except _RetryRequestedError as error:
-                exponent = min(claim.control.application_retry_count, 30)
-                delay = self.config.retry_base_delay_seconds * (2**exponent) if error.delay is None else error.delay
-                await claim.transition(
-                    ScheduleRetry(
-                        claim.control.fence,
-                        worker_id,
-                        0,
-                        math.ceil(min(delay, self.config.retry_max_delay_seconds) * 1_000),
-                        self.config.max_application_retries,
-                        self._encode_exception(error, retryable=True),
-                        error.progress_events,
-                    )
-                )
+                await self._schedule_retry(claim, error, worker_id)
             except ExecutionPayloadSizeError as error:
                 await claim.transition(
                     Fail(
@@ -605,6 +656,25 @@ class DurableDeployment:
                         tuple(context._pending_progress),
                     )
                 )
+
+    async def _schedule_retry(self, claim: _ClaimedExecution, error: _RetryRequestedError, worker_id: str) -> None:
+        """Requeue with backoff and wake a local worker once the retry is due."""
+        exponent = min(claim.control.application_retry_count, 30)
+        delay = self.config.retry_base_delay_seconds * (2**exponent) if error.delay is None else error.delay
+        delay_ms = math.ceil(min(delay, self.config.retry_max_delay_seconds) * 1_000)
+        plan = await claim.transition(
+            ScheduleRetry(
+                claim.control.fence,
+                worker_id,
+                0,
+                delay_ms,
+                self.config.max_application_retries,
+                self._encode_exception(error, retryable=True),
+                error.progress_events,
+            )
+        )
+        if plan.next_control.status is ExecutionStatus.QUEUED:
+            asyncio.get_running_loop().call_later(delay_ms / 1_000, self._work_available.set)
 
     async def _acknowledge_cancellation(
         self,

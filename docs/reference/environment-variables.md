@@ -125,8 +125,8 @@ local development or tests.
 | `HAYHOOKS_DURABLE_MAX_STREAM_CHUNKS` | `100` | Retained SSE display chunks; `0` disables chunks |
 | `HAYHOOKS_DURABLE_MAX_STREAM_CHUNK_BYTES` | `64000` | Maximum encoded display chunk |
 | `HAYHOOKS_DURABLE_WORKER_CONCURRENCY` | `1` | Worker slots per durable deployment and process |
-| `HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS` | `1.0` | Maximum ordinary pickup delay while an idle worker is polling |
-| `HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS` | `1.0` | Maximum additional expired-lease recovery delay |
+| `HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS` | `5.0` | Maximum pickup delay for work submitted on another replica; local submissions wake idle workers immediately |
+| `HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS` | `5.0` | Maximum additional expired-lease recovery delay |
 | `HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS` | `5.0` | Grace period for worker shutdown |
 | `HAYHOOKS_DURABLE_LEASE_DURATION_MS` | `30000` | Fenced claim lease duration |
 | `HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS` | `1500` | Minimum lease time remaining for owned commits |

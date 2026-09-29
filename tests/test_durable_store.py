@@ -21,8 +21,10 @@ from hayhooks.durable.store import ExecutionStoreCorruptionError, MemoryExecutio
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
+    assert_raced_recovery_contract,
     assert_revision_routing_contract,
     assert_store_contract,
+    assert_terminal_markers_contract,
     contract_control,
 )
 
@@ -48,6 +50,16 @@ async def test_memory_store_matches_contract(clock: Clock) -> None:
 async def test_memory_store_routes_claims_by_revision(clock: Clock) -> None:
     store = MemoryExecutionStore("jobs", clock=clock, config=CONTRACT_CONFIG)
     await assert_revision_routing_contract(store)
+
+
+@pytest.mark.parametrize("max_stream_chunks", [CONTRACT_CONFIG.max_stream_chunks, 0], ids=["chunks", "no-chunks"])
+async def test_memory_store_marks_every_terminal_path(max_stream_chunks: int) -> None:
+    store = MemoryExecutionStore("jobs", config=replace(CONTRACT_CONFIG, max_stream_chunks=max_stream_chunks))
+    await assert_terminal_markers_contract(store)
+
+
+async def test_memory_store_skips_raced_lease_recovery() -> None:
+    await assert_raced_recovery_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
 
 
 def test_chunk_reads_are_bounded_by_bytes_entries_and_retention() -> None:
@@ -146,8 +158,8 @@ async def test_memory_store_fences_stream_chunks(
         await store.transition("run_1", Complete(1, "worker", 0, b"done"))
 
     with pytest.raises(ExecutionLeaseLostError):
-        await store.append_chunk("run_1", 1, fence, worker_id, b"stale")
-    assert await store.read_chunks("run_1", "0-0") == ()
+        await store.append_chunks("run_1", 1, fence, worker_id, [b"stale"])
+    assert [chunk.terminal for chunk in await store.read_chunks("run_1", "0-0")] == ([True] if terminal else [])
 
 
 def test_importing_durable_loads_no_server_haystack_or_redis_modules() -> None:

@@ -163,7 +163,7 @@ async def context_factory():
 
     for claim in reversed(claims):
         await claim.__aexit__(None, None, None)
-        assert claim._heartbeat_task is not None and claim._heartbeat_task.done()
+        assert claim._tasks and all(task.done() for task in claim._tasks)
 
 
 @pytest.fixture

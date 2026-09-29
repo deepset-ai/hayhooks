@@ -5,7 +5,7 @@ HTTP request has returned and recover after a Hayhooks process restart. Redis
 stores the execution state; workers can resume from explicit checkpoints
 without restarting completed Pipeline work or an Agent loop from the beginning.
 
-Install the optional dependencies and start Redis 6.2 or newer:
+Install the optional dependencies and start Redis 6.2 or newer, or Valkey 7.2 or newer:
 
 ```bash
 pip install "hayhooks[durable]"
@@ -76,9 +76,11 @@ request model, a runner, a Haystack adapter, and an execution store.
 3. `DurableContext` checkpoints Pipeline or Agent state, application state,
    progress, waits, and retry decisions. Redis applies every lifecycle change
    atomically through the same state reducer used by the memory store.
-4. A worker may commit only while it still owns the current fence. After a
-   crash, lease maintenance requeues the execution or fails it when the run
-   attempt budget is exhausted.
+4. A worker may commit only while it still owns the current fence. Each
+   worker-owned Redis write, including heartbeats and stream chunks, re-checks
+   ownership and Redis time against the lease inside one script before it
+   writes. After a crash, lease maintenance requeues the execution or fails it
+   when the run attempt budget is exhausted.
 5. Inspection and SSE read Redis-backed state. They do not depend on the worker
    or client connection that originally submitted the work.
 
@@ -168,9 +170,11 @@ for approval, retry, cancellation, and checkpoint recovery.
 - **Buffered progress:** `report_progress` is persisted with the next
   checkpoint or terminal transition. Call `checkpoint` when progress must be
   durable immediately.
-- **Display-only streaming:** SSE chunks are stored immediately but bounded and
-  may be dropped without failing the execution. The terminal result remains the
-  source of truth.
+- **Display-only streaming:** streaming callbacks never wait on Redis. Chunks
+  are buffered and flushed at least every 100 ms, and always before the run
+  leaves `running`, so the final chunks precede the terminal event. They are
+  bounded and may be dropped without failing the execution. The terminal result
+  remains the source of truth.
 
 Queued, running, and waiting executions are pinned to their wrapper revision.
 Workers claim only a matching revision, and Hayhooks rejects overwrite or
@@ -185,10 +189,13 @@ The request and resume models appear in OpenAPI. See the
 [API reference](../reference/api-reference.md#durable-execution) for the route
 and status-code contract.
 
-SSE streams are reattachable with `Last-Event-ID`. A `gap` event means that the
-requested bounded history has expired and the retained tail follows. A terminal
-`completed`, `failed`, or `canceled` event contains the authoritative execution
-projection.
+SSE streams are reattachable with `Last-Event-ID`. Viewers block on the chunk
+stream and receive chunks as soon as a worker flushes them. A `gap` event means
+that the requested bounded history has expired and the retained tail follows. A
+terminal `completed`, `failed`, or `canceled` event contains the authoritative
+execution projection. A stream that ends without a terminal event, for example
+when its deployment closes, can be resumed with its last cursor on any
+replica.
 
 Hayhooks itself uses bearer-ID access: possession of a random execution ID
 grants access. An embedded FastAPI host should pass an `owner_id_dependency` to

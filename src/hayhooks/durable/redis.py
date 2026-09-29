@@ -1,5 +1,5 @@
 """Redis implementation of the durable execution store."""
-# ruff: noqa: C901, EM101, EM102, PLR0912, PLR0913, PLR0915
+# ruff: noqa: C901, EM101, EM102, PLR0912, PLR0913
 
 from __future__ import annotations
 
@@ -8,9 +8,10 @@ import hashlib
 import math
 import random
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import fields, replace
+from itertools import chain
 from typing import Any, cast
 
 from loguru import logger as log
@@ -31,18 +32,20 @@ from hayhooks.durable.engine import (
     ExecutionStatus,
     Heartbeat,
     InvalidExecutionTransitionError,
+    LeaseIndexUpdate,
     PayloadKind,
     ProgressEvent,
     RecoverExpiredLease,
     TransitionPlan,
     decide,
-    require_owned,
     submission_plan,
     validate_run_id,
 )
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
+    LEASE_COMMANDS,
     MAINTENANCE_BATCH_SIZE,
+    PUBLIC_PAYLOAD_KINDS,
     ChunkCursorExpiredError,
     ExecutionAdmissionError,
     ExecutionContentionError,
@@ -89,6 +92,90 @@ _MAX_SAFE_INTEGER = 2**53 - 1
 _DEFAULT_TRANSACTION_RETRIES = 8
 _DEFAULT_TRANSACTION_BACKOFF_MS = 25
 _PROGRESS_SEQUENCE_BYTES = 8
+_MAX_COMMAND_VALUES = 1_000
+
+# Refusals of the guarded apply script, which returns 1 once it commits.
+_STALE_SNAPSHOT, _LEASE_LOST, _CAPACITY_UNDERFLOW = 0, -1, -2
+
+# A Redis command as (name, key, *arguments); scripts receive the key through KEYS.
+_Command = tuple[Any, ...]
+
+# Returns Redis TIME in milliseconds while the worker still owns the lease with room for the safety margin.
+_OWNED_LUA = """
+local function owned_now(control, worker, fence, margin)
+  local lease = redis.call('HMGET', control, 'status', 'lease_owner', 'fence', 'lease_expires_at_ms')
+  if lease[1] ~= 'running' or lease[2] ~= worker or lease[3] ~= fence then
+    return nil
+  end
+  local time = redis.call('TIME')
+  local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+  if now < tonumber(lease[4]) - tonumber(margin) then
+    return now
+  end
+  return nil
+end
+"""
+
+# KEYS: control, chunks. ARGV: worker, fence, attempt, safety margin, maxlen, chunk...
+_APPEND_CHUNKS_LUA = """
+if not owned_now(KEYS[1], ARGV[1], ARGV[2], ARGV[4]) or redis.call('HGET', KEYS[1], 'run_attempt') ~= ARGV[3] then
+  return 0
+end
+for index = 6, #ARGV do
+  redis.call('XADD', KEYS[2], 'MAXLEN', ARGV[5], '*', 'attempt', ARGV[3], 'data', ARGV[index])
+end
+return 1
+"""
+
+# KEYS: control, lease expiry. ARGV: worker, fence, safety margin, lease duration, lease member.
+_HEARTBEAT_LUA = """
+local now = owned_now(KEYS[1], ARGV[1], ARGV[2], ARGV[3])
+if not now then
+  return false
+end
+local deadline = string.format('%d', now + tonumber(ARGV[4]))
+redis.call('HSET', KEYS[1], 'lease_expires_at_ms', deadline)
+redis.call('ZADD', KEYS[2], deadline, ARGV[5])
+return redis.call('HGETALL', KEYS[1])
+"""
+
+# KEYS: control, capacity, then every key the commands touch.
+# ARGV: worker ('' when unowned), fence, safety margin, releases capacity (0/1), snapshot field count,
+# the snapshot field/value pairs, then each command as argument count, name, key index, arguments.
+_APPLY_LUA = """
+local stored = redis.call('HGETALL', KEYS[1])
+local size = tonumber(ARGV[5])
+if #stored ~= 2 * size then
+  return 0
+end
+local fields = {}
+for index = 1, #stored, 2 do
+  fields[stored[index]] = stored[index + 1]
+end
+local cursor = 6
+for _ = 1, size do
+  if fields[ARGV[cursor]] ~= ARGV[cursor + 1] then
+    return 0
+  end
+  cursor = cursor + 2
+end
+if ARGV[1] ~= '' and not owned_now(KEYS[1], ARGV[1], ARGV[2], ARGV[3]) then
+  return -1
+end
+if ARGV[4] == '1' and (tonumber(redis.call('HGET', KEYS[2], 'nonterminal')) or 0) < 1 then
+  return -2
+end
+while cursor <= #ARGV do
+  local count = tonumber(ARGV[cursor])
+  local command = {ARGV[cursor + 1], KEYS[tonumber(ARGV[cursor + 2])]}
+  for index = cursor + 3, cursor + 2 + count do
+    command[#command + 1] = ARGV[index]
+  end
+  redis.call(unpack(command))
+  cursor = cursor + 3 + count
+end
+return 1
+"""
 
 
 class RedisKeys:
@@ -218,13 +305,20 @@ def decode_control(values: Mapping[str | bytes, str | bytes | int], *, expected_
 
 
 class RedisExecutionStore:
-    """Cross-process durable storage using optimistic Redis transactions."""
+    """
+    Cross-process durable storage using Lua-guarded Redis commits.
+
+    Blocking stream reads hold a connection for up to their timeout, so hosts
+    that serve more than one viewer pass a separate ``viewer_client`` to keep
+    viewers from starving worker heartbeats of connections.
+    """
 
     def __init__(
         self,
         redis: Any,
         deployment: str,
         *,
+        viewer_client: Any | None = None,
         config: StoreConfig | None = None,
         key_prefix: str = "hayhooks:durable",
         transaction_retries: int = _DEFAULT_TRANSACTION_RETRIES,
@@ -232,16 +326,22 @@ class RedisExecutionStore:
     ) -> None:
         if transaction_retries < 1 or transaction_backoff_ms < 0:
             raise ValueError("transaction retries must be positive and backoff cannot be negative")
-        pool = getattr(redis, "connection_pool", None)
-        encoder = pool.get_encoder() if pool is not None and hasattr(pool, "get_encoder") else None
-        if getattr(encoder, "decode_responses", False) is True:
-            raise ValueError("Redis durable storage requires decode_responses=False")
+        viewer = redis if viewer_client is None else viewer_client
+        for client in (redis, viewer):
+            pool = getattr(client, "connection_pool", None)
+            encoder = pool.get_encoder() if pool is not None and hasattr(pool, "get_encoder") else None
+            if getattr(encoder, "decode_responses", False) is True:
+                raise ValueError("Redis durable storage requires decode_responses=False")
         self.redis = redis
+        self.viewer = viewer
         self.deployment = deployment
         self.config = config or StoreConfig()
         self.keys = RedisKeys(key_prefix, deployment)
         self._transaction_retries = transaction_retries
         self._transaction_backoff_ms = transaction_backoff_ms
+        self._apply_script = redis.register_script(_OWNED_LUA + _APPLY_LUA)
+        self._heartbeat_script = redis.register_script(_OWNED_LUA + _HEARTBEAT_LUA)
+        self._append_chunks_script = redis.register_script(_OWNED_LUA + _APPEND_CHUNKS_LUA)
 
     async def initialize(self) -> None:
         with _redis_errors():
@@ -251,8 +351,9 @@ class RedisExecutionStore:
             version = tuple(int(piece) for piece in _text(raw_version).split(".")[:2])
         except (AttributeError, TypeError, ValueError) as error:
             raise ExecutionStoreError("unable to validate Redis server capabilities") from error
+        # Valkey reports a compatible redis_version (7.2.4) next to its own valkey_version.
         if version < (6, 2):
-            raise ExecutionStoreError("durable Redis requires Redis 6.2 or later")
+            raise ExecutionStoreError("durable Redis requires Redis 6.2 or newer, or Valkey 7.2 or newer")
 
     async def submit(self, control: ExecutionControl, input_payload: bytes) -> SubmissionResult:
         if control.deployment != self.deployment:
@@ -292,10 +393,9 @@ class RedisExecutionStore:
                                 raise ExecutionIdempotencyConflictError("idempotency key is bound to different work")
                             if not current_values:
                                 raise ExecutionStoreCorruptionError("idempotency binding points to a missing execution")
-                            existing = decode_control(current_values, expected_run_id=binding["run_id"])
-                            if existing.deployment != self.deployment:
-                                raise ExecutionStoreCorruptionError("control belongs to another deployment")
-                            return SubmissionResult(created=False, control=existing)
+                            return SubmissionResult(
+                                created=False, control=self._decode(current_values, binding["run_id"])
+                            )
                         if await pipe.exists(control_key):
                             raise ExecutionIdempotencyConflictError("run ID is bound to a different idempotency key")
                         if self.config.max_nonterminal_executions:
@@ -304,7 +404,7 @@ class RedisExecutionStore:
                             if count >= self.config.max_nonterminal_executions:
                                 raise ExecutionAdmissionError("nonterminal execution limit reached")
 
-                        now_ms = await self._time_ms(pipe)
+                        now_ms = _milliseconds(await pipe.time())
                         candidate = replace(control, created_at_ms=now_ms, updated_at_ms=now_ms)
                         plan = submission_plan(candidate, input_payload)
                         pipe.multi()
@@ -312,7 +412,8 @@ class RedisExecutionStore:
                             idempotency_key,
                             mapping={"run_id": candidate.run_id, "binding": candidate.idempotency_binding_digest},
                         )
-                        self._apply_plan(pipe, candidate, plan, new_submission=True)
+                        for command in self._plan_commands(candidate, plan, new_submission=True):
+                            pipe.execute_command(*command)
                         await pipe.execute()
                         log.bind(run_id=candidate.run_id, deployment=candidate.deployment).debug(
                             "Submitted durable execution"
@@ -323,55 +424,10 @@ class RedisExecutionStore:
         raise ExecutionContentionError("submission transaction retry budget exhausted")
 
     async def read(self, run_id: str) -> StoredExecution | None:
-        control_key = self.keys.control(run_id)
-        with _redis_errors():
-            for attempt in range(self._transaction_retries):
-                async with self.redis.pipeline(transaction=True) as pipe:
-                    try:
-                        await pipe.watch(control_key)
-                        values = await pipe.hgetall(control_key)
-                        if not values:
-                            return None
-                        control = decode_control(values, expected_run_id=run_id)
-                        if control.deployment != self.deployment:
-                            raise ExecutionStoreCorruptionError("control belongs to another deployment")
-                        pipe.multi()
-                        for kind in PayloadKind:
-                            pipe.get(self.keys.payload(run_id, kind))
-                        pipe.lrange(self.keys.progress(run_id), 0, -1)
-                        snapshot = await pipe.execute()
-                        payloads: dict[PayloadKind, bytes] = {}
-                        for kind, payload in zip(PayloadKind, snapshot[:-1], strict=True):
-                            if payload is None:
-                                continue
-                            if not isinstance(payload, bytes) or len(payload) > self.config.max_payload_bytes:
-                                raise ExecutionStoreCorruptionError(f"stored {kind.value} payload is invalid")
-                            payloads[kind] = payload
-                        progress = []
-                        for entry in snapshot[-1]:
-                            if not isinstance(entry, bytes) or len(entry) < _PROGRESS_SEQUENCE_BYTES:
-                                raise ExecutionStoreCorruptionError("stored progress event is invalid")
-                            event = ProgressEvent(
-                                int.from_bytes(entry[:_PROGRESS_SEQUENCE_BYTES], "big"),
-                                entry[_PROGRESS_SEQUENCE_BYTES:],
-                            )
-                            if event.sequence < 1 or len(event.data) > self.config.max_progress_event_bytes:
-                                raise ExecutionStoreCorruptionError("stored progress event is invalid")
-                            progress.append(event)
-                        sequences = [event.sequence for event in progress]
-                        if (control.progress_sequence and not progress) or sequences != list(
-                            range(
-                                control.progress_sequence - len(progress) + 1,
-                                control.progress_sequence + 1,
-                            )
-                        ):
-                            raise ExecutionStoreCorruptionError("progress sequence contradicts control state")
-                        stored = StoredExecution(control, payloads, tuple(progress))
-                        validate_stored_execution(stored)
-                        return stored
-                    except WatchError:
-                        await self._backoff(attempt)
-        raise ExecutionContentionError("read transaction retry budget exhausted")
+        return await self._read(run_id, private=True)
+
+    async def read_public(self, run_id: str) -> StoredExecution | None:
+        return await self._read(run_id, private=False)
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         with _redis_errors():
@@ -382,13 +438,9 @@ class RedisExecutionStore:
     async def claim(self, command: Claim) -> TransitionPlan | None:
         if command.lease_duration_ms <= self.config.lease_commit_safety_ms:
             raise ValueError("lease duration must exceed the commit safety margin")
+        candidate_index = self.keys.runnable_revision(command.worker_revision)
         with _redis_errors():
-            entries = await self.redis.zrange(
-                self.keys.runnable_revision(command.worker_revision),
-                0,
-                0,
-                withscores=True,
-            )
+            entries = await self.redis.zrange(candidate_index, 0, 0, withscores=True)
             if not entries:
                 return None
             try:
@@ -398,17 +450,18 @@ class RedisExecutionStore:
                 available_at_ms = _index_score_ms(raw_score, "runnable score")
             except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError) as error:
                 raise ExecutionStoreCorruptionError("runnable index contains an invalid member or score") from error
-            now_ms = await self._time_ms(self.redis)
+            now_ms = _milliseconds(await self.redis.time())
             if available_at_ms > now_ms:
                 return None
-            return await self._transition(run_id, command, candidate=True)
+            return await self._transition(run_id, command, candidate_index=candidate_index)
 
     async def maintain(
         self,
         *,
         max_run_attempts: int,
         attempts_error: bytes,
-    ) -> None:
+    ) -> int:
+        requeued = 0
         with _redis_errors():
             entries = await self.redis.zrange(
                 self.keys.lease_expiry,
@@ -417,7 +470,7 @@ class RedisExecutionStore:
                 withscores=True,
             )
             if not entries:
-                return
+                return requeued
             valid_entries: list[tuple[str | bytes | int, str, int, int]] = []
             for member, raw_deadline in entries:
                 try:
@@ -432,13 +485,13 @@ class RedisExecutionStore:
                     continue
                 valid_entries.append((member, run_id, fence, deadline))
             if not valid_entries:
-                return
-            now_ms = await self._time_ms(self.redis)
+                return requeued
+            now_ms = _milliseconds(await self.redis.time())
             for member, run_id, fence, deadline in valid_entries:
                 if deadline > now_ms:
                     break
                 try:
-                    await self.transition(
+                    plan = await self.transition(
                         run_id,
                         RecoverExpiredLease(
                             0,
@@ -450,45 +503,35 @@ class RedisExecutionStore:
                     )
                 except ExecutionNotFoundError:
                     await self.redis.zrem(self.keys.lease_expiry, member)
+                except InvalidExecutionTransitionError:
+                    continue
+                else:
+                    requeued += plan.next_control.status is ExecutionStatus.QUEUED
+        return requeued
 
-    async def append_chunk(self, run_id: str, attempt: int, fence: int, worker_id: str, data: bytes) -> None:
+    async def append_chunks(
+        self, run_id: str, attempt: int, fence: int, worker_id: str, chunks: Sequence[bytes]
+    ) -> None:
         if not self.config.max_stream_chunks:
             return
-        validate_run_id(run_id)
         if not 0 <= attempt <= _MAX_SAFE_INTEGER:
             raise ValueError("stream chunk attempt must be a non-negative safe integer")
-        validate_payload_size("stream chunk", data, self.config.max_stream_chunk_bytes)
-        control_key = self.keys.control(run_id)
+        for data in chunks:
+            validate_payload_size("stream chunk", data, self.config.max_stream_chunk_bytes)
         with _redis_errors():
-            for transaction_attempt in range(self._transaction_retries):
-                async with self.redis.pipeline(transaction=True) as pipe:
-                    try:
-                        await pipe.watch(control_key)
-                        values = await pipe.hgetall(control_key)
-                        if not values:
-                            raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
-                        control = decode_control(values, expected_run_id=run_id)
-                        if control.deployment != self.deployment or control.run_attempt != attempt:
-                            raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
-                        require_owned(
-                            control,
-                            fence,
-                            worker_id,
-                            await self._time_ms(pipe),
-                            self.config.lease_commit_safety_ms,
-                        )
-                        pipe.multi()
-                        pipe.xadd(
-                            self.keys.chunks(run_id),
-                            {"attempt": attempt, "data": data},
-                            maxlen=self.config.max_stream_chunks,
-                            approximate=False,
-                        )
-                        await pipe.execute()
-                        return
-                    except WatchError:
-                        await self._backoff(transaction_attempt)
-        raise ExecutionContentionError("stream chunk transaction retry budget exhausted")
+            appended = await self._append_chunks_script(
+                keys=[self.keys.control(run_id), self.keys.chunks(run_id)],
+                args=[
+                    worker_id,
+                    fence,
+                    attempt,
+                    self.config.lease_commit_safety_ms,
+                    self.config.max_stream_chunks,
+                    *chunks,
+                ],
+            )
+        if not appended:
+            raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
 
     async def read_chunks(self, run_id: str, after: str) -> tuple[StreamChunk, ...]:
         validate_run_id(run_id)
@@ -507,27 +550,23 @@ class RedisExecutionStore:
                 if not entries or _text(entries[0][0]) != after:
                     raise ChunkCursorExpiredError(after)
                 entries = entries[1:]
+        return self._decode_chunks(entries)
 
-        chunks = []
-        for entry_id, raw_fields in entries:
-            try:
-                values = {_text(key): value for key, value in raw_fields.items()}
-                if (
-                    values.keys() != {"attempt", "data"}
-                    or not isinstance(values["data"], bytes)
-                    or len(values["data"]) > self.config.max_stream_chunk_bytes
-                ):
-                    raise ValueError
-                chunks.append(
-                    StreamChunk(
-                        _text(entry_id),
-                        _nonnegative_int(values["attempt"], "stream chunk attempt"),
-                        values["data"],
-                    )
-                )
-            except (KeyError, TypeError, UnicodeError, ValueError) as error:
-                raise ExecutionStoreCorruptionError("stream chunk entry is invalid") from error
-        return tuple(chunks)
+    async def wait_chunks(self, run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...]:
+        validate_run_id(run_id)
+        parse_chunk_cursor(after)
+        if not timeout > 0:
+            raise ValueError("chunk wait timeout must be positive")
+        key = self.keys.chunks(run_id)
+        with _redis_errors():
+            async with self.viewer.pipeline(transaction=False) as pipe:
+                if after != CHUNK_CURSOR_START:
+                    pipe.xrange(key, min=after, max=after)
+                pipe.xread({key: after}, count=chunk_read_count(self.config), block=math.ceil(timeout * 1_000))
+                *cursor_check, streams = await pipe.execute()
+        if cursor_check and not cursor_check[0]:
+            raise ChunkCursorExpiredError(after)
+        return self._decode_chunks(streams[0][1] if streams else ())
 
     async def operational_counts(self) -> dict[str, int]:
         with _redis_errors():
@@ -542,155 +581,279 @@ class RedisExecutionStore:
             "lease_expiry": _nonnegative_int(lease_expiry, "lease_expiry"),
         }
 
+    async def _read(self, run_id: str, *, private: bool) -> StoredExecution | None:
+        kinds = tuple(PayloadKind) if private else PUBLIC_PAYLOAD_KINDS
+        with _redis_errors():
+            async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.hgetall(self.keys.control(run_id))
+                for kind in kinds:
+                    pipe.get(self.keys.payload(run_id, kind))
+                pipe.lrange(self.keys.progress(run_id), 0, -1)
+                # Collect per-command errors so a missing control wins over wrong-type orphan keys.
+                values, *raw_payloads, raw_progress = await pipe.execute(raise_on_error=False)
+        if values == {}:
+            return None
+        if any(isinstance(reply, Exception) for reply in (values, *raw_payloads, raw_progress)):
+            raise ExecutionStoreCorruptionError("stored execution keys have invalid types")
+        control = self._decode(values, run_id)
+        payloads: dict[PayloadKind, bytes] = {}
+        for kind, payload in zip(kinds, raw_payloads, strict=True):
+            if payload is None:
+                continue
+            if not isinstance(payload, bytes) or len(payload) > self.config.max_payload_bytes:
+                raise ExecutionStoreCorruptionError(f"stored {kind.value} payload is invalid")
+            payloads[kind] = payload
+        progress = []
+        for entry in raw_progress:
+            if not isinstance(entry, bytes) or len(entry) < _PROGRESS_SEQUENCE_BYTES:
+                raise ExecutionStoreCorruptionError("stored progress event is invalid")
+            event = ProgressEvent(
+                int.from_bytes(entry[:_PROGRESS_SEQUENCE_BYTES], "big"),
+                entry[_PROGRESS_SEQUENCE_BYTES:],
+            )
+            if event.sequence < 1 or len(event.data) > self.config.max_progress_event_bytes:
+                raise ExecutionStoreCorruptionError("stored progress event is invalid")
+            progress.append(event)
+        sequences = [event.sequence for event in progress]
+        if (control.progress_sequence and not progress) or sequences != list(
+            range(
+                control.progress_sequence - len(progress) + 1,
+                control.progress_sequence + 1,
+            )
+        ):
+            raise ExecutionStoreCorruptionError("progress sequence contradicts control state")
+        stored = StoredExecution(control, payloads, tuple(progress))
+        validate_stored_execution(stored, private=private)
+        return stored
+
     async def _transition(
         self,
         run_id: str,
         command: ExecutionCommand,
         *,
-        candidate: bool = False,
+        candidate_index: str | None = None,
     ) -> TransitionPlan | None:
-        control_key = self.keys.control(run_id)
-        candidate_key = self.keys.runnable_revision(command.worker_revision) if isinstance(command, Claim) else None
-        for attempt in range(self._transaction_retries):
-            async with self.redis.pipeline(transaction=True) as pipe:
-                try:
-                    await pipe.watch(control_key, *((candidate_key,) if candidate_key is not None else ()))
-                    values = await pipe.hgetall(control_key)
-                    if not values:
-                        if not candidate:
-                            raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
-                        pipe.multi()
-                        pipe.zrem(self.keys.runnable, run_id)
-                        assert candidate_key is not None
-                        pipe.zrem(candidate_key, run_id)
-                        await pipe.execute()
-                        return None
-                    current = decode_control(values, expected_run_id=run_id)
-                    if current.deployment != self.deployment:
-                        raise ExecutionStoreCorruptionError("control belongs to another deployment")
-                    bound = bind_store_command(command, await self._time_ms(pipe), self.config)
-                    try:
-                        plan = decide(current, bound)
-                    except InvalidExecutionTransitionError:
-                        if not candidate:
-                            raise
-                        pipe.multi()
-                        pipe.zrem(self.keys.runnable, run_id)
-                        assert candidate_key is not None
-                        pipe.zrem(candidate_key, run_id)
-                        if current.status is ExecutionStatus.QUEUED:
-                            pipe.zadd(self.keys.runnable, {run_id: runnable_score(current)})
-                            pipe.zadd(
-                                self.keys.runnable_revision(current.definition_revision),
-                                {run_id: runnable_score(current)},
-                            )
-                        await pipe.execute()
-                        return None
-                    validate_transition_plan(plan, self.config)
-                    if not current.terminal and plan.next_control.terminal:
-                        await pipe.watch(self.keys.capacity)
-                        raw_count = await pipe.hget(self.keys.capacity, "nonterminal")
-                        if raw_count is None or _nonnegative_int(raw_count, "nonterminal") < 1:
-                            raise ExecutionStoreCorruptionError("nonterminal execution counter would underflow")
+        """
+        Reduce a fresh control snapshot and commit it with one guarded script.
 
-                    pipe.multi()
-                    if isinstance(bound, Heartbeat):
-                        lease = plan.lease_index_update
-                        if lease is None or lease.deadline_ms is None:
-                            raise AssertionError("heartbeat must renew a lease")
-                        pipe.hset(control_key, "lease_expires_at_ms", lease.deadline_ms)
-                        pipe.zadd(
-                            self.keys.lease_expiry,
-                            {RedisKeys.lease_member(run_id, lease.fence): lease.deadline_ms},
-                        )
-                    else:
-                        self._apply_plan(pipe, current, plan)
-                    await pipe.execute()
-                    if not isinstance(bound, Heartbeat) and (
-                        plan.next_control != current
-                        or plan.payload_writes
-                        or plan.payload_deletes
-                        or plan.progress_events
-                        or plan.lease_index_update
-                    ):
-                        log.bind(
-                            run_id=run_id,
-                            command=type(bound).__name__,
-                            from_status=current.status.value,
-                            to_status=plan.next_control.status.value,
-                            version=plan.next_control.version,
-                            fence=plan.next_control.fence,
-                        ).debug("Committed durable execution transition")
-                    return plan
-                except WatchError:
-                    await self._backoff(attempt)
+        A claim candidate that cannot be claimed has its runnable indexes repaired
+        under the same snapshot guard and yields ``None``.
+        """
+        if isinstance(command, Heartbeat):
+            return await self._heartbeat(run_id, command)
+        owner = (command.worker_id, command.fence) if isinstance(command, LEASE_COMMANDS) else None
+        for attempt in range(self._transaction_retries):
+            async with self.redis.pipeline(transaction=False) as pipe:
+                pipe.hgetall(self.keys.control(run_id))
+                pipe.time()
+                values, now = await pipe.execute()
+            current = self._decode(values, run_id) if values else None
+            plan = None
+            releases_capacity = False
+            try:
+                if current is None:
+                    raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
+                plan = decide(current, bind_store_command(command, _milliseconds(now), self.config))
+            except (ExecutionNotFoundError, InvalidExecutionTransitionError):
+                if candidate_index is None:
+                    raise
+                commands = self._runnable_commands(run_id, candidate_index, current)
+            else:
+                validate_transition_plan(plan, self.config)
+                commands = self._plan_commands(current, plan)
+                releases_capacity = not current.terminal and plan.next_control.terminal
+            outcome = await self._commit(run_id, values, commands, owner=owner, releases_capacity=releases_capacity)
+            if outcome == _STALE_SNAPSHOT:
+                await self._backoff(attempt)
+                continue
+            if outcome == _LEASE_LOST:
+                raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
+            if outcome == _CAPACITY_UNDERFLOW:
+                raise ExecutionStoreCorruptionError("nonterminal execution counter would underflow")
+            if (
+                plan is not None
+                and current is not None
+                and (
+                    plan.next_control != current
+                    or plan.payload_writes
+                    or plan.payload_deletes
+                    or plan.progress_events
+                    or plan.lease_index_update
+                )
+            ):
+                log.bind(
+                    run_id=run_id,
+                    command=type(command).__name__,
+                    from_status=current.status.value,
+                    to_status=plan.next_control.status.value,
+                    version=plan.next_control.version,
+                    fence=plan.next_control.fence,
+                ).debug("Committed durable execution transition")
+            return plan
         raise ExecutionContentionError("execution transaction retry budget exhausted")
 
-    def _apply_plan(
+    async def _heartbeat(self, run_id: str, command: Heartbeat) -> TransitionPlan:
+        """Renew a lease inside the owned guard; only the deadline and its index change."""
+        bind_store_command(command, 0, self.config)
+        values = await self._heartbeat_script(
+            keys=[self.keys.control(run_id), self.keys.lease_expiry],
+            args=[
+                command.worker_id,
+                command.fence,
+                self.config.lease_commit_safety_ms,
+                command.lease_duration_ms,
+                RedisKeys.lease_member(run_id, command.fence),
+            ],
+        )
+        if values is None:
+            raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
+        control = self._decode(dict(zip(values[::2], values[1::2], strict=True)), run_id)
+        return TransitionPlan(control, lease_index_update=LeaseIndexUpdate(control.lease_expires_at_ms, control.fence))
+
+    async def _commit(
         self,
-        pipe: Any,
+        run_id: str,
+        snapshot: Mapping[bytes, bytes],
+        commands: Sequence[_Command],
+        *,
+        owner: tuple[str, int] | None,
+        releases_capacity: bool,
+    ) -> int:
+        """Run ``commands`` only if control still equals ``snapshot`` and every guard holds."""
+        keys = [self.keys.control(run_id), self.keys.capacity]
+        worker_id, fence = owner or ("", 0)
+        args: list[Any] = [
+            worker_id,
+            fence,
+            self.config.lease_commit_safety_ms,
+            int(releases_capacity),
+            len(snapshot),
+            *chain.from_iterable(snapshot.items()),
+        ]
+        for name, key, *arguments in commands:
+            if key not in keys:
+                keys.append(key)
+            args.extend((len(arguments), name, keys.index(key) + 1, *arguments))
+        return int(await self._apply_script(keys=keys, args=args))
+
+    def _plan_commands(
+        self,
         current: ExecutionControl,
         plan: TransitionPlan,
         *,
         new_submission: bool = False,
-    ) -> None:
+    ) -> list[_Command]:
+        """Translate one reducer plan into the Redis commands that persist it."""
         control = plan.next_control
-        current_fields = encode_control(current)
+        run_id = control.run_id
+        control_key = self.keys.control(run_id)
+        progress_key = self.keys.progress(run_id)
         next_fields = encode_control(control)
-        control_key = self.keys.control(control.run_id)
-        pipe.hset(control_key, mapping=next_fields)
-        removed_fields = current_fields.keys() - next_fields.keys()
-        if removed_fields:
-            pipe.hdel(control_key, *removed_fields)
-        for write in plan.payload_writes:
-            pipe.set(self.keys.payload(control.run_id, write.kind), write.data)
-        for kind in plan.payload_deletes:
-            pipe.delete(self.keys.payload(control.run_id, kind))
+        commands: list[_Command] = [("HSET", control_key, *chain.from_iterable(next_fields.items()))]
+        if removed_fields := encode_control(current).keys() - next_fields.keys():
+            commands.append(("HDEL", control_key, *removed_fields))
+        commands.extend(("SET", self.keys.payload(run_id, write.kind), write.data) for write in plan.payload_writes)
+        commands.extend(("DEL", self.keys.payload(run_id, kind)) for kind in plan.payload_deletes)
         if plan.progress_events:
-            pipe.rpush(
-                self.keys.progress(control.run_id),
-                *(
-                    event.sequence.to_bytes(_PROGRESS_SEQUENCE_BYTES, "big") + event.data
-                    for event in plan.progress_events
-                ),
+            entries = [
+                event.sequence.to_bytes(_PROGRESS_SEQUENCE_BYTES, "big") + event.data for event in plan.progress_events
+            ]
+            # Lua's unpack() caps a script command at about 8,000 arguments.
+            commands.extend(
+                ("RPUSH", progress_key, *entries[start : start + _MAX_COMMAND_VALUES])
+                for start in range(0, len(entries), _MAX_COMMAND_VALUES)
             )
-            pipe.ltrim(self.keys.progress(control.run_id), -self.config.max_progress_events, -1)
-
-        pipe.zrem(self.keys.runnable, control.run_id)
-        pipe.zrem(self.keys.runnable_revision(current.definition_revision), control.run_id)
-        if control.status is ExecutionStatus.QUEUED:
-            pipe.zadd(self.keys.runnable, {control.run_id: runnable_score(control)})
-            pipe.zadd(
-                self.keys.runnable_revision(control.definition_revision),
-                {control.run_id: runnable_score(control)},
-            )
+            commands.append(("LTRIM", progress_key, -self.config.max_progress_events, -1))
+        commands.extend(
+            self._runnable_commands(run_id, self.keys.runnable_revision(current.definition_revision), control)
+        )
         if (lease := plan.lease_index_update) is not None:
-            member = RedisKeys.lease_member(control.run_id, lease.fence)
-            if lease.deadline_ms is None:
-                pipe.zrem(self.keys.lease_expiry, member)
-            else:
-                pipe.zadd(self.keys.lease_expiry, {member: lease.deadline_ms})
+            member = RedisKeys.lease_member(run_id, lease.fence)
+            commands.append(
+                ("ZREM", self.keys.lease_expiry, member)
+                if lease.deadline_ms is None
+                else ("ZADD", self.keys.lease_expiry, lease.deadline_ms, member)
+            )
 
         if new_submission:
-            pipe.hincrby(self.keys.capacity, "nonterminal", 1)
+            commands.append(("HINCRBY", self.keys.capacity, "nonterminal", 1))
         elif not current.terminal and control.terminal:
-            pipe.hincrby(self.keys.capacity, "nonterminal", -1)
-            for key in (
-                self.keys.control(control.run_id),
-                self.keys.progress(control.run_id),
-                self.keys.chunks(control.run_id),
-                *(self.keys.payload(control.run_id, kind) for kind in PayloadKind),
-            ):
-                pipe.expire(key, self.config.terminal_ttl_seconds)
-            pipe.expire(self.keys.idempotency(control.idempotency_digest), self.config.terminal_ttl_seconds)
+            chunks_key = self.keys.chunks(run_id)
+            commands.append(("HINCRBY", self.keys.capacity, "nonterminal", -1))
+            # The marker wakes blocked stream viewers; it is written even when chunk persistence is disabled.
+            commands.append(
+                (
+                    "XADD",
+                    chunks_key,
+                    "MAXLEN",
+                    max(self.config.max_stream_chunks, 1),
+                    "*",
+                    "attempt",
+                    control.run_attempt,
+                    "terminal",
+                    control.status.value,
+                )
+            )
+            commands.extend(
+                ("EXPIRE", key, self.config.terminal_ttl_seconds)
+                for key in (
+                    control_key,
+                    progress_key,
+                    chunks_key,
+                    *(self.keys.payload(run_id, kind) for kind in PayloadKind),
+                    self.keys.idempotency(control.idempotency_digest),
+                )
+            )
+        return commands
 
-    async def _time_ms(self, client: Any) -> int:
-        seconds, microseconds = await client.time()
-        return int(seconds) * 1_000 + int(microseconds) // 1_000
+    def _runnable_commands(
+        self,
+        run_id: str,
+        indexed_revision_key: str,
+        control: ExecutionControl | None,
+    ) -> list[_Command]:
+        """Drop ``run_id`` from its runnable indexes and re-add it when ``control`` is queued."""
+        commands: list[_Command] = [("ZREM", self.keys.runnable, run_id), ("ZREM", indexed_revision_key, run_id)]
+        if control is not None and control.status is ExecutionStatus.QUEUED:
+            score = runnable_score(control)
+            commands.append(("ZADD", self.keys.runnable, score, run_id))
+            commands.append(("ZADD", self.keys.runnable_revision(control.definition_revision), score, run_id))
+        return commands
+
+    def _decode(self, values: Mapping[str | bytes, str | bytes | int], run_id: str) -> ExecutionControl:
+        control = decode_control(values, expected_run_id=run_id)
+        if control.deployment != self.deployment:
+            raise ExecutionStoreCorruptionError("control belongs to another deployment")
+        return control
+
+    def _decode_chunks(self, entries: Iterable[tuple[Any, Mapping[Any, Any]]]) -> tuple[StreamChunk, ...]:
+        chunks = []
+        for entry_id, raw_fields in entries:
+            try:
+                values = {_text(key): value for key, value in raw_fields.items()}
+                attempt = _nonnegative_int(values.pop("attempt"), "stream chunk attempt")
+                if values.keys() == {"terminal"}:
+                    chunks.append(StreamChunk(_text(entry_id), attempt, b"", terminal=True))
+                    continue
+                if (
+                    values.keys() != {"data"}
+                    or not isinstance(values["data"], bytes)
+                    or len(values["data"]) > self.config.max_stream_chunk_bytes
+                ):
+                    raise ValueError
+                chunks.append(StreamChunk(_text(entry_id), attempt, values["data"]))
+            except (KeyError, TypeError, UnicodeError, ValueError) as error:
+                raise ExecutionStoreCorruptionError("stream chunk entry is invalid") from error
+        return tuple(chunks)
 
     async def _backoff(self, attempt: int) -> None:
         if attempt + 1 < self._transaction_retries and self._transaction_backoff_ms:
             await asyncio.sleep(random.uniform(0, self._transaction_backoff_ms) / 1_000)  # noqa: S311
+
+
+def _milliseconds(redis_time: tuple[int, int]) -> int:
+    seconds, microseconds = redis_time
+    return int(seconds) * 1_000 + int(microseconds) // 1_000
 
 
 def _text(value: str | bytes | int | None) -> str:

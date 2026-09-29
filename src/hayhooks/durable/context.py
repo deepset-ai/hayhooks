@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+from collections import deque
 from collections.abc import Coroutine, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
@@ -29,6 +30,8 @@ from hayhooks.durable.models import CheckpointEnvelope, ExecutionProgress, JsonV
 from hayhooks.durable.store import ExecutionStore
 
 _T = TypeVar("_T")
+# With push delivery to stream viewers, this is also the display latency of a chunk.
+_CHUNK_FLUSH_SECONDS = 0.1
 
 
 class DurableExecutionCancelledError(RuntimeError):
@@ -47,7 +50,7 @@ class _ExecutionSuspendedError(Exception):
 
 
 class _ClaimedExecution:
-    """Fenced store handle and heartbeat owned by one runtime worker."""
+    """Fenced store handle, heartbeat, and chunk flusher owned by one runtime worker."""
 
     def __init__(
         self,
@@ -76,25 +79,31 @@ class _ClaimedExecution:
         self._safe_duration = safe_duration
         self._confirmed_until = time.monotonic() + safe_duration
         self._transition_lock = asyncio.Lock()
-        self._heartbeat_task: asyncio.Task[None] | None = None
+        self._chunks: deque[bytes] = deque(maxlen=store.config.max_stream_chunks)
+        self._flush_lock = asyncio.Lock()
+        self._chunk_drop_reported = False
+        self._tasks: tuple[asyncio.Task[None], ...] = ()
         self._finished = False
 
     async def __aenter__(self) -> _ClaimedExecution:
         await self.transition(Heartbeat(self.control.fence, self.worker_id, 0, self.lease_duration_ms))
-        self._heartbeat_task = asyncio.create_task(
-            self._heartbeat_loop(),
-            name=f"durable-heartbeat:{self.control.run_id}",
+        self._tasks = (
+            asyncio.create_task(self._heartbeat_loop(), name=f"durable-heartbeat:{self.control.run_id}"),
+            asyncio.create_task(self._flush_loop(), name=f"durable-chunks:{self.control.run_id}"),
         )
         return self
 
     async def __aexit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
         self._finished = True
-        if self._heartbeat_task is not None:
-            self._heartbeat_task.cancel()
+        for task in self._tasks:
+            task.cancel()
             with suppress(asyncio.CancelledError):
-                await self._heartbeat_task
+                await task
 
     async def transition(self, command: ExecutionCommand) -> TransitionPlan:
+        if not isinstance(command, (Heartbeat, Checkpoint)):
+            # Buffered chunks must reach the stream before viewers can observe the status change.
+            await self.flush_chunks()
         async with self._transition_lock:
             self.require_owned()
             confirmed_at = time.monotonic()
@@ -117,6 +126,42 @@ class _ClaimedExecution:
 
     def mark_lost(self) -> None:
         self.lease_lost.set()
+
+    def buffer_chunk(self, data: bytes) -> None:
+        """Queue one display chunk; the oldest are dropped beyond the stream limit."""
+        self.require_owned()
+        self._chunks.append(data)
+
+    async def flush_chunks(self) -> None:
+        async with self._flush_lock:
+            if not self._chunks or self.lease_lost.is_set():
+                return
+            chunks = tuple(self._chunks)
+            self._chunks.clear()
+            try:
+                await self.store.append_chunks(
+                    self.control.run_id,
+                    self.control.run_attempt,
+                    self.control.fence,
+                    self.worker_id,
+                    chunks,
+                )
+            except ExecutionLeaseLostError:
+                self.mark_lost()
+            except Exception as error:
+                self.report_dropped_chunks(error)
+
+    def report_dropped_chunks(self, error: Exception) -> None:
+        if not self._chunk_drop_reported:
+            self._chunk_drop_reported = True
+            log.bind(run_id=self.control.run_id, exception_type=type(error).__name__).debug(
+                "Dropped durable display chunks"
+            )
+
+    async def _flush_loop(self) -> None:
+        while not self._finished and not self.lease_lost.is_set():
+            await asyncio.sleep(_CHUNK_FLUSH_SECONDS)
+            await self.flush_chunks()
 
     async def _heartbeat_loop(self) -> None:
         while not self._finished and not self.lease_lost.is_set():
@@ -141,7 +186,6 @@ class DurableContext:
         self._resume_input_consumed = False
         self._pending_progress: list[bytes] = []
         self._operation_lock = asyncio.Lock()
-        self._chunk_drop_reported = False
         self._adapter: Any | None = None
 
     @property
@@ -260,28 +304,17 @@ class DurableContext:
             raise _ExecutionSuspendedError
 
     async def stream_chunk(self, payload: object) -> None:
+        """Buffer one best-effort display chunk without waiting on the store."""
         self._claim.require_owned()
         try:
             converter = getattr(payload, "to_dict", None)
             if callable(converter):
                 payload = converter()
             data = encode_json(payload, max_bytes=self._claim.store.config.max_stream_chunk_bytes)
-            await self._claim.store.append_chunk(
-                self.execution_id,
-                self.attempt,
-                self._claim.control.fence,
-                self._claim.worker_id,
-                data,
-            )
-        except ExecutionLeaseLostError:
-            self._claim.mark_lost()
-            raise
         except Exception as error:
-            if not self._chunk_drop_reported:
-                self._chunk_drop_reported = True
-                log.bind(run_id=self.execution_id, exception_type=type(error).__name__).debug(
-                    "Dropped a durable display chunk"
-                )
+            self._claim.report_dropped_chunks(error)
+            return
+        self._claim.buffer_chunk(data)
 
     def _require_adapter(self) -> Any:
         if self._adapter is None:

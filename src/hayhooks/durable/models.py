@@ -161,7 +161,7 @@ def project_execution(
     max_payload_bytes: int = DEFAULT_MAX_JSON_BYTES,
 ) -> ExecutionResult:
     """Decode the public subset of one stored execution snapshot."""
-    validate_stored_execution(stored)
+    validate_stored_execution(stored, private=False)
     payloads = stored.payloads
     result = (
         decode_json(payloads[PayloadKind.RESULT], max_bytes=max_payload_bytes)

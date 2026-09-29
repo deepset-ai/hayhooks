@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -43,7 +45,8 @@ MAX_CHUNK_READ_BYTES = 4_000_000
 MAX_CHUNK_READ_COUNT = 1_000
 _CHUNK_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
 _MAX_CURSOR_PART = 2**64 - 1
-_LEASE_COMMANDS = (ReleaseClaim, Heartbeat, Checkpoint, ScheduleRetry, Suspend, Complete, Fail)
+LEASE_COMMANDS = (ReleaseClaim, Heartbeat, Checkpoint, ScheduleRetry, Suspend, Complete, Fail)
+PUBLIC_PAYLOAD_KINDS = (PayloadKind.RESULT, PayloadKind.ERROR, PayloadKind.WAIT)
 
 
 class ExecutionStoreError(RuntimeError):
@@ -114,9 +117,12 @@ class StoredExecution:
 
 @dataclass(frozen=True, slots=True)
 class StreamChunk:
+    """One display chunk, or the marker that every terminal transition appends."""
+
     cursor: str
     attempt: int
     data: bytes
+    terminal: bool = False
 
 
 class ExecutionStore(Protocol):
@@ -131,6 +137,10 @@ class ExecutionStore(Protocol):
 
     async def read(self, run_id: str) -> StoredExecution | None: ...
 
+    async def read_public(self, run_id: str) -> StoredExecution | None:
+        """Read control, progress, and public payloads without input or checkpoint bytes."""
+        ...
+
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan: ...
 
     async def claim(self, command: Claim) -> TransitionPlan | None: ...
@@ -140,11 +150,19 @@ class ExecutionStore(Protocol):
         *,
         max_run_attempts: int,
         attempts_error: bytes,
+    ) -> int:
+        """Recover due expired leases and return how many executions were requeued."""
+        ...
+
+    async def append_chunks(
+        self, run_id: str, attempt: int, fence: int, worker_id: str, chunks: Sequence[bytes]
     ) -> None: ...
 
-    async def append_chunk(self, run_id: str, attempt: int, fence: int, worker_id: str, data: bytes) -> None: ...
-
     async def read_chunks(self, run_id: str, after: str) -> tuple[StreamChunk, ...]: ...
+
+    async def wait_chunks(self, run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...]:
+        """Like ``read_chunks``, but block up to ``timeout`` seconds for a first entry; empty on timeout."""
+        ...
 
     async def operational_counts(self) -> dict[str, int]: ...
 
@@ -169,6 +187,7 @@ class MemoryExecutionStore:
         self._progress: dict[str, list[ProgressEvent]] = {}
         self._chunks: dict[str, deque[StreamChunk]] = {}
         self._chunk_sequence = 0
+        self._chunks_written = asyncio.Condition()
         self._runnable: dict[str, int] = {}
         self._lease_expiry: dict[tuple[str, int], int] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
@@ -205,17 +224,10 @@ class MemoryExecutionStore:
         return SubmissionResult(created=True, control=control)
 
     async def read(self, run_id: str) -> StoredExecution | None:
-        self._cleanup_terminal(self._clock())
-        control = self._controls.get(run_id)
-        if control is None:
-            return None
-        stored = StoredExecution(
-            control,
-            dict(self._payloads.get(run_id, {})),
-            tuple(self._progress.get(run_id, ())),
-        )
-        validate_stored_execution(stored)
-        return stored
+        return self._read(run_id, private=True)
+
+    async def read_public(self, run_id: str) -> StoredExecution | None:
+        return self._read(run_id, private=False)
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         current = self._controls.get(run_id)
@@ -225,6 +237,8 @@ class MemoryExecutionStore:
         plan = decide(current, command)
         validate_transition_plan(plan, self.config)
         self._apply(current, plan)
+        if not current.terminal and plan.next_control.terminal:
+            await self._write_chunks(run_id, plan.next_control.run_attempt, (b"",), terminal=True)
         if not isinstance(command, Heartbeat) and (
             plan.next_control != current
             or plan.payload_writes
@@ -271,15 +285,16 @@ class MemoryExecutionStore:
         *,
         max_run_attempts: int,
         attempts_error: bytes,
-    ) -> None:
+    ) -> int:
         now_ms = self._clock()
+        requeued = 0
         for (run_id, fence), deadline in sorted(self._lease_expiry.items(), key=lambda item: item[1])[
             :MAINTENANCE_BATCH_SIZE
         ]:
             if deadline > now_ms:
                 break
             try:
-                await self.transition(
+                plan = await self.transition(
                     run_id,
                     RecoverExpiredLease(
                         0,
@@ -291,30 +306,39 @@ class MemoryExecutionStore:
                 )
             except ExecutionNotFoundError:
                 self._lease_expiry.pop((run_id, fence), None)
+            except InvalidExecutionTransitionError:
+                continue
+            else:
+                requeued += plan.next_control.status is ExecutionStatus.QUEUED
         self._cleanup_terminal(now_ms)
+        return requeued
 
-    async def append_chunk(self, run_id: str, attempt: int, fence: int, worker_id: str, data: bytes) -> None:
+    async def append_chunks(
+        self, run_id: str, attempt: int, fence: int, worker_id: str, chunks: Sequence[bytes]
+    ) -> None:
         if not self.config.max_stream_chunks:
             return
         if attempt < 0:
             raise ValueError("stream chunk attempt cannot be negative")
-        validate_payload_size("stream chunk", data, self.config.max_stream_chunk_bytes)
+        for data in chunks:
+            validate_payload_size("stream chunk", data, self.config.max_stream_chunk_bytes)
         control = self._controls.get(run_id)
         if control is None or control.run_attempt != attempt:
             raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
         require_owned(control, fence, worker_id, self._clock(), self.config.lease_commit_safety_ms)
-        self._chunk_sequence += 1
-        chunks = self._chunks.setdefault(run_id, deque(maxlen=self.config.max_stream_chunks))
-        chunks.append(StreamChunk(f"0-{self._chunk_sequence}", attempt, data))
+        await self._write_chunks(run_id, attempt, chunks)
 
     async def read_chunks(self, run_id: str, after: str) -> tuple[StreamChunk, ...]:
-        _, sequence = parse_chunk_cursor(after)
-        chunks = tuple(self._chunks.get(run_id, ()))
-        if after != CHUNK_CURSOR_START and not any(chunk.cursor == after for chunk in chunks):
-            raise ChunkCursorExpiredError(after)
-        return tuple(chunk for chunk in chunks if int(chunk.cursor.partition("-")[2]) > sequence)[
-            : chunk_read_count(self.config)
-        ]
+        return self._chunks_after(run_id, after)
+
+    async def wait_chunks(self, run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...]:
+        async with self._chunks_written:
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    self._chunks_written.wait_for(lambda: self._chunks_after(run_id, after)),
+                    timeout,
+                )
+        return self._chunks_after(run_id, after)
 
     async def operational_counts(self) -> dict[str, int]:
         self._cleanup_terminal(self._clock())
@@ -362,6 +386,39 @@ class MemoryExecutionStore:
                 binding,
             )
 
+    def _read(self, run_id: str, *, private: bool) -> StoredExecution | None:
+        self._cleanup_terminal(self._clock())
+        control = self._controls.get(run_id)
+        if control is None:
+            return None
+        payloads = self._payloads.get(run_id, {})
+        stored = StoredExecution(
+            control,
+            dict(payloads) if private else {kind: payloads[kind] for kind in PUBLIC_PAYLOAD_KINDS if kind in payloads},
+            tuple(self._progress.get(run_id, ())),
+        )
+        validate_stored_execution(stored, private=private)
+        return stored
+
+    def _chunks_after(self, run_id: str, after: str) -> tuple[StreamChunk, ...]:
+        _, sequence = parse_chunk_cursor(after)
+        chunks = tuple(self._chunks.get(run_id, ()))
+        if after != CHUNK_CURSOR_START and not any(chunk.cursor == after for chunk in chunks):
+            raise ChunkCursorExpiredError(after)
+        return tuple(chunk for chunk in chunks if int(chunk.cursor.partition("-")[2]) > sequence)[
+            : chunk_read_count(self.config)
+        ]
+
+    async def _write_chunks(
+        self, run_id: str, attempt: int, chunks: Sequence[bytes], *, terminal: bool = False
+    ) -> None:
+        stream = self._chunks.setdefault(run_id, deque(maxlen=max(self.config.max_stream_chunks, 1)))
+        for data in chunks:
+            self._chunk_sequence += 1
+            stream.append(StreamChunk(f"0-{self._chunk_sequence}", attempt, data, terminal))
+        async with self._chunks_written:
+            self._chunks_written.notify_all()
+
     def _cleanup_terminal(self, now_ms: int) -> None:
         for run_id, (expires_at, digest, binding) in tuple(self._terminal_cleanup.items()):
             if expires_at > now_ms:
@@ -406,7 +463,7 @@ def runnable_score(control: ExecutionControl) -> int:
 def bind_store_command(command: ExecutionCommand, now_ms: int, config: StoreConfig) -> ExecutionCommand:
     """Bind a store clock and lease policy before reduction."""
     changes = {"now_ms": now_ms}
-    if isinstance(command, _LEASE_COMMANDS):
+    if isinstance(command, LEASE_COMMANDS):
         changes["lease_commit_safety_ms"] = config.lease_commit_safety_ms
     bound = replace(command, **changes)
     if isinstance(bound, (Claim, Heartbeat, Checkpoint)) and (bound.lease_duration_ms <= config.lease_commit_safety_ms):
@@ -422,16 +479,20 @@ def validate_transition_plan(plan: TransitionPlan, config: StoreConfig) -> None:
         validate_payload_size("progress event", event.data, config.max_progress_event_bytes)
 
 
-def validate_stored_execution(stored: StoredExecution) -> None:
-    """Reject payload snapshots that contradict their authoritative lifecycle state."""
+def validate_stored_execution(stored: StoredExecution, *, private: bool = True) -> None:
+    """
+    Reject payload snapshots that contradict their authoritative lifecycle state.
+
+    Public snapshots carry no input or checkpoint, so only full reads require them.
+    """
     status = stored.control.status
-    required = {PayloadKind.INPUT}
+    required = {PayloadKind.INPUT} if private else set()
     if status is ExecutionStatus.COMPLETED:
         required.add(PayloadKind.RESULT)
     elif status is ExecutionStatus.FAILED:
         required.add(PayloadKind.ERROR)
     elif status is ExecutionStatus.WAITING:
-        required.update((PayloadKind.CHECKPOINT, PayloadKind.WAIT))
+        required.update((PayloadKind.CHECKPOINT, PayloadKind.WAIT) if private else (PayloadKind.WAIT,))
     if missing := required - stored.payloads.keys():
         names = ", ".join(sorted(kind.value for kind in missing))
         raise ExecutionStoreCorruptionError(f"{status.value} execution is missing required payload: {names}")

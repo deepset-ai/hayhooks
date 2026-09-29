@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
@@ -148,7 +149,7 @@ def seed_stream_chunks(
     run_id: str,
     chunks: list[tuple[int, object]],
 ) -> None:
-    """Seed retained display history without pretending a terminal worker still owns a lease."""
+    """Seed retained display history, ending with the terminal marker, without faking a live lease."""
     if not store.config.max_stream_chunks:
         return
     encoded = [
@@ -159,7 +160,8 @@ def seed_stream_chunks(
         )
         for index, (attempt, payload) in enumerate(chunks, start=1)
     ]
-    store._chunks[run_id] = deque(encoded, maxlen=store.config.max_stream_chunks)
+    marker = StreamChunk(f"0-{len(chunks) + 1}", 1, b"", terminal=True)
+    store._chunks[run_id] = deque([*encoded, marker], maxlen=store.config.max_stream_chunks)
 
 
 def test_router_is_typed_prefix_and_root_path_safe(durable_app_factory, wait_for_execution) -> None:
@@ -338,13 +340,22 @@ def test_owner_scopes_idempotency_and_invalid_values_fail_closed(durable_app_fac
             id="reconnect",
         ),
         pytest.param(
-            1,
+            2,
             64_000,
             [(1, {"index": 0}), (1, {"index": 1}), (1, {"index": 2})],
             "0-1",
             ["gap", "chunk", "completed"],
             [{"index": 2}],
             id="expired-cursor",
+        ),
+        pytest.param(
+            10,
+            2_000_000,
+            [(1, {"index": 0}), (1, {"index": 1}), (1, {"index": 2}), (1, {"index": 3})],
+            "0-1",
+            ["chunk", "chunk", "chunk", "completed"],
+            [{"index": 1}, {"index": 2}, {"index": 3}],
+            id="paged-reconnect",
         ),
         pytest.param(
             10,
@@ -401,56 +412,94 @@ def test_stream_resume_gap_fencing_and_drain(
         assert payloads == expected_payloads
 
 
-def test_stream_drains_chunk_committed_immediately_before_terminal(durable_app_factory, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("action", "expected_events"),
+    [
+        pytest.param("stream", ["chunk", "completed"], id="final-chunk"),
+        pytest.param("complete", ["completed"], id="no-chunks"),
+    ],
+)
+def test_blocked_viewer_wakes_on_the_final_flush_and_terminal_marker(
+    durable_app_factory, action: str, expected_events: list[str]
+) -> None:
     app, deployment = durable_app_factory()
-    chunk_written = threading.Event()
     release_runner = threading.Event()
 
     async def controlled_run(context: DurableContext, request: JobRequest) -> JobResult:
-        await context.stream_chunk({"index": 0})
-        chunk_written.set()
         await asyncio.to_thread(release_runner.wait)
+        if request.action == "stream":
+            await context.stream_chunk({"index": 0})
         return JobResult(value=request.value, owner_id=context.owner_id)
 
     deployment.runner = controlled_run
-    read_chunks = deployment.store.read_chunks
-    missed_once = False
-
-    async def miss_once(run_id: str, cursor: str):
-        nonlocal missed_once
-        if not missed_once:
-            missed_once = True
-            release_runner.set()
-            for _ in range(200):
-                stored = await deployment.store.read(run_id)
-                if stored is not None and stored.control.terminal:
-                    return []
-                await asyncio.sleep(0.005)
-            raise AssertionError("execution did not complete")
-        return await read_chunks(run_id, cursor)
-
-    monkeypatch.setattr(deployment.store, "read_chunks", miss_once)
     with TestClient(app) as client:
-        submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
-        assert chunk_written.wait(timeout=1)
+        submitted = client.post("/api/jobs/run-durable", json={"value": 1, "action": action}).json()
+        threading.Timer(0.2, release_runner.set).start()
+        started = time.monotonic()
         events, _, _ = read_sse(client, submitted["links"]["stream"])
 
-    assert [event["event"] for event in events] == ["chunk", "completed"]
+    assert [event["event"] for event in events] == expected_events
+    assert time.monotonic() - started < 2
+
+
+def test_block_timeout_keeps_alive_and_ends_on_terminal_control_without_marker(
+    durable_app_factory, monkeypatch, wait_for_execution
+) -> None:
+    app, deployment = durable_app_factory()
+    monkeypatch.setattr("hayhooks.durable.fastapi._STREAM_BLOCK_SECONDS", 0.05)
+    with TestClient(app) as client:
+        submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
+        wait_for_execution(client, submitted["links"]["self"], "completed")
+        deployment.store._chunks.pop(submitted["execution_id"])
+        events, comments, _ = read_sse(client, submitted["links"]["stream"])
+
+    assert [event["event"] for event in events] == ["completed"]
+    assert len(comments) == 2
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "expected_events"),
+    [
+        pytest.param("close", [], id="close-ends-streams"),
+        pytest.param("quiesce-probe", ["completed"], id="quiesce-probe-keeps-streams"),
+    ],
+)
+def test_only_close_ends_blocked_streams(
+    durable_app_factory, wait_for_execution, lifecycle: str, expected_events: list[str]
+) -> None:
+    app, deployment = durable_app_factory()
+    with TestClient(app) as client:
+        submitted = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"}).json()
+        wait_for_execution(client, submitted["links"]["self"], "waiting")
+
+        async def interrupt() -> None:
+            if lifecycle == "close":
+                await deployment.close()
+                return
+            # Hayhooks probes a redeploy by quiescing, then restarts when work is still live.
+            await deployment.quiesce()
+            await deployment.start()
+            await deployment.resume(submitted["execution_id"], {"approved": True}, enforce_owner=False)
+
+        threading.Timer(0.2, client.portal.call, (interrupt,)).start()
+        events, _, _ = read_sse(client, submitted["links"]["stream"])
+
+    assert [event["event"] for event in events] == expected_events
 
 
 def test_chunk_failures_are_display_only_and_midstream_errors_are_framed(
     durable_app_factory, monkeypatch, wait_for_execution
 ) -> None:
     app, deployment = durable_app_factory(max_stream_chunk_bytes=1_024)
-    append_chunk = deployment.store.append_chunk
+    append_chunks = deployment.store.append_chunks
     with TestClient(app) as client:
-        monkeypatch.setattr(deployment.store, "append_chunk", AsyncMock(side_effect=ExecutionStoreError("down")))
+        monkeypatch.setattr(deployment.store, "append_chunks", AsyncMock(side_effect=ExecutionStoreError("down")))
         dropped = client.post("/api/jobs/run-durable", json={"value": 1, "action": "stream"}).json()
         assert wait_for_execution(client, dropped["links"]["self"], "completed")["attempt"] == 1
-        monkeypatch.setattr(deployment.store, "append_chunk", append_chunk)
+        monkeypatch.setattr(deployment.store, "append_chunks", append_chunks)
         oversized = client.post("/api/jobs/run-durable", json={"value": 1, "action": "oversized"}).json()
         assert wait_for_execution(client, oversized["links"]["self"], "completed")["attempt"] == 1
-        monkeypatch.setattr(deployment.store, "read_chunks", AsyncMock(side_effect=ExecutionStoreError("down")))
+        monkeypatch.setattr(deployment.store, "wait_chunks", AsyncMock(side_effect=ExecutionStoreError("down")))
         events, _, _ = read_sse(client, oversized["links"]["stream"])
         assert events == [{"event": "error", "data": '{"detail":"Execution stream interrupted"}'}]
 

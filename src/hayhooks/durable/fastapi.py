@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -36,9 +35,7 @@ from hayhooks.durable.store import (
 )
 
 _MAX_HEADER_BYTES = 512
-_STREAM_POLL_SECONDS = 0.1
-_STREAM_IDLE_POLL_SECONDS = 1.0
-_STREAM_IDLE_AFTER = 10
+_STREAM_BLOCK_SECONDS = 15.0
 _SSE_HEARTBEAT = ": heartbeat\n\n"
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 ExecutionId = Annotated[str, Path(pattern=rf"^{RUN_ID_PATTERN}$")]
@@ -128,7 +125,7 @@ def _sse(event: str, data: str, *, cursor: str | None = None) -> str:
     return f"{prefix}event: {event}\ndata: {data}\n\n"
 
 
-async def _stream_events(  # noqa: PLR0913
+async def _stream_events(  # noqa: C901, PLR0913
     request: Request,
     deployment: DurableDeployment,
     route_names: dict[str, str],
@@ -138,60 +135,75 @@ async def _stream_events(  # noqa: PLR0913
     enforce_owner: bool,
     cursor: str,
 ) -> AsyncIterator[str]:
+    """
+    Push chunks as workers flush them and end on the terminal marker.
+
+    A resumed cursor first catches up with bounded pages. After that every
+    iteration blocks on the stream, and a block timeout sends a keepalive and
+    checks control once, so a terminal run that lost its marker still ends.
+    """
     execution_id = stored.control.run_id
     visible_attempt = stored.control.run_attempt
-    page_size = chunk_read_count(deployment.store.config)
-    quiet = 0
+    store = deployment.store
+    page_size = chunk_read_count(store.config)
+
+    async def read() -> StoredExecution:
+        return await deployment.get(
+            execution_id,
+            owner_id=owner_id,
+            enforce_owner=enforce_owner,
+            allow_revision_mismatch=True,
+        )
+
+    def terminal_event(stored: StoredExecution) -> str:
+        public = _project(request, deployment, route_names, stored, response_model)
+        return _sse(stored.control.status.value, public.model_dump_json())
+
     try:
         yield _SSE_HEARTBEAT
+        catching_up = cursor != CHUNK_CURSOR_START
         while True:
-            stored = await deployment.get(
-                execution_id,
-                owner_id=owner_id,
-                enforce_owner=enforce_owner,
-                allow_revision_mismatch=True,
-            )
-            visible_attempt = max(visible_attempt, stored.control.run_attempt)
             try:
-                chunks = await deployment.store.read_chunks(execution_id, cursor)
+                if catching_up:
+                    chunks = await store.read_chunks(execution_id, cursor)
+                    catching_up = len(chunks) == page_size
+                else:
+                    waited = await deployment.wait_chunks(execution_id, cursor, _STREAM_BLOCK_SECONDS)
+                    if waited is None:
+                        return
+                    if not waited:
+                        yield _SSE_HEARTBEAT
+                        stored = await read()
+                        if stored.control.terminal:
+                            yield terminal_event(stored)
+                            return
+                        continue
+                    chunks = waited
             except ChunkCursorExpiredError:
                 yield _sse("gap", '{"detail":"Requested stream history is no longer available"}')
-                cursor = CHUNK_CURSOR_START
+                cursor, catching_up = CHUNK_CURSOR_START, False
                 continue
 
-            if chunks:
-                for chunk in chunks:
-                    cursor = chunk.cursor
-                    if chunk.attempt < visible_attempt:
-                        continue
-                    visible_attempt = chunk.attempt
-                    yield _sse(
-                        "chunk",
-                        json.dumps(
-                            {
-                                "attempt": chunk.attempt,
-                                "payload": decode_json(
-                                    chunk.data,
-                                    max_bytes=deployment.store.config.max_stream_chunk_bytes,
-                                ),
-                            },
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        ),
-                        cursor=chunk.cursor,
-                    )
-                quiet = 0
-                if len(chunks) == page_size:
+            for chunk in chunks:
+                cursor = chunk.cursor
+                if chunk.terminal:
+                    yield terminal_event(await read())
+                    return
+                if chunk.attempt < visible_attempt:
                     continue
-            else:
-                quiet += 1
-
-            if stored.control.terminal:
-                public = _project(request, deployment, route_names, stored, response_model)
-                yield _sse(stored.control.status.value, public.model_dump_json())
-                return
-            yield _SSE_HEARTBEAT
-            await asyncio.sleep(_STREAM_IDLE_POLL_SECONDS if quiet > _STREAM_IDLE_AFTER else _STREAM_POLL_SECONDS)
+                visible_attempt = chunk.attempt
+                yield _sse(
+                    "chunk",
+                    json.dumps(
+                        {
+                            "attempt": chunk.attempt,
+                            "payload": decode_json(chunk.data, max_bytes=store.config.max_stream_chunk_bytes),
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    cursor=chunk.cursor,
+                )
     except Exception as error:
         log.bind(run_id=execution_id, exception_type=type(error).__name__).warning("Durable execution stream failed")
         yield _sse("error", '{"detail":"Execution stream interrupted"}')

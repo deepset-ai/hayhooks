@@ -77,13 +77,24 @@ jobs:
 
   tests-redis:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The supported floor, the latest Redis, and the latest Valkey.
+          - image: redis:6.2-alpine
+            cli: redis-cli
+          - image: redis:latest
+            cli: redis-cli
+          - image: valkey/valkey:latest
+            cli: valkey-cli
     services:
       redis:
-        image: redis:6.2-alpine
+        image: ${{ matrix.image }}
         ports:
           - 6379:6379
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "${{ matrix.cli }} ping"
           --health-interval 2s
           --health-timeout 2s
           --health-retries 20

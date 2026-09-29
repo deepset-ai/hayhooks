@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -17,12 +18,16 @@ from hayhooks.durable.context import (
     durable_streaming_callback,
 )
 from hayhooks.durable.engine import (
+    Complete,
     ExecutionLeaseLostError,
     ExecutionStatus,
+    Fail,
     PayloadKind,
     ReleaseClaim,
     RequestCancellation,
     Resume,
+    ScheduleRetry,
+    Suspend,
 )
 from hayhooks.durable.models import decode_json, encode_json
 from hayhooks.durable.store import CHUNK_CURSOR_START
@@ -154,6 +159,7 @@ async def test_sync_bridge_and_callbacks_keep_concurrent_contexts_isolated(conte
             await asyncio.to_thread(durable_streaming_callback, {"value": value})
 
     await asyncio.gather(emit(first, 1), emit(second, 2))
+    await asyncio.gather(first._claim.flush_chunks(), second._claim.flush_chunks())
     first_chunks = await store.read_chunks(first.execution_id, CHUNK_CURSOR_START)
     second_chunks = await store.read_chunks(second.execution_id, CHUNK_CURSOR_START)
     assert decode_json(first_chunks[0].data, max_bytes=1_024) == {"value": 1}
@@ -161,6 +167,7 @@ async def test_sync_bridge_and_callbacks_keep_concurrent_contexts_isolated(conte
 
     version = first._claim.control.version
     await first.stream_chunk(object())
+    await first._claim.flush_chunks()
     assert first._claim.control.version == version
     assert await store.read_chunks(first.execution_id, CHUNK_CURSOR_START) == first_chunks
 
@@ -202,17 +209,63 @@ async def test_missing_execution_marks_claim_lost(context_factory) -> None:
     assert claim.lease_lost.is_set()
 
 
-async def test_stream_chunk_propagates_store_detected_lease_loss(context_factory, monkeypatch) -> None:
+async def test_lease_lost_chunk_flush_surfaces_on_the_next_callback(context_factory, monkeypatch) -> None:
     store, create = context_factory
     context, claim = await create()
+    monkeypatch.setattr(store, "append_chunks", AsyncMock(side_effect=ExecutionLeaseLostError))
 
-    async def reject_stale_chunk(*_args) -> None:
-        raise ExecutionLeaseLostError
+    await context.stream_chunk({"chunk": 1})
+    await claim.flush_chunks()
 
-    monkeypatch.setattr(store, "append_chunk", reject_stale_chunk)
-    with pytest.raises(ExecutionLeaseLostError):
-        await context.stream_chunk({"chunk": 1})
     assert claim.lease_lost.is_set()
+    with pytest.raises(ExecutionLeaseLostError):
+        await context.stream_chunk({"chunk": 2})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(lambda fence: Complete(fence, "worker-run_1", 0, b"null"), id="complete"),
+        pytest.param(lambda fence: Fail(fence, "worker-run_1", 0, b"{}"), id="fail"),
+        pytest.param(lambda fence: Suspend(fence, "worker-run_1", 0, b"{}", b"{}"), id="suspend"),
+        pytest.param(lambda fence: ScheduleRetry(fence, "worker-run_1", 0, 0, 1, b"{}"), id="retry"),
+        pytest.param(lambda fence: ReleaseClaim(fence, "worker-run_1"), id="release"),
+    ],
+)
+async def test_buffered_chunks_are_flushed_before_leaving_running(context_factory, command) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    await context.stream_chunk({"chunk": 1})
+    assert await store.read_chunks(context.execution_id, CHUNK_CURSOR_START) == ()
+
+    await claim.transition(command(claim.control.fence))
+
+    chunks = await store.read_chunks(context.execution_id, CHUNK_CURSOR_START)
+    assert decode_json(chunks[0].data, max_bytes=1_024) == {"chunk": 1}
+
+
+async def test_chunk_buffer_stays_bounded_while_the_store_is_slow(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    release = asyncio.Event()
+    sent: list[tuple[bytes, ...]] = []
+
+    async def slow_append(*args) -> None:
+        sent.append(tuple(args[-1]))
+        await release.wait()
+
+    monkeypatch.setattr(store, "append_chunks", slow_append)
+    await context.stream_chunk({"chunk": 0})
+    flush = asyncio.create_task(claim.flush_chunks())
+    await asyncio.sleep(0)
+    limit = store.config.max_stream_chunks
+    for index in range(1, 3 * limit + 1):
+        await context.stream_chunk({"chunk": index})
+
+    assert len(sent) == 1 and len(claim._chunks) == limit
+    assert decode_json(claim._chunks[0], max_bytes=1_024) == {"chunk": 2 * limit + 1}
+    release.set()
+    await flush
 
 
 async def test_retry_request_carries_buffered_progress(context_factory) -> None:

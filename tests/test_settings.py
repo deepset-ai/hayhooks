@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from hayhooks.durable.runtime import RuntimeConfig
 from hayhooks.server.app import create_app
 from hayhooks.settings import AppSettings, check_cors_settings
 
@@ -54,8 +55,9 @@ def test_durable_polling_defaults_and_environment(monkeypatch):
     monkeypatch.delenv("HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS", raising=False)
     monkeypatch.delenv("HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS", raising=False)
     defaults = AppSettings()
-    assert defaults.durable_poll_interval_seconds == 1.0
-    assert defaults.durable_maintenance_interval_seconds == 1.0
+    assert defaults.durable_poll_interval_seconds == 5.0
+    assert defaults.durable_maintenance_interval_seconds == 5.0
+    assert (RuntimeConfig().poll_interval_seconds, RuntimeConfig().maintenance_interval_seconds) == (5.0, 5.0)
 
     monkeypatch.setenv("HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS", "0.25")
     monkeypatch.setenv("HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS", "2")

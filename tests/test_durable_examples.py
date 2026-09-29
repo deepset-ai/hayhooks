@@ -175,7 +175,7 @@ async def test_durable_website_example_keeps_concurrent_streams_isolated(monkeyp
         streams = []
         for stored in completed:
             chunks = await deployment.store.read_chunks(stored.control.run_id, CHUNK_CURSOR_START)
-            streams.append("".join(json.loads(chunk.data)["text"] for chunk in chunks))
+            streams.append("".join(json.loads(chunk.data)["text"] for chunk in chunks if not chunk.terminal))
         assert "alpha" in streams[0] and "beta" not in streams[0]
         assert "beta" in streams[1] and "alpha" not in streams[1]
     finally:

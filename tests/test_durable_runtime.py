@@ -16,7 +16,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from hayhooks.durable.context import DurableContext
-from hayhooks.durable.engine import ExecutionNotFoundError, ExecutionStatus, PayloadKind, initial_control
+from hayhooks.durable.engine import Claim, ExecutionNotFoundError, ExecutionStatus, PayloadKind, initial_control
 from hayhooks.durable.models import PersistedError, decode_json
 from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, RuntimeConfig
 from hayhooks.durable.store import (
@@ -89,13 +89,13 @@ class ControlledStore(MemoryExecutionStore):
         *,
         max_run_attempts: int,
         attempts_error: bytes,
-    ) -> None:
+    ) -> int:
         self.maintenance_calls += 1
         if self.maintenance_error is not None:
             error, self.maintenance_error = self.maintenance_error, None
             self.failure_seen.set()
             raise error
-        await super().maintain(
+        return await super().maintain(
             max_run_attempts=max_run_attempts,
             attempts_error=attempts_error,
         )
@@ -637,4 +637,127 @@ def test_shutdown_grace_bounds_event_loop_teardown_for_sync_runner() -> None:
         check=True,
         env={**os.environ, "PYTHONPATH": str(source_root)},
         timeout=3,
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "poll_interval_seconds"),
+    [
+        pytest.param("local", 60, id="local-wakes-idle-worker"),
+        pytest.param("during-claim", 60, id="local-while-worker-busy"),
+        pytest.param("remote", 0.05, id="remote-within-poll"),
+    ],
+)
+async def test_workers_pick_up_submissions(
+    deployment_factory, monkeypatch, source: str, poll_interval_seconds: float
+) -> None:
+    store = ControlledStore("jobs")
+    deployment = await deployment_factory(
+        store=store,
+        config=RuntimeConfig(
+            poll_interval_seconds=poll_interval_seconds,
+            maintenance_interval_seconds=60,
+            lease_duration_ms=300,
+        ),
+    )
+    submissions: list[SubmissionResult] = []
+    if source == "during-claim":
+        claim = store.claim
+
+        async def claim_then_submit(command):
+            plan = await claim(command)
+            if plan is None and not submissions:
+                submissions.append(await deployment.submit({"value": 1}))
+            return plan
+
+        monkeypatch.setattr(store, "claim", claim_then_submit)
+    await asyncio.sleep(0.05)
+    if source == "local":
+        submissions.append(await deployment.submit({"value": 1}))
+    elif source == "remote":
+        submissions.append(
+            await store.submit(
+                initial_control(
+                    run_id="remote_run",
+                    idempotency_digest="remote",
+                    idempotency_binding_digest="remote",
+                    deployment="jobs",
+                    definition_revision="v1",
+                    owner_id=None,
+                    kind="pipeline",
+                    now_ms=0,
+                ),
+                b'{"value":1}',
+            )
+        )
+
+    await wait_for_execution(
+        deployment,
+        submissions[0].control.run_id,
+        lambda stored: stored.control.status is ExecutionStatus.COMPLETED,
+        timeout=0.5,
+    )
+
+
+@pytest.mark.parametrize("threaded", [False, True], ids=["async", "thread"])
+async def test_health_counts_active_executions_until_retained_work_finishes(deployment_factory, threaded: bool) -> None:
+    release = threading.Event()
+
+    def blocking(_context: DurableContext, request: BaseModel) -> Result:
+        release.wait()
+        return Result(value=Request.model_validate(request).value)
+
+    async def blocking_async(context: DurableContext, request: BaseModel) -> Result:
+        return await asyncio.to_thread(blocking, context, request)
+
+    deployment = await deployment_factory(
+        blocking if threaded else blocking_async,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0),
+    )
+    assert (await deployment.health())["active_executions"] == 0
+    await deployment.submit({"value": 1})
+    await wait_for_health(deployment, lambda health: health["active_executions"] == 1)
+    if threaded:
+        await deployment.close()
+        assert (await deployment.health())["active_executions"] == 1
+    release.set()
+    await wait_for_health(deployment, lambda health: health["active_executions"] == 0)
+
+
+@pytest.mark.parametrize("source", ["retry", "recovered-lease"])
+async def test_locally_requeued_work_wakes_idle_workers(deployment_factory, source: str) -> None:
+    attempts: list[int] = []
+
+    async def retry_once(context: DurableContext, request: BaseModel) -> Result:
+        attempts.append(context.attempt)
+        if source == "retry" and len(attempts) == 1:
+            await context.retry("again", delay=0.05)
+        return Result(value=Request.model_validate(request).value)
+
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    if source == "recovered-lease":
+        # A crashed replica's claim, recovered by this process's maintenance.
+        await store.submit(
+            initial_control(
+                run_id="crashed_run",
+                idempotency_digest="crashed",
+                idempotency_binding_digest="crashed",
+                deployment="jobs",
+                definition_revision="v1",
+                owner_id=None,
+                kind="pipeline",
+                now_ms=0,
+            ),
+            b'{"value":1}',
+        )
+        assert await store.claim(Claim("crashed", 0, 50, 3, "v1", b"{}")) is not None
+    deployment = await deployment_factory(
+        retry_once,
+        store=store,
+        config=RuntimeConfig(poll_interval_seconds=60, maintenance_interval_seconds=0.05, lease_duration_ms=300),
+    )
+    run_id = "crashed_run" if source == "recovered-lease" else (await deployment.submit({"value": 1})).control.run_id
+
+    await wait_for_execution(
+        deployment, run_id, lambda stored: stored.control.status is ExecutionStatus.COMPLETED, timeout=0.5
     )

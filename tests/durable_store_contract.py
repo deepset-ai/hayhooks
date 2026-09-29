@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
@@ -10,6 +12,7 @@ from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
     Complete,
+    ExecutionCommand,
     ExecutionStatus,
     Heartbeat,
     InvalidExecutionTransitionError,
@@ -18,6 +21,7 @@ from hayhooks.durable.engine import (
     RequestCancellation,
     Resume,
     Suspend,
+    TransitionPlan,
     initial_control,
 )
 from hayhooks.durable.models import CheckpointEnvelope, decode_json
@@ -81,6 +85,7 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
 
     snapshot = await store.read(control.run_id)
     assert snapshot is not None and snapshot.payloads[PayloadKind.INPUT] == b"input"
+    assert await store.read_public(control.run_id) == replace(snapshot, payloads={})
     assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
 
     claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
@@ -91,30 +96,39 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
 
     claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert claimed is not None
+    before_heartbeat = await store.read(control.run_id)
     heartbeat = await store.transition(
         control.run_id,
         Heartbeat(claimed.next_control.fence, "worker", 0, 500),
     )
-    assert heartbeat.next_control.version == claimed.next_control.version
+    after_heartbeat = await store.read(control.run_id)
+    assert before_heartbeat is not None and after_heartbeat is not None
+    assert heartbeat.next_control == after_heartbeat.control
+    assert after_heartbeat == replace(
+        before_heartbeat,
+        control=replace(before_heartbeat.control, lease_expires_at_ms=heartbeat.next_control.lease_expires_at_ms),
+    )
     assert await store.operational_counts() == {"nonterminal": 1, "runnable": 0, "lease_expiry": 1}
 
     before_chunks = await store.read(control.run_id)
-    for index in range(4):
-        await store.append_chunk(
-            control.run_id,
-            claimed.next_control.run_attempt,
-            claimed.next_control.fence,
-            "worker",
-            str(index).encode(),
-        )
+    await store.append_chunks(
+        control.run_id,
+        claimed.next_control.run_attempt,
+        claimed.next_control.fence,
+        "worker",
+        [str(index).encode() for index in range(4)],
+    )
     after_chunks = await store.read(control.run_id)
     assert before_chunks is not None and after_chunks is not None
     assert after_chunks.control.version == before_chunks.control.version
     chunks = await store.read_chunks(control.run_id, CHUNK_CURSOR_START)
     assert [chunk.data for chunk in chunks] == [b"1", b"2", b"3"]
     assert await store.read_chunks(control.run_id, chunks[0].cursor) == chunks[1:]
-    with pytest.raises(ChunkCursorExpiredError):
-        await store.read_chunks(control.run_id, "0-1")
+    assert await store.wait_chunks(control.run_id, chunks[0].cursor, 5) == chunks[1:]
+    assert await store.wait_chunks(control.run_id, chunks[-1].cursor, 0.01) == ()
+    for read in (store.read_chunks, lambda run_id, cursor: store.wait_chunks(run_id, cursor, 5)):
+        with pytest.raises(ChunkCursorExpiredError):
+            await read(control.run_id, "0-1")
 
     await store.transition(
         control.run_id,
@@ -130,6 +144,8 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
         Suspend(claimed.next_control.fence, "worker", 0, b"checkpoint", b"wait"),
     )
     assert suspended.next_control.status is ExecutionStatus.WAITING
+    public = await store.read_public(control.run_id)
+    assert public is not None and public.payloads == {PayloadKind.WAIT: b"wait"}
     resumed = await store.transition(control.run_id, Resume(0, "v1", b"resumed"))
     assert resumed.next_control.status is ExecutionStatus.QUEUED
     claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
@@ -165,3 +181,53 @@ async def assert_revision_routing_contract(store: ExecutionStore) -> None:
     old_claim = await store.claim(Claim("worker-v1", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert old_claim is not None
     assert (old_claim.next_control.run_id, old_claim.next_control.status) == ("run_a_old", ExecutionStatus.RUNNING)
+
+
+async def assert_terminal_markers_contract(store: ExecutionStore) -> None:
+    """Every terminal path appends one marker, even when chunk persistence is disabled."""
+    for index in range(4):
+        run_id = f"run_{index}"
+        await store.submit(contract_control(store.deployment, run_id, idempotency=run_id, binding=run_id), b"input")
+
+    await store.transition("run_0", RequestCancellation(0, "queued"))
+    claimed = [await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) for _ in range(3)]
+    fences = {plan.next_control.run_id: plan.next_control.fence for plan in claimed if plan is not None}
+    await store.transition("run_1", Suspend(fences["run_1"], "worker", 0, b"checkpoint", b"wait"))
+    await store.transition("run_1", RequestCancellation(0, "waiting"))
+    await store.transition("run_2", Complete(fences["run_2"], "worker", 0, b"done"))
+    await asyncio.sleep(0.06)
+    await store.maintain(max_run_attempts=1, attempts_error=ATTEMPTS_ERROR)
+
+    for run_id, status in (
+        ("run_0", ExecutionStatus.CANCELED),
+        ("run_1", ExecutionStatus.CANCELED),
+        ("run_2", ExecutionStatus.COMPLETED),
+        ("run_3", ExecutionStatus.FAILED),
+    ):
+        stored = await store.read(run_id)
+        chunks = await store.read_chunks(run_id, CHUNK_CURSOR_START)
+        assert stored is not None and stored.control.status is status
+        assert [(chunk.terminal, chunk.attempt) for chunk in chunks] == [(True, stored.control.run_attempt)]
+
+
+async def assert_raced_recovery_contract(store: ExecutionStore) -> None:
+    """A lease recovery that loses its race skips that entry and still recovers the rest of the batch."""
+    for run_id in ("run_a", "run_b"):
+        await store.submit(contract_control(store.deployment, run_id, idempotency=run_id, binding=run_id), b"input")
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await asyncio.sleep(0.06)
+    transition = store.transition
+
+    async def raced(run_id: str, command: ExecutionCommand) -> TransitionPlan:
+        if run_id == "run_a":
+            raise InvalidExecutionTransitionError("lease renewed after the index scan")
+        return await transition(run_id, command)
+
+    with patch.object(store, "transition", raced):
+        await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR)
+
+    statuses = [(await store.read(run_id)) for run_id in ("run_a", "run_b")]
+    assert [stored.control.status for stored in statuses if stored is not None] == [
+        ExecutionStatus.RUNNING,
+        ExecutionStatus.QUEUED,
+    ]
