@@ -7,31 +7,32 @@ is intentionally process-local and is only suitable for development and tests.
 
 1. Install `hayhooks[durable]` and provision Redis 6.2 or newer, or Valkey 7.2
    or newer.
-2. Give every wrapper revision an immutable value and deploy the same revision
-   to every replica that can claim its work.
+2. Give every deployment revision an immutable value and serve the same
+   revision on every replica that can claim its work.
 3. Start with low worker concurrency and a finite nonterminal capacity.
 4. Exercise submit, checkpoint, restart, resume, cancel, and terminal retention
    before increasing traffic.
-5. Drain live work before overwriting or undeploying a durable wrapper.
+5. On shutdown, close the runtime and await `wait_drained()` before closing
+   its Redis clients. Serve a new revision from a new deployment instance.
 
-Hayhooks rejects a dynamic change with `409` while queued, running, or waiting
-work exists. For file-based wrappers, this gate runs before candidate source is
-loaded or persisted, so the rejected deployment cannot affect the active
-revision. Hayhooks never runs an old checkpoint under a new revision.
+Workers claim only their exact revision, so an old checkpoint never runs under a
+new revision. Hayhooks-managed hosting of durable wrappers follows in a later
+release; the Hayhooks server in this release rejects them.
 
 ## Redis
 
-- The built-in Hayhooks URL configuration uses a standalone
-  `redis.asyncio.Redis` client. Redis Cluster and Sentinel topologies are not
-  validated by this integration; an application that embeds the portable engine
-  can pass and test a compatible client through the store API.
+- `RedisExecutionStore` takes an injected `redis.asyncio` client and viewer
+  client, so the host chooses the database number, authentication, and
+  topology. Redis Cluster and Sentinel topologies are not validated; test a
+  compatible client through the store API.
 - Enable persistence appropriate for the recovery objective (AOF, RDB, or both)
   and test restore from backup.
 - Use a TLS Redis URL and authenticated network path outside a trusted local
   environment.
 - Use `noeviction`. Evicting control, payload, progress, or index keys can make
   an execution unrecoverable.
-- Keep the configured key prefix private to Hayhooks. Each deployment uses a
+- Keep the store's `key_prefix` private to the engine. Every key lives under it,
+  so a per-tenant prefix maps to one Redis ACL key pattern. Each deployment uses a
   cluster-safe hash tag and stores control, payloads, progress, chunks,
   idempotency, runnable, lease, and capacity data.
 - Monitor latency, memory, connection limits, persistence errors, replication
@@ -49,7 +50,7 @@ before upgrading a Redis namespace to this release.
 
 ## Capacity and stream load
 
-`HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS` is the admission ceiling per
+`StoreConfig.max_nonterminal_executions` is the admission ceiling per
 deployment and defaults to `1000`; `0` explicitly opts into unlimited
 admission. Worker concurrency controls claims, not accepted queue size. Stream
 chunk count and byte limits bound display history per execution. Progress count
@@ -132,7 +133,7 @@ trip. Submit, claim, and complete are a small constant per run.
 
 Every worker-owned write, including heartbeats and stream chunks, runs as one
 Lua script that checks ownership, fence, and Redis `TIME` against the lease
-deadline minus `HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS` before it writes. A
+deadline minus `StoreConfig.lease_commit_safety_ms` before it writes. A
 lifecycle transition also requires the stored control to equal the exact
 snapshot the reducer decided from, so a worker that stalls between reading and
 committing cannot write after its lease expired or after another worker claimed
@@ -147,7 +148,7 @@ so these checks reject corrupt targets before changing execution state.
 ## Streaming
 
 Streaming callbacks never wait on Redis. `stream_chunk` appends to a
-per-execution buffer bounded by `HAYHOOKS_DURABLE_MAX_STREAM_CHUNKS`, dropping
+per-execution buffer bounded by `StoreConfig.max_stream_chunks`, dropping
 the oldest entries. One flusher sleeps for 100 ms between flushes, then sends
 the buffer through the chunk script. Redis latency and scheduler delays add to
 that interval. The buffer is flushed before the execution completes,
@@ -192,9 +193,8 @@ which the host reads the execution's final state.
 Worker pickup and lease maintenance are configured independently. Both default
 to five seconds:
 
-```bash
-export HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS=5
-export HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS=5
+```python
+RuntimeConfig(poll_interval_seconds=5.0, maintenance_interval_seconds=5.0)
 ```
 
 A submission or resume on the same process wakes an idle local worker
@@ -229,7 +229,7 @@ The intervals are upper bounds added by polling; average delay under steady
 arrival is usually about half the configured interval. Keep maintenance short
 relative to customized short leases.
 
-Maintenance cadence does not supervise local worker capacity. Hayhooks restarts
+Maintenance cadence does not supervise local worker capacity. The runtime restarts
 an unexpectedly stopped worker task immediately through local task supervision,
 without waiting for the next Redis maintenance scan.
 
@@ -247,9 +247,9 @@ without waiting for the next Redis maintenance scan.
 
 ## Health and recovery
 
-`GET /status` includes durable deployment health, configured/running/draining
+`runtime.health()` reports durable deployment health, configured/running/draining
 worker counts, maintenance state, store error streak, and bounded operational
-counts. `active_executions` counts the claims this process is still running,
+counts; expose it through the host's health checks. `active_executions` counts the claims this process is still running,
 including thread-backed work retained after shutdown; report the process as
 busy while it is non-zero so that an autoscaler does not reap it mid-run. Alert on unhealthy deployments, a growing nonterminal count, repeated
 store errors, or sustained draining work.
@@ -260,12 +260,28 @@ indexes ensure only a worker serving the pinned revision can claim it. Old
 fences cannot commit. Clients inspect the execution again and reconnect SSE with
 their last cursor; they do not resubmit unless no execution was created.
 
-Applications that embed the portable engine may run multiple revisions during a
-rollout. Claiming is
-revision-safe, but a resume request must still be routed to the replica serving
-the execution's pinned revision so that it uses the matching resume schema.
-Hayhooks' dynamic deployment path avoids this requirement by rejecting a
-revision change while live work exists.
+A rollout may run multiple revisions at once. Claiming is revision-safe, but a
+resume request must still be routed to the replica serving the execution's
+pinned revision so that it uses the matching resume schema.
+
+## Shutdown handoff
+
+At the end of the shutdown grace, `close()` cancels async work and releases its
+claim: the run is queued again at once, without spending a run attempt, and a
+pending cancellation ends it `canceled`. Thread-backed work keeps its claim
+until it exits, and `wait_drained()` waits for it. On hosts that kill processes
+shortly after SIGTERM, set `RuntimeConfig(release_running_on_close=True)` so
+those claims are released too; see
+[Hosts with short kill deadlines](../features/durable-execution.md#hosts-with-short-kill-deadlines)
+for the overlap trade-off.
+
+Because a released run does not spend an attempt, a run that never reaches a
+checkpoint can restart on every shutdown: on a fleet that replaces processes
+routinely, a run whose first checkpoint takes longer than a process lifetime
+never completes and never fails. Inspection shows it alternating between
+`queued` and `running` while `attempt` does not increase. Cancel it through the
+cancel endpoint, then add a checkpoint before its first long step so each
+restart resumes further along.
 
 ## Incident checklist
 

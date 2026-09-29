@@ -461,13 +461,24 @@ def test_block_timeout_keeps_alive_and_ends_on_terminal_control_without_marker(
     ("lifecycle", "expected_events"),
     [
         pytest.param("close", [], id="close-ends-streams"),
-        pytest.param("quiesce-probe", ["completed"], id="quiesce-probe-keeps-streams"),
+        pytest.param("quiesce", ["completed"], id="quiesce-keeps-streams-for-a-successor"),
     ],
 )
 def test_only_close_ends_blocked_streams(
     durable_app_factory, wait_for_execution, lifecycle: str, expected_events: list[str]
 ) -> None:
     app, deployment = durable_app_factory()
+    # Quiescing is one-way; a new instance on the same store finishes the work that open streams follow.
+    successor = DurableDeployment(
+        deployment.name,
+        deployment.revision,
+        deployment.store,
+        JobRequest,
+        run_job,
+        result_model=JobResult,
+        resume_model=ResumeInput,
+        config=deployment.config,
+    )
     with TestClient(app) as client:
         submitted = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"}).json()
         wait_for_execution(client, submitted["links"]["self"], "waiting")
@@ -476,13 +487,13 @@ def test_only_close_ends_blocked_streams(
             if lifecycle == "close":
                 await deployment.close()
                 return
-            # Hayhooks probes a redeploy by quiescing, then restarts when work is still live.
             await deployment.quiesce()
-            await deployment.start()
-            await deployment.resume(submitted["execution_id"], {"approved": True}, enforce_owner=False)
+            await successor.start()
+            await successor.resume(submitted["execution_id"], {"approved": True}, enforce_owner=False)
 
         threading.Timer(0.2, client.portal.call, (interrupt,)).start()
         events, _, _ = read_sse(client, submitted["links"]["stream"])
+        client.portal.call(successor.close)
 
     assert [event["event"] for event in events] == expected_events
 

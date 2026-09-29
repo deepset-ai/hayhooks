@@ -4,6 +4,12 @@ This local example demonstrates detached execution, a Pipeline checkpoint,
 one bounded retry, typed approval/resume, cooperative cancellation, durable
 progress, and SSE output without a paid API.
 
+> [!NOTE]
+> Hayhooks-managed hosting of durable wrappers follows in a later release. In
+> this release, `hayhooks run` rejects this wrapper at startup, so the steps
+> below apply once durable hosting ships. To run durable work today, embed the
+> engine as in the [standalone FastAPI example](../durable_fastapi/).
+
 Start Redis and Hayhooks from the repository root:
 
 ```bash

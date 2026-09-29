@@ -5,11 +5,14 @@ import threading
 from importlib.metadata import version
 
 import pytest
+from pydantic import BaseModel
 
-from hayhooks.durable.context import _ExecutionSuspendedError, durable_context_scope
-from hayhooks.durable.engine import ExecutionLeaseLostError, PayloadKind, Resume, ScheduleRetry
+from hayhooks.durable.context import DurableContext, _ExecutionSuspendedError, durable_context_scope
+from hayhooks.durable.engine import ExecutionLeaseLostError, ExecutionStatus, PayloadKind, Resume, ScheduleRetry
 from hayhooks.durable.haystack import HaystackDurableAdapter, _agent_checkpoint
-from hayhooks.durable.models import ExecutionKind, encode_json
+from hayhooks.durable.models import ExecutionKind, decode_json, encode_json
+from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
+from hayhooks.durable.store import MemoryExecutionStore, StoreConfig
 from tests.durable_store_contract import decode_checkpoint
 
 try:
@@ -366,3 +369,60 @@ async def test_sync_and_async_adapters_reject_a_lost_fence(context_factory, meth
             await asyncio.to_thread(adapter.run_agent, context, messages=[])
         else:
             await adapter.run_agent_async(context, messages=[])
+
+
+class PipelineDefinition(BaseModel):
+    steps: int
+    approval: bool = False
+
+
+@requires_haystack_v3
+async def test_runner_built_adapters_resume_on_a_new_deployment_instance() -> None:
+    store = MemoryExecutionStore("per-execution", config=StoreConfig(lease_commit_safety_ms=10))
+
+    def deployment(*, hold: bool) -> DurableDeployment:
+        async def run(context: DurableContext, definition: PipelineDefinition) -> dict[str, int]:
+            if definition.approval and context.resume_input is None:
+                await context.suspend({"kind": "approval"})
+            if hold:
+                await asyncio.Event().wait()
+            # The execution's own input defines its Pipeline, so no adapter is shared by the deployment.
+            pipeline = Pipeline()
+            for step in range(definition.steps):
+                pipeline.add_component(f"step_{step}", Increment())
+                if step:
+                    pipeline.connect(f"step_{step - 1}.value", f"step_{step}.value")
+            result = await HaystackDurableAdapter(pipeline).run_pipeline_async(context, {"step_0": {"value": 0}})
+            return result[f"step_{definition.steps - 1}"]
+
+        config = RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0.01)
+        return DurableDeployment("per-execution", "v1", store, PipelineDefinition, run, config=config)
+
+    async def wait_for(run_id: str, expected: ExecutionStatus) -> dict[str, int] | None:
+        for _ in range(200):
+            stored = await store.read(run_id)
+            if stored is not None and stored.control.status is expected:
+                result = stored.payloads.get(PayloadKind.RESULT)
+                return None if result is None else decode_json(result, max_bytes=1_000)
+            await asyncio.sleep(0.005)
+        message = f"execution did not reach {expected.value}"
+        raise AssertionError(message)
+
+    first = deployment(hold=True)
+    await first.start()
+    waiting = (await first.submit({"steps": 2, "approval": True})).control.run_id
+    await wait_for(waiting, ExecutionStatus.WAITING)
+    queued = (await first.submit({"steps": 3})).control.run_id
+    await wait_for(queued, ExecutionStatus.RUNNING)
+    await first.close()
+    await first.wait_drained()
+    await wait_for(queued, ExecutionStatus.QUEUED)
+
+    second = deployment(hold=False)
+    await second.start()
+    try:
+        await second.resume(waiting, {"approved": True})
+        assert await wait_for(queued, ExecutionStatus.COMPLETED) == {"value": 3}
+        assert await wait_for(waiting, ExecutionStatus.COMPLETED) == {"value": 2}
+    finally:
+        await second.close()

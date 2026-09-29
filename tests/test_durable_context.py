@@ -277,3 +277,32 @@ async def test_retry_request_carries_buffered_progress(context_factory) -> None:
     with pytest.raises(_RetryRequestedError) as raised:
         await context.retry("later", delay=1.5)
     assert (str(raised.value), raised.value.delay, len(raised.value.progress_events)) == ("later", 1.5, 1)
+
+
+async def test_release_rejects_a_write_waiting_behind_it(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    commands: list[str] = []
+    releasing, proceed = asyncio.Event(), asyncio.Event()
+
+    async def slow_release(run_id: str, command):
+        commands.append(type(command).__name__)
+        if isinstance(command, ReleaseClaim):
+            releasing.set()
+            await proceed.wait()
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", slow_release)
+    release = asyncio.create_task(claim.release())
+    await releasing.wait()
+    # The checkpoint passes its ownership check, then waits for the transition lock the release holds.
+    checkpoint = asyncio.create_task(context.checkpoint({"step": 1}))
+    await asyncio.sleep(0.01)
+    proceed.set()
+    await release
+
+    with pytest.raises(ExecutionLeaseLostError):
+        await checkpoint
+    assert commands == ["ReleaseClaim"]
+    assert (await store.read(context.execution_id)).control.status is ExecutionStatus.QUEUED

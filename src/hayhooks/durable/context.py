@@ -7,7 +7,7 @@ import asyncio
 import math
 import time
 from collections import deque
-from collections.abc import Coroutine, Iterator, Mapping
+from collections.abc import Callable, Coroutine, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -15,6 +15,7 @@ from typing import Any, TypeVar
 
 from loguru import logger as log
 
+from hayhooks.durable._threading import start_daemon_thread
 from hayhooks.durable.engine import (
     Checkpoint,
     ExecutionCommand,
@@ -23,11 +24,13 @@ from hayhooks.durable.engine import (
     ExecutionNotFoundError,
     ExecutionStatus,
     Heartbeat,
+    InvalidExecutionTransitionError,
+    ReleaseClaim,
     Suspend,
     TransitionPlan,
 )
 from hayhooks.durable.models import CheckpointEnvelope, ExecutionProgress, JsonValue, encode_json
-from hayhooks.durable.store import ExecutionStore
+from hayhooks.durable.store import ExecutionStore, ExecutionStoreError
 
 _T = TypeVar("_T")
 # With push delivery to stream viewers, this is also the display latency of a chunk.
@@ -50,7 +53,7 @@ class _ExecutionSuspendedError(Exception):
 
 
 class _ClaimedExecution:
-    """Fenced store handle, heartbeat, and chunk flusher owned by one runtime worker."""
+    """Fenced store handle, heartbeat, chunk flusher, and engine threads owned by one runtime worker."""
 
     def __init__(
         self,
@@ -75,6 +78,8 @@ class _ClaimedExecution:
         self.checkpoint = checkpoint
         self.lease_lost = asyncio.Event()
         self.event_loop = asyncio.get_running_loop()
+        # Exit futures of the engine threads still running this execution.
+        self.threads: set[asyncio.Future[None]] = set()
         self._heartbeat_interval = heartbeat_interval
         self._safe_duration = safe_duration
         self._confirmed_until = time.monotonic() + safe_duration
@@ -126,6 +131,27 @@ class _ClaimedExecution:
 
     def mark_lost(self) -> None:
         self.lease_lost.set()
+
+    async def release(self) -> None:
+        """Requeue the run without spending its attempt, flushing buffered chunks first, then stop owning it."""
+        try:
+            await self.transition(ReleaseClaim(self.control.fence, self.worker_id))
+        except (ExecutionLeaseLostError, InvalidExecutionTransitionError):
+            pass  # Already lost, finished, or suspended: nothing to hand back.
+        except ExecutionStoreError as error:
+            log.bind(run_id=self.control.run_id, exception_type=type(error).__name__).warning(
+                "Could not release durable claim; it is recovered when its lease expires"
+            )
+        finally:
+            self.mark_lost()
+
+    def start_thread(self, function: Callable[[], _T], *, name: str) -> asyncio.Future[_T]:
+        """Run synchronous work in a daemon thread tracked until it exits, not just until it returns."""
+        self.require_owned()
+        result, exited = start_daemon_thread(function, name=name)
+        self.threads.add(exited)
+        exited.add_done_callback(self.threads.discard)
+        return result
 
     def buffer_chunk(self, data: bytes) -> None:
         """Queue one display chunk; the oldest are dropped beyond the stream limit."""
@@ -217,6 +243,9 @@ class DurableContext:
 
     def _require_owned(self) -> None:
         self._claim.require_owned()
+
+    def _start_thread(self, function: Callable[[], _T], *, name: str) -> asyncio.Future[_T]:
+        return self._claim.start_thread(function, name=name)
 
     async def checkpoint(self, adapter_checkpoint: JsonValue = None) -> None:
         async with self._operation_lock:

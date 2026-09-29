@@ -10,16 +10,28 @@ import textwrap
 import threading
 from collections.abc import Callable
 from dataclasses import replace
+from importlib.metadata import version
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from hayhooks.durable.context import DurableContext
-from hayhooks.durable.engine import Claim, ExecutionNotFoundError, ExecutionStatus, PayloadKind, initial_control
+from hayhooks.durable.engine import (
+    Claim,
+    ExecutionLeaseLostError,
+    ExecutionNotFoundError,
+    ExecutionStatus,
+    Heartbeat,
+    PayloadKind,
+    ReleaseClaim,
+    initial_control,
+)
 from hayhooks.durable.models import PersistedError, decode_json
 from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, RuntimeConfig
 from hayhooks.durable.store import (
+    CHUNK_CURSOR_START,
     ExecutionIdempotencyConflictError,
     ExecutionStoreError,
     MemoryExecutionStore,
@@ -503,28 +515,313 @@ async def test_worker_and_maintenance_loops_use_independent_intervals(deployment
     assert store.maintenance_calls == 1
 
 
-async def test_runtime_instances_are_isolated_and_empty_start_is_inert(deployment_factory) -> None:
+async def test_runtime_membership_is_fixed_at_construction(deployment_factory) -> None:
     empty = DurableRuntime()
     await empty.start()
     assert await empty.health() == {"healthy": True, "deployments": {}}
     await empty.close()
+    await empty.wait_drained()
 
-    first_store, second_store = ControlledStore("first"), ControlledStore("second")
-    first = await deployment_factory(store=first_store, start=False)
-    second = await deployment_factory(store=second_store, start=False)
-    first_runtime, second_runtime = DurableRuntime(), DurableRuntime()
-    await first_runtime.install(first)
-    await second_runtime.install(second)
-    await first_runtime.start()
-    await second_runtime.start()
-    assert await first_runtime.remove("first") is first
-    await first_runtime.close()
-    assert not first.accepting and second.accepting
-    submitted = await second.submit({"value": 2})
-    stored = await wait_for_execution(second, submitted.control.run_id, lambda value: value.control.terminal)
+    first = await deployment_factory(start=False)
+    members = [first]
+    runtime = DurableRuntime(members)
+    members.append(await deployment_factory(start=False))
+    assert list((await runtime.health())["deployments"]) == [first.name]
+    assert not any(hasattr(runtime, name) for name in ("add", "install", "remove", "discard"))
+    with pytest.raises(ValueError, match="more than once"):
+        DurableRuntime((first, first))
+
+
+async def test_runtime_start_failure_closes_started_deployments(deployment_factory) -> None:
+    started = await deployment_factory(start=False)
+    failing_store = ControlledStore("failing")
+    failing_store.initialize = AsyncMock(side_effect=ExecutionStoreError("unavailable"))
+    failing = await deployment_factory(store=failing_store, start=False)
+    runtime = DurableRuntime((started, failing))
+
+    with pytest.raises(ExecutionStoreError):
+        await runtime.start()
+
+    await asyncio.wait_for(runtime.wait_drained(), timeout=1)
+    health = await started.health()
+    assert (health["accepting"], health["running_slots"], health["maintenance_running"]) == (False, 0, False)
+    with pytest.raises(RuntimeError, match="closed durable runtime"):
+        await runtime.start()
+
+
+@pytest.mark.parametrize("stop", ["quiesce", "close", "failed-activation"])
+async def test_stopped_deployment_is_never_reactivated(deployment_factory, stop: str) -> None:
+    store = ControlledStore("jobs")
+    deployment = await deployment_factory(store=store, start=False)
+    if stop == "failed-activation":
+        store.initialize = AsyncMock(side_effect=ExecutionStoreError("unavailable"))
+        with pytest.raises(ExecutionStoreError):
+            await deployment.start()
+    else:
+        await deployment.start()
+        await deployment.start()
+        assert store.initialize_calls == 1
+        # Repeated calls complete any cleanup an earlier call left unfinished.
+        await getattr(deployment, stop)()
+        await getattr(deployment, stop)()
+    tasks = (tuple(deployment._workers.values()), deployment._maintenance_task)
+
+    with pytest.raises(RuntimeError, match="cannot be restarted"):
+        await deployment.start()
+
+    assert not deployment.accepting
+    assert (tuple(deployment._workers.values()), deployment._maintenance_task) == tasks
+    with pytest.raises(RuntimeError, match="not accepting"):
+        await deployment.submit({"value": 1})
+
+
+async def test_quiesce_lets_an_in_flight_claim_finish_and_stops_claiming(deployment_factory, monkeypatch) -> None:
+    store = ControlledStore("jobs")
+    deployment = await deployment_factory(store=store)
+    claim = store.claim
+    claim_calls: list[object] = []
+    claiming, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked_claim(command):
+        claim_calls.append(command)
+        claiming.set()
+        await release.wait()
+        return await claim(command)
+
+    monkeypatch.setattr(store, "claim", blocked_claim)
+    await asyncio.wait_for(claiming.wait(), timeout=1)
+    submitted = await deployment.submit({"value": 1})
+    await deployment.quiesce()
+    release.set()
+
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    await wait_for_health(deployment, lambda health: health["draining_slots"] == 0)
     assert stored.control.status is ExecutionStatus.COMPLETED
-    assert (first_store.initialize_calls, second_store.initialize_calls) == (1, 1)
-    await second_runtime.close()
+    assert len(claim_calls) == 1
+
+
+async def test_runtime_close_reaches_every_deployment_and_raises_the_first_error(deployment_factory, monkeypatch):
+    deployments = [await deployment_factory() for _ in range(3)]
+    for deployment in deployments[1:]:
+        close = deployment.close
+
+        async def failing_close(close=close, name=deployment.name) -> None:
+            await close()
+            raise RuntimeError(name)
+
+        monkeypatch.setattr(deployment, "close", failing_close)
+    runtime = DurableRuntime(deployments)
+    await runtime.start()
+
+    # Deployments close in reverse order, so the last one fails first.
+    with pytest.raises(RuntimeError, match=deployments[-1].name):
+        await runtime.close()
+
+    assert not any(deployment.accepting for deployment in deployments)
+    await asyncio.wait_for(runtime.wait_drained(), timeout=1)
+
+
+async def test_wait_drained_requires_closed_admission(deployment_factory) -> None:
+    deployment = await deployment_factory()
+
+    with pytest.raises(RuntimeError, match="close the durable deployment"):
+        await deployment.wait_drained()
+
+
+@pytest.mark.parametrize("cancel_requested", [False, True], ids=["requeued", "cancel-wins"])
+async def test_close_releases_async_work_it_cancels(deployment_factory, cancel_requested: bool) -> None:
+    started = asyncio.Event()
+
+    async def runner(context: DurableContext, _request: Request) -> Result:
+        await context.stream_chunk({"token": "partial"})
+        started.set()
+        await asyncio.Event().wait()
+        return Result(value=0)
+
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    deployment = await deployment_factory(
+        runner,
+        store=store,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0.01),
+    )
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    await asyncio.wait_for(started.wait(), timeout=1)
+    if cancel_requested:
+        await deployment.cancel(run_id)
+
+    await deployment.close()
+
+    stored = await store.read(run_id)
+    assert stored is not None
+    # Buffered chunks reach the stream before the claim is handed back.
+    assert (await store.read_chunks(run_id, CHUNK_CURSOR_START))[0].data == b'{"token":"partial"}'
+    if cancel_requested:
+        assert stored.control.status is ExecutionStatus.CANCELED
+        return
+    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
+    reclaimed = await store.claim(Claim("successor", 0, 300, 3, "v1", b"{}"))
+    assert reclaimed is not None and reclaimed.next_control.run_attempt == 1
+
+
+async def test_repeated_close_waits_for_the_claim_release_in_progress(deployment_factory, monkeypatch) -> None:
+    started, releasing, proceed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def runner(_context: DurableContext, _request: Request) -> Result:
+        started.set()
+        await asyncio.Event().wait()
+        return Result(value=0)
+
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    deployment = await deployment_factory(
+        runner,
+        store=store,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0.01),
+    )
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    await asyncio.wait_for(started.wait(), timeout=1)
+    transition = store.transition
+
+    async def slow_release(execution_id: str, command):
+        if isinstance(command, ReleaseClaim):
+            releasing.set()
+            await proceed.wait()
+        return await transition(execution_id, command)
+
+    monkeypatch.setattr(store, "transition", slow_release)
+    first = asyncio.create_task(deployment.close())
+    await asyncio.wait_for(releasing.wait(), timeout=1)
+    second = asyncio.create_task(deployment.close())
+    drained = asyncio.create_task(deployment.wait_drained())
+    await asyncio.sleep(0.05)
+
+    assert not second.done() and not drained.done()
+    proceed.set()
+    await asyncio.wait_for(asyncio.gather(first, second, drained), timeout=1)
+    assert (await store.read(run_id)).control.status is ExecutionStatus.QUEUED
+
+
+@pytest.mark.parametrize("threaded", [False, True], ids=["async", "thread"])
+async def test_cancellation_raised_by_the_application_fails_the_execution(deployment_factory, threaded: bool) -> None:
+    calls = 0
+
+    def cancel(_context: DurableContext, _request: Request) -> Result:
+        nonlocal calls
+        calls += 1
+        raise asyncio.CancelledError
+
+    async def cancel_async(context: DurableContext, request: Request) -> Result:
+        return cancel(context, request)
+
+    deployment = await deployment_factory(cancel if threaded else cancel_async)
+    submitted = await deployment.submit({"value": 1})
+
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    assert (stored.control.status, stored.control.run_attempt, calls) == (ExecutionStatus.FAILED, 1, 1)
+
+
+_HAYSTACK_V3 = (3, 1) <= tuple(int(part) for part in version("haystack-ai").split(".")[:2]) < (4, 0)
+THREAD_SOURCES = [
+    pytest.param("runner", id="runner-thread"),
+    pytest.param(
+        "adapter",
+        id="adapter-thread",
+        marks=pytest.mark.skipif(not _HAYSTACK_V3, reason="durable adapters require Haystack 3.1+"),
+    ),
+]
+
+
+@pytest.fixture
+def thread_work(monkeypatch):
+    """A runner whose engine thread blocks, then checkpoints, recording that call's outcome."""
+    started, release = threading.Event(), threading.Event()
+    outcomes: list[BaseException | None] = []
+
+    def work(context: DurableContext) -> dict[str, bool]:
+        started.set()
+        release.wait()
+        try:
+            context.checkpoint_sync()
+        except ExecutionLeaseLostError as error:
+            outcomes.append(error)
+        else:
+            outcomes.append(None)
+        return {"value": 1}
+
+    def create(source: str):
+        if source == "runner":
+            return lambda context, _request: work(context)
+        from haystack import Pipeline
+
+        from hayhooks.durable.haystack import HaystackDurableAdapter
+
+        adapter = HaystackDurableAdapter(Pipeline())
+        monkeypatch.setattr(adapter, "run_pipeline", lambda context, _data, **_options: work(context))
+
+        async def run_nested(context: DurableContext, _request: Request) -> dict[str, bool]:
+            return await adapter.run_pipeline_async(context, {})
+
+        return run_nested
+
+    yield create, started, release, outcomes
+    release.set()
+
+
+@pytest.mark.parametrize("source", THREAD_SOURCES)
+async def test_retained_thread_work_keeps_its_claim_until_drained(deployment_factory, thread_work, source) -> None:
+    create, started, release, outcomes = thread_work
+    deployment = await deployment_factory(
+        create(source),
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0.01),
+    )
+    runtime = DurableRuntime((deployment,))
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    assert await asyncio.to_thread(started.wait, 1)
+    await runtime.close()
+
+    drain = asyncio.create_task(runtime.wait_drained())
+    await asyncio.sleep(0.4)  # longer than the lease: heartbeats must keep the claim alive
+    drain.cancel()
+    await asyncio.wait({drain})
+    await runtime.close()
+    assert (await deployment.health())["active_executions"] == 1
+
+    release.set()
+    await asyncio.wait_for(runtime.wait_drained(), timeout=1)
+    stored = await deployment.get(run_id)
+    assert (stored.control.status, outcomes) == (ExecutionStatus.COMPLETED, [None])
+
+
+@pytest.mark.parametrize("source", THREAD_SOURCES)
+async def test_release_running_on_close_hands_thread_work_over(deployment_factory, thread_work, source) -> None:
+    create, started, release, outcomes = thread_work
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    deployment = await deployment_factory(
+        create(source),
+        store=store,
+        config=RuntimeConfig(
+            poll_interval_seconds=0.005,
+            lease_duration_ms=300,
+            shutdown_grace_seconds=0.01,
+            release_running_on_close=True,
+        ),
+    )
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    assert await asyncio.to_thread(started.wait, 1)
+    running = (await store.read(run_id)).control
+
+    await deployment.close()
+    await asyncio.wait_for(deployment.wait_drained(), timeout=1)
+
+    reclaimed = await store.claim(Claim("successor", 0, 300, 3, "v1", b"{}"))
+    assert reclaimed is not None and reclaimed.next_control.run_attempt == running.run_attempt
+    with pytest.raises(ExecutionLeaseLostError):
+        await store.transition(run_id, Heartbeat(running.fence, running.lease_owner, 0, 300))
+    transitions = AsyncMock(wraps=store.transition)
+    store.transition = transitions
+    release.set()
+    await wait_for_health(deployment, lambda health: health["draining_runs"] == 0)
+    assert [type(outcome) for outcome in outcomes] == [ExecutionLeaseLostError]
+    transitions.assert_not_called()
 
 
 @pytest.mark.parametrize("loss_mode", ["shutdown", "lease"])
@@ -565,7 +862,8 @@ async def test_thread_work_is_retained_until_exit(deployment_factory, loss_mode:
             release.set()
             await wait_for_health(deployment, lambda health: health[counter] == 0)
             stored = await deployment.get(submitted.control.run_id)
-            expected = ExecutionStatus.COMPLETED if runner_mode == "sync" else ExecutionStatus.RUNNING
+            # Retained threads finish their claim; cancelled async work was handed back to the queue.
+            expected = ExecutionStatus.COMPLETED if runner_mode == "sync" else ExecutionStatus.QUEUED
             assert stored.control.status is expected
         else:
             contexts[0]._claim.mark_lost()
@@ -637,6 +935,102 @@ def test_shutdown_grace_bounds_event_loop_teardown_for_sync_runner() -> None:
         check=True,
         env={**os.environ, "PYTHONPATH": str(source_root)},
         timeout=3,
+    )
+
+
+def test_core_engine_runs_without_integration_dependencies() -> None:
+    source_root = Path(__file__).parents[1] / "src"
+    subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                """
+                import asyncio
+                import importlib.abc
+                import sys
+
+                BLOCKED = ("fastapi", "haystack", "redis", "hayhooks.server", "hayhooks.settings")
+
+
+                class BlockIntegrations(importlib.abc.MetaPathFinder):
+                    def find_spec(self, name, path=None, target=None):
+                        if any(name == blocked or name.startswith(blocked + ".") for blocked in BLOCKED):
+                            raise ImportError(f"{name} is blocked")
+
+
+                sys.meta_path.insert(0, BlockIntegrations())
+
+                import hayhooks.durable._threading
+                import hayhooks.durable.context
+                import hayhooks.durable.engine
+                import hayhooks.durable.models
+                import hayhooks.durable.runtime
+                import hayhooks.durable.store
+                from hayhooks.durable import (
+                    DurableContext,
+                    DurableDeployment,
+                    DurableExecutionCancelledError,
+                    DurableRuntime,
+                    ExecutionStore,
+                    MemoryExecutionStore,
+                    RuntimeConfig,
+                    StoreConfig,
+                    current_durable_context,
+                    durable_context_scope,
+                    durable_streaming_callback,
+                )
+                from hayhooks.durable.engine import ExecutionStatus
+                from pydantic import BaseModel
+
+                try:
+                    from hayhooks.durable import create_durable_router
+                except ImportError:
+                    pass
+                else:
+                    raise AssertionError("the FastAPI transport must load only on demand")
+
+
+                class Request(BaseModel):
+                    value: int
+
+
+                def double(_context: DurableContext, request: Request) -> Request:
+                    return Request(value=request.value * 2)
+
+
+                async def main() -> None:
+                    deployment = DurableDeployment(
+                        "jobs",
+                        "v1",
+                        MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10)),
+                        Request,
+                        double,
+                        result_model=Request,
+                        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+                    )
+                    runtime = DurableRuntime((deployment,))
+                    await runtime.start()
+                    run_id = (await deployment.submit({"value": 21})).control.run_id
+                    while not (stored := await deployment.get(run_id)).control.terminal:
+                        await asyncio.sleep(0.005)
+                    await runtime.close()
+                    await runtime.wait_drained()
+                    assert stored.control.status is ExecutionStatus.COMPLETED
+
+
+                modules = set(sys.modules)
+                dont_write_bytecode = sys.dont_write_bytecode
+                asyncio.run(main())
+                # Haystack cannot be imported, so its global tracer cannot have been replaced either.
+                assert not {name for name in set(sys.modules) - modules if not name.startswith("hayhooks.durable")}
+                assert sys.dont_write_bytecode is dont_write_bytecode
+                """
+            ),
+        ],
+        check=True,
+        env={**os.environ, "PYTHONPATH": str(source_root)},
+        timeout=10,
     )
 
 

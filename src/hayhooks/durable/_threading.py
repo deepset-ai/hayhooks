@@ -13,13 +13,22 @@ from typing import TypeVar
 _T = TypeVar("_T")
 
 
-def start_daemon_thread(function: Callable[[], _T], *, name: str) -> tuple[asyncio.Future[_T], asyncio.Event]:
-    """Start context-aware work without making interpreter shutdown wait for it."""
+def start_daemon_thread(function: Callable[[], _T], *, name: str) -> tuple[asyncio.Future[_T], asyncio.Future[None]]:
+    """
+    Start context-aware work without making interpreter shutdown wait for it.
+
+    Returns the work's result and a future that resolves once the thread has exited, which
+    outlives cancellation of the result.
+    """
     loop = asyncio.get_running_loop()
-    done = asyncio.Event()
+    exited: asyncio.Future[None] = loop.create_future()
     result: ThreadFuture[_T] = ThreadFuture()
     result.set_running_or_notify_cancel()
     active_context = copy_context()
+
+    def mark_exited() -> None:
+        if not exited.done():
+            exited.set_result(None)
 
     def run() -> None:
         try:
@@ -28,7 +37,7 @@ def start_daemon_thread(function: Callable[[], _T], *, name: str) -> tuple[async
             result.set_exception(error)
         finally:
             with suppress(RuntimeError):
-                loop.call_soon_threadsafe(done.set)
+                loop.call_soon_threadsafe(mark_exited)
 
     Thread(target=active_context.run, args=(run,), name=name, daemon=True).start()
-    return asyncio.wrap_future(result), done
+    return asyncio.wrap_future(result), exited

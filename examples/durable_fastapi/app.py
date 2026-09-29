@@ -159,19 +159,22 @@ deployment = DurableDeployment(
     resume_model=Approval,
     adapter=adapter,
 )
-runtime = DurableRuntime()
-runtime.add(deployment)
+runtime = DurableRuntime((deployment,))
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    await runtime.start()
     try:
+        await runtime.start()
         yield
     finally:
-        await runtime.close()
-        await viewers.aclose()
-        await redis.aclose()
+        try:
+            await runtime.close()
+        finally:
+            # Work retained past the shutdown grace keeps using Redis until it exits.
+            await runtime.wait_drained()
+            await viewers.aclose()
+            await redis.aclose()
 
 
 app = FastAPI(title="Durable document API", lifespan=lifespan)
