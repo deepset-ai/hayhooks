@@ -407,6 +407,20 @@ async def test_typed_resume_reconstructs_waiting_execution(deployment_factory) -
     assert decode_json(stored.payloads[PayloadKind.RESULT], max_bytes=1_000) == {"value": 7}
 
 
+async def test_application_failure_is_logged_with_its_cause(deployment_factory, caplog) -> None:
+    async def runner(_context: DurableContext, _request: Request) -> dict[str, int]:
+        raise ValueError("secret cause")
+
+    deployment = await deployment_factory(runner)
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+
+    assert stored.control.status is ExecutionStatus.FAILED
+    assert b"secret cause" not in stored.payloads[PayloadKind.ERROR]
+    [record] = [record for record in caplog.records if record.getMessage().startswith("Durable execution failed")]
+    assert "secret cause" in caplog.text and record.levelname == "ERROR"
+
+
 async def test_oversized_output_becomes_a_bounded_failure(deployment_factory) -> None:
     async def runner(_context: DurableContext, _request: Request) -> dict[str, str]:
         return {"large": "x" * 512}

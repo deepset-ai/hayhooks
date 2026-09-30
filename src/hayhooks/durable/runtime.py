@@ -714,6 +714,10 @@ class DurableDeployment:
         except Exception as error:
             if claim.application_cancelled:
                 raise asyncio.CancelledError from error
+            # The persisted error only names the exception type, so the log is where operators find the cause.
+            log.opt(exception=error).bind(
+                deployment=self.name, run_id=claim.control.run_id, exception_type=type(error).__name__, error=str(error)
+            ).error("Durable execution failed")
             code = "payload_too_large" if isinstance(error, ExecutionPayloadSizeError) else None
             await claim.transition(
                 Fail(

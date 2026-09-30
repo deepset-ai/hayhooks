@@ -302,6 +302,9 @@ deployment = DurableDeployment(
 runtime = DurableRuntime((deployment,))
 ```
 
+`context.resume_input` returns the resume input on its first read and `None`
+afterwards, so read it once into a variable, as above.
+
 For a Pipeline, call
 `context.run_pipeline[_async](data, checkpoint_at="component")`. The adapter
 persists a Haystack `PipelineSnapshot` before that component and also saves a
