@@ -222,6 +222,46 @@ def test_host_construction_failures_fail_startup_and_unload_modules(
     assert _registry_modules() == set()
 
 
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+@pytest.mark.parametrize(
+    "dashboard_path",
+    [
+        "/jobs/run-durable",
+        "/jobs/executions",
+        *(f"/jobs/executions/{'a' * 32}{suffix}" for suffix in ("", "/cancel", "/resume", "/stream")),
+    ],
+)
+def test_durable_routes_cannot_be_shadowed_by_nested_mounts(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, dashboard_path: str
+) -> None:
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    monkeypatch.setattr(settings, "dashboard_enabled", True)
+    monkeypatch.setattr(settings, "dashboard_path", dashboard_path)
+    monkeypatch.setattr(settings, "dashboard_dist_dir", str(durable_pipelines_dir.parent))
+
+    with pytest.raises(PipelineModeError, match="conflict"):
+        create_app()
+
+    assert _registry_modules() == set()
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_durable_routes_can_share_a_prefix_with_an_unrelated_mount(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    monkeypatch.setattr(settings, "dashboard_enabled", True)
+    monkeypatch.setattr(settings, "dashboard_path", "/jobs/monitor")
+    monkeypatch.setattr(settings, "dashboard_dist_dir", str(durable_pipelines_dir.parent))
+
+    with TestClient(create_app()) as client:
+        response = client.post("/jobs/run-durable", json={"value": 2})
+        assert response.status_code == 202
+        assert client.get(response.headers["Location"]).status_code == 200
+
+
 def test_additional_python_path_is_importable_while_loading(
     durable_pipelines_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -20,8 +20,9 @@ if _chainlit_app_dir.exists():
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
-from starlette.routing import Match
+from starlette.routing import Match, Mount, compile_path
 
 from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
@@ -431,7 +432,13 @@ def _add_immutable_pipelines(app: FastAPI, pipeline_registry: ImmutablePipelineR
 
 def _matches_existing_route(app: FastAPI, path: str) -> bool:
     scope = {"type": "http", "method": "POST", "path": path, "root_path": ""}
-    return any(route.matches(scope)[0] is not Match.NONE for route in app.router.routes)
+    path_regex, _, _ = compile_path(path)
+    return any(
+        route.matches(scope)[0] is not Match.NONE
+        # Also catch mounts within a parameterized path, e.g. /jobs/executions/<id>.
+        or (isinstance(route, Mount) and path_regex.fullmatch(route.path) is not None)
+        for route in app.router.routes
+    )
 
 
 def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipelineWrapper]) -> None:
@@ -493,7 +500,15 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         except Exception as error:
             msg = f"Failed to build the durable deployment of pipeline '{name}': {error}"
             raise PipelineModeError(msg) from error
-        app.include_router(create_durable_router(deployment, owner_id_dependency=None), prefix=f"/{name}")
+        router = create_durable_router(deployment, owner_id_dependency=None)
+        if conflicts := [
+            route.path
+            for route in router.routes
+            if isinstance(route, APIRoute) and _matches_existing_route(app, f"/{name}{route.path}")
+        ]:
+            msg = f"Pipeline '{name}' routes {conflicts} conflict with server routes or mounts; rename its definition"
+            raise PipelineModeError(msg)
+        app.include_router(router, prefix=f"/{name}")
         deployments.append(deployment)
     app.state.durable_runtime = DurableRuntime(tuple(deployments))
 

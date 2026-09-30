@@ -87,11 +87,14 @@ registry = _PipelineRegistry()
 
 @dataclass(frozen=True, slots=True)
 class PipelineRegistration:
-    """One pipeline of an immutable registry; ``metadata`` is a read-only mapping."""
+    """One pipeline of an immutable registry; ``metadata`` is a shallow, read-only snapshot."""
 
     name: str
     wrapper: BasePipelineWrapper
     metadata: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
 class ImmutablePipelineRegistry:

@@ -10,9 +10,10 @@ the root is part of the durable storage contract.
 import re
 import sys
 from collections.abc import Callable
+from importlib.machinery import ModuleSpec
+from importlib.util import module_from_spec
 from os import PathLike
 from pathlib import Path
-from types import MappingProxyType
 from typing import TypeVar
 
 from hayhooks.server.exceptions import PipelineModuleLoadError
@@ -65,6 +66,7 @@ def load_pipeline_registry(pipelines_dir: PathLike | str) -> ImmutablePipelineRe
     sys.dont_write_bytecode = True
     unload_pipeline_modules(REGISTRY_ROOT)
     try:
+        sys.modules[REGISTRY_ROOT] = module_from_spec(ModuleSpec(REGISTRY_ROOT, loader=None, is_package=True))
         registry = ImmutablePipelineRegistry(_load_candidate(name, path) for name, path in candidates.items())
     except BaseException:
         unload_pipeline_modules(REGISTRY_ROOT)
@@ -121,7 +123,11 @@ def _load_candidate(name: str, path: Path) -> PipelineRegistration:
     try:
         wrapper: BasePipelineWrapper
         if path.is_dir():
-            module = load_pipeline_module(name, path, package_name=_package_name(name))
+            package_name = _package_name(name)
+            module = load_pipeline_module(name, path, package_name=package_name)
+            package = sys.modules[package_name]
+            package.__dict__["pipeline_wrapper"] = module
+            setattr(sys.modules[REGISTRY_ROOT], package_name.rpartition(".")[2], package)
             wrapper = create_pipeline_wrapper_instance(module)
             metadata = create_pipeline_metadata(name, wrapper)
         else:
@@ -131,4 +137,4 @@ def _load_candidate(name: str, path: Path) -> PipelineRegistration:
     except Exception as error:
         msg = f"Failed to load pipeline '{name}' from '{path}': {error}"
         raise PipelineModuleLoadError(msg) from error
-    return PipelineRegistration(name, wrapper, MappingProxyType(metadata))
+    return PipelineRegistration(name, wrapper, metadata)

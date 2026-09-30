@@ -1,6 +1,7 @@
 """The immutable startup loader and the registry it publishes."""
 
 import json
+import pickle
 import sys
 from pathlib import Path
 from types import MappingProxyType
@@ -11,7 +12,7 @@ from hayhooks.server.exceptions import PipelineModuleLoadError
 from hayhooks.server.pipelines.loader import REGISTRY_ROOT, load_pipeline_registry, registry_module_name
 from hayhooks.server.pipelines.registry import ImmutablePipelineRegistry, PipelineRegistration
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from tests.pipeline_sources import CALC_YAML, ORDINARY_WRAPPER, write_tree
+from tests.pipeline_sources import CALC_YAML, DURABLE_WRAPPER, ORDINARY_WRAPPER, write_tree
 
 # Relative imports from __init__.py, setup(), and a request-time helper, plus a source asset.
 PACKAGE_WRAPPER = {
@@ -104,6 +105,21 @@ def test_pipeline_named_after_a_real_module_does_not_shadow_it(durable_pipelines
     assert sys.modules["json"] is json
 
 
+def test_private_package_supports_standard_imports_and_pickling(durable_pipelines_dir: Path) -> None:
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    load_pipeline_registry(durable_pipelines_dir)
+    module_name = registry_module_name("jobs")
+    module = sys.modules[module_name]
+
+    root = __import__(module_name)
+    package = getattr(root, module_name.split(".")[1])
+    assert package.pipeline_wrapper is module
+    request = module.Request(value=7)
+    restored = pickle.loads(pickle.dumps(request))
+    assert type(restored) is module.Request
+    assert restored == request
+
+
 def test_reloading_replaces_the_previous_pipeline_modules(durable_pipelines_dir: Path, tmp_path: Path) -> None:
     write_tree(durable_pipelines_dir, {"first/pipeline_wrapper.py": ORDINARY_WRAPPER})
     load_pipeline_registry(durable_pipelines_dir)
@@ -112,6 +128,7 @@ def test_reloading_replaces_the_previous_pipeline_modules(durable_pipelines_dir:
     load_pipeline_registry(other)
 
     assert _registry_modules() == {
+        REGISTRY_ROOT,
         f"{REGISTRY_ROOT}.p_{b'second'.hex()}",
         registry_module_name("second"),
     }
@@ -191,15 +208,20 @@ class _Wrapper(BasePipelineWrapper):
         pass
 
 
-def test_registry_copies_its_input_and_exposes_read_only_metadata() -> None:
+@pytest.mark.parametrize("read_only", [False, True])
+def test_registry_copies_its_input_and_exposes_read_only_metadata(read_only: bool) -> None:
     wrapper = _Wrapper()
-    registration = PipelineRegistration("demo", wrapper, MappingProxyType({"description": "Demo"}))
+    card = {"name": "Demo agent"}
+    metadata = {"description": "Demo", "a2a_card": card}
+    registration = PipelineRegistration("demo", wrapper, MappingProxyType(metadata) if read_only else metadata)
     registrations = [registration]
     registry = ImmutablePipelineRegistry(registrations)
     registrations.clear()
+    metadata["description"] = "changed"
 
     assert registry.get("demo") is wrapper
-    assert registry.get_metadata(name="demo") == {"description": "Demo"}
+    assert registry.get_metadata(name="demo") == {"description": "Demo", "a2a_card": card}
+    assert registry.get_metadata("demo")["a2a_card"] is card
     assert registry.get("missing") is None
     assert registry.get_metadata("missing") is None
     names = registry.get_names()
