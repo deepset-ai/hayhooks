@@ -4,9 +4,11 @@ This local example demonstrates detached execution, a Pipeline checkpoint,
 one bounded retry, typed approval/resume, cooperative cancellation, durable
 progress, and SSE output without a paid API.
 
-Start Redis, then Hayhooks in durable mode, from the repository root:
+Install the durable extra (it requires Haystack 3.1 or newer), start Redis,
+then Hayhooks in durable mode, from the repository root:
 
 ```bash
+pip install "hayhooks[durable]"
 docker compose -f examples/durable-compose.yaml up -d
 HAYHOOKS_DURABLE_MODE=true hayhooks run --pipelines-dir examples/durable_execution/pipelines
 ```

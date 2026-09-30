@@ -25,7 +25,8 @@ With the Hayhooks server, run durable wrappers in
   and roll out a change by replacing processes. A process never changes its
   pipeline set, and a failed startup exits.
 - Keep every process that can claim a revision's work on the same pipeline
-  names and wrapper module paths. Add the module paths from the startup log to
+  names and wrapper module paths. Add each pipeline's package (the startup
+  log's module path without `.pipeline_wrapper`) to
   `HAYSTACK_DESERIALIZATION_ALLOWLIST` when checkpoints hold wrapper-local
   types or handlers.
 - The server performs step 5 itself. Graceful shutdown waits for retained

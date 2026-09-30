@@ -116,7 +116,7 @@ jobs:
           hatch -e test env run -- uv pip install --upgrade "haystack-ai>=3.1,<4"
 
       - name: Run Redis integration tests
-        run: hatch run test:integration tests/test_it_durable_redis.py tests/test_it_durable_redis_process.py
+        run: hatch run test:integration tests/test_it_durable_redis.py tests/test_it_durable_redis_process.py tests/test_it_durable_mode.py
 
   linting:
     runs-on: ubuntu-slim

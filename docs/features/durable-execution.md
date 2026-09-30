@@ -136,12 +136,14 @@ shadowing it.
 
 The module path of a pipeline's wrapper depends only on its name, never on the
 source location, so checkpoints written before a restart or a move of the
-source still resolve. Haystack's deserialization allowlist must name these
-exact modules: the server logs each one at startup, and
+source still resolve. The server logs each wrapper module at startup, and
 `hayhooks.server.pipelines.loader.registry_module_name(name)` returns it.
+Haystack's deserialization allowlist treats a name as a prefix, so allowlist
+the pipeline's package, the module path without `.pipeline_wrapper`, to cover
+the wrapper and its wrapper-local modules such as `helpers`:
 
 ```bash
-export HAYSTACK_DESERIALIZATION_ALLOWLIST="_hayhooks_registry.p_6a6f6273.pipeline_wrapper"
+export HAYSTACK_DESERIALIZATION_ALLOWLIST="_hayhooks_registry.p_6a6f6273"
 ```
 
 Durable mode sets `sys.dont_write_bytecode` for the whole process before
