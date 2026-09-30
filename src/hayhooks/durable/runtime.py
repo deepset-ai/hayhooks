@@ -708,7 +708,7 @@ class DurableDeployment:
         except (asyncio.CancelledError, ExecutionLeaseLostError, ExecutionStoreError):
             raise
         except Exception as error:
-            if claim.stopping:
+            if claim.application_cancelled:
                 raise asyncio.CancelledError from error
             code = "payload_too_large" if isinstance(error, ExecutionPayloadSizeError) else None
             await claim.transition(
@@ -793,7 +793,7 @@ class DurableDeployment:
             return application.result()
         except asyncio.CancelledError as error:
             # Shutdown cancellation hands the claim back; spontaneous application cancellation is a failure.
-            if claim.stopping:
+            if claim.application_cancelled:
                 raise
             raise RuntimeError("the durable application was cancelled") from error
 

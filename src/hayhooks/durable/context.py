@@ -83,6 +83,8 @@ class _ClaimedExecution:
         self.application: asyncio.Future[object] | None = None
         # Shutdown or worker cancellation: reject new threads and hand back interrupted work.
         self.stopping = False
+        # Shutdown actually interrupted the application; retained thread work that fails on its own still fails.
+        self.application_cancelled = False
         # Exit futures of the engine threads still running this execution.
         self.threads: set[asyncio.Future[None]] = set()
         self._heartbeat_interval = heartbeat_interval
@@ -159,12 +161,13 @@ class _ClaimedExecution:
                 thread.add_done_callback(self.cancel_application)
         if not self.threads and self.application is not None:
             # A synchronous runner's result is already done by the time its thread exits.
-            self.application.cancel()
+            self.application_cancelled = self.application.cancel() or self.application_cancelled
 
     def start_thread(self, function: Callable[[], _T], *, name: str) -> asyncio.Future[_T]:
         """Run synchronous work in a daemon thread tracked until it exits, not just until it returns."""
         self.require_owned()
         if self.stopping:
+            self.application_cancelled = True
             raise asyncio.CancelledError
         result, exited = start_daemon_thread(function, name=name)
         _track(self.threads, exited)

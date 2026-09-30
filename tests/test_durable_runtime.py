@@ -1046,6 +1046,35 @@ async def test_retained_thread_work_keeps_its_claim_until_drained(deployment_fac
     assert (stored.control.status, outcomes) == (ExecutionStatus.COMPLETED, [None])
 
 
+@pytest.mark.parametrize("outcome", ["raises", "invalid-result"])
+async def test_retained_thread_failure_after_close_fails_the_run(deployment_factory, outcome) -> None:
+    started, release = threading.Event(), threading.Event()
+
+    def work(_context: DurableContext, _request: Request) -> dict[str, object]:
+        started.set()
+        release.wait()
+        if outcome == "raises":
+            raise ValueError("thread failed after shutdown")
+        return {"value": "not an int"}
+
+    deployment = await deployment_factory(
+        work,
+        config=RuntimeConfig(
+            poll_interval_seconds=0.005, lease_duration_ms=300, shutdown_grace_seconds=0.01, max_run_attempts=1
+        ),
+    )
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        await deployment.close()
+    finally:
+        release.set()
+    await asyncio.wait_for(deployment.wait_drained(), timeout=1)
+    # Nothing interrupted the thread, so its own failure spends the attempt instead of handing the run back.
+    stored = await deployment.store.read(run_id)
+    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.FAILED, 1)
+
+
 @pytest.mark.parametrize("handoff", ["release-on-close", "cancelled-worker"])
 @pytest.mark.parametrize("source", THREAD_SOURCES)
 async def test_thread_work_is_handed_over_when_its_claim_is_released(
