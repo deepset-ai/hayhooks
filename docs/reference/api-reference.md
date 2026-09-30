@@ -20,6 +20,9 @@ Currently, Hayhooks does not include built-in authentication. Consider implement
 
 ### Pipeline Management
 
+The deploy and undeploy endpoints exist only in the default, live-deployment mode. A server in
+[durable mode](../features/durable-execution.md#durable-mode) does not register them, so they return `404`.
+
 #### Deploy Pipeline (files)
 
 ```http
@@ -89,19 +92,24 @@ Check the status of a specific pipeline.
 GET /status
 ```
 
-Get status of all deployed pipelines.
+Get status of all deployed pipelines, the server mode, and durable deployment health.
 
 **Response:**
 
 ```json
 {
+  "status": "Up!",
   "pipelines": [
     "pipeline1",
     "pipeline2"
   ],
-  "status": "Up!"
+  "durable_mode": false,
+  "durable": {"healthy": true, "deployments": {}}
 }
 ```
+
+`durable_mode` is `true` when the pipeline set is fixed at startup. `durable` reports each durable deployment in
+[durable mode](../features/durable-execution.md#durable-mode); `status` is `Degraded` when one is unhealthy.
 
 ### Pipeline Execution
 
@@ -132,7 +140,8 @@ Execute a deployed pipeline.
 ### Durable Execution
 
 `create_durable_router(deployment, ...)` adds these typed routes under the
-prefix the host mounts it at:
+prefix the host mounts it at. In durable mode the Hayhooks server mounts one per
+durable wrapper, at `/{pipeline_name}`:
 
 | Method | Route | Result |
 |---|---|---|

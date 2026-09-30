@@ -74,7 +74,11 @@ Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-
 - **Span waterfall** — expand any trace to see nested spans with duration bars, per-span pipeline badges, and
   readable Haystack component labels on `haystack.component.run` spans.
 - **Slowest component signal** — highlights only the single slowest component span per trace when its duration is above the configured threshold.
-- **Kind badges** — each trace shows a kind badge (run, openai, deploy, undeploy, mcp) for at-a-glance classification.
+- **Kind badges** — each trace shows a kind badge (run, openai, deploy, undeploy, mcp, durable) for at-a-glance classification.
+- **Durable attempts** — in [durable mode](../features/durable-execution.md#durable-mode), each attempt of a durable
+  execution is its own `durable` card, with the execution ID and attempt number in its summary. An attempt that
+  suspends at a checkpoint, such as a wait for approval, is a successful trace tagged `checkpoint`, not a failure.
+  The dashboard observes durable work; inspect, resume, and cancel executions through their REST routes.
 - **Streaming indicator** — streaming requests get a visible STREAM badge beside the kind badge.
 - **Summary tags** — collapsed cards show transport and success/error status; expanded view shows all tags with tooltips and a copyable trace ID.
 - **Error detail** — failed traces display error type, message, and an expandable/copyable stack trace.

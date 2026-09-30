@@ -16,8 +16,25 @@ is intentionally process-local and is only suitable for development and tests.
    its Redis clients. Serve a new revision from a new deployment instance.
 
 Workers claim only their exact revision, so an old checkpoint never runs under a
-new revision. Hayhooks-managed hosting of durable wrappers follows in a later
-release; the Hayhooks server in this release rejects them.
+new revision.
+
+With the Hayhooks server, run durable wrappers in
+[durable mode](../features/durable-execution.md#durable-mode):
+
+- Ship the pipelines directory in the image or on a read-only, versioned mount,
+  and roll out a change by replacing processes. A process never changes its
+  pipeline set, and a failed startup exits.
+- Keep every process that can claim a revision's work on the same pipeline
+  names and wrapper module paths. Add the module paths from the startup log to
+  `HAYSTACK_DESERIALIZATION_ALLOWLIST` when checkpoints hold wrapper-local
+  types or handlers.
+- The server performs step 5 itself. Graceful shutdown waits for retained
+  work, which can take longer than `HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS`;
+  give the orchestrator a kill deadline that covers your longest step, or
+  enable `HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN` (see
+  [Shutdown handoff](#shutdown-handoff)).
+- Report the process as busy while `GET /status` shows nonzero
+  `active_executions`, so an autoscaler does not reap it mid-run.
 
 ## Redis
 
@@ -168,8 +185,10 @@ it still ends on a terminal execution whose marker was lost.
 The cursor check follows the blocking read in the same pipeline, so history
 trimmed while a viewer waits produces a `gap` event as well.
 
-Each open viewer holds one Redis connection for up to 15 seconds. A portable
-host that serves SSE must pass a separate `viewer_client` to
+Each open viewer holds one Redis connection for up to 15 seconds. The Hayhooks
+server in durable mode runs a separate viewer client whose pool,
+`HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS`, bounds concurrent viewers per process. A
+portable host that serves SSE must pass a separate `viewer_client` to
 `RedisExecutionStore`, built from the same URL, and size its connection pool
 for the expected concurrent viewers. Without one, viewers share the worker
 client, and a surge of viewers can starve heartbeats, lose leases, and
@@ -247,7 +266,7 @@ without waiting for the next Redis maintenance scan.
 
 ## Health and recovery
 
-`runtime.health()` reports durable deployment health, configured/running/draining
+`runtime.health()`, which `GET /status` returns as `durable` in durable mode, reports durable deployment health, configured/running/draining
 worker counts, maintenance state, store error streak, and bounded operational
 counts; expose it through the host's health checks. `active_executions` counts the claims this process is still running,
 including thread-backed work retained after shutdown; report the process as
