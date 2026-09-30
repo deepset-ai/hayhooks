@@ -287,6 +287,8 @@ class DurableDeployment:
             raise RuntimeError("close the durable deployment before waiting for it to drain")
         async with self._submission_condition:
             await self._submission_condition.wait_for(lambda: self._admitted_submissions == 0)
+        if self._undrained():
+            log.bind(deployment=self.name).info("Waiting for retained durable work to finish")
         while undrained := self._undrained():
             await asyncio.wait(undrained)
 

@@ -34,6 +34,7 @@ def run(  # noqa: PLR0913
     import uvicorn
 
     from hayhooks.server.logger import intercept_stdlib_logging, log
+    from hayhooks.server.pipelines.loader import build_immutable_host
     from hayhooks.server.utils.deploy_utils import deploy_pipelines
     from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
     from hayhooks.settings import settings
@@ -54,14 +55,23 @@ def run(  # noqa: PLR0913
         sys.path.append(additional_python_path)
         log.trace("Added '{}' to sys.path", additional_python_path)
 
-    # Deploy the pipelines
-    deploy_pipelines()
+    if settings.durable_mode:
+        # The pipeline set is fixed at startup; any loading or tool validation error stops the server
+        app = build_immutable_host(
+            pipelines_dir,
+            lambda registry: create_starlette_app(
+                create_mcp_server(registry=registry), debug=debug, json_response=json_response
+            ),
+        )
+    else:
+        # Deploy the pipelines
+        deploy_pipelines()
 
-    # Setup the MCP server
-    server: Server = create_mcp_server()
+        # Setup the MCP server
+        server: Server = create_mcp_server()
 
-    # Setup the Starlette app
-    app = create_starlette_app(server, debug=debug, json_response=json_response)
+        # Setup the Starlette app
+        app = create_starlette_app(server, debug=debug, json_response=json_response)
 
     # Run the MCP server
     # NOTE: reload and workers options are not supported in this context

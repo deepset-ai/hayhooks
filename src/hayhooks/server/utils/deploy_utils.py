@@ -28,11 +28,13 @@ from hayhooks.server.exceptions import (
 )
 from hayhooks.server.logger import log, log_elapsed
 from hayhooks.server.pipelines.models import (
+    create_pipeline_metadata,
     create_request_model_from_callable,
     create_response_model_from_callable,
     get_response_class_from_callable,
+    get_run_api_method,
 )
-from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.pipelines.registry import ImmutablePipelineRegistry, registry
 from hayhooks.server.pipelines.sse import SSEStream
 from hayhooks.server.tracing import (
     SPAN_PIPELINE_DEPLOY,
@@ -73,6 +75,23 @@ def _with_deploy_lock(func: Callable) -> Callable:
             return func(*args, **kwargs)
 
     return wrapper
+
+
+def require_live_deployment(app: FastAPI | None = None) -> None:
+    """
+    Reject a pipeline mutation in durable mode, where the pipeline set is fixed at startup.
+
+    Raises:
+        PipelineModeError: If durable mode is enabled or *app* serves an immutable registry.
+    """
+    if settings.durable_mode or (
+        app is not None and isinstance(getattr(app.state, "pipeline_registry", None), ImmutablePipelineRegistry)
+    ):
+        msg = (
+            "Pipelines cannot be deployed or undeployed in durable mode (HAYHOOKS_DURABLE_MODE); "
+            "change the pipelines directory and restart the server instead"
+        )
+        raise PipelineModeError(msg)
 
 
 async def _offload(func: Callable, **kwargs: Any) -> Any:
@@ -154,7 +173,9 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
 
     Raises:
         PipelineFilesError: If there are any issues saving the files
+        PipelineModeError: In durable mode
     """
+    require_live_deployment()
     try:
         pipelines_path = Path(pipelines_dir)
         pipelines_path.mkdir(parents=True, exist_ok=True)
@@ -199,7 +220,11 @@ def remove_pipeline_files(pipeline_name: str, pipelines_dir: str) -> None:
     Args:
         pipeline_name: Name of the pipeline
         pipelines_dir: Path to the pipelines directory
+
+    Raises:
+        PipelineModeError: In durable mode
     """
+    require_live_deployment()
     pipelines_path = Path(pipelines_dir)
 
     # Remove pipeline directory (wrapper-based pipelines)
@@ -474,10 +499,8 @@ def create_run_endpoint_handler(
     Returns:
         A FastAPI endpoint function that executes the pipeline and returns the response model.
     """
-    run_method = (
-        pipeline_wrapper.run_api_async if pipeline_wrapper._is_run_api_async_implemented else pipeline_wrapper.run_api
-    )
-    is_streaming_response = get_response_class_from_callable(run_method) is StreamingResponse
+    run_method = get_run_api_method(pipeline_wrapper)
+    is_streaming_response = run_method is not None and get_response_class_from_callable(run_method) is StreamingResponse
 
     async def _handle_request(run_req: BaseModel, request: Request) -> Response | BaseModel:
         payload = run_req.model_dump()
@@ -539,6 +562,57 @@ def create_run_endpoint_handler(
     return run_endpoint_with_files if requires_files else run_endpoint_without_files
 
 
+def _build_run_route(
+    pipeline_name: str, pipeline_wrapper: BasePipelineWrapper
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """
+    Build the ``add_api_route`` arguments of the ordinary /{pipeline_name}/run endpoint.
+
+    Returns:
+        The route arguments and the request/response metadata they derive, or ``None`` when the
+        wrapper implements neither ``run_api`` nor ``run_api_async``.
+    """
+    clog = log.bind(pipeline_name=pipeline_name)
+    run_method_to_inspect = get_run_api_method(pipeline_wrapper)
+    if run_method_to_inspect is None:
+        return None
+
+    docstring_content = inspect.getdoc(run_method_to_inspect) or ""
+    docstring = docstring_parser.parse(docstring_content)
+    RunRequest = create_request_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
+    RunResponse = create_response_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
+    RunResponseClass = get_response_class_from_callable(run_method_to_inspect)
+
+    run_api_params = inspect.signature(run_method_to_inspect).parameters
+    requires_files = "files" in run_api_params
+    clog.debug("Pipeline requires files: {}", requires_files)
+
+    run_endpoint = create_run_endpoint_handler(
+        pipeline_wrapper=pipeline_wrapper,
+        pipeline_name=pipeline_name,
+        request_model=RunRequest,
+        response_model=RunResponse,
+        requires_files=requires_files,
+    )
+
+    # Build the route kwargs. response_class is only set for non-JSON endpoints
+    # (e.g. FileResponse for file downloads, StreamingResponse for generators) so that
+    # OpenAPI docs show the correct Content-Type. For normal JSON endpoints we omit it
+    # and let FastAPI use its default JSONResponse.
+    route_kwargs: dict[str, Any] = {
+        "path": f"/{pipeline_name}/run",
+        "endpoint": run_endpoint,
+        "methods": ["POST"],
+        "name": f"{pipeline_name}_run",
+        "response_model": RunResponse,
+        "tags": ["pipelines"],
+        "description": docstring.short_description or None,
+    }
+    if RunResponseClass is not None:
+        route_kwargs["response_class"] = RunResponseClass
+    return route_kwargs, {"request_model": RunRequest, "response_model": RunResponse, "requires_files": requires_files}
+
+
 def add_pipeline_api_route(
     app: FastAPI,
     pipeline_name: str,
@@ -560,75 +634,29 @@ def add_pipeline_api_route(
         - Removes any existing route at /{pipeline_name}/run
         - Rebuilds and invalidates the OpenAPI schema (unless ``_defer_openapi_rebuild``)
         - Updates registry metadata with request/response models and file requirement flag
-    """
-    clog = log.bind(pipeline_name=pipeline_name)
 
-    # Determine which run_api method to use (prefer async if available)
-    if pipeline_wrapper._is_run_api_async_implemented:
-        run_method_to_inspect = pipeline_wrapper.run_api_async
-        clog.debug("Using `run_api_async` as API route handler.")
-    elif pipeline_wrapper._is_run_api_implemented:
-        run_method_to_inspect = pipeline_wrapper.run_api
-        clog.debug("Using `run_api` as API route handler.")
-    else:
+    Raises:
+        PipelineModeError: In durable mode, before any route or metadata changes.
+    """
+    require_live_deployment(app)
+    route = _build_run_route(pipeline_name, pipeline_wrapper)
+    if route is None:
         # If neither run_api nor run_api_async is implemented,
         # this pipeline will not have a generic /<pipeline_name>/run endpoint.
         # This is a valid configuration (e.g., for chat-only pipelines).
-        clog.warning(
+        log.bind(pipeline_name=pipeline_name).warning(
             f"Pipeline '{pipeline_name}' does not implement `run_api` or `run_api_async`. "
             f"Skipping /{pipeline_name}/run API route creation."
         )
         return
-
-    docstring_content = inspect.getdoc(run_method_to_inspect) or ""
-    docstring = docstring_parser.parse(docstring_content)
-    RunRequest = create_request_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
-    RunResponse = create_response_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
-    RunResponseClass = get_response_class_from_callable(run_method_to_inspect)
-
-    run_api_params = inspect.signature(run_method_to_inspect).parameters
-    requires_files = "files" in run_api_params
-    clog.debug("Pipeline requires files: {}", requires_files)
-
-    run_endpoint = create_run_endpoint_handler(
-        pipeline_wrapper=pipeline_wrapper,
-        pipeline_name=pipeline_name,
-        request_model=RunRequest,
-        response_model=RunResponse,
-        requires_files=requires_files,
-    )
+    route_kwargs, route_metadata = route
 
     _remove_pipeline_routes(app, pipeline_name)
-
-    # Build the route kwargs. response_class is only set for non-JSON endpoints
-    # (e.g. FileResponse for file downloads, StreamingResponse for generators) so that
-    # OpenAPI docs show the correct Content-Type. For normal JSON endpoints we omit it
-    # and let FastAPI use its default JSONResponse.
-    route_kwargs: dict[str, Any] = {
-        "path": f"/{pipeline_name}/run",
-        "endpoint": run_endpoint,
-        "methods": ["POST"],
-        "name": f"{pipeline_name}_run",
-        "response_model": RunResponse,
-        "tags": ["pipelines"],
-        "description": docstring.short_description or None,
-    }
-    if RunResponseClass is not None:
-        route_kwargs["response_class"] = RunResponseClass
-
     app.add_api_route(**route_kwargs)
-
-    registry.update_metadata(
-        pipeline_name,
-        {
-            "request_model": RunRequest,
-            "response_model": RunResponse,
-            "requires_files": requires_files,
-        },
-    )
+    registry.update_metadata(pipeline_name, route_metadata)
 
     if not _defer_openapi_rebuild:
-        clog.debug("Setting up FastAPI app")
+        log.bind(pipeline_name=pipeline_name).debug("Setting up FastAPI app")
         app.openapi_schema = None
         app.setup()
 
@@ -679,33 +707,7 @@ def _register_prepared_pipeline(
         msg = f"Pipeline '{pipeline_name}' already exists"
         raise PipelineAlreadyExistsError(msg)
 
-    # Determine which run method to use for model generation (prefer async)
-    if pipeline_wrapper._is_run_api_async_implemented:
-        run_method = pipeline_wrapper.run_api_async
-        clog.debug("Using `run_api_async` for model generation")
-    elif pipeline_wrapper._is_run_api_implemented:
-        run_method = pipeline_wrapper.run_api
-        clog.debug("Using `run_api` for model generation")
-    else:
-        run_method = None
-        clog.debug("No run_api method implemented, skipping model generation")
-
-    # Generate request/response models from the run method signature
-    request_model = None
-    description = ""
-    if run_method:
-        docstring = docstring_parser.parse(inspect.getdoc(run_method) or "")
-        description = docstring.short_description or ""
-        request_model = create_request_model_from_callable(run_method, f"{pipeline_name}Run", docstring)
-
-    # Build metadata
-    metadata: dict[str, Any] = {
-        "description": description,
-        "request_model": request_model,
-        "skip_mcp": pipeline_wrapper.skip_mcp,
-        "skip_a2a": pipeline_wrapper.skip_a2a,
-        "a2a_card": pipeline_wrapper.a2a_card,
-    }
+    metadata = create_pipeline_metadata(pipeline_name, pipeline_wrapper)
 
     # Merge extra metadata (e.g., YAML-specific fields)
     if extra_metadata:
@@ -741,7 +743,11 @@ def prepare_pipeline_files(
     Does file I/O, module loading, wrapper creation, and ``setup()`` — all the
     expensive work that is safe to run in a thread.  The returned
     ``PreparedPipeline`` can be committed later via ``_register_prepared_pipeline``.
+
+    Raises:
+        PipelineModeError: In durable mode, or if the wrapper is durable.
     """
+    require_live_deployment()
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_PREPARE,
         tags=build_trace_tags(
@@ -784,7 +790,11 @@ def prepare_pipeline_yaml(
 
     Does file I/O, YAML parsing, wrapper creation, and ``setup()`` — all the
     expensive work that is safe to run in a thread.
+
+    Raises:
+        PipelineModeError: In durable mode.
     """
+    require_live_deployment()
     save_file: bool = True if options is None else bool(options.get("save_file", True))
     description = (options or {}).get("description")
     skip_mcp = bool((options or {}).get("skip_mcp", False))
@@ -861,9 +871,10 @@ def commit_prepared_pipeline(
         source_files: Candidate source to persist atomically with the host-side publication.
 
     Raises:
-        PipelineModeError: If the prepared wrapper is durable.
+        PipelineModeError: In durable mode, or if the prepared wrapper is durable.
         PipelineRollbackError: If the commit failed and the replaced pipeline could not be restored.
     """
+    require_live_deployment(app)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_COMMIT,
         tags=build_trace_tags(
@@ -951,9 +962,10 @@ def deploy_pipeline_files(
         PipelineFilesError: If saving files fails.
         PipelineModuleLoadError: If loading the pipeline module fails.
         PipelineWrapperError: If wrapper creation or setup fails.
-        PipelineModeError: If the wrapper is durable.
+        PipelineModeError: In durable mode, or if the wrapper is durable.
         PipelineRollbackError: If the deployment failed and the replaced pipeline could not be restored.
     """
+    require_live_deployment(app)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY,
         tags=build_trace_tags(
@@ -1033,7 +1045,9 @@ def deploy_pipeline_yaml(
         PipelineAlreadyExistsError: If the pipeline exists and overwrite is False.
         ValueError: If the YAML cannot be parsed into a Pipeline.
         InvalidYamlIOError: If the YAML is missing inputs/outputs declarations.
+        PipelineModeError: In durable mode.
     """
+    require_live_deployment(app)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY,
         tags=build_trace_tags(
@@ -1094,7 +1108,13 @@ def read_pipeline_files_from_dir(dir_path: Path) -> dict[str, str]:
 
 
 def deploy_pipelines() -> None:
-    """Deploy pipelines from the configured directory"""
+    """
+    Deploy pipelines from the configured directory.
+
+    Raises:
+        PipelineModeError: In durable mode, or if a wrapper is durable.
+    """
+    require_live_deployment()
     # Imported here to avoid a circular import (hayhooks.server.app imports this module)
     from hayhooks.server.app import init_pipeline_dir
 
@@ -1134,7 +1154,9 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
 
     Raises:
         HTTPException: If the pipeline is not found in the registry (404).
+        PipelineModeError: In durable mode.
     """
+    require_live_deployment(app)
     with trace_operation(
         SPAN_PIPELINE_UNDEPLOY,
         tags=build_trace_tags(

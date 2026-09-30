@@ -11,8 +11,14 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
+from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.logger import log
-from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.pipelines.registry import (
+    ImmutablePipelineRegistry,
+    PipelineRegistry,
+    require_ordinary_pipelines,
+    resolve_registry,
+)
 from hayhooks.server.routers.deploy import PipelineFilesRequest
 from hayhooks.server.tracing import (
     SPAN_MCP_CALL_TOOL,
@@ -57,8 +63,11 @@ with LazyImport("Run 'pip install \"mcp\"' to install MCP.") as mcp_import:
 async def list_core_tools() -> list["Tool"]:
     """List available Hayhooks core tools"""
     mcp_import.check()
+    return _core_tools()
 
-    tools = [
+
+def _core_tools() -> list["Tool"]:
+    return [
         Tool(
             name=CoreTools.GET_ALL_PIPELINE_STATUSES,
             description="Get the status of all pipelines and list available pipeline names.",
@@ -85,17 +94,18 @@ async def list_core_tools() -> list["Tool"]:
         ),
     ]
 
-    return tools
 
-
-async def list_pipelines_as_tools() -> list["Tool"]:
+async def list_pipelines_as_tools(pipeline_registry: PipelineRegistry) -> list["Tool"]:
     """List available pipelines as MCP tools"""
     mcp_import.check()
+    return _pipeline_tools(pipeline_registry)
 
+
+def _pipeline_tools(pipeline_registry: PipelineRegistry) -> list["Tool"]:
     tools = []
 
-    for pipeline_name in registry.get_names():
-        metadata = registry.get_metadata(name=pipeline_name) or {}
+    for pipeline_name in pipeline_registry.get_names():
+        metadata = pipeline_registry.get_metadata(name=pipeline_name) or {}
         log.trace("Metadata for pipeline '{}': {}", pipeline_name, metadata)
 
         if not metadata.get("request_model"):
@@ -120,7 +130,9 @@ async def list_pipelines_as_tools() -> list["Tool"]:
     return tools
 
 
-async def run_pipeline_as_tool(name: str, arguments: dict[str, Any]) -> list["TextContent"]:
+async def run_pipeline_as_tool(
+    pipeline_registry: PipelineRegistry, name: str, arguments: dict[str, Any]
+) -> list["TextContent"]:
     mcp_import.check()
 
     with trace_operation(
@@ -134,7 +146,7 @@ async def run_pipeline_as_tool(name: str, arguments: dict[str, Any]) -> list["Te
         ),
     ):
         log.debug("Calling pipeline as tool '{}' with arguments: {}", name, arguments)
-        pipeline_wrapper: BasePipelineWrapper | None = registry.get(name)
+        pipeline_wrapper: BasePipelineWrapper | None = pipeline_registry.get(name)
 
         if not pipeline_wrapper:
             msg = f"Pipeline '{name}' not found"
@@ -154,7 +166,9 @@ async def notify_client(server: "Server") -> None:
     await server.request_context.session.send_tool_list_changed()
 
 
-async def _handle_deploy_pipeline(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+async def _handle_deploy_pipeline(
+    _pipeline_registry: PipelineRegistry, arguments: dict[str, Any], span: Any
+) -> list["TextContent"]:
     span.set_tag("hayhooks.pipeline.name", arguments.get("name"))
     result = await deploy_pipeline_files_async(
         pipeline_name=arguments["name"],
@@ -166,19 +180,25 @@ async def _handle_deploy_pipeline(arguments: dict[str, Any], span: Any) -> list[
     return [TextContent(type="text", text=f"Pipeline '{result['name']}' deployed successfully")]
 
 
-async def _handle_get_all_pipeline_statuses(_arguments: dict[str, Any], _span: Any) -> list["TextContent"]:
-    pipelines_str = "\n".join(registry.get_names())
+async def _handle_get_all_pipeline_statuses(
+    pipeline_registry: PipelineRegistry, _arguments: dict[str, Any], _span: Any
+) -> list["TextContent"]:
+    pipelines_str = "\n".join(pipeline_registry.get_names())
     return [TextContent(type="text", text=f"Available pipelines:\n{pipelines_str}")]
 
 
-async def _handle_get_pipeline_status(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+async def _handle_get_pipeline_status(
+    pipeline_registry: PipelineRegistry, arguments: dict[str, Any], span: Any
+) -> list["TextContent"]:
     pipeline_name = arguments["pipeline_name"]
     span.set_tag("hayhooks.pipeline.name", pipeline_name)
-    is_deployed = pipeline_name in registry.get_names()
+    is_deployed = pipeline_name in pipeline_registry.get_names()
     return [TextContent(type="text", text=f"Pipeline '{pipeline_name}' is deployed: {is_deployed}")]
 
 
-async def _handle_undeploy_pipeline(arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+async def _handle_undeploy_pipeline(
+    _pipeline_registry: PipelineRegistry, arguments: dict[str, Any], span: Any
+) -> list["TextContent"]:
     pipeline_name = arguments["pipeline_name"]
     span.set_tag("hayhooks.pipeline.name", pipeline_name)
     # app=None: the MCP server doesn't own FastAPI routes
@@ -189,7 +209,7 @@ async def _handle_undeploy_pipeline(arguments: dict[str, Any], span: Any) -> lis
 # Core tools that trigger a ``tools/list_changed`` notification after execution.
 _MUTATING_CORE_TOOLS: frozenset[str] = frozenset({CoreTools.DEPLOY_PIPELINE.value, CoreTools.UNDEPLOY_PIPELINE.value})
 
-_CoreToolHandler = Callable[[dict[str, Any], Any], Awaitable[list["TextContent"]]]
+_CoreToolHandler = Callable[[PipelineRegistry, dict[str, Any], Any], Awaitable[list["TextContent"]]]
 
 _CORE_TOOL_HANDLERS: dict[str, _CoreToolHandler] = {
     CoreTools.DEPLOY_PIPELINE.value: _handle_deploy_pipeline,
@@ -199,20 +219,55 @@ _CORE_TOOL_HANDLERS: dict[str, _CoreToolHandler] = {
 }
 
 
-async def _run_pipeline_tool(name: str, arguments: dict[str, Any], span: Any) -> list["TextContent"]:
+async def _run_pipeline_tool(
+    pipeline_registry: PipelineRegistry, name: str, arguments: dict[str, Any], span: Any
+) -> list["TextContent"]:
     log.debug("Attempting to run pipeline '{}' as MCP Tool with arguments: {}", name, arguments)
     span.set_tag("hayhooks.pipeline.name", name)
 
     try:
-        return await run_pipeline_as_tool(name, arguments)
+        return await run_pipeline_as_tool(pipeline_registry, name, arguments)
     except Exception as exc:
         msg = f"Error calling pipeline as MCP Tool '{name}': {exc}"
         log.opt(exception=True).error(msg)
         raise Exception(msg) from exc
 
 
-def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
+async def _reject_fixed_registry_mutation(
+    _pipeline_registry: PipelineRegistry, _arguments: dict[str, Any], _span: Any
+) -> list["TextContent"]:
+    msg = "Pipelines cannot be deployed or undeployed in durable mode, where the pipeline set is fixed at startup"
+    raise PipelineModeError(msg)
+
+
+def _fixed_tools(pipeline_registry: ImmutablePipelineRegistry) -> list["Tool"]:
+    """Build the tool list of an immutable registry once: read-only core tools, then its pipelines."""
+    require_ordinary_pipelines(pipeline_registry, "MCP")
+    if reserved := sorted({tool.value for tool in CoreTools}.intersection(pipeline_registry.get_names())):
+        msg = f"Pipeline names {reserved} conflict with MCP core tools; rename their definitions"
+        raise PipelineModeError(msg)
+    read_only_tools = [tool for tool in _core_tools() if tool.name not in _MUTATING_CORE_TOOLS]
+    return read_only_tools + _pipeline_tools(pipeline_registry)
+
+
+def create_mcp_server(name: str = "hayhooks-mcp-server", registry: PipelineRegistry | None = None) -> "Server":
+    """
+    Create the MCP server exposing *registry*, the mutable singleton by default outside durable mode.
+
+    An immutable registry is served with a tool list built once and without the deploy/undeploy tools.
+
+    Raises:
+        PipelineModeError: If an immutable registry has a durable pipeline or a pipeline named after a core tool.
+    """
     mcp_import.check()
+
+    pipeline_registry = resolve_registry(registry)
+    handlers = _CORE_TOOL_HANDLERS
+    fixed_tools: list[Tool] | None = None
+    if isinstance(pipeline_registry, ImmutablePipelineRegistry):
+        # Mutation tools are neither listed nor dispatched to deployment, so calls cannot reach pipeline tools either.
+        handlers = {**handlers, **dict.fromkeys(_MUTATING_CORE_TOOLS, _reject_fixed_registry_mutation)}
+        fixed_tools = _fixed_tools(pipeline_registry)
 
     server: Server = Server(name)
 
@@ -227,11 +282,13 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
                 }
             ),
         ):
+            if fixed_tools is not None:
+                return fixed_tools
             try:
                 core_tools = await list_core_tools()
                 log.debug("Listing {} core tools", len(core_tools))
 
-                pipelines_tools = await list_pipelines_as_tools()
+                pipelines_tools = await list_pipelines_as_tools(pipeline_registry)
                 log.debug("Listing {} pipelines as tools", len(pipelines_tools))
 
                 return core_tools + pipelines_tools
@@ -241,7 +298,7 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list["TextContent"]:
-        handler = _CORE_TOOL_HANDLERS.get(name)
+        handler = handlers.get(name)
         is_core_tool = handler is not None
 
         with trace_operation(
@@ -257,8 +314,8 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
         ) as span:
             try:
                 if handler is not None:
-                    return await handler(arguments, span)
-                return await _run_pipeline_tool(name, arguments, span)
+                    return await handler(pipeline_registry, arguments, span)
+                return await _run_pipeline_tool(pipeline_registry, name, arguments, span)
             except Exception as exc:
                 msg = f"General unhandled error in call_tool for tool '{name}': {exc}"
                 if settings.show_tracebacks:
@@ -266,7 +323,7 @@ def create_mcp_server(name: str = "hayhooks-mcp-server") -> "Server":
                 log.opt(exception=True).error(msg)
                 raise Exception(msg) from exc
             finally:
-                if name in _MUTATING_CORE_TOOLS:
+                if fixed_tools is None and name in _MUTATING_CORE_TOOLS:
                     log.debug("Sending 'tools/list_changed' notification after deploy/undeploy")
                     await notify_client(server)
 

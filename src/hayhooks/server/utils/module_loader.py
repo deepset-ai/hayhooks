@@ -9,6 +9,7 @@ import importlib.util
 import inspect
 import sys
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import NoReturn, get_type_hints
@@ -25,20 +26,23 @@ from hayhooks.settings import settings
 _DURABLE_PARAMETER_COUNT = 2
 
 
-def load_pipeline_module(pipeline_name: str, dir_path: Path | str) -> ModuleType:
+def load_pipeline_module(pipeline_name: str, dir_path: Path | str, *, package_name: str | None = None) -> ModuleType:
     """
     Load a pipeline module from a directory path.
 
     The pipeline directory is treated as a Python package, enabling both:
     - Relative imports within the pipeline folder (e.g., `from .helper import func`)
-    - Absolute imports from sibling modules (e.g., `from helper import func`)
+    - Absolute imports from sibling modules (e.g., `from helper import func`), unless
+      ``package_name`` is given
 
     The module is also registered in sys.modules to support tracing libraries
     (e.g., Phoenix/OpenInference) that resolve modules by name.
 
     Args:
-        pipeline_name: Name of the pipeline (used as the package name)
+        pipeline_name: Name of the pipeline (used as the package name by default)
         dir_path: Path to the directory containing the pipeline files
+        package_name: Private package to load the pipeline under instead of its name. The source
+            directory is then not added to ``sys.path``, so only relative imports reach its files.
 
     Returns:
         The loaded wrapper module
@@ -50,7 +54,7 @@ def load_pipeline_module(pipeline_name: str, dir_path: Path | str) -> ModuleType
     log.trace("Loading pipeline module from '{}'", dir_path)
 
     dir_path = Path(dir_path)
-    loader = _PipelineModuleLoader(pipeline_name, dir_path)
+    loader = _PipelineModuleLoader(pipeline_name, dir_path, package_name)
     return loader.load()
 
 
@@ -123,15 +127,17 @@ class _PipelineModuleLoader:
     Handles sys.path management, module creation, and cleanup on failure.
     """
 
-    def __init__(self, pipeline_name: str, dir_path: Path):
+    def __init__(self, pipeline_name: str, dir_path: Path, package_name: str | None = None):
         self.pipeline_name = pipeline_name
         self.dir_path = dir_path.resolve()
         self.dir_path_str = str(self.dir_path)
         self.parent_dir_str = str(self.dir_path.parent)
+        # Private packages resolve imports through their package only, never sys.path.
+        self.uses_sys_path = package_name is None
 
         # Module names
-        self.package_name = pipeline_name
-        self.wrapper_module_name = f"{pipeline_name}.pipeline_wrapper"
+        self.package_name = package_name or pipeline_name
+        self.wrapper_module_name = f"{self.package_name}.pipeline_wrapper"
 
         # Cleanup tracking
         self._path_added = False
@@ -141,7 +147,8 @@ class _PipelineModuleLoader:
         try:
             self._check_wrapper_exists()
             self._clear_existing_modules()
-            self._add_parent_to_sys_path()
+            if self.uses_sys_path:
+                self._add_parent_to_sys_path()
             self._create_package_module()
 
             wrapper_module = self._load_wrapper_module()
@@ -160,7 +167,7 @@ class _PipelineModuleLoader:
             raise PipelineModuleLoadError(msg)
 
     def _clear_existing_modules(self) -> None:
-        unload_pipeline_modules(self.pipeline_name)
+        unload_pipeline_modules(self.package_name)
 
     def _add_parent_to_sys_path(self) -> None:
         if self.parent_dir_str not in sys.path:
@@ -170,42 +177,33 @@ class _PipelineModuleLoader:
 
     def _create_package_module(self) -> None:
         init_path = self.dir_path / "__init__.py"
+        package_spec = None
 
         if init_path.exists():
-            package_module = self._create_package_from_init(init_path)
+            package_spec = importlib.util.spec_from_file_location(
+                self.package_name,
+                init_path,
+                submodule_search_locations=[self.dir_path_str],
+            )
+            if package_spec is None:
+                msg = f"Failed to create package spec for '{self.pipeline_name}'"
+                raise PipelineModuleLoadError(msg)
+            package_module = importlib.util.module_from_spec(package_spec)
         else:
-            package_module = self._create_namespace_package()
+            package_module = ModuleType(self.package_name)
 
         # Set package attributes
         package_module.__path__ = [self.dir_path_str]
         package_module.__package__ = self.package_name
         package_module.__file__ = str(init_path) if init_path.exists() else None
 
-        # Register in sys.modules
+        # Register BEFORE executing __init__.py so its relative imports resolve to this package
         sys.modules[self.package_name] = package_module
         self._modules_registered.append(self.package_name)
         log.debug("Created package module '{}' with __path__={}", self.package_name, package_module.__path__)
 
-    def _create_package_from_init(self, init_path: Path) -> ModuleType:
-        package_spec = importlib.util.spec_from_file_location(
-            self.package_name,
-            init_path,
-            submodule_search_locations=[self.dir_path_str],
-        )
-        if package_spec is None:
-            msg = f"Failed to create package spec for '{self.pipeline_name}'"
-            raise PipelineModuleLoadError(msg)
-
-        package_module = importlib.util.module_from_spec(package_spec)
-
-        # Execute __init__.py if it has a loader
-        if package_spec.loader is not None:
+        if package_spec is not None and package_spec.loader is not None:
             package_spec.loader.exec_module(package_module)
-
-        return package_module
-
-    def _create_namespace_package(self) -> ModuleType:
-        return ModuleType(self.package_name)
 
     def _load_wrapper_module(self) -> ModuleType:
         wrapper_path = self.dir_path / "pipeline_wrapper.py"
@@ -281,6 +279,13 @@ def _set_method_implementation_flags(pipeline_wrapper: BasePipelineWrapper) -> N
         log.debug("pipeline_wrapper.{}: {}", attr_name, is_implemented)
 
 
+def is_durable_wrapper(pipeline_wrapper: BasePipelineWrapper | type[BasePipelineWrapper]) -> bool:
+    """Whether a wrapper class or instance implements ``run_durable`` or ``run_durable_async``."""
+    return _is_method_overridden(pipeline_wrapper, "run_durable") or _is_method_overridden(
+        pipeline_wrapper, "run_durable_async"
+    )
+
+
 def reject_durable_wrapper(pipeline_wrapper: BasePipelineWrapper | type[BasePipelineWrapper]) -> None:
     """
     Reject a wrapper class or instance that implements a durable run method.
@@ -288,10 +293,11 @@ def reject_durable_wrapper(pipeline_wrapper: BasePipelineWrapper | type[BasePipe
     Raises:
         PipelineModeError: If ``run_durable`` or ``run_durable_async`` is overridden.
     """
-    if _is_method_overridden(pipeline_wrapper, "run_durable") or _is_method_overridden(
-        pipeline_wrapper, "run_durable_async"
-    ):
-        msg = "Durable pipeline wrappers cannot be deployed through live deployment"
+    if is_durable_wrapper(pipeline_wrapper):
+        msg = (
+            "Durable pipeline wrappers cannot be deployed through live deployment; "
+            "set HAYHOOKS_DURABLE_MODE=true to serve them from the pipelines directory at startup"
+        )
         raise PipelineModeError(msg)
 
 
@@ -365,6 +371,20 @@ def _validate_run_methods(pipeline_wrapper: BasePipelineWrapper) -> None:
         message = "durable_resume_model must be a Pydantic model class or None"
         raise PipelineWrapperError(message)
 
+    inspect_durable_runner(pipeline_wrapper)
+
+
+def inspect_durable_runner(
+    pipeline_wrapper: BasePipelineWrapper,
+) -> tuple[Callable[[DurableContext, BaseModel], object], type[BaseModel], type[BaseModel] | None]:
+    """
+    Validate a durable wrapper's run method and return it with its request and result models.
+
+    The result model is the method's return annotation when that is a Pydantic model, else ``None``.
+
+    Raises:
+        PipelineWrapperError: If the method signature or its annotations are not a valid durable runner.
+    """
     method = (
         pipeline_wrapper.run_durable_async
         if pipeline_wrapper._is_run_durable_async_implemented
@@ -390,3 +410,9 @@ def _validate_run_methods(pipeline_wrapper: BasePipelineWrapper) -> None:
     if not isinstance(request_model, type) or not issubclass(request_model, BaseModel):
         message = "the durable request parameter must be a Pydantic model"
         raise PipelineWrapperError(message)
+    result_model = hints.get("return")
+    return (
+        method,
+        request_model,
+        (result_model if isinstance(result_model, type) and issubclass(result_model, BaseModel) else None),
+    )
