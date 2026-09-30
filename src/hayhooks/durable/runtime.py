@@ -254,21 +254,11 @@ class DurableDeployment:
         stopping = set()
         for worker in pending:
             claim = self._claims.get(worker)
-            threaded = claim is not None and bool(claim.threads)
-            retain_threads = threaded and not self.config.release_running_on_close
-            if not retain_threads:
-                stopping.add(worker)
             if claim is None:
                 worker.cancel()
-            elif not claim.stopping:
-                # Cancel once: a second cancellation would interrupt the release the first one started.
-                claim.stopping = True
-                if claim.application is not None and (not threaded or retain_threads):
-                    # Cancelling the application, not the worker, keeps a resistant one heartbeating until it exits.
-                    claim.cancel_application()
-                else:
-                    # The worker owns the release, so cancelling close() cannot interrupt the handoff.
-                    worker.cancel()
+                stopping.add(worker)
+            elif claim.request_shutdown(worker, release_running=self.config.release_running_on_close):
+                stopping.add(worker)
         if stopping:
             grace = self.config.shutdown_grace_seconds
             await asyncio.wait(stopping, timeout=max(0.0, self._shutdown_deadline + grace - loop.time()))
@@ -375,7 +365,7 @@ class DurableDeployment:
     ) -> TransitionPlan:
         """Request cancellation without exposing owner mismatches."""
         await self.get(run_id, owner_id=owner_id, enforce_owner=enforce_owner, allow_revision_mismatch=True)
-        return await self.store.transition(run_id, RequestCancellation(0, reason))
+        return await self.store.transition(run_id, RequestCancellation(now_ms=0, reason=reason))
 
     async def resume(
         self,
@@ -414,9 +404,11 @@ class DurableDeployment:
         plan = await self.store.transition(
             run_id,
             Resume(
-                0,
-                self.revision,
-                encode_json(checkpoint.model_dump(mode="json"), max_bytes=self.store.config.max_payload_bytes),
+                now_ms=0,
+                worker_revision=self.revision,
+                checkpoint=encode_json(
+                    checkpoint.model_dump(mode="json"), max_bytes=self.store.config.max_payload_bytes
+                ),
                 expected_version=stored.control.version,
             ),
         )
@@ -560,12 +552,12 @@ class DurableDeployment:
         try:
             claimed = await self.store.claim(
                 Claim(
-                    worker_id,
-                    0,
-                    self.config.lease_duration_ms,
-                    self.config.max_run_attempts,
-                    self.revision,
-                    self._attempts_error,
+                    worker_id=worker_id,
+                    now_ms=0,
+                    lease_duration_ms=self.config.lease_duration_ms,
+                    max_run_attempts=self.config.max_run_attempts,
+                    worker_revision=self.revision,
+                    attempts_error=self._attempts_error,
                 )
             )
         except ExecutionStoreError as error:
@@ -592,13 +584,13 @@ class DurableDeployment:
             stored = await self.store.read(control.run_id)
         except ExecutionStoreError as error:
             with suppress(ExecutionLeaseLostError, ExecutionNotFoundError, ExecutionStoreError):
-                await self.store.transition(control.run_id, ReleaseClaim(control.fence, worker_id))
+                await self.store.transition(control.run_id, ReleaseClaim(fence=control.fence, worker_id=worker_id))
             await self._backoff_worker(worker_id, error, "read")
             return None
         if stored is not None:
             return stored
         try:
-            await self.store.transition(control.run_id, ReleaseClaim(control.fence, worker_id))
+            await self.store.transition(control.run_id, ReleaseClaim(fence=control.fence, worker_id=worker_id))
         except (ExecutionLeaseLostError, ExecutionNotFoundError):
             pass
         except ExecutionStoreError as error:
@@ -629,14 +621,12 @@ class DurableDeployment:
         except (KeyError, TypeError, ValueError, ExecutionPayloadSizeError) as error:
             await self.store.transition(
                 control.run_id,
-                Fail(control.fence, worker_id, 0, self._encode_exception(error)),
+                Fail(fence=control.fence, worker_id=worker_id, now_ms=0, error=self._encode_exception(error)),
             )
             return None
 
         claim.control = control
-        context = DurableContext(claim, checkpoint)
-        context._adapter = self.adapter
-        return context, request
+        return DurableContext(claim, checkpoint, adapter=self.adapter), request
 
     async def _execute_claim(
         self,
@@ -692,11 +682,11 @@ class DurableDeployment:
                 result = result.model_dump(mode="json")
             await claim.transition(
                 Complete(
-                    claim.control.fence,
-                    worker_id,
-                    0,
-                    encode_json(result, max_bytes=self.store.config.max_payload_bytes),
-                    tuple(context._pending_progress),
+                    fence=claim.control.fence,
+                    worker_id=worker_id,
+                    now_ms=0,
+                    result=encode_json(result, max_bytes=self.store.config.max_payload_bytes),
+                    progress_events=context._progress_events,
                 )
             )
         except _ExecutionSuspendedError:
@@ -713,11 +703,11 @@ class DurableDeployment:
             code = "payload_too_large" if isinstance(error, ExecutionPayloadSizeError) else None
             await claim.transition(
                 Fail(
-                    claim.control.fence,
-                    worker_id,
-                    0,
-                    self._encode_exception(error, code=code),
-                    tuple(context._pending_progress),
+                    fence=claim.control.fence,
+                    worker_id=worker_id,
+                    now_ms=0,
+                    error=self._encode_exception(error, code=code),
+                    progress_events=context._progress_events,
                 )
             )
 
@@ -728,13 +718,13 @@ class DurableDeployment:
         delay_ms = math.ceil(min(delay, self.config.retry_max_delay_seconds) * 1_000)
         plan = await claim.transition(
             ScheduleRetry(
-                claim.control.fence,
-                worker_id,
-                0,
-                delay_ms,
-                self.config.max_application_retries,
-                self._encode_exception(error, retryable=True),
-                error.progress_events,
+                fence=claim.control.fence,
+                worker_id=worker_id,
+                now_ms=0,
+                delay_ms=delay_ms,
+                max_application_retries=self.config.max_application_retries,
+                error=self._encode_exception(error, retryable=True),
+                progress_events=error.progress_events,
             )
         )
         if plan.next_control.status is ExecutionStatus.QUEUED:
@@ -749,11 +739,11 @@ class DurableDeployment:
         """Commit pending progress through the reducer's cancellation-wins rule."""
         await claim.transition(
             Complete(
-                claim.control.fence,
-                worker_id,
-                0,
-                b"null",
-                tuple(context._pending_progress),
+                fence=claim.control.fence,
+                worker_id=worker_id,
+                now_ms=0,
+                result=b"null",
+                progress_events=context._progress_events,
             )
         )
 

@@ -30,7 +30,7 @@ from hayhooks.durable.engine import (
     Suspend,
 )
 from hayhooks.durable.models import decode_json, encode_json
-from hayhooks.durable.store import CHUNK_CURSOR_START
+from hayhooks.durable.store import CHUNK_CURSOR_START, ExecutionStoreError
 from tests.durable_store_contract import decode_checkpoint
 
 
@@ -40,7 +40,9 @@ def test_root_exports_durable_streaming_callback() -> None:
     assert public_callback is durable_streaming_callback
 
 
-async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancellation(context_factory) -> None:
+async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancellation(
+    context_factory, monkeypatch
+) -> None:
     store, create = context_factory
     context, _ = await create()
     before = await store.read(context.execution_id)
@@ -51,6 +53,11 @@ async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancell
     buffered = await store.read(context.execution_id)
     assert buffered is not None and buffered.control.version == before.control.version
     assert not buffered.progress
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "transition", AsyncMock(side_effect=ExecutionStoreError("unavailable")))
+        with pytest.raises(ExecutionStoreError, match="unavailable"):
+            await context.checkpoint({"component": "fetch"})
 
     await context.checkpoint({"component": "fetch"})
     checkpointed = await store.read(context.execution_id)

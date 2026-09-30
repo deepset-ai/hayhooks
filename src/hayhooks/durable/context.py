@@ -99,7 +99,11 @@ class _ClaimedExecution:
 
     async def start(self) -> None:
         """Confirm the lease, then keep it alive and flush chunks in the background."""
-        await self.transition(Heartbeat(self.control.fence, self.worker_id, 0, self.lease_duration_ms))
+        await self.transition(
+            Heartbeat(
+                fence=self.control.fence, worker_id=self.worker_id, now_ms=0, lease_duration_ms=self.lease_duration_ms
+            )
+        )
         self._tasks = (
             asyncio.create_task(self._heartbeat_loop(), name=f"durable-heartbeat:{self.control.run_id}"),
             asyncio.create_task(self._flush_loop(), name=f"durable-chunks:{self.control.run_id}"),
@@ -143,7 +147,7 @@ class _ClaimedExecution:
     async def release(self) -> None:
         """Requeue the run without spending its attempt, flushing buffered chunks first, then stop owning it."""
         try:
-            await self.transition(ReleaseClaim(self.control.fence, self.worker_id))
+            await self.transition(ReleaseClaim(fence=self.control.fence, worker_id=self.worker_id))
         except (ExecutionLeaseLostError, InvalidExecutionTransitionError):
             pass  # Already lost, finished, or suspended: nothing to hand back.
         except ExecutionStoreError as error:
@@ -153,6 +157,20 @@ class _ClaimedExecution:
         finally:
             self.mark_lost()
             await self.stop()
+
+    def request_shutdown(self, worker: asyncio.Task[None], *, release_running: bool) -> bool:
+        """Request shutdown once; return whether to include the worker in the bounded shutdown wait."""
+        retain_threads = bool(self.threads) and not release_running
+        if not self.stopping:
+            # Cancel once: a second cancellation would interrupt the release the first one started.
+            self.stopping = True
+            if self.application is not None and (not self.threads or retain_threads):
+                # Keep cancellation-resistant applications heartbeating until they exit.
+                self.cancel_application()
+            else:
+                # The worker owns the release, so cancelling close() cannot interrupt the handoff.
+                worker.cancel()
+        return not retain_threads
 
     def cancel_application(self, _exited: asyncio.Future[None] | None = None) -> None:
         """Cancel the async remainder once all retained threads have exited."""
@@ -213,7 +231,14 @@ class _ClaimedExecution:
         while not self._finished and not self.lease_lost.is_set():
             await asyncio.sleep(self._heartbeat_interval)
             try:
-                await self.transition(Heartbeat(self.control.fence, self.worker_id, 0, self.lease_duration_ms))
+                await self.transition(
+                    Heartbeat(
+                        fence=self.control.fence,
+                        worker_id=self.worker_id,
+                        now_ms=0,
+                        lease_duration_ms=self.lease_duration_ms,
+                    )
+                )
             except ExecutionLeaseLostError:
                 return
             except Exception:
@@ -225,7 +250,7 @@ class _ClaimedExecution:
 class DurableContext:
     """Checkpoint, progress, cancellation, suspension, retry, and streaming controls."""
 
-    def __init__(self, claim: _ClaimedExecution, checkpoint: CheckpointEnvelope) -> None:
+    def __init__(self, claim: _ClaimedExecution, checkpoint: CheckpointEnvelope, *, adapter: Any | None = None) -> None:
         if checkpoint.adapter_kind.value != claim.control.kind:
             raise ValueError("checkpoint kind does not match the claimed execution")
         self._claim = claim
@@ -235,7 +260,7 @@ class DurableContext:
         self._resume_input_consumed = False
         self._pending_progress: list[bytes] = []
         self._operation_lock = asyncio.Lock()
-        self._adapter: Any | None = None
+        self._adapter = adapter
 
     @property
     def execution_id(self) -> str:
@@ -264,6 +289,11 @@ class DurableContext:
     def _adapter_checkpoint(self) -> JsonValue:
         return self._checkpoint.adapter_checkpoint
 
+    @property
+    def _progress_events(self) -> tuple[bytes, ...]:
+        """Snapshot buffered events without removing uncommitted progress."""
+        return tuple(self._pending_progress)
+
     def _require_owned(self) -> None:
         self._claim.require_owned()
 
@@ -276,12 +306,14 @@ class DurableContext:
             snapshot = self._snapshot(adapter_checkpoint)
             plan = await self._claim.transition(
                 Checkpoint(
-                    self._claim.control.fence,
-                    self._claim.worker_id,
-                    0,
-                    self._claim.lease_duration_ms,
-                    encode_json(snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes),
-                    tuple(self._pending_progress),
+                    fence=self._claim.control.fence,
+                    worker_id=self._claim.worker_id,
+                    now_ms=0,
+                    lease_duration_ms=self._claim.lease_duration_ms,
+                    checkpoint=encode_json(
+                        snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
+                    ),
+                    progress_events=self._progress_events,
                 )
             )
             self._checkpoint = snapshot
@@ -317,7 +349,12 @@ class DurableContext:
         self._claim.require_owned()
         control = (
             await self._claim.transition(
-                Heartbeat(self._claim.control.fence, self._claim.worker_id, 0, self._claim.lease_duration_ms)
+                Heartbeat(
+                    fence=self._claim.control.fence,
+                    worker_id=self._claim.worker_id,
+                    now_ms=0,
+                    lease_duration_ms=self._claim.lease_duration_ms,
+                )
             )
         ).next_control
         if control.cancel_requested_at_ms is not None:
@@ -328,7 +365,7 @@ class DurableContext:
             self._claim.require_owned()
             if delay is not None and (delay < 0 or not math.isfinite(delay)):
                 raise ValueError("retry delay must be a finite non-negative number")
-            raise _RetryRequestedError(str(message), delay, tuple(self._pending_progress))
+            raise _RetryRequestedError(str(message), delay, self._progress_events)
 
     async def suspend(
         self,
@@ -342,12 +379,14 @@ class DurableContext:
             snapshot = self._snapshot(adapter_checkpoint, {**self._state, **dict(update or {})})
             plan = await self._claim.transition(
                 Suspend(
-                    self._claim.control.fence,
-                    self._claim.worker_id,
-                    0,
-                    encode_json(snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes),
-                    encode_json(dict(wait), max_bytes=self._claim.store.config.max_payload_bytes),
-                    tuple(self._pending_progress),
+                    fence=self._claim.control.fence,
+                    worker_id=self._claim.worker_id,
+                    now_ms=0,
+                    checkpoint=encode_json(
+                        snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
+                    ),
+                    wait=encode_json(dict(wait), max_bytes=self._claim.store.config.max_payload_bytes),
+                    progress_events=self._progress_events,
                 )
             )
             self._checkpoint = snapshot
