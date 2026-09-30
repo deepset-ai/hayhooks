@@ -12,6 +12,7 @@ import secrets
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
+from enum import Enum, auto
 from types import MappingProxyType
 from typing import Any, TypeAlias, cast
 
@@ -114,6 +115,15 @@ class RuntimeConfig:
             raise ValueError("runtime retry and backoff bounds are invalid")
 
 
+class _DeploymentState(Enum):
+    """Admission lifecycle; stopped deployments may still have work to drain."""
+
+    CREATED = auto()
+    STARTING = auto()
+    ACTIVE = auto()
+    STOPPED = auto()
+
+
 class DurableDeployment:
     """
     One typed durable callable backed by an explicit execution store.
@@ -180,8 +190,7 @@ class DurableDeployment:
         self._chunk_waits: set[asyncio.Task[tuple[StreamChunk, ...]]] = set()
         self._active_claims = 0
         self._admitted_submissions = 0
-        self._startable = True
-        self._accepting = False
+        self._state = _DeploymentState.CREATED
         # Set by the first close(); repeated calls share its grace instead of starting a new one.
         self._shutdown_deadline: float | None = None
         self._worker_identity = secrets.token_hex(8)
@@ -196,20 +205,24 @@ class DurableDeployment:
 
     @property
     def accepting(self) -> bool:
-        return self._accepting
+        return self._state is _DeploymentState.ACTIVE
 
     async def start(self) -> None:
         """Initialize storage and open admission and workers; repeated while active, it does nothing."""
         async with self._submission_condition:
-            if self._accepting:
+            if self.accepting:
                 return
-            if not self._startable:
+            if self._state is not _DeploymentState.CREATED:
                 raise RuntimeError(
                     "a quiesced, closed, or failed durable deployment cannot be restarted; create a new instance"
                 )
-            self._startable = False
-            await self.store.initialize()
-            self._accepting = True
+            self._state = _DeploymentState.STARTING
+            try:
+                await self.store.initialize()
+            except BaseException:
+                self._state = _DeploymentState.STOPPED
+                raise
+            self._state = _DeploymentState.ACTIVE
             self._ensure_workers()
             self._maintenance_task = asyncio.create_task(self._maintenance(), name=f"durable-maintenance:{self.name}")
             self._maintenance_task.add_done_callback(self._maintenance_stopped)
@@ -217,8 +230,7 @@ class DurableDeployment:
     async def quiesce(self) -> None:
         """Permanently close admission, wait for admitted submissions, and stop new claims."""
         async with self._submission_condition:
-            self._startable = False
-            self._accepting = False
+            self._state = _DeploymentState.STOPPED
             self._work_available.set()
             await self._submission_condition.wait_for(lambda: self._admitted_submissions == 0)
         # Maintenance serves claims this deployment will never make again.
@@ -271,7 +283,7 @@ class DurableDeployment:
         never cancels retained work, so a cancelled wait can be repeated. With
         ``release_running_on_close``, released threads may still be running when it returns.
         """
-        if self._accepting:
+        if self._state in (_DeploymentState.STARTING, _DeploymentState.ACTIVE):
             raise RuntimeError("close the durable deployment before waiting for it to drain")
         async with self._submission_condition:
             await self._submission_condition.wait_for(lambda: self._admitted_submissions == 0)
@@ -312,7 +324,7 @@ class DurableDeployment:
             now_ms=0,
         )
         async with self._submission_condition:
-            if not self._accepting:
+            if not self.accepting:
                 raise RuntimeError(f"durable deployment '{self.name}' is not accepting submissions")
             self._admitted_submissions += 1
         try:
@@ -424,13 +436,13 @@ class DurableDeployment:
         work as busy.
         """
         live_workers = sum(not worker.done() for worker in self._workers.values())
-        running = live_workers if self._accepting else 0
+        running = live_workers if self.accepting else 0
         draining_runs = sum(not run.done() for run in (*self._draining_runs, *self._draining_threads))
         maintenance_running = self._maintenance_task is not None and not self._maintenance_task.done()
         worker_error_streak = max(self._worker_store_error_streaks.values(), default=0)
         health: dict[str, object] = {
             "healthy": (
-                self._accepting
+                self.accepting
                 and running == self.config.worker_concurrency
                 and maintenance_running
                 and not worker_error_streak
@@ -442,7 +454,7 @@ class DurableDeployment:
             "draining_runs": draining_runs,
             "active_executions": self._active_claims + draining_runs,
             "maintenance_running": maintenance_running,
-            "accepting": self._accepting,
+            "accepting": self.accepting,
             "store_error_streak": max(worker_error_streak, self._maintenance_error_streak),
         }
         try:
@@ -493,7 +505,7 @@ class DurableDeployment:
                     "Durable worker slot stopped unexpectedly"
                 )
         for slot in range(self.config.worker_concurrency):
-            if not self._accepting or slot in self._workers:
+            if not self.accepting or slot in self._workers:
                 continue
             worker = asyncio.create_task(
                 self._worker(f"{self._worker_identity}-{slot}"),
@@ -513,7 +525,7 @@ class DurableDeployment:
         self._ensure_workers()
 
     async def _maintenance(self) -> None:
-        while self._accepting:
+        while self.accepting:
             try:
                 if await self.store.maintain(
                     max_run_attempts=self.config.max_run_attempts,
@@ -531,7 +543,7 @@ class DurableDeployment:
 
     async def _worker(self, worker_id: str) -> None:
         self._worker_store_error_streaks[worker_id] = 0
-        while self._accepting:
+        while self.accepting:
             control = await self._claim_next_execution(worker_id)
             if control is None:
                 continue
@@ -565,7 +577,7 @@ class DurableDeployment:
             return None
         self._worker_store_error_streaks[worker_id] = 0
         if claimed is None:
-            if self._accepting:
+            if self.accepting:
                 with suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self._work_available.wait(), self.config.poll_interval_seconds)
             # Consume the wake-up here, so one that arrived while every worker was busy is not lost.

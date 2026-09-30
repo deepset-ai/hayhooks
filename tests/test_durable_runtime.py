@@ -563,7 +563,9 @@ async def test_runtime_start_failure_closes_started_deployments(deployment_facto
         await runtime.start()
 
 
-@pytest.mark.parametrize("stop", ["quiesce", "close", "quiesce-before-start", "failed-activation"])
+@pytest.mark.parametrize(
+    "stop", ["quiesce", "close", "quiesce-before-start", "close-before-start", "failed-activation"]
+)
 async def test_stopped_deployment_is_never_reactivated(deployment_factory, stop: str) -> None:
     store = ControlledStore("jobs")
     deployment = await deployment_factory(store=store, start=False)
@@ -571,8 +573,8 @@ async def test_stopped_deployment_is_never_reactivated(deployment_factory, stop:
         store.initialize = AsyncMock(side_effect=ExecutionStoreError("unavailable"))
         with pytest.raises(ExecutionStoreError):
             await deployment.start()
-    elif stop == "quiesce-before-start":
-        await deployment.quiesce()
+    elif stop.endswith("-before-start"):
+        await getattr(deployment, stop.removesuffix("-before-start"))()
         assert store.initialize_calls == 0
     else:
         await deployment.start()
@@ -644,6 +646,34 @@ async def test_wait_drained_requires_closed_admission(deployment_factory) -> Non
 
     with pytest.raises(RuntimeError, match="close the durable deployment"):
         await deployment.wait_drained()
+
+
+async def test_cancelled_startup_is_drainable_but_cannot_restart(deployment_factory, monkeypatch) -> None:
+    store = ControlledStore("jobs")
+    deployment = await deployment_factory(store=store, start=False)
+    initializing = asyncio.Event()
+
+    async def blocked_initialize() -> None:
+        initializing.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(store, "initialize", blocked_initialize)
+    startup = asyncio.create_task(deployment.start())
+    try:
+        await asyncio.wait_for(initializing.wait(), timeout=1)
+        assert not deployment.accepting
+        with pytest.raises(RuntimeError, match="close the durable deployment"):
+            await asyncio.wait_for(deployment.wait_drained(), timeout=1)
+    finally:
+        startup.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await startup
+
+    await asyncio.wait_for(deployment.wait_drained(), timeout=1)
+    with pytest.raises(RuntimeError, match="cannot be restarted"):
+        await deployment.start()
+    assert not deployment.accepting
+    assert store.claim_calls == store.maintenance_calls == 0
 
 
 async def test_idle_workers_returning_from_claim_do_not_delay_close(deployment_factory, monkeypatch) -> None:
