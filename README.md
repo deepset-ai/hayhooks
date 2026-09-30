@@ -199,7 +199,7 @@ A durable wrapper sets a revision and implements `run_durable_async`. This Agent
 
 ```python
 from haystack.components.agents import Agent
-from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.components.generators.chat import OpenAIResponsesChatGenerator
 from haystack.dataclasses import ChatMessage
 from haystack.tools import tool
 from pydantic import BaseModel
@@ -230,7 +230,8 @@ class PipelineWrapper(BasePipelineWrapper):
     durable_resume_model = Approval  # typed input for human-in-the-loop waits
 
     def setup(self) -> None:
-        self.pipeline = Agent(chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"), tools=[search])
+        generator = OpenAIResponsesChatGenerator(model="gpt-6-luna", generation_kwargs={"reasoning": {"effort": "high"}})
+        self.pipeline = Agent(chat_generator=generator, tools=[search])
 
     async def run_durable_async(self, context: DurableContext, task: Task) -> Report:
         # Wait for a human. The wait lives in Redis, so it survives restarts and deploys.
