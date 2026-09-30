@@ -43,10 +43,13 @@ curl -N http://localhost:8000/jobs/document-analysis/executions/EXECUTION_ID/str
   -H "Authorization: Bearer $APP_API_KEY"
 ```
 
-Restart Uvicorn during the ten-second processing delay to verify that Redis
-preserves the checkpoint. The `extract` component is not repeated: recovery
-resumes at `analyze`. The delay only makes recovery easy to observe; replace the
-example analysis with the real Pipeline or Agent work in your application.
+To verify that Redis preserves the checkpoint, stop Uvicorn abruptly (for
+example with `kill -9`) during the ten-second processing delay, then start it
+again. Once the lost worker's lease expires (30 seconds by default), recovery
+resumes at `analyze`: the `extract` component is not repeated. A graceful stop
+(Ctrl+C) instead lets the running step finish before the process exits. The
+delay only makes recovery easy to observe; replace the example analysis with
+the real Pipeline or Agent work in your application.
 
 The API-key dependency is deliberately small so the example runs by itself. In
 an existing application, replace it with your normal authentication dependency

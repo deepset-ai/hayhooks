@@ -107,6 +107,8 @@ persistence disabled. From the repository root, using a Python environment
 with `hayhooks[durable]` and the versions above installed:
 
 ```bash
+# Both measured commits are kept in the pull request that introduced this engine.
+git fetch origin pull/267/head
 git worktree add --detach /tmp/hayhooks-redis-before 3e4509ed
 # Warm the current scripts before collecting measurements.
 PYTHONPATH=src python scripts/benchmark_durable_redis.py --duration 2

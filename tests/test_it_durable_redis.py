@@ -129,6 +129,20 @@ async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) ->
     assert await redis.zcard(store.keys.lease_expiry) == 1
 
 
+async def test_claim_that_loses_a_race_takes_the_next_runnable_execution(redis_store) -> None:
+    redis, store = redis_store
+    for index in range(2):
+        await store.submit(contract_control("jobs", f"run_{index}", idempotency=str(index), binding=str(index)), b"input")
+    first = await store.claim(Claim("worker-0", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert first is not None and first.next_control.run_id == "run_0"
+    # A worker that read the index head before worker-0 committed still sees run_0 first.
+    await redis.zadd(store.keys.runnable_revision("v1"), {"run_0": 0})
+
+    second = await store.claim(Claim("worker-1", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+
+    assert second is not None and second.next_control.run_id == "run_1"
+
+
 async def test_concurrent_progress_and_cancellation_remain_atomic(redis_store) -> None:
     redis, store = redis_store
     control = contract_control("jobs")

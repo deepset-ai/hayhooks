@@ -171,7 +171,7 @@ for approval, retry, cancellation, and checkpoint recovery.
   checkpoint or terminal transition. Call `checkpoint` when progress must be
   durable immediately.
 - **Display-only streaming:** streaming callbacks never wait on Redis. Chunks
-  are buffered and flushed at least every 100 ms, and always before the run
+  are buffered and flushed about every 100 ms, and always before the run
   leaves `running`, so the final chunks precede the terminal event. They are
   bounded and may be dropped without failing the execution. The terminal result
   remains the source of truth.

@@ -459,20 +459,25 @@ class RedisExecutionStore:
             raise ValueError("lease duration must exceed the commit safety margin")
         candidate_index = self.keys.runnable_revision(command.worker_revision)
         with _redis_errors():
-            entries = await self.redis.zrange(candidate_index, 0, 0, withscores=True)
-            if not entries:
-                return None
-            try:
-                member, raw_score = entries[0]
-                run_id = _text(member)
-                validate_run_id(run_id)
-                available_at_ms = _index_score_ms(raw_score, "runnable score")
-            except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError) as error:
-                raise ExecutionStoreCorruptionError("runnable index contains an invalid member or score") from error
-            now_ms = _milliseconds(await self.redis.time())
-            if available_at_ms > now_ms:
-                return None
-            return await self._transition(run_id, command, candidate_index=candidate_index)
+            # A head that another worker claimed first is dropped from the index, so try the next one.
+            for _ in range(self._transaction_retries):
+                entries = await self.redis.zrange(candidate_index, 0, 0, withscores=True)
+                if not entries:
+                    return None
+                try:
+                    member, raw_score = entries[0]
+                    run_id = _text(member)
+                    validate_run_id(run_id)
+                    available_at_ms = _index_score_ms(raw_score, "runnable score")
+                except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError) as error:
+                    raise ExecutionStoreCorruptionError("runnable index contains an invalid member or score") from error
+                now_ms = _milliseconds(await self.redis.time())
+                if available_at_ms > now_ms:
+                    return None
+                plan = await self._transition(run_id, command, candidate_index=candidate_index)
+                if plan is not None:
+                    return plan
+            return None
 
     async def maintain(
         self,

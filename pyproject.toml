@@ -81,7 +81,6 @@ packages = ["src/hayhooks"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-  "/examples/durable_engine_showcase",
   "/uv.lock",
 ]
 
