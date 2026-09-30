@@ -10,10 +10,11 @@ a deterministic excerpt answer, so no paid model or API key is required.
 > below apply once durable hosting ships. To run durable work today, embed the
 > engine as in the [standalone FastAPI example](../durable_fastapi/).
 
+Start Redis from the repository root. Hayhooks hosting configuration will be
+documented when that feature ships:
+
 ```bash
 docker compose -f examples/durable-compose.yaml up -d
-HAYHOOKS_DURABLE_STORE=redis \
-  hayhooks run --pipelines-dir examples/durable_chat_with_website/pipelines
 ```
 
 ```bash

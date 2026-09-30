@@ -81,7 +81,7 @@ class _ClaimedExecution:
         self.lease_lost = asyncio.Event()
         self.event_loop = asyncio.get_running_loop()
         self.application: asyncio.Future[object] | None = None
-        # Set once by close(): cancellation is then a shutdown, and must not be requested twice.
+        # Shutdown or worker cancellation: reject new threads and hand back interrupted work.
         self.stopping = False
         # Exit futures of the engine threads still running this execution.
         self.threads: set[asyncio.Future[None]] = set()
@@ -104,7 +104,7 @@ class _ClaimedExecution:
         )
 
     async def stop(self) -> None:
-        """Stop owning the claim; a release must run before this, which rejects later transitions."""
+        """Stop background tasks and reject later transitions; this does not release a running claim."""
         self._finished = True
         for task in self._tasks:
             task.cancel()
@@ -150,10 +150,22 @@ class _ClaimedExecution:
             )
         finally:
             self.mark_lost()
+            await self.stop()
+
+    def cancel_application(self, _exited: asyncio.Future[None] | None = None) -> None:
+        """Cancel the async remainder once all retained threads have exited."""
+        if _exited is None:
+            for thread in self.threads:
+                thread.add_done_callback(self.cancel_application)
+        if not self.threads and self.application is not None:
+            # A synchronous runner's result is already done by the time its thread exits.
+            self.application.cancel()
 
     def start_thread(self, function: Callable[[], _T], *, name: str) -> asyncio.Future[_T]:
         """Run synchronous work in a daemon thread tracked until it exits, not just until it returns."""
         self.require_owned()
+        if self.stopping:
+            raise asyncio.CancelledError
         result, exited = start_daemon_thread(function, name=name)
         _track(self.threads, exited)
         return result

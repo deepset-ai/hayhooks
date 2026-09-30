@@ -247,16 +247,20 @@ shows the complete integration.
   after `close()`, even when `close()` raised, and only then closes the client.
   Cancelling that wait does not cancel the work, and the wait can be repeated.
 - **Stopped work is handed back.** Async work that stops in response to
-  cancellation at the end of the grace releases its claim before `close()`
-  returns: its buffered chunks are flushed, and the run returns to the queue
+  cancellation at the end of the grace releases its claim: its buffered chunks
+  are flushed, and the run returns to the queue
   without spending a run attempt, so another process can claim it immediately. Progress since the last checkpoint is lost,
   as after a crash. A pending cancellation wins, and the run ends `canceled`.
   A coroutine that suppresses cancellation or awaits cleanup keeps its claim,
   heartbeats, and context access until it exits; `wait_drained()` waits for it.
+  An exception raised during shutdown cleanup also hands the claim back.
+  If release outlasts the close deadline, `wait_drained()` waits for that release.
 - **Thread-backed work keeps its claim.** Python cannot interrupt a thread, so
   a synchronous runner, or a Pipeline thread started by `run_pipeline_async`,
   keeps its claim, heartbeats, and Redis access after `close()`, and
-  `wait_drained()` waits for it to exit. If the host cancels a worker task
+  `wait_drained()` waits for it to exit. Once its last Pipeline thread exits, an
+  async runner receives cancellation; it cannot start new engine threads after
+  the shutdown grace expires. If the host cancels a worker task
   directly, its heartbeat stops, so that claim is handed back as well.
 
 ```python

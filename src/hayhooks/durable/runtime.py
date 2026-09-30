@@ -233,8 +233,9 @@ class DurableDeployment:
         Async work still running then is cancelled and gets up to another grace period to stop;
         work that stops releases its claim, so another process can take the run over without
         spending an attempt. Cancellation-resistant async work keeps its claim until it exits, and
-        so do threads, unless ``release_running_on_close`` hands their claims over. A repeated call
-        completes cleanup that an earlier one left unfinished, within the same deadline;
+        so do threads, unless ``release_running_on_close`` hands their claims over. Async runners
+        awaiting thread work are cancelled when their last thread exits; no new threads may start.
+        A repeated call completes cleanup that an earlier one left unfinished, within the same deadline;
         ``wait_drained()`` waits for the work that close() retains.
         """
         await self.quiesce()
@@ -254,17 +255,17 @@ class DurableDeployment:
         for worker in pending:
             claim = self._claims.get(worker)
             threaded = claim is not None and bool(claim.threads)
-            if threaded and not self.config.release_running_on_close:
-                continue
-            stopping.add(worker)
+            retain_threads = threaded and not self.config.release_running_on_close
+            if not retain_threads:
+                stopping.add(worker)
             if claim is None:
                 worker.cancel()
             elif not claim.stopping:
                 # Cancel once: a second cancellation would interrupt the release the first one started.
                 claim.stopping = True
-                if claim.application is not None and not threaded:
+                if claim.application is not None and (not threaded or retain_threads):
                     # Cancelling the application, not the worker, keeps a resistant one heartbeating until it exits.
-                    claim.application.cancel()
+                    claim.cancel_application()
                 else:
                     # The worker owns the release, so cancelling close() cannot interrupt the handoff.
                     worker.cancel()
@@ -572,8 +573,9 @@ class DurableDeployment:
             return None
         self._worker_store_error_streaks[worker_id] = 0
         if claimed is None:
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._work_available.wait(), self.config.poll_interval_seconds)
+            if self._accepting:
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._work_available.wait(), self.config.poll_interval_seconds)
             # Consume the wake-up here, so one that arrived while every worker was busy is not lost.
             self._work_available.clear()
             return None
@@ -644,6 +646,7 @@ class DurableDeployment:
         claim = _ClaimedExecution(self.store, control, worker_id, self.config.lease_duration_ms)
         worker = cast(asyncio.Task[None], asyncio.current_task())
         self._claims[worker] = claim
+        release: asyncio.Task[None] | None = None
         try:
             stored = await self._read_claimed_execution(control, worker_id)
             if stored is None:
@@ -657,10 +660,15 @@ class DurableDeployment:
             await self._run_claim(claim, context, request, worker_id)
         except asyncio.CancelledError:
             # The heartbeat stops with this worker, so hand the run back rather than let its lease expire.
-            await asyncio.shield(claim.release())
+            claim.stopping = True
+            release = asyncio.create_task(claim.release())
+            _track(self._draining_runs, release)
+            release.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            await asyncio.shield(release)
             raise
         finally:
-            await claim.stop()
+            if release is None:
+                await claim.stop()
             del self._claims[worker]
             for thread in tuple(claim.threads):
                 _track(self._draining_threads, thread)
@@ -700,6 +708,8 @@ class DurableDeployment:
         except (asyncio.CancelledError, ExecutionLeaseLostError, ExecutionStoreError):
             raise
         except Exception as error:
+            if claim.stopping:
+                raise asyncio.CancelledError from error
             code = "payload_too_large" if isinstance(error, ExecutionPayloadSizeError) else None
             await claim.transition(
                 Fail(
@@ -782,7 +792,7 @@ class DurableDeployment:
         try:
             return application.result()
         except asyncio.CancelledError as error:
-            # Only a stopping worker hands its claim back; cancellation raised by the application is a failure.
+            # Shutdown cancellation hands the claim back; spontaneous application cancellation is a failure.
             if claim.stopping:
                 raise
             raise RuntimeError("the durable application was cancelled") from error

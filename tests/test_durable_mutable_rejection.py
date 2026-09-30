@@ -7,6 +7,7 @@ import sys
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -155,6 +156,41 @@ def test_http_durable_overwrite_is_rejected_and_preserves_ordinary_pipeline(test
         assert (Path(test_settings.pipelines_dir) / "demo" / "pipeline_wrapper.py").read_text() == ORDINARY_SOURCE
         assert sys.modules["demo.pipeline_wrapper"] is old_module
         assert registry.get_metadata("demo") is old_metadata
+        assert client.post("/demo/run", json={"value": 21}).json() == {"result": 42}
+
+
+def test_commit_rejects_durable_overwrite_before_removing_existing_pipeline(
+    test_settings, monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(test_settings, "pipelines_dir", str(tmp_path))
+    app = create_app()
+    with TestClient(app) as client:
+        assert (
+            client.post(
+                "/deploy_files", json={"name": "demo", "files": {"pipeline_wrapper.py": ORDINARY_SOURCE}}
+            ).status_code
+            == 200
+        )
+        old_wrapper = registry.get("demo")
+        old_module = sys.modules["demo.pipeline_wrapper"]
+        backup = Mock(wraps=deploy_utils._backup_pipeline_files)
+        remove = Mock(wraps=registry.remove)
+        monkeypatch.setattr(deploy_utils, "_backup_pipeline_files", backup)
+        monkeypatch.setattr(registry, "remove", remove)
+
+        with pytest.raises(PipelineModeError):
+            deploy_utils.commit_prepared_pipeline(
+                PreparedPipeline("demo", MixedWrapper()),
+                app=app,
+                overwrite=True,
+                source_files={"pipeline_wrapper.py": DURABLE_SOURCE},
+            )
+
+        backup.assert_not_called()
+        remove.assert_not_called()
+        assert registry.get("demo") is old_wrapper
+        assert sys.modules["demo.pipeline_wrapper"] is old_module
+        assert (Path(test_settings.pipelines_dir) / "demo" / "pipeline_wrapper.py").read_text() == ORDINARY_SOURCE
         assert client.post("/demo/run", json={"value": 21}).json() == {"result": 42}
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -193,6 +193,23 @@ async def test_heartbeat_marks_a_rejected_claim_lost(context_factory) -> None:
     context, claim = await create(lease_duration_ms=60)
     await store.transition(context.execution_id, ReleaseClaim(claim.control.fence, claim.worker_id))
     await asyncio.wait_for(claim.lease_lost.wait(), timeout=0.3)
+
+
+@pytest.mark.parametrize("state", ["lost", "stopping"])
+async def test_thread_start_rejects_lost_or_stopping_claim(context_factory, monkeypatch, state) -> None:
+    _, create = context_factory
+    context, claim = await create()
+    start = Mock()
+    monkeypatch.setattr("hayhooks.durable.context.start_daemon_thread", start)
+    if state == "lost":
+        claim.mark_lost()
+    else:
+        claim.stopping = True
+
+    error = ExecutionLeaseLostError if state == "lost" else asyncio.CancelledError
+    with pytest.raises(error):
+        context._start_thread(lambda: None, name="test-rejected-thread")
+    start.assert_not_called()
 
 
 async def test_missing_execution_marks_claim_lost(context_factory) -> None:
