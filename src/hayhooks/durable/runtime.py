@@ -637,8 +637,16 @@ class DurableDeployment:
             if checkpoint.adapter_kind is not self.kind:
                 raise ValueError("checkpoint kind does not match the deployment")
         except (KeyError, TypeError, ValueError, ExecutionPayloadSizeError) as error:
+            first, events = claim.progress_snapshot()
             await claim.transition(
-                Fail(fence=control.fence, worker_id=worker_id, now_ms=0, error=self._encode_exception(error)),
+                Fail(
+                    fence=control.fence,
+                    worker_id=worker_id,
+                    now_ms=0,
+                    error=self._encode_exception(error),
+                    progress_events=events,
+                    first_progress_sequence=first,
+                ),
             )
             return None
 
@@ -714,7 +722,7 @@ class DurableDeployment:
                 result = self.result_model.model_validate(result).model_dump(mode="json")
             elif isinstance(result, BaseModel):
                 result = result.model_dump(mode="json")
-            _, events = claim.progress_snapshot()
+            first, events = claim.progress_snapshot()
             await claim.transition(
                 Complete(
                     fence=claim.control.fence,
@@ -722,6 +730,7 @@ class DurableDeployment:
                     now_ms=0,
                     result=encode_json(result, max_bytes=self.store.config.max_payload_bytes),
                     progress_events=events,
+                    first_progress_sequence=first,
                 )
             )
         except _ExecutionSuspendedError:
@@ -743,7 +752,7 @@ class DurableDeployment:
                 deployment=self.name, run_id=claim.control.run_id, exception_type=type(error).__name__, error=str(error)
             ).error("Durable execution failed")
             code = "payload_too_large" if isinstance(error, ExecutionPayloadSizeError) else None
-            _, events = claim.progress_snapshot()
+            first, events = claim.progress_snapshot()
             await claim.transition(
                 Fail(
                     fence=claim.control.fence,
@@ -751,6 +760,7 @@ class DurableDeployment:
                     now_ms=0,
                     error=self._encode_exception(error, code=code),
                     progress_events=events,
+                    first_progress_sequence=first,
                 )
             )
 
@@ -759,7 +769,7 @@ class DurableDeployment:
         exponent = min(claim.control.application_retry_count, 30)
         delay = self.config.retry_base_delay_seconds * (2**exponent) if error.delay is None else error.delay
         delay_ms = math.ceil(min(delay, self.config.retry_max_delay_seconds) * 1_000)
-        _, events = claim.progress_snapshot()
+        first, events = claim.progress_snapshot()
         plan = await claim.transition(
             ScheduleRetry(
                 fence=claim.control.fence,
@@ -769,6 +779,7 @@ class DurableDeployment:
                 max_application_retries=self.config.max_application_retries,
                 error=self._encode_exception(error, retryable=True),
                 progress_events=events,
+                first_progress_sequence=first,
             )
         )
         if plan.next_control.status is ExecutionStatus.QUEUED:
@@ -781,7 +792,7 @@ class DurableDeployment:
         error: BaseException,
     ) -> None:
         """Cancel through cancellation-wins; without a pending request the run fails."""
-        _, events = claim.progress_snapshot()
+        first, events = claim.progress_snapshot()
         plan = await claim.transition(
             Fail(
                 fence=claim.control.fence,
@@ -789,6 +800,7 @@ class DurableDeployment:
                 now_ms=0,
                 error=self._encode_exception(error),
                 progress_events=events,
+                first_progress_sequence=first,
             )
         )
         if plan.next_control.status is ExecutionStatus.FAILED:

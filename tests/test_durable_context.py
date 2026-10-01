@@ -34,7 +34,7 @@ from hayhooks.durable.engine import (
     Suspend,
 )
 from hayhooks.durable.models import decode_json, encode_json
-from hayhooks.durable.store import CHUNK_CURSOR_START, ExecutionStoreError
+from hayhooks.durable.store import CHUNK_CURSOR_START, ExecutionStoreCorruptionError, ExecutionStoreError
 from tests.durable_store_contract import decode_checkpoint
 
 
@@ -88,12 +88,21 @@ async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancell
     assert buffered is not None and buffered.control.version == before.control.version
     assert not buffered.progress
 
-    with monkeypatch.context() as patch:
-        patch.setattr(store, "transition", AsyncMock(side_effect=ExecutionStoreError("unavailable")))
-        with pytest.raises(ExecutionStoreError, match="unavailable"):
-            await context.checkpoint({"component": "fetch"})
+    transition = store.transition
+    unavailable = True
 
-    await context.checkpoint({"component": "fetch"})
+    async def fail_once(run_id, command):
+        nonlocal unavailable
+        if isinstance(command, Checkpoint) and unavailable:
+            unavailable = False
+            message = "unavailable"
+            raise ExecutionStoreError(message)
+        return await transition(run_id, command)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "transition", fail_once)
+        await context.checkpoint({"component": "fetch"})
+
     checkpointed = await store.read(context.execution_id)
     assert checkpointed is not None and checkpointed.control.version == before.control.version + 1
     assert decode_checkpoint(checkpointed.payloads[PayloadKind.CHECKPOINT]).application_state == {"step": 1}
@@ -307,6 +316,70 @@ async def test_heartbeat_drops_progress_the_store_already_holds(context_factory)
     await context.checkpoint()
     stored = await store.read(context.execution_id)
     assert stored is not None
+    assert [event.sequence for event in stored.progress] == [1, 2]
+
+
+async def test_checkpoint_replay_after_a_lost_reply_stores_progress_once(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    reply_lost = False
+
+    async def lose_first_reply(run_id, command):
+        nonlocal reply_lost
+        plan = await transition(run_id, command)
+        if isinstance(command, Checkpoint) and not reply_lost:
+            reply_lost = True
+            message = "reply lost"
+            raise ExecutionStoreError(message)
+        return plan
+
+    monkeypatch.setattr(store, "transition", lose_first_reply)
+    await context.report_progress("one")
+    await context.report_progress("two")
+    await context.checkpoint()
+
+    stored = await store.read(context.execution_id)
+    assert stored is not None
+    assert [event.sequence for event in stored.progress] == [1, 2]
+    assert claim.pending_progress == []
+    assert claim.control.progress_sequence == 2
+
+
+async def test_commit_after_an_unconfirmed_checkpoint_does_not_duplicate_progress(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    reply_lost = False
+
+    async def corrupt_first_reply(run_id, command):
+        nonlocal reply_lost
+        plan = await transition(run_id, command)
+        if isinstance(command, Checkpoint) and not reply_lost:
+            reply_lost = True
+            message = "bad reply"
+            raise ExecutionStoreCorruptionError(message)
+        return plan
+
+    monkeypatch.setattr(store, "transition", corrupt_first_reply)
+    await context.report_progress("one")
+    await context.report_progress("two")
+    with pytest.raises(ExecutionStoreCorruptionError, match="bad reply"):
+        await context.checkpoint()
+
+    first, events = claim.progress_snapshot()
+    await claim.transition(
+        Complete(
+            claim.control.fence,
+            claim.worker_id,
+            0,
+            b"null",
+            progress_events=events,
+            first_progress_sequence=first,
+        )
+    )
+    stored = await store.read(context.execution_id)
+    assert stored is not None and stored.control.status is ExecutionStatus.COMPLETED
     assert [event.sequence for event in stored.progress] == [1, 2]
 
 

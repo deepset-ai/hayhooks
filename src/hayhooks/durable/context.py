@@ -166,8 +166,6 @@ class _ClaimedExecution:
                 except ExecutionStoreCorruptionError:
                     raise
                 except ExecutionStoreError as error:
-                    if isinstance(command, Checkpoint):
-                        raise
                     failures += 1
                     remaining = max(0.0, self._confirmed_until - time.monotonic())
                     delay = min(backoff_delay(failures, *self._backoff), remaining / 2)
@@ -380,7 +378,7 @@ class DurableContext:
         async with self._operation_lock:
             self._claim.require_owned()
             snapshot = self._snapshot(adapter_checkpoint)
-            _, events = self._claim.progress_snapshot()
+            first, events = self._claim.progress_snapshot()
             await self._claim.transition(
                 Checkpoint(
                     fence=self._claim.control.fence,
@@ -391,6 +389,7 @@ class DurableContext:
                         snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
                     ),
                     progress_events=events,
+                    first_progress_sequence=first,
                 )
             )
             self._checkpoint = snapshot
@@ -453,7 +452,7 @@ class DurableContext:
         async with self._operation_lock:
             self._claim.require_owned()
             snapshot = self._snapshot(adapter_checkpoint, {**self._state, **dict(update or {})})
-            _, events = self._claim.progress_snapshot()
+            first, events = self._claim.progress_snapshot()
             await self._claim.transition(
                 Suspend(
                     fence=self._claim.control.fence,
@@ -464,6 +463,7 @@ class DurableContext:
                     ),
                     wait=encode_json(dict(wait), max_bytes=self._claim.store.config.max_payload_bytes),
                     progress_events=events,
+                    first_progress_sequence=first,
                 )
             )
             self._checkpoint = snapshot
