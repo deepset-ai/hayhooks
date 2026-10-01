@@ -28,6 +28,7 @@ from hayhooks.durable.engine import (
     ReleaseClaim,
     RequestCancellation,
     Resume,
+    ScheduleRetry,
     Suspend,
 )
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys
@@ -138,7 +139,9 @@ async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) ->
 async def test_claim_that_loses_a_race_takes_the_next_runnable_execution(redis_store) -> None:
     redis, store = redis_store
     for index in range(2):
-        await store.submit(contract_control("jobs", f"run_{index}", idempotency=str(index), binding=str(index)), b"input")
+        await store.submit(
+            contract_control("jobs", f"run_{index}", idempotency=str(index), binding=str(index)), b"input"
+        )
     first = await store.claim(Claim("worker-0", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
     assert first is not None and first.next_control.run_id == "run_0"
     # A worker that read the index head before worker-0 committed still sees run_0 first.
@@ -147,6 +150,39 @@ async def test_claim_that_loses_a_race_takes_the_next_runnable_execution(redis_s
     second = await store.claim(Claim("worker-1", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
 
     assert second is not None and second.next_control.run_id == "run_1"
+
+
+async def test_stepped_back_redis_time_keeps_controls_decodable(redis_store, monkeypatch) -> None:
+    _, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    updated_at_ms = claimed.next_control.updated_at_ms
+
+    from hayhooks.durable import redis as redis_module
+
+    real_milliseconds = redis_module._milliseconds
+    monkeypatch.setattr(redis_module, "_milliseconds", lambda value: real_milliseconds(value) - 5_000)
+    retried = await store.transition("run_1", ScheduleRetry(1, "worker", 0, 0, 3, b"retry"))
+    assert retried.next_control.updated_at_ms == updated_at_ms
+    assert (await store.read("run_1")).control.updated_at_ms == updated_at_ms
+
+    monkeypatch.setattr(redis_module, "_milliseconds", real_milliseconds)
+    assert await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is not None
+
+
+async def test_heartbeat_after_a_clock_step_renews_past_the_last_update(redis_store) -> None:
+    redis, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    updated_at_ms = claimed.next_control.lease_expires_at_ms - 1
+    await redis.hset(store.keys.control("run_1"), "updated_at_ms", updated_at_ms)
+
+    heartbeat = await store.transition("run_1", Heartbeat(1, "worker", 0, 50))
+
+    assert heartbeat.next_control.updated_at_ms == updated_at_ms
+    assert heartbeat.next_control.lease_expires_at_ms == updated_at_ms + 50
 
 
 async def test_concurrent_progress_and_cancellation_remain_atomic(redis_store) -> None:

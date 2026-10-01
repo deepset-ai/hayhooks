@@ -233,7 +233,7 @@ class MemoryExecutionStore:
         current = self._controls.get(run_id)
         if current is None:
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
-        command = bind_store_command(command, self._clock(), self.config)
+        command = bind_store_command(command, max(self._clock(), current.updated_at_ms), self.config)
         plan = decide(current, command)
         validate_transition_plan(plan, self.config)
         self._apply(current, plan)

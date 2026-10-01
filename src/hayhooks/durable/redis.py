@@ -104,14 +104,14 @@ _Command = tuple[Any, ...]
 # Returns Redis TIME in milliseconds while the worker still owns the lease with room for the safety margin.
 _OWNED_LUA = """
 local function owned_now(control, worker, fence, margin)
-  local lease = redis.call('HMGET', control, 'status', 'lease_owner', 'fence', 'lease_expires_at_ms')
+  local lease = redis.call('HMGET', control, 'status', 'lease_owner', 'fence', 'lease_expires_at_ms', 'updated_at_ms')
   if lease[1] ~= 'running' or lease[2] ~= worker or lease[3] ~= fence then
     return nil
   end
   local time = redis.call('TIME')
   local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
   if now < tonumber(lease[4]) - tonumber(margin) then
-    return now
+    return now, tonumber(lease[5])
   end
   return nil
 end
@@ -130,11 +130,11 @@ return 1
 
 # KEYS: control, lease expiry. ARGV: worker, fence, safety margin, lease duration, lease member.
 _HEARTBEAT_LUA = """
-local now = owned_now(KEYS[1], ARGV[1], ARGV[2], ARGV[3])
+local now, updated = owned_now(KEYS[1], ARGV[1], ARGV[2], ARGV[3])
 if not now then
   return false
 end
-local deadline = string.format('%d', now + tonumber(ARGV[4]))
+local deadline = string.format('%d', math.max(now, updated) + tonumber(ARGV[4]))
 -- A script error does not roll back writes, so validate the index before renewing control.
 redis.call('ZCARD', KEYS[2])
 redis.call('HSET', KEYS[1], 'lease_expires_at_ms', deadline)
@@ -676,7 +676,8 @@ class RedisExecutionStore:
             try:
                 if current is None:
                     raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
-                plan = decide(current, bind_store_command(command, _milliseconds(now), self.config))
+                now_ms = max(_milliseconds(now), current.updated_at_ms)
+                plan = decide(current, bind_store_command(command, now_ms, self.config))
             except (ExecutionNotFoundError, InvalidExecutionTransitionError):
                 if candidate_index is None:
                     raise

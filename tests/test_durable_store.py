@@ -13,7 +13,9 @@ from hayhooks.durable.engine import (
     ExecutionLeaseLostError,
     ExecutionPayloadSizeError,
     ExecutionStatus,
+    Heartbeat,
     PayloadKind,
+    ScheduleRetry,
 )
 from hayhooks.durable.store import ExecutionStoreCorruptionError, MemoryExecutionStore, StoreConfig, chunk_read_count
 from tests.durable_store_contract import (
@@ -114,6 +116,25 @@ async def test_memory_store_repairs_only_the_stale_lease_member(clock: Clock) ->
         attempts_error=ATTEMPTS_ERROR,
     )
     assert store._lease_expiry == {live_member: live_deadline}
+
+
+async def test_memory_store_keeps_timestamps_monotonic_when_the_clock_steps_back(clock: Clock) -> None:
+    store = MemoryExecutionStore("jobs", clock=clock, config=StoreConfig(lease_commit_safety_ms=10))
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+
+    clock.now = 500
+    heartbeat = await store.transition("run_1", Heartbeat(1, "worker", 0, 400))
+    assert heartbeat.next_control.updated_at_ms == 1_000
+    assert heartbeat.next_control.lease_expires_at_ms == 1_400
+    retry = await store.transition("run_1", ScheduleRetry(1, "worker", 0, 0, 3, b"retry"))
+    assert retry.next_control.updated_at_ms == 1_000
+    assert retry.next_control.available_at_ms == 1_000
+    assert await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR)) is None
+
+    clock.now = 1_000
+    assert await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR)) is not None
 
 
 @pytest.mark.parametrize(
