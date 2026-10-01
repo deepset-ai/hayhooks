@@ -348,10 +348,7 @@ class RedisExecutionStore:
             raise ValueError("transaction retries must be positive and backoff cannot be negative")
         viewer = redis if viewer_client is None else viewer_client
         for client in (redis, viewer):
-            pool = getattr(client, "connection_pool", None)
-            encoder = pool.get_encoder() if pool is not None and hasattr(pool, "get_encoder") else None
-            if getattr(encoder, "decode_responses", False) is True:
-                raise ValueError("Redis durable storage requires decode_responses=False")
+            _validate_client(client)
         self.redis = redis
         self.viewer = viewer
         self.deployment = deployment
@@ -880,6 +877,28 @@ class RedisExecutionStore:
 def _milliseconds(redis_time: tuple[int, int]) -> int:
     seconds, microseconds = redis_time
     return int(seconds) * 1_000 + int(microseconds) // 1_000
+
+
+def _validate_client(client: Any) -> None:
+    pool = getattr(client, "connection_pool", None)
+    encoder = pool.get_encoder() if pool is not None and hasattr(pool, "get_encoder") else None
+    if getattr(encoder, "decode_responses", False) is True:
+        raise ValueError("Redis durable storage requires decode_responses=False")
+    kwargs = getattr(pool, "connection_kwargs", None)
+    if not isinstance(kwargs, Mapping):
+        return
+    if str(kwargs.get("protocol")) == "3" or kwargs.get("legacy_responses") is False:
+        raise ValueError("Redis durable storage requires RESP2-shaped replies: leave protocol unset or pass protocol=2")
+    retry = kwargs.get("retry")
+    if retry is None:
+        retries = int(bool(kwargs.get("retry_on_error") or kwargs.get("retry_on_timeout")))
+    else:
+        retries = retry.get_retries() if hasattr(retry, "get_retries") else retry._retries
+    if retries:
+        raise ValueError(
+            "Redis durable storage requires a client that does not retry commands, because a resent script "
+            "can commit twice: build it with Redis.from_url(...) or pass retry=None"
+        )
 
 
 def _text(value: str | bytes | int | None) -> str:

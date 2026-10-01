@@ -6,8 +6,10 @@ from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from redis.asyncio import Redis
+from redis.asyncio import ConnectionPool, Redis
+from redis.backoff import NoBackoff
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.retry import Retry
 
 from hayhooks.durable.engine import Claim
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys, decode_control, encode_control
@@ -75,6 +77,55 @@ def test_control_codec_rejects_an_unsupported_schema_version() -> None:
 def test_redis_store_rejects_text_decoding_clients() -> None:
     client = Redis.from_url("redis://localhost", decode_responses=True)
     with pytest.raises(ValueError, match="decode_responses=False"):
+        RedisExecutionStore(client, "jobs")
+
+
+@pytest.mark.parametrize(
+    "client",
+    [
+        pytest.param(Redis.from_url("redis://localhost", retry=Retry(NoBackoff(), 3)), id="retry-object"),
+        pytest.param(Redis.from_url("redis://localhost?retry_on_timeout=true"), id="url-retry-on-timeout"),
+        pytest.param(
+            Redis(host="localhost", retry=None, retry_on_error=[RedisConnectionError]),
+            id="retry-on-error",
+        ),
+    ],
+)
+def test_redis_store_rejects_clients_that_retry_commands(client: Redis) -> None:
+    with pytest.raises(ValueError, match="does not retry commands"):
+        RedisExecutionStore(client, "jobs")
+
+
+def test_redis_store_rejects_a_viewer_that_retries_commands() -> None:
+    worker = Redis.from_url("redis://localhost")
+    viewer = Redis.from_url("redis://localhost", retry=Retry(NoBackoff(), 3))
+    with pytest.raises(ValueError, match="does not retry commands"):
+        RedisExecutionStore(worker, "jobs", viewer_client=viewer)
+
+
+@pytest.mark.parametrize(
+    "client",
+    [
+        pytest.param(Redis.from_url("redis://localhost"), id="from-url"),
+        pytest.param(Redis(connection_pool=ConnectionPool.from_url("redis://localhost")), id="pool-from-url"),
+        pytest.param(Redis(host="localhost", retry=None), id="retry-none"),
+        pytest.param(Redis(host="localhost", retry=Retry(NoBackoff(), 0)), id="retry-zero"),
+    ],
+)
+def test_redis_store_accepts_clients_without_command_retries(client: Redis) -> None:
+    RedisExecutionStore(client, "jobs")
+
+
+@pytest.mark.parametrize(
+    "client",
+    [
+        pytest.param(Redis.from_url("redis://localhost", protocol=3), id="protocol-3"),
+        pytest.param(Redis.from_url("redis://localhost?protocol=3"), id="url-protocol-3"),
+        pytest.param(Redis.from_url("redis://localhost", legacy_responses=False), id="unified-replies"),
+    ],
+)
+def test_redis_store_rejects_resp3_clients(client: Redis) -> None:
+    with pytest.raises(ValueError, match="RESP2"):
         RedisExecutionStore(client, "jobs")
 
 
