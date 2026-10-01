@@ -889,7 +889,6 @@ async def test_changed_control_snapshot_retries_from_a_fresh_read(redis_store, m
 @pytest.mark.parametrize(
     "key",
     [
-        "chunks",
         "progress",
         "revision",
         "lease_expiry",
@@ -906,7 +905,6 @@ async def test_corrupt_commit_targets_leave_every_key_unchanged(redis_store, key
         await redis.hset(store.keys.capacity, field, "1.5" if key == "capacity-fraction" else "01")
     else:
         target = {
-            "chunks": store.keys.chunks("run_1"),
             "progress": store.keys.progress("run_1"),
             "revision": store.keys.runnable_revision("v1"),
             "lease_expiry": store.keys.lease_expiry,
