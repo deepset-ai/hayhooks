@@ -90,7 +90,9 @@ class ExecutionControl:
     status: ExecutionStatus = ExecutionStatus.QUEUED
     version: int = 1
     fence: int = 0
+    # run_attempt numbers claims for users; lease_recoveries (expired leases) is what max_run_attempts bounds.
     run_attempt: int = 0
+    lease_recoveries: int = 0
     application_retry_count: int = 0
     available_at_ms: int | None = None
     lease_owner: str | None = None
@@ -123,6 +125,7 @@ class ExecutionControl:
             "version",
             "fence",
             "run_attempt",
+            "lease_recoveries",
             "application_retry_count",
             "progress_sequence",
             "created_at_ms",
@@ -336,7 +339,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
         if control.definition_revision != command.worker_revision:
             raise InvalidExecutionTransitionError("definition revision is incompatible")
-        if control.run_attempt >= command.max_run_attempts:
+        if control.lease_recoveries >= command.max_run_attempts:
             return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error)
         deadline = command.now_ms + command.lease_duration_ms
         next_control = _business(
@@ -358,7 +361,6 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             control,
             command.now_ms,
             status=ExecutionStatus.QUEUED,
-            run_attempt=control.run_attempt - 1,
             lease_owner=None,
             lease_expires_at_ms=None,
         )
@@ -528,12 +530,15 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             )
         if control.lease_expires_at_ms > command.now_ms:
             return TransitionPlan(control)
+        recovered = replace(control, lease_recoveries=control.lease_recoveries + 1)
         if control.cancel_requested_at_ms is not None:
-            return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
-        if control.run_attempt >= command.max_run_attempts:
-            return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error)
+            return _terminal(recovered, command.now_ms, ExecutionStatus.CANCELED, None, None)
+        if recovered.lease_recoveries >= command.max_run_attempts:
+            return _terminal(
+                recovered, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error
+            )
         next_control = _business(
-            control,
+            recovered,
             command.now_ms,
             status=ExecutionStatus.QUEUED,
             lease_owner=None,

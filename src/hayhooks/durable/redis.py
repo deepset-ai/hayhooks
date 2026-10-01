@@ -79,6 +79,7 @@ _INTEGER_CONTROL_FIELDS = {
     "version",
     "fence",
     "run_attempt",
+    "lease_recoveries",
     "application_retry_count",
     "progress_sequence",
     "created_at_ms",

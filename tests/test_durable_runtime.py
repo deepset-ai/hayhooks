@@ -333,7 +333,7 @@ async def test_explicit_zero_retry_delay_is_immediate(deployment_factory) -> Non
     assert (stored.control.status, stored.control.run_attempt, attempts) == (ExecutionStatus.COMPLETED, 2, 2)
 
 
-async def test_failed_post_claim_read_releases_without_consuming_attempt(deployment_factory) -> None:
+async def test_failed_post_claim_read_releases_without_spending_the_run_budget(deployment_factory) -> None:
     store = ControlledStore("jobs")
     deployment = await deployment_factory(store=store)
     store.read_error = ExecutionStoreError("unavailable")
@@ -341,7 +341,8 @@ async def test_failed_post_claim_read_releases_without_consuming_attempt(deploym
     await asyncio.wait_for(store.failure_seen.wait(), timeout=1)
 
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
-    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.COMPLETED, 1)
+    control = stored.control
+    assert (control.status, control.run_attempt, control.lease_recoveries) == (ExecutionStatus.COMPLETED, 2, 0)
 
 
 async def test_exhausted_claim_fails_without_running_application(deployment_factory) -> None:
@@ -367,7 +368,7 @@ async def test_exhausted_claim_fails_without_running_application(deployment_fact
             kind="pipeline",
             now_ms=0,
         ),
-        run_attempt=1,
+        lease_recoveries=1,
     )
     await store.submit(control, b'{"value":1}')
     deployment = await deployment_factory(

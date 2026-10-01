@@ -202,7 +202,8 @@ def test_stale_lease_index_is_removed_without_changing_control() -> None:
     [
         pytest.param({"cancel_requested_at_ms": 250}, ExecutionStatus.CANCELED, id="canceled"),
         pytest.param({"definition_revision": "rev-2"}, ExecutionStatus.QUEUED, id="revision"),
-        pytest.param({"run_attempt": 3}, ExecutionStatus.FAILED, id="attempts"),
+        pytest.param({"lease_recoveries": 2}, ExecutionStatus.FAILED, id="attempts"),
+        pytest.param({"run_attempt": 3}, ExecutionStatus.QUEUED, id="attempt-number"),
     ],
 )
 def test_expired_lease_recovery_honors_cancellation_and_attempt_budget(changes, expected, claimed_control) -> None:
@@ -218,3 +219,42 @@ def test_expired_lease_recovery_honors_cancellation_and_attempt_budget(changes, 
         ),
     )
     assert recovered.next_control.status is expected
+
+
+def test_run_budget_counts_only_lost_leases() -> None:
+    current = control()
+    for lost in range(1, 4):
+        claimed = claim(current).next_control
+        current = decide(
+            claimed,
+            RecoverExpiredLease(1_000, claimed.fence, claimed.lease_expires_at_ms or 0, 3, ATTEMPTS_ERROR),
+        ).next_control
+        assert (current.run_attempt, current.lease_recoveries) == (lost, lost)
+        assert current.status is (ExecutionStatus.FAILED if lost == 3 else ExecutionStatus.QUEUED)
+
+
+def test_releases_resumes_and_retries_never_spend_the_run_budget() -> None:
+    current = control()
+    released = decide(claim(current).next_control, ReleaseClaim(1, "worker-a", 300)).next_control
+    assert (released.status, released.run_attempt) == (ExecutionStatus.QUEUED, 1)
+    current = released
+    for _ in range(5):
+        claimed = claim(current).next_control
+        waiting = decide(claimed, Suspend(claimed.fence, "worker-a", 300, b"checkpoint", b"wait")).next_control
+        current = decide(waiting, Resume(400, "rev-1")).next_control
+    for _ in range(10):
+        claimed = claim(current).next_control
+        current = replace(
+            decide(claimed, ScheduleRetry(claimed.fence, "worker-a", 300, 0, 10, b"retry")).next_control,
+            available_at_ms=None,
+        )
+    claimed = claim(current).next_control
+    assert (claimed.status, claimed.run_attempt, claimed.lease_recoveries) == (ExecutionStatus.RUNNING, 17, 0)
+
+
+def test_claim_fails_when_recovered_leases_reach_a_lowered_limit() -> None:
+    current = replace(control(), lease_recoveries=2)
+    failed = decide(current, Claim("worker-a", 200, 500, 2, "rev-1", ATTEMPTS_ERROR))
+    assert failed.next_control.status is ExecutionStatus.FAILED
+    assert failed.payload_writes[0].data == ATTEMPTS_ERROR
+    assert claim(current).next_control.status is ExecutionStatus.RUNNING

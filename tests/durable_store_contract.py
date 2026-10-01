@@ -91,7 +91,7 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert claimed is not None and claimed.next_control.status is ExecutionStatus.RUNNING
     released = await store.transition(control.run_id, ReleaseClaim(claimed.next_control.fence, "worker"))
-    assert released.next_control.run_attempt == 0
+    assert (released.next_control.run_attempt, released.next_control.lease_recoveries) == (1, 0)
     assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
 
     claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
@@ -231,3 +231,17 @@ async def assert_raced_recovery_contract(store: ExecutionStore) -> None:
         ExecutionStatus.RUNNING,
         ExecutionStatus.QUEUED,
     ]
+
+
+async def assert_lost_lease_budget_contract(store: ExecutionStore) -> None:
+    """Each recovered lease is counted; the run fails when the last allowed lease is lost."""
+    await store.submit(contract_control(store.deployment), b"input")
+    for lost in range(1, 4):
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+        await asyncio.sleep(0.06)
+        await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR)
+        stored = await store.read("run_1")
+        assert stored is not None
+        assert (stored.control.run_attempt, stored.control.lease_recoveries) == (lost, lost)
+    assert stored.control.status is ExecutionStatus.FAILED
+    assert stored.payloads[PayloadKind.ERROR] == ATTEMPTS_ERROR

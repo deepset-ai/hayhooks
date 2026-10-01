@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -38,6 +39,7 @@ def test_redis_keys_are_private_cluster_safe_and_strict() -> None:
     "mutate",
     [
         pytest.param(lambda values: values.pop("version"), id="missing"),
+        pytest.param(lambda values: values.pop("lease_recoveries"), id="missing-lease-recoveries"),
         pytest.param(lambda values: values.__setitem__("unknown", "value"), id="unknown"),
         pytest.param(lambda values: values.__setitem__("status", "unknown"), id="status"),
         pytest.param(lambda values: values.__setitem__("fence", "-1"), id="negative"),
@@ -57,7 +59,7 @@ def test_control_codec_rejects_corruption(mutate) -> None:
 
 
 def test_control_codec_round_trip() -> None:
-    control = contract_control("jobs")
+    control = replace(contract_control("jobs"), run_attempt=3, lease_recoveries=2)
     encoded = encode_control(control)
     assert encoded["schema_version"] == "1"
     assert decode_control(encoded, expected_run_id=control.run_id) == control

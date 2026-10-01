@@ -43,6 +43,7 @@ from hayhooks.durable.store import (
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
+    assert_lost_lease_budget_contract,
     assert_raced_recovery_contract,
     assert_revision_routing_contract,
     assert_store_contract,
@@ -110,6 +111,11 @@ async def test_redis_store_marks_every_terminal_path(redis_store, max_stream_chu
 async def test_redis_store_skips_raced_lease_recovery(redis_store) -> None:
     _, store = redis_store
     await assert_raced_recovery_contract(store)
+
+
+async def test_redis_store_fails_on_the_last_lost_lease(redis_store) -> None:
+    _, store = redis_store
+    await assert_lost_lease_budget_contract(store)
 
 
 async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) -> None:
