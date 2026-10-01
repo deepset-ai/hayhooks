@@ -52,19 +52,35 @@ With the Hayhooks server, run durable wrappers in
 - Keep the store's `key_prefix` private to the engine. Every key lives under it,
   so a per-tenant prefix maps to one Redis ACL key pattern. Each deployment uses a
   cluster-safe hash tag and stores control, payloads, progress, chunks,
-  idempotency, runnable, lease, and capacity data.
+  idempotency, per-revision runnable and lease indexes, and capacity data. The
+  capacity hash has one `nonterminal:<sha256>` field per revision; there is no
+  global runnable index.
 - Monitor latency, memory, connection limits, persistence errors, replication
   lag, and failover behavior.
 
-The terminal TTL applies to control, payloads, progress, chunks, and idempotency
-bindings. Size it for inspection needs and Redis capacity; increasing it does
-not improve in-flight durability.
+Finished executions keep their chunk stream for
+`StoreConfig.stream_ttl_seconds` (one hour by default), or the terminal TTL when
+it is shorter. Control, payloads, progress, and idempotency bindings keep the
+terminal TTL. Size those periods for inspection needs and Redis capacity;
+increasing them does not improve in-flight durability.
 
 Control hashes and checkpoint envelopes carry an explicit storage schema
 version. Unsupported versions fail closed as store corruption instead of being
-interpreted with a newer runtime. Records written by an earlier prototype that
-did not carry a schema version are not auto-migrated; drain or migrate them
-before upgrading a Redis namespace to this release.
+interpreted with a newer runtime. Earlier prototype layouts are incompatible,
+including versioned controls that lack the `lease_recoveries` lost-lease
+counter. They are not auto-migrated. Drain and clean up those records, migrate
+them explicitly, or start with a fresh namespace before upgrading to this
+release.
+
+Claims and maintenance remove undecodable controls from scheduling indexes and
+log an error with the execution ID. Those records still require operator
+cleanup of their run keys and any reserved `nonterminal` and
+`nonterminal:<sha256>` capacity. Invalid claimed input, checkpoint, or progress
+instead reaches a guarded terminal repair: it discards unusable progress when
+needed, stores a publicly readable `stored_execution_invalid` error, and
+releases capacity. Corrupt best-effort chunks cannot block that repair or lease
+recovery. GET and SSE can inspect the resulting failure; do not decrement its
+capacity again manually.
 
 ## Capacity and stream load
 
@@ -75,6 +91,13 @@ chunk count and byte limits bound display history per execution. Progress count
 and byte limits bound both the worker's pending progress buffer and retained
 progress history. Reduce them before scaling SSE fan-out if replay consumes too
 much memory or bandwidth.
+
+`max_payload_bytes`, `max_progress_event_bytes`, and
+`max_stream_chunk_bytes` apply to new writes. Lowering them does not make valid
+stored input, checkpoints, results, progress, or chunks unreadable, including
+chunks larger than 4 MB that a previous setting admitted. JSON and structural
+validation still apply. A resume whose new checkpoint exceeds the lowered
+payload limit is rejected as too large.
 
 Lease duration must exceed the commit safety margin and comfortably cover Redis
 latency and scheduler pauses. A short lease recovers faster but raises false
@@ -262,9 +285,9 @@ without waiting for the next Redis maintenance scan.
   contract. `WAITAOF` (Redis and Valkey 7.2+) narrows this window but does not
   close it. If acknowledged state must survive any failover, use a
   synchronously replicated database.
-- **Retained data lives in RAM.** Terminal payloads, chunks, and progress stay
-  in memory until the terminal TTL expires. Control this with the terminal TTL
-  and the chunk and progress limits.
+- **Retained data lives in RAM.** Terminal payloads and progress stay until the
+  terminal TTL expires. Chunks use the shorter of the stream and terminal TTLs.
+  Control retained memory with those TTLs and the chunk and progress limits.
 
 ## Health and recovery
 
@@ -314,6 +337,11 @@ so each restart resumes further along.
   checkpoints, results, chunks, credentials, or idempotency material into logs.
 - Confirm all replicas resolve the same immutable revision.
 - Check Redis time, persistence, memory policy, and lease/runnable indexes.
+  Stored timestamps do not move backwards when Redis time steps back; active
+  leases last longer by the size of the step.
+- For an undecodable control, clean up its run keys and reserved capacity after
+  confirming no healthy replica can recover it. A guarded terminal repair has
+  already released capacity and needs no manual counter change.
 - Restart healthy replicas and allow lease expiry to drive fenced recovery.
 - Resume waiting work through its typed endpoint; do not edit checkpoint keys.
 - Cancel unwanted work through the API and wait for the terminal projection.
