@@ -405,9 +405,18 @@ SSE streams are reattachable with `Last-Event-ID`. Viewers block on the chunk
 stream and receive chunks as soon as a worker flushes them. A `gap` event means
 that the requested bounded history has expired and the retained tail follows. A
 terminal `completed`, `failed`, or `canceled` event contains the authoritative
-execution projection. A stream that ends without a terminal event, for example
-when its deployment closes, can be resumed with its last cursor on any
-replica.
+execution projection. The first frame and every idle 15 seconds are heartbeat
+comments; undecodable entries are skipped. A finished run replays retained
+history and ends immediately. If its history expired, a new stream receives
+only the terminal event, while a resumed cursor receives `gap` and then the
+terminal event. A stream failure sends an `error` event without an `id` and
+ends; a deployment close ends the stream without a terminal event. Reconnect
+with the last cursor on any replica.
+
+Portable Python callers can use `DurableDeployment.get_control(...)` to read
+only the control snapshot with the same authorization checks as `get()`.
+Unlike `get()`, it allows a revision mismatch by default. `submit()` raises
+`ExecutionAdmissionError` when the deployment is not accepting submissions.
 
 Without an owner dependency, the router uses bearer-ID access: possession of a
 random execution ID grants access. A multi-user host should pass an

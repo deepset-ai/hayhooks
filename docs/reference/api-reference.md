@@ -170,12 +170,25 @@ Status codes:
   with different explicitly sent request fields, or a revision or resume-state
   conflict occurred;
 - `422`: request, resume, header, cursor, or payload validation failure;
-- `503`: admission closed or durable store unavailable.
+- `500`: stored execution state is invalid, with detail
+  `Durable execution state is invalid`; this response is not retryable;
+- `503`: `Durable execution store is unavailable`, `Durable execution service
+  is unavailable`, or an admission failure. Admission failures include
+  `Retry-After: 1` when the nonterminal limit is reached or the deployment is
+  shutting down.
 
 SSE accepts `Last-Event-ID`. Every `chunk` carries `attempt`. A higher attempt
 means the run restarted from its last checkpoint, so clients discard text from
-lower attempts. Events are `chunk`, optional `gap`, and one terminal
-`completed`, `failed`, or `canceled` event. See
+lower attempts. Events are `chunk`, optional `gap`, one terminal `completed`,
+`failed`, or `canceled` event, and `error`. An interrupted stream sends
+`event: error` with data `{"detail":"Execution stream interrupted"}` and no
+`id`, then ends; reconnect with the last `Last-Event-ID`. The first frame and
+every idle 15 seconds are a `: heartbeat` comment. Undecodable entries are
+logged and skipped without an event.
+
+A finished execution replays retained history and sends its terminal event
+immediately. When history has expired, a fresh stream gets only the terminal
+event; a resumed cursor gets `gap` followed by the terminal event. See
 [Durable Execution](../features/durable-execution.md) for semantics and
 ownership modes.
 
