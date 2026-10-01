@@ -184,6 +184,12 @@ class DurableDeployment:
             "run attempts exhausted",
             code="run_attempts_exhausted",
         )
+        self._retry_error = self._encode_error("RetryRequestedError", "retry requested", retryable=True)
+        self._retries_exhausted_error = self._encode_error(
+            "ApplicationRetriesExhaustedError",
+            "application retries exhausted",
+            code="application_retries_exhausted",
+        )
         self._runner_is_async = is_async_callable(runner)
         self._submission_condition = asyncio.Condition()
         # Local submissions and shutdown wake idle workers before their next poll.
@@ -777,13 +783,20 @@ class DurableDeployment:
                 now_ms=0,
                 delay_ms=delay_ms,
                 max_application_retries=self.config.max_application_retries,
-                error=self._encode_exception(error, retryable=True),
+                error=self._retry_error,
+                exhausted_error=self._retries_exhausted_error,
                 progress_events=events,
                 first_progress_sequence=first,
             )
         )
+        logger = log.bind(deployment=self.name, run_id=plan.next_control.run_id, retry_message=str(error))
         if plan.next_control.status is ExecutionStatus.QUEUED:
+            logger.bind(retry=plan.next_control.application_retry_count, delay_ms=delay_ms).info(
+                "Durable execution scheduled an application retry"
+            )
             asyncio.get_running_loop().call_later(delay_ms / 1_000, self._work_available.set)
+        elif plan.next_control.status is ExecutionStatus.FAILED:
+            logger.warning("Durable execution failed: application retries are exhausted")
 
     async def _acknowledge_cancellation(
         self,

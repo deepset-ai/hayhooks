@@ -370,7 +370,7 @@ async def test_cancellation_wins_the_result_race(deployment_factory) -> None:
     assert PayloadKind.RESULT not in stored.payloads
 
 
-async def test_retry_delay_and_application_budget(deployment_factory) -> None:
+async def test_retry_delay_and_application_budget(deployment_factory, log_records) -> None:
     attempts = 0
     first_attempt = asyncio.Event()
 
@@ -401,15 +401,24 @@ async def test_retry_delay_and_application_budget(deployment_factory) -> None:
         lambda value: value.control.application_retry_count == 1,
     )
     assert queued.control.available_at_ms == queued.control.updated_at_ms + 40
+    queued_error = PersistedError.model_validate(decode_json(queued.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    assert (queued_error.type, queued_error.retryable) == ("RetryRequestedError", True)
 
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
     error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
-    assert (stored.control.status, stored.control.run_attempt, attempts, error.retryable) == (
+    assert (stored.control.status, stored.control.run_attempt, attempts) == (
         ExecutionStatus.FAILED,
         2,
         2,
-        True,
     )
+    assert (error.type, error.code, error.retryable) == (
+        "ApplicationRetriesExhaustedError",
+        "application_retries_exhausted",
+        False,
+    )
+    retry_logs = [record for record in log_records if record["extra"].get("retry_message") == "again"]
+    assert any(record["message"] == "Durable execution scheduled an application retry" for record in retry_logs)
+    assert any(record["message"] == "Durable execution failed: application retries are exhausted" for record in retry_logs)
 
 
 async def test_explicit_zero_retry_delay_is_immediate(deployment_factory) -> None:
