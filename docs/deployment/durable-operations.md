@@ -80,7 +80,7 @@ With the Hayhooks server, run durable wrappers in
 
 Finished executions keep their chunk stream for
 `StoreConfig.stream_ttl_seconds` (one hour by default), or the terminal TTL when
-it is shorter. Control, payloads, progress, and idempotency bindings keep the
+it is shorter. `hayhooks run` always uses the one-hour default. Control, payloads, progress, and idempotency bindings keep the
 terminal TTL. Size those periods for inspection needs and Redis capacity;
 increasing them does not improve in-flight durability.
 

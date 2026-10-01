@@ -173,7 +173,7 @@ livenessProbe:
 ```
 
 For readiness and alerts, parse the response body and require `status` to be
-`Up!` or `durable.healthy` to be `true`. Durable health is at most one second
+`Up!` (in durable mode this matches `durable.healthy: true`). Durable health is at most one second
 old; a store read that exceeds one second reports `status: "Degraded"` and
 `operational_error: "TimeoutError"` while the HTTP response remains 200.
 

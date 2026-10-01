@@ -45,6 +45,11 @@ Hayhooks can be configured via environment variables. Most app settings use the 
 - Default: `false`
 - Description: Include tracebacks in error messages (server and MCP)
 
+### HAYHOOKS_GRACEFUL_SHUTDOWN_TIMEOUT
+
+- Default: `5`
+- Description: Seconds the server waits for open connections to finish on shutdown before cancelling them (0–300). In durable mode, open SSE streams hold this wait; see [Durable Operations](../deployment/durable-operations.md).
+
 ### HAYHOOKS_STREAMING_COMPONENTS
 
 - Default: `""` (empty string)

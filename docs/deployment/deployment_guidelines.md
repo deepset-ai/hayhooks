@@ -256,7 +256,7 @@ services:
 
 The `/status` endpoint always returns HTTP 200 and can be used for liveness.
 For readiness and alerts, parse the response and require `status` to be `Up!`
-or `durable.healthy` to be `true`. Durable health is at most one second old; a
+(in durable mode this matches `durable.healthy: true`). Durable health is at most one second old; a
 store read that exceeds one second reports `Degraded` and
 `operational_error: "TimeoutError"` in the body.
 
