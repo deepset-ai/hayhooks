@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
 from typing import Annotated, Any, cast
@@ -165,6 +166,7 @@ async def _stream_events(  # noqa: C901, PLR0913
     visible_attempt = stored.control.run_attempt
     store = deployment.store
     page_size = chunk_read_count(store.config)
+    chunk_bytes = sys.maxsize
 
     async def read() -> StoredExecution:
         return await deployment.get(
@@ -208,23 +210,29 @@ async def _stream_events(  # noqa: C901, PLR0913
                 if chunk.terminal:
                     yield terminal_event(await read())
                     return
-                if chunk.attempt < visible_attempt:
+                if chunk.skipped or chunk.attempt < visible_attempt:
+                    continue
+                try:
+                    payload = decode_json(chunk.data, max_bytes=chunk_bytes)
+                except (ExecutionPayloadSizeError, ValueError):
+                    log.bind(run_id=execution_id, cursor=chunk.cursor).warning(
+                        "Skipped an undecodable durable stream chunk"
+                    )
                     continue
                 visible_attempt = chunk.attempt
                 yield _sse(
                     "chunk",
                     json.dumps(
-                        {
-                            "attempt": chunk.attempt,
-                            "payload": decode_json(chunk.data, max_bytes=store.config.max_stream_chunk_bytes),
-                        },
+                        {"attempt": chunk.attempt, "payload": payload},
                         ensure_ascii=False,
                         separators=(",", ":"),
                     ),
                     cursor=chunk.cursor,
                 )
     except Exception as error:
-        log.bind(run_id=execution_id, exception_type=type(error).__name__).warning("Durable execution stream failed")
+        log.bind(run_id=execution_id, exception_type=type(error).__name__, error=str(error)).warning(
+            "Durable execution stream failed"
+        )
         yield _sse("error", '{"detail":"Execution stream interrupted"}')
 
 

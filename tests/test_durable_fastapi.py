@@ -38,6 +38,8 @@ from hayhooks.durable.store import (
     StreamChunk,
 )
 
+SKIPPED = object()
+
 
 class JobRequest(BaseModel):
     value: int
@@ -168,7 +170,9 @@ def seed_stream_chunks(
     if not store.config.max_stream_chunks:
         return
     encoded = [
-        StreamChunk(
+        StreamChunk(f"0-{index}", attempt, b"", skipped=True)
+        if payload is SKIPPED
+        else StreamChunk(
             f"0-{index}",
             attempt,
             payload if isinstance(payload, bytes) else json.dumps(payload, separators=(",", ":")).encode(),
@@ -402,6 +406,42 @@ def test_owner_scopes_idempotency_and_invalid_values_fail_closed(durable_app_fac
             id="terminal-backlog",
         ),
         pytest.param(0, 64_000, [(1, {"index": 0})], None, ["completed"], [], id="disabled-log"),
+        pytest.param(
+            10,
+            64_000,
+            [(1, {"index": 0}), (1, SKIPPED), (1, {"index": 2})],
+            None,
+            ["chunk", "chunk", "completed"],
+            [{"index": 0}, {"index": 2}],
+            id="skipped-entry",
+        ),
+        pytest.param(
+            10,
+            64_000,
+            [(1, {"index": 0}), (1, SKIPPED), (1, {"index": 2})],
+            "0-1",
+            ["chunk", "completed"],
+            [{"index": 2}],
+            id="reconnect-past-skipped-entry",
+        ),
+        pytest.param(
+            10,
+            64_000,
+            [(1, b"not-json"), (1, {"index": 1})],
+            None,
+            ["chunk", "completed"],
+            [{"index": 1}],
+            id="undecodable-chunk",
+        ),
+        pytest.param(
+            10,
+            16,
+            [(1, {"blob": "x" * 1_000})],
+            None,
+            ["chunk", "completed"],
+            [{"blob": "x" * 1_000}],
+            id="lowered-chunk-limit",
+        ),
     ],
 )
 def test_stream_resume_gap_fencing_and_drain(
@@ -427,6 +467,36 @@ def test_stream_resume_gap_fencing_and_drain(
         payloads = [json.loads(event["data"])["payload"] for event in events if event["event"] == "chunk"]
         assert [event["event"] for event in events] == expected_events
         assert payloads == expected_payloads
+
+
+def test_sse_delivers_a_large_chunk_after_the_write_limit_is_lowered(
+    durable_app_factory, wait_for_execution, caplog
+) -> None:
+    app, deployment = durable_app_factory(max_stream_chunk_bytes=6_000_000)
+    blob = "x" * 5_000_000
+
+    async def stream_large_chunk(context: DurableContext, request: JobRequest) -> JobResult:
+        await context.stream_chunk({"blob": blob})
+        return JobResult(value=request.value, owner_id=context.owner_id)
+
+    deployment.runner = stream_large_chunk
+    with TestClient(app) as client:
+        submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
+        wait_for_execution(client, submitted["links"]["self"], "completed")
+        stream = deployment.store._chunks[submitted["execution_id"]]
+        marker = stream.pop()
+        stream.append(StreamChunk(marker.cursor, 1, b"not-json"))
+        deployment.store._chunk_sequence += 1
+        stream.append(replace(marker, cursor=f"0-{deployment.store._chunk_sequence}"))
+        deployment.store.config = replace(deployment.store.config, max_stream_chunk_bytes=64 * 1024)
+
+        events, _, _ = read_sse(client, submitted["links"]["stream"])
+
+    chunks = [event for event in events if event["event"] == "chunk"]
+    assert [event["event"] for event in events] == ["chunk", "completed"]
+    assert chunks[0]["id"] == "0-1"
+    assert json.loads(chunks[0]["data"])["payload"] == {"blob": blob}
+    assert caplog.messages.count("Skipped an undecodable durable stream chunk") == 1
 
 
 @pytest.mark.parametrize(

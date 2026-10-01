@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 import uuid
@@ -279,7 +280,10 @@ async def test_invalid_data_failure_repairs_public_progress(redis_store, corrupt
     }
 
 
-@pytest.mark.parametrize("corruption", ["wrong-type", "malformed", "invalid-json", "invalid-model"])
+@pytest.mark.parametrize(
+    "corruption",
+    ["wrong-type", "wrong-types", "malformed", "invalid-json", "invalid-model"],
+)
 async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(redis_store, corruption: str) -> None:
     redis, fixture_store = redis_store
     store = RedisExecutionStore(
@@ -291,7 +295,7 @@ async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(
     await store.submit(contract_control("jobs"), b'{"value":1}')
     await redis.hset(store.keys.control("run_1"), "progress_sequence", 1)
     progress_key = store.keys.progress("run_1")
-    if corruption == "wrong-type":
+    if corruption in ("wrong-type", "wrong-types"):
         await redis.set(progress_key, b"wrong type")
     else:
         payload = {
@@ -300,6 +304,10 @@ async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(
             "invalid-model": (1).to_bytes(8, "big") + b'{"message":1}',
         }[corruption]
         await redis.rpush(progress_key, payload)
+    if corruption == "wrong-types":
+        input_key = store.keys.payload("run_1", PayloadKind.INPUT)
+        await redis.delete(input_key)
+        await redis.rpush(input_key, b"wrong type")
     await redis.set(store.keys.chunks("run_1"), b"wrong type")
     calls = 0
 
@@ -339,6 +347,18 @@ async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(
             "lease_expiry": 0,
         }
         assert (await deployment.health())["store_error_streak"] == 0
+
+        app = _stream_app(store)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/executions/run_1")
+            streamed = (await client.get("/executions/run_1/stream")).text
+        result = response.json()
+        events = [line.removeprefix("event: ") for line in streamed.splitlines() if line.startswith("event: ")]
+        data = [line.removeprefix("data: ") for line in streamed.splitlines() if line.startswith("data: ")]
+        assert response.status_code == 200
+        assert (result["status"], result["error"]["code"]) == ("failed", "stored_execution_invalid")
+        assert events == ["failed"]
+        assert json.loads(data[-1])["error"]["code"] == "stored_execution_invalid"
     finally:
         await deployment.close()
 
@@ -1415,3 +1435,67 @@ async def test_sse_streams_through_redis_viewer_client(redis_store) -> None:
 
     events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
     assert events == ["chunk"] * 5 + ["completed"]
+
+
+def _stream_app(store: RedisExecutionStore) -> FastAPI:
+    deployment = DurableDeployment("jobs", "v1", store, SSERequest, lambda _context, _request: None)
+    app = FastAPI()
+    app.include_router(create_durable_router(deployment, owner_id_dependency=None))
+    return app
+
+
+async def _stream_body(store: RedisExecutionStore, headers: dict[str, str] | None = None) -> str:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_stream_app(store)), base_url="http://test"
+    ) as client:
+        return (await client.get("/executions/run_1/stream", headers=headers)).text
+
+
+async def test_sse_moves_past_undecodable_redis_entries(redis_store) -> None:
+    redis, contract_store = redis_store
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(contract_store.config, max_stream_chunks=100),
+        key_prefix=store_prefix(contract_store),
+    )
+    control = await claim_one(store, lease_ms=10_000)
+    chunks = store.keys.chunks("run_1")
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b'{"index":0}'])
+    await redis.xadd(chunks, {"attempt": "not-a-number", "data": b"{}"})
+    await redis.xadd(chunks, {"attempt": "1", "data": b"\xff"})
+    await redis.xadd(chunks, {"attempt": "1", "data": b'{"blob":"' + b"x" * 100 + b'"}'})
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b'{"index":3}'])
+    await store.transition("run_1", Complete(control.fence, "worker", 0, b"{}"))
+
+    body = await _stream_body(store)
+
+    events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
+    assert events == ["chunk", "chunk", "chunk", "completed"]
+
+
+async def test_sse_delivers_a_large_redis_chunk_after_the_write_limit_is_lowered(redis_store, caplog) -> None:
+    redis, contract_store = redis_store
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(contract_store.config, max_stream_chunks=10, max_stream_chunk_bytes=6_000_000),
+        key_prefix=store_prefix(contract_store),
+    )
+    control = await claim_one(store, lease_ms=10_000)
+    data = b'{"blob":"' + b"x" * 5_000_000 + b'"}'
+    assert len(data) == 5_000_011
+    await store.append_chunks("run_1", 1, control.fence, "worker", [data])
+    large_cursor = (await store.read_chunks("run_1", CHUNK_CURSOR_START))[0].cursor
+    await redis.xadd(store.keys.chunks("run_1"), {"attempt": "1", "data": b"not-json"})
+    await store.transition("run_1", Complete(control.fence, "worker", 0, b"{}"))
+    store.config = replace(store.config, max_stream_chunk_bytes=64 * 1024)
+
+    body = await _stream_body(store)
+
+    events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
+    data_lines = [line.removeprefix("data: ") for line in body.splitlines() if line.startswith("data: ")]
+    assert events == ["chunk", "completed"]
+    assert f"id: {large_cursor}" in body
+    assert json.loads(data_lines[0])["payload"] == {"blob": "x" * 5_000_000}
+    assert caplog.messages.count("Skipped an undecodable durable stream chunk") == 1
