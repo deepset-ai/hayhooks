@@ -882,6 +882,19 @@ async def test_store_error_health_streak_clears_after_success(deployment_factory
     await wait_for_health(deployment, lambda health: health["store_error_streak"] == 0)
 
 
+async def test_store_failure_logs_carry_the_error_text(deployment_factory, log_records) -> None:
+    store = ControlledStore("jobs")
+    message = "redis down"
+    store.claim_error = ExecutionStoreError(message)
+    await deployment_factory(store=store)
+    await asyncio.wait_for(store.failure_seen.wait(), 1)
+
+    failures = [record for record in log_records if record["message"] == "Durable store operation failed; retrying"]
+    assert failures
+    assert failures[0]["extra"]["error"] == message
+    assert failures[0]["extra"]["operation"] == "claim"
+
+
 @pytest.mark.parametrize("exit_mode", ["cancel", "crash"])
 async def test_worker_slots_restart(deployment_factory, exit_mode: str) -> None:
     store = ControlledStore("jobs")

@@ -502,9 +502,11 @@ class DurableDeployment:
                 continue
             self._workers.pop(slot)
             if not worker.cancelled() and (error := worker.exception()) is not None:
-                log.bind(deployment=self.name, exception_type=type(error).__name__).error(
-                    "Durable worker slot stopped unexpectedly"
-                )
+                log.opt(exception=error).bind(
+                    deployment=self.name,
+                    exception_type=type(error).__name__,
+                    error=str(error),
+                ).error("Durable worker slot stopped unexpectedly")
         for slot in range(self.config.worker_concurrency):
             if not self.accepting or slot in self._workers:
                 continue
@@ -517,9 +519,11 @@ class DurableDeployment:
 
     def _maintenance_stopped(self, maintenance: asyncio.Task[None]) -> None:
         if not maintenance.cancelled() and (error := maintenance.exception()) is not None:
-            log.opt(exception=error).bind(deployment=self.name, exception_type=type(error).__name__).error(
-                "Durable maintenance stopped unexpectedly"
-            )
+            log.opt(exception=error).bind(
+                deployment=self.name,
+                exception_type=type(error).__name__,
+                error=str(error),
+            ).error("Durable maintenance stopped unexpectedly")
 
     def _worker_stopped(self, _worker: asyncio.Task[None]) -> None:
         """Restore worker capacity immediately without tying supervision to Redis maintenance."""
@@ -887,6 +891,8 @@ class DurableDeployment:
             deployment=self.name,
             operation=operation,
             exception_type=type(error).__name__,
+            error=str(error),
+            retry_in=round(delay, 3),
         ).warning("Durable store operation failed; retrying")
         await asyncio.sleep(delay)
 
@@ -931,9 +937,11 @@ class DurableRuntime:
             if isinstance(result, BaseException)
         ]
         for deployment, error in failures:
-            log.opt(exception=error).bind(deployment=deployment.name, exception_type=type(error).__name__).error(
-                "Durable deployment failed to close"
-            )
+            log.opt(exception=error).bind(
+                deployment=deployment.name,
+                exception_type=type(error).__name__,
+                error=str(error),
+            ).error("Durable deployment failed to close")
         if failures:
             raise failures[0][1]
 

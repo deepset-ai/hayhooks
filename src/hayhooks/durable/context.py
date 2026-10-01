@@ -227,9 +227,12 @@ class _ClaimedExecution:
         except (ExecutionLeaseLostError, InvalidExecutionTransitionError):
             pass  # Already lost, finished, or suspended: nothing to hand back.
         except ExecutionStoreError as error:
-            log.bind(run_id=self.control.run_id, exception_type=type(error).__name__).warning(
-                "Could not release durable claim; it is recovered when its lease expires"
-            )
+            log.bind(
+                deployment=self.store.deployment,
+                run_id=self.control.run_id,
+                exception_type=type(error).__name__,
+                error=str(error),
+            ).warning("Could not release durable claim; it is recovered when its lease expires")
         finally:
             self.mark_lost()
             await self.stop()
