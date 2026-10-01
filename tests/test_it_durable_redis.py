@@ -185,6 +185,65 @@ async def test_heartbeat_after_a_clock_step_renews_past_the_last_update(redis_st
     assert heartbeat.next_control.lease_expires_at_ms == updated_at_ms + 50
 
 
+async def test_claim_drops_an_undecodable_head_and_claims_the_next(redis_store, caplog) -> None:
+    redis, store = redis_store
+    for run_id in ("run_a", "run_b"):
+        await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
+    await redis.hset(store.keys.control("run_a"), "status", "bogus")
+
+    claims = [await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) for _ in range(2)]
+
+    assert [plan.next_control.run_id for plan in claims if plan is not None] == ["run_b"]
+    assert await redis.zscore(store.keys.runnable_revision("v1"), "run_a") is None
+    assert "Removed an undecodable durable execution from the runnable index" in caplog.messages
+    with pytest.raises(ExecutionStoreCorruptionError):
+        await store.read("run_a")
+
+
+async def test_maintenance_drops_an_undecodable_lease_member_and_recovers_the_rest(redis_store, caplog) -> None:
+    redis, store = redis_store
+    for run_id in ("run_a", "run_b", "run_c", "run_d"):
+        await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    created = await redis.hget(store.keys.control("run_a"), "created_at_ms")
+    await redis.hset(store.keys.control("run_a"), "updated_at_ms", int(created) - 1)
+    await asyncio.sleep(0.1)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 3
+    assert await redis.zscore(store.keys.lease_expiry, RedisKeys.lease_member("run_a", 1)) is None
+    assert "Removed an undecodable durable execution from the lease index" in caplog.messages
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+
+
+async def test_read_keeps_operational_command_errors_visible(redis_store, monkeypatch) -> None:
+    _, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    original = store.redis.pipeline
+
+    class BrokenPipeline:
+        async def __aenter__(self):
+            self.pipe = original(transaction=True)
+            await self.pipe.__aenter__()
+            return self
+
+        async def __aexit__(self, *args):
+            return await self.pipe.__aexit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.pipe, name)
+
+        async def execute(self, **_kwargs):
+            replies = list(await self.pipe.execute())
+            replies[-1] = ResponseError("NOPERM denied")
+            return replies
+
+    from redis.exceptions import ResponseError
+
+    monkeypatch.setattr(store.redis, "pipeline", lambda **_kwargs: BrokenPipeline())
+    with pytest.raises(ExecutionStoreError, match="ResponseError NOPERM"):
+        await store.read("run_1")
+
+
 async def test_concurrent_progress_and_cancellation_remain_atomic(redis_store) -> None:
     redis, store = redis_store
     control = contract_control("jobs")

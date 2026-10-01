@@ -17,7 +17,7 @@ from typing import Any, cast
 from loguru import logger as log
 
 try:
-    from redis.exceptions import RedisError, WatchError
+    from redis.exceptions import RedisError, ResponseError, WatchError
 except ImportError as error:  # pragma: no cover - exercised by packaging checks
     raise RuntimeError("Redis durable storage requires `hayhooks[durable]`") from error
 
@@ -100,6 +100,11 @@ _STALE_SNAPSHOT, _LEASE_LOST, _CAPACITY_UNDERFLOW = 0, -1, -2
 
 # A Redis command as (name, key, *arguments); scripts receive the key through KEYS.
 _Command = tuple[Any, ...]
+
+
+class _UndecodableControlError(ExecutionStoreCorruptionError):
+    """An execution control that scheduling can isolate from the shared indexes."""
+
 
 # Returns Redis TIME in milliseconds while the worker still owns the lease with room for the safety margin.
 _OWNED_LUA = """
@@ -467,12 +472,23 @@ class RedisExecutionStore:
                     run_id = _text(member)
                     validate_run_id(run_id)
                     available_at_ms = _index_score_ms(raw_score, "runnable score")
-                except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError) as error:
-                    raise ExecutionStoreCorruptionError("runnable index contains an invalid member or score") from error
+                except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError):
+                    await self.redis.zrem(candidate_index, member)
+                    log.bind(operation="claim", entries=1).error(
+                        "Removed invalid entries from a durable scheduling index"
+                    )
+                    continue
                 now_ms = _milliseconds(await self.redis.time())
                 if available_at_ms > now_ms:
                     return None
-                plan = await self._transition(run_id, command, candidate_index=candidate_index)
+                try:
+                    plan = await self._transition(run_id, command, candidate_index=candidate_index)
+                except _UndecodableControlError as error:
+                    await self.redis.zrem(candidate_index, run_id)
+                    log.bind(run_id=run_id, operation="claim", error=str(error)).error(
+                        "Removed an undecodable durable execution from the runnable index"
+                    )
+                    continue
                 if plan is not None:
                     return plan
             return None
@@ -504,6 +520,9 @@ class RedisExecutionStore:
                     deadline = _index_score_ms(raw_deadline, "lease deadline")
                 except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError):
                     await self.redis.zrem(self.keys.lease_expiry, member)
+                    log.bind(operation="maintenance", entries=1).error(
+                        "Removed invalid entries from a durable scheduling index"
+                    )
                     continue
                 valid_entries.append((member, run_id, fence, deadline))
             if not valid_entries:
@@ -513,7 +532,7 @@ class RedisExecutionStore:
                 if deadline > now_ms:
                     break
                 try:
-                    plan = await self.transition(
+                    plan = await self._transition(
                         run_id,
                         RecoverExpiredLease(
                             0,
@@ -527,7 +546,13 @@ class RedisExecutionStore:
                     await self.redis.zrem(self.keys.lease_expiry, member)
                 except InvalidExecutionTransitionError:
                     continue
+                except _UndecodableControlError as error:
+                    await self.redis.zrem(self.keys.lease_expiry, member)
+                    log.bind(run_id=run_id, operation="maintenance", error=str(error)).error(
+                        "Removed an undecodable durable execution from the lease index"
+                    )
                 else:
+                    assert plan is not None
                     requeued += plan.next_control.status is ExecutionStatus.QUEUED
         return requeued
 
@@ -616,7 +641,11 @@ class RedisExecutionStore:
                 values, *raw_payloads, raw_progress = await pipe.execute(raise_on_error=False)
         if values == {}:
             return None
-        if any(isinstance(reply, Exception) for reply in (values, *raw_payloads, raw_progress)):
+        replies = (values, *raw_payloads, raw_progress)
+        with _redis_errors():
+            if any(isinstance(reply, Exception) and not _wrong_type(reply) for reply in replies):
+                raise next(reply for reply in replies if isinstance(reply, Exception) and not _wrong_type(reply))
+        if any(isinstance(reply, Exception) for reply in replies):
             raise ExecutionStoreCorruptionError("stored execution keys have invalid types")
         control = self._decode(values, run_id)
         payloads: dict[PayloadKind, bytes] = {}
@@ -669,8 +698,10 @@ class RedisExecutionStore:
             async with self.redis.pipeline(transaction=False) as pipe:
                 pipe.hgetall(self.keys.control(run_id))
                 pipe.time()
-                values, now = await pipe.execute()
-            current = self._decode(values, run_id) if values else None
+                values, now = await pipe.execute(raise_on_error=False)
+            if isinstance(now, Exception):
+                raise now
+            current = self._control(values, run_id)
             plan = None
             releases_capacity = False
             try:
@@ -850,6 +881,18 @@ class RedisExecutionStore:
             raise ExecutionStoreCorruptionError("control belongs to another deployment")
         return control
 
+    def _control(self, values: Any, run_id: str) -> ExecutionControl | None:
+        if isinstance(values, Exception):
+            if not _wrong_type(values):
+                raise values
+            raise _UndecodableControlError("control key has an invalid type") from values
+        if not values:
+            return None
+        try:
+            return self._decode(values, run_id)
+        except ExecutionStoreCorruptionError as error:
+            raise _UndecodableControlError(str(error)) from error
+
     def _decode_chunks(self, entries: Iterable[tuple[Any, Mapping[Any, Any]]]) -> tuple[StreamChunk, ...]:
         chunks = []
         for entry_id, raw_fields in entries:
@@ -927,6 +970,10 @@ def _index_score_ms(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or int(value) != value:
         raise ExecutionStoreCorruptionError(f"{name} is not an integer millisecond timestamp")
     return _nonnegative_int(str(int(value)), name)
+
+
+def _wrong_type(reply: object) -> bool:
+    return isinstance(reply, ResponseError) and str(reply).startswith("WRONGTYPE")
 
 
 @contextmanager
