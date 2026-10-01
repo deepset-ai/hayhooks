@@ -114,9 +114,9 @@ lost leases count toward `max_run_attempts`.
 
 ## Redis traffic
 
-Measured on 2026-09-29 with `scripts/benchmark_durable_redis.py`, comparing
-`3e4509ed` (the engine before the Redis protocol changes) with `000f388b`
-(including the corruption preflight and viewer cleanup fixes). This synthetic
+The original baseline was measured on 2026-09-29 at `3e4509ed`, before the
+Redis protocol changes. The final engine was measured on 2026-10-01 at
+`2f91ee06`. Both used `scripts/benchmark_durable_redis.py`. This synthetic
 runner uses the real runtime and SSE generator: six turns of 250 Haystack
 `StreamingChunk` objects paced over 40 seconds, five simulated tool boundaries,
 11 cancellation checks, six checkpoints, and five progress events. It has one
@@ -128,44 +128,43 @@ Redis 8.6.3 results below are per-metric medians of three runs, using Python
 
 | Per run | Before | After | Reduction |
 |---|---:|---:|---:|
-| Client commands | 13,695 | 1,279 | 90.7% |
-| Client exchanges (a pipeline counts once) | 7,783 | 846 | 89.1% |
-| Server commands, including inside Lua, excluding INFO probes | 13,693 | 4,154 | 69.7% |
+| Client commands | 13,695 | 1,255 | 90.8% |
+| Client exchanges (a pipeline counts once) | 7,783 | 825 | 89.4% |
+| Server commands, including inside Lua, excluding INFO probes | 13,693 | 4,093 | 70.1% |
 | RESP request + response bytes | 21.81 MB | 1.40 MB | 93.6% |
 
-Client commands ranged from 13,689–13,705 before and 1,276–1,280 after;
-exchange counts ranged from 7,781–7,786 and 844–847. Bytes use decimal MB and
-exclude TCP/IP headers. Exchanges are counted client sends, not a latency
-measurement. These results measure Redis traffic for this workload; application
-throughput and latency depend on workload, network, server, and viewer count.
+Client commands ranged from 13,689–13,705 before and 1,255–1,258 after;
+exchange counts ranged from 7,781–7,786 and 825–827. The final median was
+1,395,203 RESP bytes. Bytes use decimal MB and exclude TCP/IP headers.
+Exchanges are counted client sends, not a latency measurement. These results
+measure Redis traffic for this workload; application throughput and latency
+depend on workload, network, server, and viewer count.
 
-Single-run checks on the same host, with Redis 6.2 and Valkey in Docker:
-
-| Server | Client commands, before → after | Exchanges, before → after | RESP MB, before → after |
-|---|---:|---:|---:|
-| Redis 6.2.24 | 13,616 → 1,264 | 7,752 → 836 | 21.37 → 1.40 |
-| Valkey 9.1.2 | 13,599 → 1,265 | 7,745 → 837 | 21.36 → 1.40 |
+An atomic new submission takes one exchange, and an idempotent replay takes
+two. With `--submissions 100`, all 100 concurrent submissions completed without
+an error at one exchange each.
 
 Scheduling changes the number of flushes and viewer wake-ups. Roughly 390 chunk
 flushes and their viewer reads account for most remaining exchanges. Public
 inspection skips input and checkpoint payloads; resume still reads them
-internally. The steady idle floor with one worker falls from 2 to 0.4 commands/s
-at the default intervals, excluding startup (20 versus 4 empty-index commands
-observed over a 10-second sampling window).
+internally. The steady idle floor with one worker falls from 2 to 0.8 commands/s
+at the default intervals, while round trips fall to 0.4/s. Each empty scan
+pipelines its sorted-set read with Redis `TIME`.
 
 To reproduce, start an isolated Redis server on localhost port 16479 with
 persistence disabled. From the repository root, using a Python environment
 with `hayhooks[durable]` and the versions above installed:
 
 ```bash
-# Both measured commits are kept in the pull request that introduced this engine.
+# Fetch the historical baseline from the original engine pull request;
+# the current checkout supplies the after version.
 git fetch origin pull/267/head
 git worktree add --detach /tmp/hayhooks-redis-before 3e4509ed
 # Warm the current scripts before collecting measurements.
-PYTHONPATH=src python scripts/benchmark_durable_redis.py --duration 2
+PYTHONPATH=src python scripts/benchmark_durable_redis.py --duration 2 --submissions 0
 for run in 1 2 3; do
   PYTHONPATH=/tmp/hayhooks-redis-before/src python scripts/benchmark_durable_redis.py
-  PYTHONPATH=src python scripts/benchmark_durable_redis.py
+  PYTHONPATH=src python scripts/benchmark_durable_redis.py --submissions 100
 done
 ```
 
@@ -177,7 +176,9 @@ random key namespace afterward.
 
 Chunk appends, heartbeats, and owned transitions are each one Lua script call;
 an owned transition first reads control and Redis time in one pipelined round
-trip. Submit, claim, and complete are a small constant per run.
+trip. Four round trips precede user code on a claim. A no-op transition stops
+after its read and does not run the write script. A maintenance scan takes one
+round trip.
 
 ## Commit-time lease validation
 
@@ -197,14 +198,20 @@ so these checks reject corrupt targets before changing execution state.
 
 ## Streaming
 
-Streaming callbacks never wait on Redis. `stream_chunk` appends to a
-per-execution buffer bounded by `StoreConfig.max_stream_chunks`, dropping
-the oldest entries. One flusher sleeps for 100 ms between flushes, then sends
-the buffer through the chunk script. Redis latency and scheduler delays add to
-that interval. The buffer is flushed before the execution completes,
-fails, suspends, schedules a retry, or releases its claim, so final chunks are
-visible before the terminal event. Delivery is best-effort: a failed flush
-drops those chunks without failing the execution.
+Streaming callbacks check ownership, encode the chunk in the calling thread,
+queue it, and return without waiting for Redis or the event loop.
+`stream_chunk_sync()` may also run on the event loop; the other `*_sync`
+methods still require a thread. The per-execution buffer is bounded by
+`StoreConfig.max_stream_chunks`, and pending wake-ups stay bounded even when the
+event loop stalls.
+
+The first chunk after a quiet period flushes immediately. While chunks keep
+arriving, the flusher sends at most one batch per 100 ms and sleeps only while
+work is pending. The buffer is flushed before the execution completes, fails,
+suspends, schedules a retry, or releases its claim, so final chunks are visible
+before the terminal event. Delivery is best-effort: a failed flush drops those
+chunks without failing the execution. A chunk queued as the lease is lost is
+dropped, and the next streaming call raises `ExecutionLeaseLostError`.
 
 SSE viewers block on the chunk stream with `XREAD` instead of polling. Chunk
 delivery follows the next successful flush and viewer read. While blocked, a
@@ -249,27 +256,37 @@ to five seconds:
 RuntimeConfig(poll_interval_seconds=5.0, maintenance_interval_seconds=5.0)
 ```
 
-A submission or resume on the same process wakes an idle local worker
-immediately, and so does a local retry when its delay elapses and a lease that
-this process's maintenance recovers. The poll interval therefore only bounds
-pickup of work that another replica submitted, retried, or recovered. Lease
-recovery after a crash takes the remaining lease duration plus up to one
-maintenance interval, and up to one poll interval more when another replica
-recovers it.
+A submission, resume, or due retry on the same process wakes one idle local
+worker immediately. A maintenance pass that recovers N leases wakes up to N;
+shutdown wakes every worker. The poll interval therefore only bounds pickup of
+work that another replica submitted, retried, or recovered. Lease recovery
+after a crash takes the remaining lease duration plus up to one maintenance
+interval, and up to one poll interval more when another replica recovers it.
 
-For empty scheduling indexes, each scan uses one Redis sorted-set command and
-does not call `TIME`. The idle floor is therefore:
+A claim selects one of the eight oldest due executions at random, so ordering
+among near-simultaneous submissions is approximate. One maintenance pass
+recovers up to 1,000 expired leases, without repeating work another maintainer
+already completed. The claim itself confirms ownership; the first heartbeat is
+due one third of a lease later, or immediately if loading consumed that long.
+
+For empty scheduling indexes, each scan pipelines one Redis sorted-set command
+with `TIME`. The idle floor is therefore:
 
 ```text
-commands/second = deployments * processes * (
+commands/second = 2 * deployments * processes * (
+    worker_concurrency / poll_interval
+    + 1 / maintenance_interval
+)
+
+exchanges/second = deployments * processes * (
     worker_concurrency / poll_interval
     + 1 / maintenance_interval
 )
 ```
 
-With one worker and the default intervals, that is 0.4 commands per second, or
-about 35,000 per day, per deployment and process, excluding startup. Shorter
-intervals trade Redis traffic for latency:
+With one worker and the default intervals, that is 0.8 commands and 0.4
+exchanges per second, or about 69,000 commands per day, per deployment and
+process, excluding startup. Shorter intervals trade Redis traffic for latency:
 
 | Use case | Worker interval | Maintenance interval | Tradeoff |
 |---|---:|---:|---|
@@ -280,6 +297,12 @@ intervals trade Redis traffic for latency:
 The intervals are upper bounds added by polling; average delay under steady
 arrival is usually about half the configured interval. Keep maintenance short
 relative to customized short leases.
+
+`check_cancelled()` reuses execution state that the store confirmed within the
+last 0.5 seconds, so frequent checks usually add no Redis exchange. A
+cancellation can take up to 0.5 seconds longer to be noticed. An Agent may start
+one more LLM call when cancellation arrives just after a step checkpoint; the
+run still ends `canceled` at its next commit.
 
 Maintenance cadence does not supervise local worker capacity. The runtime restarts
 an unexpectedly stopped worker task immediately through local task supervision,
@@ -299,12 +322,17 @@ without waiting for the next Redis maintenance scan.
 
 ## Health and recovery
 
-`runtime.health()`, which `GET /status` returns as `durable` in durable mode, reports durable deployment health, configured/running/draining
-worker counts, maintenance state, store error streak, and bounded operational
-counts; expose it through the host's health checks. `active_executions` counts the claims this process is still running,
-including thread-backed work retained after shutdown; report the process as
-busy while it is non-zero so that an autoscaler does not reap it mid-run. Alert on unhealthy deployments, a growing nonterminal count, repeated
-store errors, or sustained draining work.
+`runtime.health()`, which `GET /status` returns as `durable` in durable mode,
+reports durable deployment health, configured/running/draining worker counts,
+maintenance state, store error streak, and bounded operational counts. The
+counts are `nonterminal`, `revision_nonterminal`, `revision_runnable` (including
+delayed retries that are not due), and `lease_expiry`. `active_executions`
+counts claims this process is still running, including thread-backed work
+retained after shutdown. Report the process as busy while it is nonzero so an
+autoscaler does not reap it mid-run. Alert on unhealthy deployments, a growing
+nonterminal count, repeated store errors, or sustained draining work. Redis
+store errors name their cause, for example
+`Redis durable store operation failed: TimeoutError`.
 
 After process loss, another worker recovers an expired lease and requeues or
 fails the execution according to attempt rules. Revision-specific runnable
@@ -314,7 +342,14 @@ their last cursor; they do not resubmit unless no execution was created.
 
 A rollout may run multiple revisions at once. Claiming is revision-safe, but a
 resume request must still be routed to the replica serving the execution's
-pinned revision so that it uses the matching resume schema.
+pinned revision so that it uses the matching resume schema. An old revision has
+drained when its `revision_nonterminal` count reaches zero.
+
+Operational logs include `Durable execution lease lost` with `reason`,
+`Durable store commit failed; retrying within the lease window`, and
+`Durable execution has invalid stored data`. Application retries log when they
+are scheduled or exhausted, with `retry_message`. Store, worker, maintenance,
+close, and release failure logs include `error`.
 
 ## Shutdown handoff
 
@@ -329,6 +364,9 @@ shortly after SIGTERM, set `RuntimeConfig(release_running_on_close=True)` so
 those claims are released too; see
 [Hosts with short kill deadlines](../features/durable-execution.md#hosts-with-short-kill-deadlines)
 for the overlap trade-off.
+
+`DurableRuntime.close()` closes deployments concurrently, so this phase takes
+about one shutdown grace rather than one grace per deployment.
 
 Because a handoff does not count toward `max_run_attempts`, a run that never
 reaches a checkpoint can restart on every shutdown: on a fleet that replaces

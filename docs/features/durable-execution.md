@@ -379,11 +379,13 @@ Pipeline with approval, checkpoint recovery, and cancellation.
 - **Buffered progress:** `report_progress` is persisted with the next
   checkpoint or terminal transition. Call `checkpoint` when progress must be
   durable immediately.
-- **Display-only streaming:** streaming callbacks never wait on Redis. Chunks
-  are buffered and flushed about every 100 ms, and always before the run
-  leaves `running`, so the final chunks precede the terminal event. They are
-  bounded and may be dropped without failing the execution. The terminal result
-  remains the source of truth.
+- **Display-only streaming:** streaming callbacks check ownership, encode and
+  queue chunks in the calling thread, and never wait for Redis or the event
+  loop. The first chunk after a quiet period flushes immediately; later chunks
+  flush at most once per 100 ms while work is pending, and always before the run
+  leaves `running`. Buffer size and pending wake-ups stay bounded even when the
+  event loop stalls. Chunks may be dropped without failing the execution, so
+  the terminal result remains the source of truth.
 
 Queued, running, and waiting executions are pinned to their deployment
 revision, and workers claim only a matching revision. Change the revision only
