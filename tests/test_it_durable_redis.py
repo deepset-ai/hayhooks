@@ -260,7 +260,7 @@ async def test_corrupt_chunk_stream_does_not_block_terminal_recovery(redis_store
     for run_id in ("run_bad", "run_a", "run_b"):
         await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
         assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
-    await redis.hset(store.keys.control("run_bad"), "run_attempt", 3)
+    await redis.hset(store.keys.control("run_bad"), "lease_recoveries", 2)
     await redis.set(store.keys.chunks("run_bad"), b"wrong type")
     await asyncio.sleep(0.06)
 
@@ -282,7 +282,7 @@ async def test_corrupt_chunk_stream_does_not_block_terminal_recovery(redis_store
     )
     await store.submit(race, b"input")
     assert await store.claim(Claim("worker", 0, 50, 3, "v2", ATTEMPTS_ERROR)) is not None
-    await redis.hset(store.keys.control("run_race"), "run_attempt", 3)
+    await redis.hset(store.keys.control("run_race"), "lease_recoveries", 2)
     await redis.set(store.keys.chunks("run_race"), b"wrong type")
     contender = RedisExecutionStore(redis, "jobs", config=store.config, key_prefix=store_prefix(store))
     await asyncio.sleep(0.06)
