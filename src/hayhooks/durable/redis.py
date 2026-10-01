@@ -37,7 +37,9 @@ from hayhooks.durable.engine import (
     ProgressEvent,
     RecoverExpiredLease,
     TransitionPlan,
+    became_terminal,
     decide,
+    plan_changes,
     submission_plan,
     validate_run_id,
 )
@@ -62,6 +64,7 @@ from hayhooks.durable.store import (
     chunk_read_count,
     parse_chunk_cursor,
     runnable_score,
+    validate_lease_duration,
     validate_payload_size,
     validate_stored_execution,
     validate_transition_plan,
@@ -110,6 +113,14 @@ class _UndecodableControlError(ExecutionStoreCorruptionError):
     """An execution control that scheduling can isolate from the shared indexes."""
 
 
+# Prelude shared by every script: Redis TIME in milliseconds.
+_NOW_LUA = """
+local function redis_now_ms()
+  local time = redis.call('TIME')
+  return tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+end
+"""
+
 # Returns Redis TIME in milliseconds while the worker still owns the lease with room for the safety margin.
 _OWNED_LUA = """
 local function owned_now(control, worker, fence, margin)
@@ -117,8 +128,7 @@ local function owned_now(control, worker, fence, margin)
   if lease[1] ~= 'running' or lease[2] ~= worker or lease[3] ~= fence then
     return nil
   end
-  local time = redis.call('TIME')
-  local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+  local now = redis_now_ms()
   if now < tonumber(lease[4]) - tonumber(margin) then
     return now, tonumber(lease[5])
   end
@@ -252,9 +262,7 @@ if limit > 0 and tonumber(counts[1] or '0') >= limit then
 end
 -- Validate the runnable index type before the first write, since scripts have no rollback.
 redis.call('ZCARD', KEYS[4])
-local time = redis.call('TIME')
-local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
-local stamp = string.format('%d', now)
+local stamp = string.format('%d', redis_now_ms())
 redis.call('HSET', KEYS[1], 'run_id', ARGV[4], 'binding', ARGV[5])
 redis.call('HSET', KEYS[2], 'created_at_ms', stamp, 'updated_at_ms', stamp, unpack(ARGV, 7))
 redis.call('SET', KEYS[3], ARGV[3])
@@ -426,10 +434,10 @@ class RedisExecutionStore:
         self.keys = RedisKeys(key_prefix, deployment)
         self._transaction_retries = transaction_retries
         self._transaction_backoff_ms = transaction_backoff_ms
-        self._submit_script = redis.register_script(_SUBMIT_LUA)
-        self._apply_script = redis.register_script(_OWNED_LUA + _APPLY_LUA)
-        self._heartbeat_script = redis.register_script(_OWNED_LUA + _HEARTBEAT_LUA)
-        self._append_chunks_script = redis.register_script(_OWNED_LUA + _APPEND_CHUNKS_LUA)
+        self._submit_script = redis.register_script(_NOW_LUA + _SUBMIT_LUA)
+        self._apply_script = redis.register_script(_NOW_LUA + _OWNED_LUA + _APPLY_LUA)
+        self._heartbeat_script = redis.register_script(_NOW_LUA + _OWNED_LUA + _HEARTBEAT_LUA)
+        self._append_chunks_script = redis.register_script(_NOW_LUA + _OWNED_LUA + _APPEND_CHUNKS_LUA)
 
     async def initialize(self) -> None:
         with _redis_errors():
@@ -510,8 +518,7 @@ class RedisExecutionStore:
         return plan
 
     async def claim(self, command: Claim) -> TransitionPlan | None:
-        if command.lease_duration_ms <= self.config.lease_commit_safety_ms:
-            raise ValueError("lease duration must exceed the commit safety margin")
+        validate_lease_duration(command.lease_duration_ms, self.config)
         candidate_index = self.keys.runnable_revision(command.worker_revision)
         with _redis_errors():
             for _ in range(self._transaction_retries):
@@ -712,8 +719,9 @@ class RedisExecutionStore:
                 values, *raw_payloads, raw_progress = await pipe.execute(raise_on_error=False)
         replies = (values, *raw_payloads, raw_progress)
         with _redis_errors():
-            if any(isinstance(reply, Exception) and not _wrong_type(reply) for reply in replies):
-                raise next(reply for reply in replies if isinstance(reply, Exception) and not _wrong_type(reply))
+            error = next((reply for reply in replies if isinstance(reply, Exception) and not _wrong_type(reply)), None)
+            if error is not None:
+                raise error
         if values == {}:
             return None
         if isinstance(values, Exception):
@@ -782,7 +790,7 @@ class RedisExecutionStore:
                 ):
                     return current, plan
                 commands = self._plan_commands(current, plan)
-                if not current.terminal and plan.next_control.terminal:
+                if became_terminal(current, plan):
                     released = RedisKeys.revision_nonterminal_field(current.definition_revision)
             outcome = await self._commit(run_id, values, commands, owner=owner, released=released)
             if outcome == _STALE_SNAPSHOT:
@@ -792,18 +800,8 @@ class RedisExecutionStore:
                 raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
             if outcome == _CAPACITY_UNDERFLOW:
                 raise ExecutionStoreCorruptionError("nonterminal execution counter is invalid or would underflow")
-            if (
-                plan is not None
-                and current is not None
-                and (
-                    plan.next_control != current
-                    or plan.payload_writes
-                    or plan.payload_deletes
-                    or plan.progress_events
-                    or plan.lease_index_update
-                    or plan.discard_progress
-                )
-            ):
+            # _changes_nothing already returned every no-op plan, so a committed plan always changed something.
+            if plan is not None and current is not None:
                 log.bind(
                     run_id=run_id,
                     command=type(command).__name__,
@@ -898,7 +896,7 @@ class RedisExecutionStore:
                 else ("ZADD", self.keys.lease_expiry, lease.deadline_ms, member)
             )
 
-        if not current.terminal and control.terminal:
+        if became_terminal(current, plan):
             chunks_key = self.keys.chunks(run_id)
             commands.append(("HINCRBY", self.keys.capacity, "nonterminal", -1))
             commands.append(
@@ -982,7 +980,7 @@ class RedisExecutionStore:
         if not binding["binding"] or len(binding["binding"].encode()) > MAX_CONTROL_SCALAR_BYTES:
             raise ExecutionStoreCorruptionError("idempotency binding has an invalid digest")
         try:
-            self.keys.control(binding["run_id"])
+            validate_run_id(binding["run_id"])
         except ValueError as error:
             raise ExecutionStoreCorruptionError("idempotency binding has an invalid execution ID") from error
         if binding["binding"] != control.idempotency_binding_digest:
@@ -1098,11 +1096,10 @@ def _wrong_type(reply: object) -> bool:
 
 def _changes_nothing(plan: TransitionPlan, current: ExecutionControl, *, lease_member_indexed: bool) -> bool:
     lease = plan.lease_index_update
-    return (
-        plan.next_control == current
-        and not (plan.payload_writes or plan.payload_deletes or plan.progress_events or plan.discard_progress)
-        and (lease is None or (lease.deadline_ms is None and not lease_member_indexed))
-    )
+    # Removing a lease member that is not indexed is a no-op.
+    if lease is not None and lease.deadline_ms is None and not lease_member_indexed:
+        plan = replace(plan, lease_index_update=None)
+    return not plan_changes(current, plan)
 
 
 @contextmanager

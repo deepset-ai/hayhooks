@@ -34,7 +34,9 @@ from hayhooks.durable.engine import (
     ScheduleRetry,
     Suspend,
     TransitionPlan,
+    became_terminal,
     decide,
+    plan_changes,
     require_owned,
     submission_plan,
 )
@@ -255,15 +257,9 @@ class MemoryExecutionStore:
         plan = decide(current, command)
         validate_transition_plan(plan, self.config)
         self._apply(current, plan)
-        if not current.terminal and plan.next_control.terminal:
+        if became_terminal(current, plan):
             await self._write_chunks(run_id, plan.next_control.run_attempt, (b"",), terminal=True)
-        if not isinstance(command, Heartbeat) and (
-            plan.next_control != current
-            or plan.payload_writes
-            or plan.payload_deletes
-            or plan.progress_events
-            or plan.lease_index_update
-        ):
+        if not isinstance(command, Heartbeat) and plan_changes(current, plan):
             log.bind(
                 run_id=run_id,
                 command=type(command).__name__,
@@ -275,8 +271,7 @@ class MemoryExecutionStore:
         return plan
 
     async def claim(self, command: Claim) -> TransitionPlan | None:
-        if command.lease_duration_ms <= self.config.lease_commit_safety_ms:
-            raise ValueError("lease duration must exceed the commit safety margin")
+        validate_lease_duration(command.lease_duration_ms, self.config)
         now_ms = self._clock()
         due = (
             (score, run_id)
@@ -293,9 +288,7 @@ class MemoryExecutionStore:
             self._runnable.pop(run_id, None)
             control = self._controls.get(run_id)
             if control is not None and control.status is ExecutionStatus.QUEUED:
-                self._runnable[run_id] = (
-                    control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
-                )
+                self._runnable[run_id] = runnable_score(control)
             return None
 
     async def maintain(
@@ -409,7 +402,7 @@ class MemoryExecutionStore:
 
         if new_submission:
             self._nonterminal += 1
-        elif not current.terminal and control.terminal:
+        elif became_terminal(current, plan):
             self._nonterminal -= 1
             if self._nonterminal < 0:
                 raise ExecutionStoreError("nonterminal execution counter underflow")
@@ -503,9 +496,14 @@ def bind_store_command(command: ExecutionCommand, now_ms: int, config: StoreConf
     if isinstance(command, LEASE_COMMANDS):
         changes["lease_commit_safety_ms"] = config.lease_commit_safety_ms
     bound = replace(command, **changes)
-    if isinstance(bound, (Claim, Heartbeat, Checkpoint)) and (bound.lease_duration_ms <= config.lease_commit_safety_ms):
-        raise ValueError("lease duration must exceed the commit safety margin")
+    if isinstance(bound, (Claim, Heartbeat, Checkpoint)):
+        validate_lease_duration(bound.lease_duration_ms, config)
     return bound
+
+
+def validate_lease_duration(lease_duration_ms: int, config: StoreConfig) -> None:
+    if lease_duration_ms <= config.lease_commit_safety_ms:
+        raise ValueError("lease duration must exceed the commit safety margin")
 
 
 def validate_transition_plan(plan: TransitionPlan, config: StoreConfig) -> None:
