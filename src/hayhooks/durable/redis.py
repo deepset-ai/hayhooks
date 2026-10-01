@@ -472,6 +472,13 @@ class RedisExecutionStore:
     async def read_public(self, run_id: str) -> StoredExecution | None:
         return await self._read(run_id, private=False)
 
+    async def read_control(self, run_id: str) -> ExecutionControl | None:
+        with _redis_errors():
+            async with self.redis.pipeline(transaction=False) as pipe:
+                pipe.hgetall(self.keys.control(run_id))
+                (values,) = await pipe.execute(raise_on_error=False)
+            return self._control(values, run_id)
+
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         with _redis_errors():
             plan = await self._transition(run_id, command)

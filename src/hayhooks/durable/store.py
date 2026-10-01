@@ -142,6 +142,10 @@ class ExecutionStore(Protocol):
         """Read control, progress, and public payloads without input or checkpoint bytes."""
         ...
 
+    async def read_control(self, run_id: str) -> ExecutionControl | None:
+        """Read only the decoded control, or ``None`` when the execution does not exist."""
+        ...
+
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan: ...
 
     async def claim(self, command: Claim) -> TransitionPlan | None: ...
@@ -231,6 +235,10 @@ class MemoryExecutionStore:
 
     async def read_public(self, run_id: str) -> StoredExecution | None:
         return self._read(run_id, private=False)
+
+    async def read_control(self, run_id: str) -> ExecutionControl | None:
+        self._cleanup_terminal(self._clock())
+        return self._controls.get(run_id)
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         current = self._controls.get(run_id)

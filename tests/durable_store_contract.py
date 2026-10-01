@@ -87,6 +87,8 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     snapshot = await store.read(control.run_id)
     assert snapshot is not None and snapshot.payloads[PayloadKind.INPUT] == b"input"
     assert snapshot.control == submitted.control
+    assert await store.read_control(control.run_id) == snapshot.control
+    assert await store.read_control("missing") is None
     assert await store.read_public(control.run_id) == replace(snapshot, payloads={})
     assert await store.operational_counts(revision="v1") == {
         "nonterminal": 1,
@@ -252,6 +254,7 @@ async def assert_lowered_limits_keep_data_readable(store: ExecutionStore) -> Non
 
     assert await store.read("run_1") == before
     assert await store.read_public("run_1") == public
+    assert await store.read_control("run_1") == before.control
     assert await store.read_chunks("run_1", CHUNK_CURSOR_START) == chunks
     assert await store.wait_chunks("run_1", CHUNK_CURSOR_START, 0.05) == chunks
     with pytest.raises(ExecutionPayloadSizeError):
