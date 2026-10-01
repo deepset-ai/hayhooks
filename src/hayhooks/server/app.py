@@ -293,7 +293,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         finally:
             if runtime is not None:
                 try:
-                    # Closing also ends open durable SSE streams before their viewer client goes away.
+                    # Uvicorn drains or cancels open requests, SSE streams included, before lifespan shutdown;
+                    # closing ends any stream still waiting, so none outlives its viewer client.
                     await runtime.close()
                 finally:
                     # ponytail: retained threads can delay graceful shutdown past the grace period;
