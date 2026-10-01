@@ -690,7 +690,7 @@ class DurableDeployment:
             for thread in tuple(claim.threads):
                 _track(self._draining_threads, thread)
 
-    async def _run_claim(
+    async def _run_claim(  # noqa: C901
         self,
         claim: _ClaimedExecution,
         context: DurableContext,
@@ -922,19 +922,21 @@ class DurableRuntime:
             raise
 
     async def close(self) -> None:
-        """Close every deployment in reverse order, even when one fails, then raise the first failure."""
+        """Close every deployment concurrently, then raise the first failure in reverse membership order."""
         self._closed = True
-        first_error: Exception | None = None
-        for deployment in reversed(tuple(self._deployments.values())):
-            try:
-                await deployment.close()
-            except Exception as error:
-                log.opt(exception=error).bind(deployment=deployment.name, exception_type=type(error).__name__).error(
-                    "Durable deployment failed to close"
-                )
-                first_error = first_error or error
-        if first_error is not None:
-            raise first_error
+        deployments = tuple(reversed(self._deployments.values()))
+        results = await asyncio.gather(*(deployment.close() for deployment in deployments), return_exceptions=True)
+        failures = [
+            (deployment, result)
+            for deployment, result in zip(deployments, results, strict=True)
+            if isinstance(result, BaseException)
+        ]
+        for deployment, error in failures:
+            log.opt(exception=error).bind(deployment=deployment.name, exception_type=type(error).__name__).error(
+                "Durable deployment failed to close"
+            )
+        if failures:
+            raise failures[0][1]
 
     async def wait_drained(self) -> None:
         """Wait for every deployment's retained work; call after close() and before releasing shared clients."""

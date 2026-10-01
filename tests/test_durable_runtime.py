@@ -1003,12 +1003,40 @@ async def test_runtime_close_reaches_every_deployment_and_raises_the_first_error
     runtime = DurableRuntime(deployments)
     await runtime.start()
 
-    # Deployments close in reverse order, so the last one fails first.
+    # Failures are reported in reverse membership order, so the last one is raised.
     with pytest.raises(RuntimeError, match=deployments[-1].name):
         await runtime.close()
 
     assert not any(deployment.accepting for deployment in deployments)
     await asyncio.wait_for(runtime.wait_drained(), timeout=1)
+
+
+async def test_runtime_close_closes_deployments_concurrently(deployment_factory, monkeypatch) -> None:
+    deployments = [await deployment_factory() for _ in range(3)]
+    runtime = DurableRuntime(deployments)
+    await runtime.start()
+    started: list[str] = []
+    gate = asyncio.Event()
+
+    for deployment in deployments:
+        close = deployment.close
+
+        async def gated_close(close=close, name=deployment.name) -> None:
+            started.append(name)
+            await gate.wait()
+            await close()
+
+        monkeypatch.setattr(deployment, "close", gated_close)
+
+    closing = asyncio.create_task(runtime.close())
+    for _ in range(10):
+        if len(started) == len(deployments):
+            break
+        await asyncio.sleep(0)
+    assert started == [deployment.name for deployment in reversed(deployments)]
+    gate.set()
+    await asyncio.wait_for(closing, 1)
+    await asyncio.wait_for(runtime.wait_drained(), 1)
 
 
 async def test_wait_drained_requires_closed_admission(deployment_factory) -> None:
