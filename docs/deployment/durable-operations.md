@@ -51,6 +51,11 @@ With the Hayhooks server, run durable wrappers in
 - Replies must be RESP2-shaped. Leave `protocol` unset, which redis-py 8
   translates to the legacy reply shapes, or pass `protocol=2`. Keep
   `decode_responses=False`.
+- In durable mode, the Hayhooks server's worker client has 5-second socket and
+  connect timeouts, TCP keepalive, RESP2, no command retries, and an unbounded
+  pool. Bound HTTP concurrency in a proxy or with uvicorn
+  `--limit-concurrency` when the Redis connection count matters. URL query
+  options override these client defaults.
 - Enable persistence appropriate for the recovery objective (AOF, RDB, or both)
   and test restore from backup.
 - Use a TLS Redis URL and authenticated network path outside a trusted local
@@ -225,22 +230,23 @@ it still ends on a terminal execution whose marker was lost.
 The cursor check follows the blocking read in the same pipeline, so history
 trimmed while a viewer waits produces a `gap` event as well.
 
-Each open viewer holds one Redis connection for up to 15 seconds. The Hayhooks
-server in durable mode runs a separate viewer client whose pool,
-`HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS`, bounds concurrent viewers per process. A
-portable host that serves SSE must pass a separate `viewer_client` to
+Each open viewer holds one Redis connection for up to 15 seconds. In durable
+mode, the Hayhooks server uses a 30-second socket timeout and a blocking pool of
+`HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS` connections. An extra viewer waits up to
+one second for a connection; if none becomes available, its stream ends with
+`event: error` and the client resumes from its cursor, possibly on another
+replica. A portable host that serves SSE must pass a separate `viewer_client` to
 `RedisExecutionStore`, built from the same URL, and size its connection pool
 for the expected concurrent viewers. Without one, viewers share the worker
 client, and a surge of viewers can starve heartbeats, lose leases, and
 re-execute work; that is acceptable only for a single-viewer development host.
-Exhausting the viewer pool ends the affected stream with an `error` event, and
-the client resumes from its cursor; workers are unaffected. The default
+Workers are unaffected by an exhausted viewer pool. The default
 `Redis.from_url` pool is unbounded on redis-py 5–7 and has 100 non-blocking
-connections on redis-py 8, so pass `max_connections` deliberately. The viewer
-client must use RESP2-shaped replies and a `socket_timeout` longer than 15
-seconds, or every blocked read fails. When a deployment closes, open streams
-end without a terminal event so that clients resume from their cursor, possibly
-on another replica.
+connections on redis-py 8, so portable hosts should pass `max_connections`
+deliberately. The viewer client must use RESP2-shaped replies and a
+`socket_timeout` longer than 15 seconds, or every blocked read fails. When a
+deployment closes, open streams end without a terminal event so that clients
+resume from their cursor, possibly on another replica.
 
 A host with its own SSE transport or frame format can build it on the store:
 `read_chunks` pages through retained entries, `wait_chunks` blocks for the
