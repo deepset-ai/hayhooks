@@ -47,6 +47,10 @@ mcp = [
 a2a = [
   "a2a-sdk[http-server]>=1.1.0,<2.0",
 ]
+durable = [
+  "haystack-ai>=3.1,<4",
+  "redis>=5,<9",
+]
 chainlit = [
   "chainlit>=2.0.0",
   "httpx>=0.27.0",
@@ -74,6 +78,11 @@ source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hayhooks"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/uv.lock",
+]
 
 [tool.hatch.build.targets.wheel.force-include]
 # Bundle dashboard source files so --with-tracing-dashboard can build locally at runtime.
@@ -126,6 +135,7 @@ extra-dependencies = [
   "pytest-asyncio",
   "pytest-cov",
   "pytest-mock",
+  "redis>=5,<9",
   "ty",
 ]
 

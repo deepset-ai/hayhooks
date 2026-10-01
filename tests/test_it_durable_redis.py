@@ -1,0 +1,611 @@
+"""Real-Redis checks for cross-process store invariants."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import uuid
+from dataclasses import replace
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from pydantic import BaseModel
+from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio.client import Pipeline
+
+from hayhooks.durable import DurableContext, create_durable_router
+from hayhooks.durable.engine import (
+    Checkpoint,
+    Claim,
+    Complete,
+    ExecutionControl,
+    ExecutionLeaseLostError,
+    ExecutionStatus,
+    Heartbeat,
+    InvalidExecutionTransitionError,
+    PayloadKind,
+    ReleaseClaim,
+    RequestCancellation,
+    Resume,
+    Suspend,
+)
+from hayhooks.durable.redis import RedisExecutionStore, RedisKeys
+from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
+from hayhooks.durable.store import (
+    CHUNK_CURSOR_START,
+    PUBLIC_PAYLOAD_KINDS,
+    ChunkCursorExpiredError,
+    ExecutionAdmissionError,
+    ExecutionStoreCorruptionError,
+    ExecutionStoreError,
+)
+from tests.durable_store_contract import (
+    ATTEMPTS_ERROR,
+    CONTRACT_CONFIG,
+    assert_raced_recovery_contract,
+    assert_revision_routing_contract,
+    assert_store_contract,
+    assert_terminal_markers_contract,
+    contract_control,
+)
+
+pytestmark = pytest.mark.integration
+
+
+class SSERequest(BaseModel):
+    chunks: int
+
+
+def store_prefix(store: RedisExecutionStore) -> str:
+    return store.keys.base.rsplit(":{", maxsplit=1)[0]
+
+
+@pytest.fixture
+async def redis_store():
+    redis_url = os.getenv("HAYHOOKS_TEST_REDIS_URL")
+    if not redis_url:
+        pytest.skip("set HAYHOOKS_TEST_REDIS_URL to run the real-Redis suite")
+    redis = Redis.from_url(redis_url, decode_responses=False)
+    prefix = f"hayhooks:test:{uuid.uuid4().hex}"
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(CONTRACT_CONFIG, terminal_ttl_seconds=1),
+        key_prefix=prefix,
+    )
+    await store.initialize()
+    try:
+        yield redis, store
+    finally:
+        keys = [key async for key in redis.scan_iter(match=f"{prefix}:*")]
+        if keys:
+            await redis.delete(*keys)
+        await redis.aclose()
+
+
+async def test_redis_store_matches_shared_contract(redis_store) -> None:
+    _, store = redis_store
+    await assert_store_contract(store)
+
+
+async def test_redis_store_routes_claims_by_revision(redis_store) -> None:
+    _, store = redis_store
+    await assert_revision_routing_contract(store)
+
+
+@pytest.mark.parametrize("max_stream_chunks", [CONTRACT_CONFIG.max_stream_chunks, 0], ids=["chunks", "no-chunks"])
+async def test_redis_store_marks_every_terminal_path(redis_store, max_stream_chunks: int) -> None:
+    redis, store = redis_store
+    await assert_terminal_markers_contract(
+        RedisExecutionStore(
+            redis,
+            "jobs",
+            config=replace(store.config, max_stream_chunks=max_stream_chunks),
+            key_prefix=store_prefix(store),
+        )
+    )
+
+
+async def test_redis_store_skips_raced_lease_recovery(redis_store) -> None:
+    _, store = redis_store
+    await assert_raced_recovery_contract(store)
+
+
+async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) -> None:
+    redis, store = redis_store
+    submissions = await asyncio.gather(
+        *(store.submit(contract_control("jobs", f"run_{index}"), b"input") for index in range(20))
+    )
+    assert sum(result.created for result in submissions) == 1
+    assert {result.control.run_id for result in submissions} == {submissions[0].control.run_id}
+
+    claims = await asyncio.gather(
+        *(store.claim(Claim(f"worker-{index}", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) for index in range(20))
+    )
+    winners = [plan for plan in claims if plan is not None and plan.next_control.status is ExecutionStatus.RUNNING]
+    assert len(winners) == 1
+    assert await redis.zcard(store.keys.runnable) == 0
+    assert await redis.zcard(store.keys.lease_expiry) == 1
+
+
+async def test_claim_that_loses_a_race_takes_the_next_runnable_execution(redis_store) -> None:
+    redis, store = redis_store
+    for index in range(2):
+        await store.submit(contract_control("jobs", f"run_{index}", idempotency=str(index), binding=str(index)), b"input")
+    first = await store.claim(Claim("worker-0", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert first is not None and first.next_control.run_id == "run_0"
+    # A worker that read the index head before worker-0 committed still sees run_0 first.
+    await redis.zadd(store.keys.runnable_revision("v1"), {"run_0": 0})
+
+    second = await store.claim(Claim("worker-1", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+
+    assert second is not None and second.next_control.run_id == "run_1"
+
+
+async def test_concurrent_progress_and_cancellation_remain_atomic(redis_store) -> None:
+    redis, store = redis_store
+    control = contract_control("jobs")
+    await store.submit(control, b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    fence = claimed.next_control.fence
+    await asyncio.gather(
+        *(
+            store.transition(
+                control.run_id,
+                Checkpoint(fence, "worker", 0, 10_000, f"checkpoint-{index}".encode(), (str(index).encode(),)),
+            )
+            for index in range(10)
+        )
+    )
+    await asyncio.gather(
+        store.transition(control.run_id, RequestCancellation(0, "stop")),
+        store.transition(control.run_id, Checkpoint(fence, "worker", 0, 10_000, b"final", (b"final",))),
+    )
+    snapshot = await store.read(control.run_id)
+    assert snapshot is not None
+    assert snapshot.control.cancel_requested_at_ms is not None
+    assert [event.sequence for event in snapshot.progress] == list(range(10, 12))
+    assert {event.data for event in snapshot.progress} <= {str(index).encode() for index in range(10)} | {b"final"}
+
+    terminal = await store.transition(control.run_id, Complete(fence, "worker", 0, b"ignored"))
+    assert terminal.next_control.status is ExecutionStatus.CANCELED
+    assert (await store.operational_counts())["nonterminal"] == 0
+    with pytest.raises(ExecutionLeaseLostError):
+        await store.append_chunks(control.run_id, 1, fence, "worker", [b"late"])
+    assert [chunk.terminal for chunk in await store.read_chunks(control.run_id, CHUNK_CURSOR_START)] == [True]
+    assert await redis.pttl(store.keys.idempotency(control.idempotency_digest)) > 0
+    await asyncio.sleep(1.1)
+    assert await store.read(control.run_id) is None
+    assert not await redis.exists(store.keys.chunks(control.run_id))
+    assert not await redis.exists(store.keys.idempotency(control.idempotency_digest))
+
+
+async def test_concurrent_resume_commits_one_checkpoint(redis_store) -> None:
+    _, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    waiting = await store.transition(
+        "run_1",
+        Suspend(claimed.next_control.fence, "worker", 0, b"initial", b"wait"),
+    )
+    resumes = await asyncio.gather(
+        *(
+            store.transition("run_1", Resume(0, "v1", value, expected_version=waiting.next_control.version))
+            for value in (b"first", b"second")
+        ),
+        return_exceptions=True,
+    )
+    winner = next(result for result in resumes if not isinstance(result, BaseException))
+    assert sum(isinstance(result, InvalidExecutionTransitionError) for result in resumes) == 1
+    snapshot = await store.read("run_1")
+    assert snapshot is not None
+    assert snapshot.payloads[PayloadKind.CHECKPOINT] == winner.payload_writes[0].data
+
+
+@pytest.mark.parametrize("operation", ["read", "transition", "replay"])
+async def test_control_key_identity_corruption_is_rejected(redis_store, operation: str) -> None:
+    redis, store = redis_store
+    control = contract_control("jobs")
+    await store.submit(control, b"input")
+    await redis.hset(store.keys.control(control.run_id), "run_id", "run_2")
+
+    with pytest.raises(ExecutionStoreCorruptionError):
+        if operation == "read":
+            await store.read(control.run_id)
+        elif operation == "transition":
+            await store.transition(control.run_id, RequestCancellation(0, "stop"))
+        else:
+            await store.submit(control, b"input")
+
+    assert not await redis.exists(store.keys.control("run_2"))
+    assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
+
+
+async def test_admission_heartbeat_and_stale_lease_repair_are_transactional(redis_store, monkeypatch) -> None:
+    redis, store = redis_store
+    limited = RedisExecutionStore(
+        redis,
+        "limited",
+        config=replace(CONTRACT_CONFIG, max_nonterminal_executions=1),
+        key_prefix=f"{store_prefix(store)}:limited",
+    )
+    controls = (
+        contract_control("limited", "run_1", idempotency="one", binding="one"),
+        contract_control("limited", "run_2", idempotency="two", binding="two"),
+    )
+    results = await asyncio.gather(*(limited.submit(control, b"input") for control in controls), return_exceptions=True)
+    assert sum(not isinstance(result, BaseException) for result in results) == 1
+    assert sum(isinstance(result, ExecutionAdmissionError) for result in results) == 1
+
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_plan_commands", lambda *_args, **_kwargs: pytest.fail("heartbeat rewrote control"))
+        heartbeat = await store.transition("run_1", Heartbeat(1, "worker", 0, 10_000))
+    assert heartbeat.next_control.version == claimed.next_control.version
+    live_member = RedisKeys.lease_member("run_1", claimed.next_control.fence)
+    await redis.zadd(store.keys.lease_expiry, {RedisKeys.lease_member("run_1", 0): 0})
+    await store.maintain(
+        max_run_attempts=3,
+        attempts_error=ATTEMPTS_ERROR,
+    )
+    assert await redis.zrange(store.keys.lease_expiry, 0, -1) == [live_member.encode()]
+
+
+LEASE_MS = 300
+
+
+async def dump_keys(redis: Redis, store: RedisExecutionStore) -> dict[bytes, tuple[bytes, bool]]:
+    """Capture every key's serialized value and whether it expires."""
+    keys = [key async for key in redis.scan_iter(match=f"{store_prefix(store)}:*")]
+    return {key: (await redis.dump(key), await redis.pttl(key) > 0) for key in sorted(keys)}
+
+
+async def claim_one(store: RedisExecutionStore, lease_ms: int = LEASE_MS) -> ExecutionControl:
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, lease_ms, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    return claimed.next_control
+
+
+def interfere_on_first_call(monkeypatch, store: RedisExecutionStore, script: str, interfere) -> list[tuple]:
+    """Run ``interfere`` between a commit's preparation and its script, recording what the script changed."""
+    original = getattr(store, script)
+    calls: list[tuple] = []
+
+    async def interfering(*args, **kwargs):
+        if calls:
+            return await original(*args, **kwargs)
+        calls.append(())
+        await interfere()
+        before = await dump_keys(store.redis, store)
+        outcome = await original(*args, **kwargs)
+        calls[0] = (outcome, before, await dump_keys(store.redis, store))
+        return outcome
+
+    monkeypatch.setattr(store, script, interfering)
+    return calls
+
+
+OWNED_COMMITS = {
+    "checkpoint": (
+        "_apply_script",
+        lambda store, fence: store.transition(
+            "run_1", Checkpoint(fence, "worker", 0, LEASE_MS, b"checkpoint", (b"progress",))
+        ),
+    ),
+    "complete": (
+        "_apply_script",
+        lambda store, fence: store.transition("run_1", Complete(fence, "worker", 0, b"done")),
+    ),
+    "heartbeat": (
+        "_heartbeat_script",
+        lambda store, fence: store.transition("run_1", Heartbeat(fence, "worker", 0, LEASE_MS)),
+    ),
+    "chunk": (
+        "_append_chunks_script",
+        lambda store, fence: store.append_chunks("run_1", 1, fence, "worker", [b"chunk"]),
+    ),
+}
+
+
+@pytest.mark.parametrize("operation", OWNED_COMMITS)
+@pytest.mark.parametrize("interference", ["expired", "stale-fence"])
+async def test_delayed_owned_commit_writes_nothing(redis_store, monkeypatch, operation: str, interference: str) -> None:
+    redis, store = redis_store
+    control = await claim_one(store)
+    assert control.lease_expires_at_ms is not None
+
+    async def interfere() -> None:
+        if interference == "expired":
+            seconds, microseconds = await redis.time()
+            now_ms = seconds * 1_000 + microseconds // 1_000
+            safe_until_ms = control.lease_expires_at_ms - store.config.lease_commit_safety_ms
+            await asyncio.sleep((safe_until_ms - now_ms) / 1_000 + 0.005)
+        else:
+            await store.transition("run_1", ReleaseClaim(control.fence, "worker"))
+            assert await store.claim(Claim("other", 0, LEASE_MS, 3, "v1", ATTEMPTS_ERROR)) is not None
+
+    script, commit = OWNED_COMMITS[operation]
+    calls = interfere_on_first_call(monkeypatch, store, script, interfere)
+    with pytest.raises(ExecutionLeaseLostError):
+        await commit(store, control.fence)
+
+    _, before, after = calls[0]
+    assert after == before
+
+
+@pytest.mark.parametrize("operation", ["checkpoint", "complete"])
+async def test_changed_control_snapshot_retries_from_a_fresh_read(redis_store, monkeypatch, operation: str) -> None:
+    _, store = redis_store
+    control = await claim_one(store)
+    script, commit = OWNED_COMMITS[operation]
+    calls = interfere_on_first_call(
+        monkeypatch,
+        store,
+        script,
+        lambda: store.transition("run_1", RequestCancellation(0, "stop")),
+    )
+
+    plan = await commit(store, control.fence)
+
+    outcome, before, after = calls[0]
+    assert outcome == 0 and after == before
+    assert plan.next_control.cancel_requested_at_ms is not None
+    assert plan.next_control.status is (
+        ExecutionStatus.CANCELED if operation == "complete" else ExecutionStatus.RUNNING
+    )
+
+
+@pytest.mark.parametrize(
+    "key", ["chunks", "progress", "runnable", "revision", "lease_expiry", "capacity-fraction", "capacity-leading-zero"]
+)
+async def test_corrupt_commit_targets_leave_every_key_unchanged(redis_store, key: str) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    if key.startswith("capacity-"):
+        await redis.hset(store.keys.capacity, "nonterminal", "1.5" if key == "capacity-fraction" else "01")
+    else:
+        target = {
+            "chunks": store.keys.chunks("run_1"),
+            "progress": store.keys.progress("run_1"),
+            "runnable": store.keys.runnable,
+            "revision": store.keys.runnable_revision("v1"),
+            "lease_expiry": store.keys.lease_expiry,
+        }[key]
+        await redis.set(target, b"wrong type")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionStoreError):
+        await store.transition("run_1", Complete(control.fence, "worker", 0, b"done", (b"progress",)))
+
+    assert await dump_keys(redis, store) == before
+
+
+async def test_heartbeat_rejects_a_corrupt_lease_index_without_renewing(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await redis.set(store.keys.lease_expiry, b"wrong type")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionStoreError):
+        await store.transition("run_1", Heartbeat(control.fence, "worker", 0, 20_000))
+
+    assert await dump_keys(redis, store) == before
+
+
+async def test_claim_ignores_unrelated_submissions_during_its_commit(redis_store, monkeypatch) -> None:
+    _, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    calls = interfere_on_first_call(
+        monkeypatch,
+        store,
+        "_apply_script",
+        lambda: store.submit(contract_control("jobs", "run_2", idempotency="two", binding="two"), b"input"),
+    )
+
+    claimed = await store.claim(Claim("worker", 0, LEASE_MS, 3, "v1", ATTEMPTS_ERROR))
+
+    assert claimed is not None and claimed.next_control.status is ExecutionStatus.RUNNING
+    assert calls[0][0] == 1
+    assert (await store.operational_counts())["runnable"] == 1
+
+
+@pytest.fixture
+def round_trips(monkeypatch) -> list[list[tuple[str, ...]]]:
+    """Record client round trips as their (command, key) pairs."""
+    trips: list[list[tuple[str, ...]]] = []
+    execute_command = Redis.execute_command
+    execute_pipeline = Pipeline.execute
+
+    async def record_command(self, *args, **options):
+        trips.append([_command_name(args)])
+        return await execute_command(self, *args, **options)
+
+    async def record_pipeline(self, *args, **options):
+        trips.append([_command_name(command) for command, _ in self.command_stack])
+        return await execute_pipeline(self, *args, **options)
+
+    monkeypatch.setattr(Redis, "execute_command", record_command)
+    monkeypatch.setattr(Pipeline, "execute", record_pipeline)
+    return trips
+
+
+def _command_name(args: tuple) -> tuple[str, ...]:
+    name = args[0].decode() if isinstance(args[0], bytes) else str(args[0])
+    key = args[1] if name in {"GET", "HGETALL", "LRANGE", "XRANGE"} else None
+    return (name,) if key is None else (name, key.decode() if isinstance(key, bytes) else str(key))
+
+
+async def test_hot_paths_cost_one_round_trip(redis_store, round_trips) -> None:
+    _, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    heartbeat = Heartbeat(control.fence, "worker", 0, 10_000)
+    checkpoint = Checkpoint(control.fence, "worker", 0, 10_000, b"checkpoint")
+    for warm in (
+        store.transition("run_1", heartbeat),
+        store.transition("run_1", checkpoint),
+        store.append_chunks("run_1", 1, control.fence, "worker", [b"warm"]),
+    ):
+        await warm
+    cursor = (await store.read_chunks("run_1", CHUNK_CURSOR_START))[-1].cursor
+
+    round_trips.clear()
+    await store.transition("run_1", heartbeat)
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b"one", b"two"])
+    await store.transition("run_1", checkpoint)
+    assert round_trips == [
+        [("EVALSHA",)],
+        [("EVALSHA",)],
+        [("HGETALL", store.keys.control("run_1")), ("TIME",)],
+        [("EVALSHA",)],
+    ]
+
+    chunks = await store.read_chunks("run_1", cursor)
+    round_trips.clear()
+    assert await store.wait_chunks("run_1", chunks[-1].cursor, 0.2) == ()
+    waiting = asyncio.create_task(store.wait_chunks("run_1", chunks[-1].cursor, 5))
+    await asyncio.sleep(0.1)
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b"three"])
+    assert [chunk.data for chunk in await waiting] == [b"three"]
+    wake_up = [("XREAD",), ("XRANGE", store.keys.chunks("run_1"))]
+    assert round_trips == [wake_up, wake_up, [("EVALSHA",)]]
+
+    round_trips.clear()
+    public = await store.read_public("run_1")
+    assert public is not None and not {PayloadKind.INPUT, PayloadKind.CHECKPOINT} & public.payloads.keys()
+    assert round_trips == [
+        [
+            ("HGETALL", store.keys.control("run_1")),
+            *(("GET", store.keys.payload("run_1", kind)) for kind in PUBLIC_PAYLOAD_KINDS),
+            ("LRANGE", store.keys.progress("run_1")),
+        ]
+    ]
+
+
+@pytest.mark.parametrize("read", ["read", "read_public"])
+@pytest.mark.parametrize("control_present", [False, True], ids=["orphan", "present"])
+async def test_wrong_type_keys_fail_closed_only_for_existing_executions(
+    redis_store, read: str, control_present: bool
+) -> None:
+    redis, store = redis_store
+    if control_present:
+        await store.submit(contract_control("jobs"), b"input")
+    await redis.hset(store.keys.payload("run_1", PayloadKind.RESULT), "wrong", "type")
+    await redis.set(store.keys.progress("run_1"), b"wrong type")
+
+    if control_present:
+        with pytest.raises(ExecutionStoreCorruptionError, match="invalid types"):
+            await getattr(store, read)("run_1")
+    else:
+        assert await getattr(store, read)("run_1") is None
+
+
+async def test_blocking_reads_use_only_the_viewer_client(redis_store) -> None:
+    redis, store = redis_store
+    viewer = Redis(connection_pool=ConnectionPool.from_url(os.environ["HAYHOOKS_TEST_REDIS_URL"], max_connections=1))
+    viewing = RedisExecutionStore(
+        redis, "jobs", viewer_client=viewer, config=store.config, key_prefix=store_prefix(store)
+    )
+    try:
+        control = await claim_one(viewing, lease_ms=10_000)
+        blocked = asyncio.create_task(viewing.wait_chunks("run_1", CHUNK_CURSOR_START, 5))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(ExecutionStoreError):
+            await viewing.wait_chunks("run_1", CHUNK_CURSOR_START, 5)
+        await viewing.transition("run_1", Heartbeat(control.fence, "worker", 0, 10_000))
+        await viewing.append_chunks("run_1", 1, control.fence, "worker", [b"chunk"])
+        assert [chunk.data for chunk in await blocked] == [b"chunk"]
+
+        deployment = DurableDeployment("jobs", "v1", viewing, SSERequest, lambda _context, _request: None)
+        cancelled = asyncio.create_task(deployment.wait_chunks("run_1", (await blocked)[0].cursor, 5))
+        await asyncio.sleep(0.05)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        await deployment.close()
+        assert await viewer.ping()
+        assert await viewing.wait_chunks("run_1", CHUNK_CURSOR_START, 0.05) == await blocked
+    finally:
+        await viewer.aclose()
+
+
+async def test_wait_detects_history_trimmed_while_blocked(redis_store) -> None:
+    _, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b"old"])
+    cursor = (await store.read_chunks("run_1", CHUNK_CURSOR_START))[-1].cursor
+    waiting = asyncio.create_task(store.wait_chunks("run_1", cursor, 5))
+    await asyncio.sleep(0.05)
+
+    await store.append_chunks(
+        "run_1",
+        1,
+        control.fence,
+        "worker",
+        [str(index).encode() for index in range(2 * store.config.max_stream_chunks)],
+    )
+
+    with pytest.raises(ChunkCursorExpiredError):
+        await waiting
+
+
+async def test_commits_beyond_the_lua_argument_limit(redis_store) -> None:
+    redis, store = redis_store
+    many = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(store.config, max_progress_events=10_000),
+        key_prefix=store_prefix(store),
+    )
+    control = await claim_one(many, lease_ms=10_000)
+    events = tuple(str(index).encode() for index in range(8_000))
+
+    await many.transition("run_1", Checkpoint(control.fence, "worker", 0, 10_000, b"checkpoint", events))
+
+    stored = await many.read("run_1")
+    assert stored is not None and [event.data for event in stored.progress] == list(events)
+
+
+async def test_sse_streams_through_redis_viewer_client(redis_store) -> None:
+    redis, store = redis_store
+    viewer = Redis.from_url(os.environ["HAYHOOKS_TEST_REDIS_URL"])
+    viewing = RedisExecutionStore(
+        redis,
+        "jobs",
+        viewer_client=viewer,
+        config=replace(store.config, max_stream_chunks=100),
+        key_prefix=store_prefix(store),
+    )
+
+    async def stream(context: DurableContext, request: SSERequest) -> dict[str, int]:
+        for index in range(request.chunks):
+            await context.stream_chunk({"index": index})
+        return {"chunks": request.chunks}
+
+    deployment = DurableDeployment(
+        "jobs",
+        "v1",
+        viewing,
+        SSERequest,
+        stream,
+        config=RuntimeConfig(poll_interval_seconds=0.05, lease_duration_ms=500),
+    )
+    app = FastAPI()
+    app.include_router(create_durable_router(deployment, owner_id_dependency=None))
+    await deployment.start()
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            submitted = (await client.post("/run-durable", json={"chunks": 5})).json()
+            body = (await client.get(submitted["links"]["stream"])).text
+    finally:
+        await deployment.close()
+        await viewer.aclose()
+
+    events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
+    assert events == ["chunk"] * 5 + ["completed"]

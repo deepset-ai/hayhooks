@@ -113,6 +113,24 @@ describe("TraceCard", () => {
     expect(freshCard).not.toHaveClass("trace-card-fresh-run")
   })
 
+  it("shows durable executions and checkpoint state", () => {
+    const trace = makeTrace({
+      root_span: makeSpan({ name: "hayhooks.durable.attempt" }),
+      tags: [
+        { key: "hayhooks.durable.execution_id", value: "execution-123" },
+        { key: "hayhooks.durable.attempt", value: "2" },
+        { key: "hayhooks.checkpoint", value: "true" },
+        { key: "hayhooks.success", value: "true" },
+      ],
+    })
+    render(<TraceCard trace={trace} isFresh={false} isLatest />)
+
+    expect(screen.getByText("durable")).toBeInTheDocument()
+    expect(screen.getByText("execution-123")).toBeInTheDocument()
+    expect(screen.getByText("checkpoint")).toBeInTheDocument()
+    expect(screen.queryByText("failed")).not.toBeInTheDocument()
+  })
+
   it("shows related tags for the selected span", () => {
     const childSpan = makeSpan({
       span_id: "span-child",

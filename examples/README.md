@@ -29,6 +29,7 @@ This directory contains various examples demonstrating different use cases and f
 
 | Example | Description | Key Features | Use Case |
 |---------|-------------|--------------|----------|
+| [durable_fastapi](./durable_fastapi/) | Durable Haystack Pipeline embedded in standalone FastAPI | • Redis recovery<br/>• Typed submit and resume<br/>• Authenticated ownership<br/>• Idempotency and SSE<br/>• Lifespan and health integration | Adding durable Pipeline or Agent work to an existing FastAPI service without a general workflow platform |
 | [api_key_auth](./programmatic/api_key_auth/) | API key authentication with a weather agent | • Programmatic `create_app()` usage<br/>• Middleware-based auth enforcement<br/>• Multiple keys via `HAYHOOKS_API_KEYS`<br/>• Swagger **Authorize** button support<br/>• Weather agent with tool calling | Protecting all Hayhooks endpoints with API-key authentication |
 
 ## Getting Started

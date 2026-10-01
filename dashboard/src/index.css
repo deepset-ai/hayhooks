@@ -300,6 +300,10 @@
   --glow-color: var(--kind-mcp);
 }
 
+.trace-card-fresh-durable {
+  --glow-color: var(--haystack-green);
+}
+
 .trace-card-fresh-run {
   --glow-color: var(--haystack-blue);
 }

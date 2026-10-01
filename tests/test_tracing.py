@@ -579,6 +579,26 @@ def test_haystack_component_spans_are_mirrored_when_flag_enabled(recording_trace
     assert {"key": "haystack.component.name", "value": "prompt_builder"} in child_span["tags"]
 
 
+def test_haystack_breakpoint_is_a_checkpoint_not_a_dashboard_error(recording_tracer, monkeypatch):
+    clear_live_traces()
+    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", True)
+    assert configure_tracing() is True
+    checkpoint_exception = type("BreakpointException", (Exception,), {"__module__": "haystack.core.errors"})
+
+    with (
+        trace_operation("hayhooks.durable.attempt", tags={"hayhooks.pipeline.name": "demo"}),
+        pytest.raises(checkpoint_exception),
+        haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "work"}),
+    ):
+        raise checkpoint_exception("Breaking at component work")
+
+    trace = get_recent_traces(since_ms=None, limit=10)[0]
+    child_tags = trace["root_span"]["children"][0]["tags"]
+    assert {"key": "hayhooks.checkpoint", "value": "true"} in child_tags
+    assert {"key": "hayhooks.success", "value": "true"} in child_tags
+    assert not any(tag["key"].startswith("hayhooks.error.") for tag in trace["tags"])
+
+
 def test_haystack_component_spans_are_mirrored_without_external_tracing(monkeypatch):
     clear_live_traces()
     disable_tracing()
