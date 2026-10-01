@@ -548,3 +548,89 @@ def test_immutable_run_route_reuses_the_registry_request_model(
         assert client.post("/double/run", json={"value": 21}).json() == {"result": 42}
         schemas = client.get("/openapi.json").json()["components"]["schemas"]
     assert app.state.pipeline_registry.get_metadata("double")["request_model"].__name__ in schemas
+
+
+OWNED_DURABLE_WRAPPER = DURABLE_WRAPPER.replace(
+    "from pydantic import BaseModel\n",
+    "from fastapi import HTTPException\nfrom fastapi import Request as HTTPRequest\nfrom pydantic import BaseModel\n",
+).replace(
+    "    def run_durable(",
+    """    DURABLE_OWNER_ID
+
+    def run_durable(""",
+)
+SYNC_OWNER = """def durable_owner_id(self, request: HTTPRequest) -> str:
+        if not (user := request.headers.get("x-user")):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return user"""
+ASYNC_OWNER = "async " + SYNC_OWNER
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+@pytest.mark.parametrize("owner_source", [SYNC_OWNER, ASYNC_OWNER], ids=["sync", "async"])
+def test_durable_owner_id_scopes_hosted_executions(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, wait_for_execution, owner_source: str
+) -> None:
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    source = OWNED_DURABLE_WRAPPER.replace("DURABLE_OWNER_ID", owner_source)
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": source})
+    alice, bob = {"x-user": "alice"}, {"x-user": "bob"}
+
+    with TestClient(create_app()) as client:
+        assert client.post("/jobs/run-durable", json={"value": 1}).status_code == 401
+        # Ordinary routes are not covered by the durable owner hook.
+        assert client.post("/jobs/run", json={"value": 1}).json() == {"result": 2}
+
+        submitted = client.post("/jobs/run-durable", json={"value": 2, "wait": True}, headers=alice)
+        assert submitted.status_code == 202
+        location = submitted.headers["Location"]
+        wait_for_execution(client, location, "waiting", headers=alice)
+        for method, path in (("get", ""), ("post", "/cancel"), ("post", "/resume"), ("get", "/stream")):
+            assert getattr(client, method)(location + path, headers=bob).status_code == 404
+        assert client.get(location).status_code == 401
+        assert client.post(f"{location}/resume", json={"approved": True}, headers=alice).status_code == 202
+        assert wait_for_execution(client, location, "completed", headers=alice)["result"] == {"value": 20}
+        assert "event: completed" in client.get(f"{location}/stream", headers=alice).text
+
+        # Idempotency keys are scoped per owner.
+        key = {"Idempotency-Key": "order-1"}
+        first = client.post("/jobs/run-durable", json={"value": 3}, headers={**alice, **key})
+        replay = client.post("/jobs/run-durable", json={"value": 3}, headers={**alice, **key})
+        other = client.post("/jobs/run-durable", json={"value": 3}, headers={**bob, **key})
+        assert replay.json()["execution_id"] == first.json()["execution_id"] != other.json()["execution_id"]
+        assert replay.headers["Idempotent-Replay"] == "true"
+        assert "Idempotent-Replay" not in other.headers
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_durable_owner_id_security_dependencies_appear_in_openapi(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    owner = """def durable_owner_id(
+        self, credentials: HTTPAuthorizationCredentials = Security(HTTPBearer())
+    ) -> str:
+        return credentials.credentials"""
+    source = OWNED_DURABLE_WRAPPER.replace("DURABLE_OWNER_ID", owner).replace(
+        "from fastapi import HTTPException\nfrom fastapi import Request as HTTPRequest\n",
+        "from fastapi import Security\nfrom fastapi.security import HTTPAuthorizationCredentials, HTTPBearer\n",
+    )
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": source})
+
+    with TestClient(create_app()) as client:
+        spec = client.get("/openapi.json").json()
+        assert client.post("/jobs/run-durable", json={"value": 1}).status_code in (401, 403)
+        assert (
+            client.post("/jobs/run-durable", json={"value": 1}, headers={"Authorization": "Bearer t"}).status_code
+            == 202
+        )
+    assert "HTTPBearer" in spec["components"]["securitySchemes"]
+    assert spec["paths"]["/jobs/run-durable"]["post"]["security"] == [{"HTTPBearer": []}]
+    assert "security" not in spec["paths"]["/jobs/run"]["post"]
+
+
+def test_durable_owner_id_requires_a_durable_wrapper(durable_pipelines_dir: Path) -> None:
+    source = ORDINARY_WRAPPER + "\n    def durable_owner_id(self, request) -> str:\n        return 'alice'\n"
+    write_tree(durable_pipelines_dir, {"double/pipeline_wrapper.py": source})
+    with pytest.raises(Exception, match="durable_owner_id requires run_durable or run_durable_async"):
+        create_app()

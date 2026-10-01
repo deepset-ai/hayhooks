@@ -59,7 +59,7 @@ from hayhooks.server.utils.deploy_utils import (
 )
 from hayhooks.server.utils.live_trace_stream import get_trace_stream_broadcaster
 from hayhooks.server.utils.models import PreparedPipeline
-from hayhooks.server.utils.module_loader import inspect_durable_runner, is_durable_wrapper
+from hayhooks.server.utils.module_loader import durable_owner_dependency, inspect_durable_runner, is_durable_wrapper
 from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy, check_cors_settings, settings
 
 if TYPE_CHECKING:
@@ -509,7 +509,7 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         except Exception as error:
             msg = f"Failed to build the durable deployment of pipeline '{name}': {error}"
             raise PipelineModeError(msg) from error
-        router = create_durable_router(deployment, owner_id_dependency=None)
+        router = create_durable_router(deployment, owner_id_dependency=durable_owner_dependency(wrapper))
         if conflicts := [
             route.path
             for route in router.routes

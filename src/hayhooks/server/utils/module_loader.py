@@ -12,7 +12,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import NoReturn, get_type_hints
+from typing import Any, NoReturn, get_type_hints
 
 from pydantic import BaseModel
 
@@ -286,6 +286,11 @@ def is_durable_wrapper(pipeline_wrapper: BasePipelineWrapper | type[BasePipeline
     )
 
 
+def durable_owner_dependency(pipeline_wrapper: BasePipelineWrapper) -> Callable[..., Any] | None:
+    """Return the wrapper's ``durable_owner_id`` override, the owner dependency of its durable routes, or ``None``."""
+    return pipeline_wrapper.durable_owner_id if _is_method_overridden(pipeline_wrapper, "durable_owner_id") else None
+
+
 def reject_durable_wrapper(pipeline_wrapper: BasePipelineWrapper | type[BasePipelineWrapper]) -> None:
     """
     Reject a wrapper class or instance that implements a durable run method.
@@ -357,6 +362,9 @@ def _validate_run_methods(pipeline_wrapper: BasePipelineWrapper) -> None:
         raise PipelineWrapperError(msg)
 
     if not (pipeline_wrapper._is_run_durable_implemented or pipeline_wrapper._is_run_durable_async_implemented):
+        if _is_method_overridden(pipeline_wrapper, "durable_owner_id"):
+            message = "durable_owner_id requires run_durable or run_durable_async"
+            raise PipelineWrapperError(message)
         return
     if pipeline_wrapper._is_run_durable_implemented == pipeline_wrapper._is_run_durable_async_implemented:
         message = "exactly one of run_durable or run_durable_async must be implemented"

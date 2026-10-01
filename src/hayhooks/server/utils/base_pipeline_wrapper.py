@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
 from pydantic import BaseModel
+from starlette.requests import Request
 
 from hayhooks.durable.context import DurableContext
 
@@ -94,6 +95,19 @@ class BasePipelineWrapper(ABC):
         """Asynchronously run one detached durable execution."""
         del context, request
         message = "run_durable_async not implemented"
+        raise NotImplementedError(message)
+
+    def durable_owner_id(self, request: Request) -> str:
+        """
+        Return the owner of a durable request; override it to scope durable executions to their owner.
+
+        The override is the FastAPI dependency of this wrapper's durable routes, so FastAPI resolves its
+        parameters: annotate ``request: Request``, or declare headers or security dependencies instead.
+        Raise ``HTTPException(401)`` for an unauthenticated caller. Executions of another owner answer
+        ``404``, and idempotency keys are scoped per owner.
+        """
+        del request
+        message = "durable_owner_id not implemented"
         raise NotImplementedError(message)
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
