@@ -495,6 +495,22 @@ async def test_retry_raised_inside_a_task_group_schedules_a_retry(deployment_fac
     )
 
 
+@pytest.mark.parametrize("error", [ExecutionLeaseLostError("other run"), ExecutionStoreError("other store")])
+async def test_store_errors_raised_by_application_code_fail_the_run(deployment_factory, error) -> None:
+    async def runner(_context: DurableContext, _request: Request) -> None:
+        raise error
+
+    deployment = await deployment_factory(runner)
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    persisted = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    assert (stored.control.status, stored.control.run_attempt, persisted.type) == (
+        ExecutionStatus.FAILED,
+        1,
+        type(error).__name__,
+    )
+
+
 async def test_explicit_zero_retry_delay_is_immediate(deployment_factory) -> None:
     attempts = 0
 

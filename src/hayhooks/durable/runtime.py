@@ -783,46 +783,33 @@ class DurableDeployment:
             for thread in tuple(claim.threads):
                 _track(self._draining_threads, thread)
 
-    async def _run_claim(  # noqa: C901
+    async def _run_claim(
         self,
         claim: _ClaimedExecution,
         context: DurableContext,
         request: BaseModel,
         worker_id: str,
     ) -> None:
+        if claim.control.cancel_requested_at_ms is not None:
+            error = DurableExecutionCancelledError("durable execution cancellation was requested")
+            await self._acknowledge_cancellation(claim, worker_id, error)
+            return
+        # Only application code runs in this try: store and lease errors it raises are application failures.
         try:
-            if claim.control.cancel_requested_at_ms is not None:
-                await self._acknowledge_cancellation(
-                    claim,
-                    worker_id,
-                    DurableExecutionCancelledError("durable execution cancellation was requested"),
-                )
-                return
-
             result = await self._invoke_application(claim, context, request)
             if self.result_model is not None:
                 result = self.result_model.model_validate(result).model_dump(mode="json")
             elif isinstance(result, BaseModel):
                 result = result.model_dump(mode="json")
-            first, events = claim.progress_snapshot()
-            await claim.transition(
-                Complete(
-                    fence=claim.control.fence,
-                    worker_id=worker_id,
-                    now_ms=0,
-                    result=encode_json(result, max_bytes=self.store.config.max_payload_bytes),
-                    progress_events=events,
-                    first_progress_sequence=first,
-                )
-            )
+            encoded = encode_json(result, max_bytes=self.store.config.max_payload_bytes)
         except _ExecutionSuspendedError:
             return
         except DurableExecutionCancelledError as error:
             await self._acknowledge_cancellation(claim, worker_id, error)
+            return
         except _RetryRequestedError as error:
             await self._schedule_retry(claim, error, worker_id)
-        except (asyncio.CancelledError, ExecutionLeaseLostError, ExecutionStoreError):
-            raise
+            return
         except Exception as error:
             if claim.application_cancelled:
                 raise asyncio.CancelledError from error
@@ -845,6 +832,18 @@ class DurableDeployment:
                     first_progress_sequence=first,
                 )
             )
+            return
+        first, events = claim.progress_snapshot()
+        await claim.transition(
+            Complete(
+                fence=claim.control.fence,
+                worker_id=worker_id,
+                now_ms=0,
+                result=encoded,
+                progress_events=events,
+                first_progress_sequence=first,
+            )
+        )
 
     async def _schedule_retry(self, claim: _ClaimedExecution, error: _RetryRequestedError, worker_id: str) -> None:
         """Requeue with backoff and wake a local worker once the retry is due."""
