@@ -313,7 +313,15 @@ are not run again.
 
 For an Agent, call `context.run_agent[_async](...)`. The adapter restores Agent
 state and checkpoints continuing loops after tools, on continuation exits, and
-after the final run.
+after the final run. Resume `messages` are applied even when the Agent suspended
+before its first step checkpoint.
+
+`context.retry()` / `retry_sync()` and `context.suspend()` / `suspend_sync()`
+work inside Pipeline components and Agent tools. Their control signals are not
+`Exception` subclasses, so `except Exception` does not intercept them; never
+catch `BaseException` around durable calls. A retry from a component resumes at
+the last explicit checkpoint and re-runs later components. A retry from a tool
+resumes at the last Agent step checkpoint.
 
 The adapter methods also take the context explicitly, so a runner can build its
 own `HaystackDurableAdapter` for each execution, for example from a Pipeline
@@ -340,6 +348,34 @@ Pipeline with approval, checkpoint recovery, and cancellation.
   the execution; it is not automatically retried.
 - **Cooperative cancellation:** call `context.check_cancelled()` around long
   operations. The engine cannot safely interrupt an arbitrary external call.
+- **Bounded lease ownership:** the local lease window starts before the claim
+  request. A worker stops treating the claim as its own once
+  `lease_duration_ms - lease_commit_safety_ms` passes without store
+  confirmation, regardless of socket timeouts. Preparation reads and pre-start
+  failure or release writes use the same bound, so a hung preparation frees its
+  worker slot on expiry and never starts user code. Durable calls then raise
+  `ExecutionLeaseLostError`; async applications are cancelled, and thread work
+  fails at its next durable call. Embedders should still set a worker-client
+  `socket_timeout` so half-open connections fail promptly.
+- **Store error retries:** heartbeats and commits retry transient store errors,
+  from `operational_backoff_min_seconds` up to
+  `operational_backoff_max_seconds`, until the lease window ends. A commit whose
+  reply was lost may log lease loss even when it landed; the stored status is
+  authoritative.
+- **Contained thread exits:** `SystemExit`, `KeyboardInterrupt`,
+  `GeneratorExit`, `StopIteration`, and `StopAsyncIteration` from a synchronous
+  runner or adapter thread fail the run as `RuntimeError`; the host keeps
+  running.
+- **Invalid stored data:** unreadable or invalid claimed input, checkpoint, or
+  progress data fails with a publicly readable `stored_execution_invalid`
+  error. Guarded recovery may discard unusable progress, and corrupt
+  best-effort chunks cannot block terminal recovery or capacity release.
+  Claims and maintenance instead remove undecodable controls from scheduling
+  indexes, log an error with the execution ID, and leave those records for
+  operator cleanup.
+- **Cancellation errors:** `DurableExecutionCancelledError` without a pending
+  cancellation request fails the run. With a pending request, cancellation
+  still wins and the run ends `canceled`.
 - **Buffered progress:** `report_progress` is persisted with the next
   checkpoint or terminal transition. Call `checkpoint` when progress must be
   durable immediately.
