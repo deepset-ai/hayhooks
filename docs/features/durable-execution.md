@@ -81,6 +81,63 @@ never reroutes ordinary requests. Set `durable_resume_model` to accept typed
 resume input. The [durable execution example](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_execution)
 covers checkpoints, retries, approval, and cancellation.
 
+### Owner scoping
+
+Durable routes use bearer-ID access unless the wrapper overrides
+`durable_owner_id`, synchronously or asynchronously. Hayhooks uses that method
+as a FastAPI dependency for `run-durable` and `/executions/...` only; ordinary
+`/run`, chat, and compatibility routes are unaffected. Return a stable user or
+tenant ID. The runner receives it as `context.owner_id`, executions belonging
+to another owner return `404`, and idempotency keys are scoped per owner. Raise
+`HTTPException(401)` or `HTTPException(403)` to reject a request.
+
+An authenticating proxy can supply a trusted identity header. It must remove
+any caller-supplied copy and set `x-user` only after authentication:
+
+```python
+from fastapi import HTTPException, Request as HTTPRequest
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def durable_owner_id(self, request: HTTPRequest) -> str:
+        if not (owner := request.headers.get("x-user")):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return owner
+```
+
+For bearer authentication, declare a security dependency and validate the
+token before returning its principal. `HTTPBearer` only extracts credentials;
+it does not authenticate them. The `Security` annotation also exposes the
+scheme in OpenAPI:
+
+```python
+from typing import Annotated
+
+from fastapi import Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from my_app.auth import validate_token
+
+bearer = HTTPBearer()
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def durable_owner_id(
+        self,
+        credentials: Annotated[HTTPAuthorizationCredentials, Security(bearer)],
+    ) -> str:
+        principal = validate_token(credentials.credentials)  # Raises 401 or 403 when invalid.
+        return principal.subject
+```
+
+FastAPI treats parameters without its annotations as query parameters.
+Browser `EventSource` cannot send authorization headers, so use an authenticated
+cookie or a fetch-based SSE client when the owner dependency needs credentials.
+Adding owner scoping to an existing pipeline makes its earlier unscoped
+executions unreachable over HTTP. Roll every replica over together: an older
+unscoped replica still grants bearer-ID access, including to executions created
+with an owner ID.
+
 ### What durable mode changes
 
 | | Default mode | Durable mode |
@@ -512,8 +569,9 @@ promise exactly-once external side effects.
 The server uses two Redis clients built from `HAYHOOKS_DURABLE_REDIS_URL`: one
 for workers, and one for SSE viewers, whose connection pool of
 `HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS` connections bounds the concurrent durable
-streams per process. Durable routes use bearer-ID access; put authentication in
-front of the server for multi-user deployments.
+streams per process. Durable routes use bearer-ID access unless the wrapper
+implements `durable_owner_id`. Multi-user deployments should implement it and
+still authenticate at the edge.
 
 ### Hosts with short kill deadlines
 

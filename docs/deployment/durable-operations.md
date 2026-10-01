@@ -21,7 +21,9 @@ new revision.
 Without owner scoping, execution IDs are access tokens. They appear in logs and
 in the tracing dashboard as `hayhooks.durable.execution_id`; restrict access to
 both. All callers also share one idempotency-key namespace, so use unguessable
-keys such as UUIDs.
+keys such as UUIDs. Multi-user durable-mode wrappers should implement
+`durable_owner_id` and still authenticate at the edge; IDs and logs remain
+sensitive even when requests are owner-scoped.
 
 With the Hayhooks server, run durable wrappers in
 [durable mode](../features/durable-execution.md#durable-mode):

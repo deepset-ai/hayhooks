@@ -193,6 +193,8 @@ Status codes:
 
 - `200`: inspection, terminal replay, or terminal cancellation result;
 - `202`: accepted submission, cancellation request, or resume;
+- `401` or `403`: rejected by the wrapper's `durable_owner_id` dependency in
+  durable mode;
 - `404`: missing execution or owner mismatch;
 - `409`: an idempotency key was reused within the same deployment and owner
   with different explicitly sent request fields, or a revision or resume-state
