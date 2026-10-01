@@ -192,3 +192,13 @@ def test_remote_cli_commands_are_governed_by_the_target_server(
             time.sleep(0.02)
         time.sleep(0.2)
         assert log.read_text().count('HTTP/1.1"') - requests_before == requests == 1
+
+
+def test_cli_refuses_multiple_workers_in_durable_mode() -> None:
+    started = time.monotonic()
+    result = _cli("run", "--workers", "2", durable=True)
+
+    assert result.returncode == 1
+    assert "--workers 2 is not supported" in result.stdout + result.stderr
+    # It exits before uvicorn forks, so no worker is ever respawned.
+    assert time.monotonic() - started < 30

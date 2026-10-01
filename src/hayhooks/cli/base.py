@@ -130,6 +130,14 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
     from hayhooks.server.logger import log
     from hayhooks.settings import settings
 
+    if settings.durable_mode and workers > 1:
+        log.error(
+            "Durable mode serves one process per server: --workers {} is not supported. "
+            "Run more replicas of 'hayhooks run' instead; they share the durable Redis store.",
+            workers,
+        )
+        raise typer.Exit(code=1)
+
     # Fill defaults from settings only when command is executed
     host = host or settings.host
     port = port or settings.port
