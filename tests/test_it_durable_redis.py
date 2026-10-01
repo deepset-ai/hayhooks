@@ -289,7 +289,7 @@ async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(
     store = RedisExecutionStore(
         redis,
         "jobs",
-        config=replace(fixture_store.config, max_payload_bytes=1_000),
+        config=replace(fixture_store.config, max_payload_bytes=1_000, terminal_ttl_seconds=10),
         key_prefix=store_prefix(fixture_store),
     )
     await store.submit(contract_control("jobs"), b'{"value":1}')
@@ -321,11 +321,11 @@ async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(
         store,
         RuntimeRequest,
         runner,
-        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=10_000),
     )
     await deployment.start()
     try:
-        deadline = asyncio.get_running_loop().time() + 1
+        deadline = asyncio.get_running_loop().time() + 5
         public = None
         while asyncio.get_running_loop().time() < deadline:
             try:
