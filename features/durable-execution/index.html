@@ -1,0 +1,3051 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deploy and serve Haystack Pipelines and Agents as REST APIs">
+      
+      
+        <meta name="author" content="deepset">
+      
+      
+        <link rel="canonical" href="https://deepset-ai.github.io/hayhooks/features/durable-execution/">
+      
+      
+        <link rel="prev" href="../../concepts/agent-deployment/">
+      
+      
+        <link rel="next" href="../openai-compatibility/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Durable Execution - Hayhooks</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#durable-execution" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Hayhooks" class="md-header__button md-logo" aria-label="Hayhooks" data-md-component="logo">
+      
+  <img src="../../assets/haystack-icon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Hayhooks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Durable Execution
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/deepset-ai/hayhooks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deepset-ai/hayhooks
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/quick-start/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concepts/pipeline-deployment/" class="md-tabs__link">
+          
+  
+  
+  Core Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  Features
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/running-pipelines/" class="md-tabs__link">
+          
+  
+  
+  Advanced Usage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/development-best-practices/" class="md-tabs__link">
+          
+  
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/deployment_guidelines/" class="md-tabs__link">
+          
+  
+  
+  Deployment
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../examples/overview/" class="md-tabs__link">
+          
+  
+  
+  Examples
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/api-reference/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../about/license/" class="md-tabs__link">
+          
+  
+  
+  About
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Hayhooks" class="md-nav__button md-logo" aria-label="Hayhooks" data-md-component="logo">
+      
+  <img src="../../assets/haystack-icon.png" alt="logo">
+
+    </a>
+    Hayhooks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/deepset-ai/hayhooks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deepset-ai/hayhooks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start-docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start with Docker Compose
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Core Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/pipeline-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/pipeline-wrapper/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PipelineWrapper
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/yaml-pipeline-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    YAML Pipeline Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/agent-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Durable Execution
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Durable Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#durable-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Durable mode
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Durable mode">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#owner-scoping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Owner scoping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-durable-mode-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What durable mode changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Startup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#imports-and-source-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Imports and source files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#revisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revisions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#write-a-durable-runner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write a durable runner
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reliability-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reliability semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rest-sse-and-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        REST, SSE, and ownership
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#host-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Host lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Host lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hosts-with-short-kill-deadlines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hosts with short kill deadlines
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparison-with-temporal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comparison with Temporal
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operations-and-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operations and limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../openai-compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAI Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../a2a-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A2A Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../chainlit-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chainlit Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../openwebui-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Open WebUI Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../file-upload-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    File Upload Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../file-response-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    File Response Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Usage
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Advanced Usage
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced/running-pipelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running Pipelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced/advanced-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced/code-sharing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Sharing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/development-best-practices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Best Practices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/production-best-practices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production Best Practices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deployment
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/deployment_guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/durable-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Durable Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/durable-fastapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standalone FastAPI Durable Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/chat-with-website/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chat with Website
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/rag-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RAG System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/async-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Async Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/openwebui-events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Open WebUI Events
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tracing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    About
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    About
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about/license/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    License
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="durable-execution">Durable Execution<a class="headerlink" href="#durable-execution" title="Permanent link">&para;</a></h1>
+<p>Durable execution lets a typed Haystack Pipeline or Agent continue after the
+HTTP request has returned and recover after a process restart. Redis
+stores the execution state; workers can resume from explicit checkpoints
+without restarting completed Pipeline work or an Agent loop from the beginning.</p>
+<p>Install the optional dependencies and start Redis 6.2 or newer, or Valkey 7.2 or newer:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"hayhooks[durable]"</span>
+docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>examples/durable-compose.yaml<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>The durable extra installs <code>redis&gt;=5.0.1,&lt;9</code>. Durable execution requires
+Haystack 3.1 or newer. Use the memory store only for tests and local
+development; it does not survive process loss.</p>
+<p>There are two ways to host durable work:</p>
+<ul>
+<li><strong>Durable mode.</strong> The Hayhooks server loads a fixed set of pipeline wrappers at
+  startup and serves each durable wrapper with detached-execution routes. See
+  <a href="#durable-mode">Durable mode</a>.</li>
+<li><strong>The portable engine.</strong> Any asyncio application hosts it with
+  <code>DurableDeployment</code>, <code>DurableRuntime</code>, an execution store, and, for FastAPI,
+  <code>create_durable_router</code>. See <a href="#write-a-durable-runner">Write a durable runner</a>.</li>
+</ul>
+<p>Live deployment, the default server mode, rejects a wrapper that implements
+<code>run_durable</code> or <code>run_durable_async</code>: <code>422</code> over HTTP, and <code>PipelineModeError</code>
+from Python, MCP, and server startup, which fails instead of skipping the
+wrapper. The error names <code>HAYHOOKS_DURABLE_MODE</code>, the setting that serves it.</p>
+<p><code>import hayhooks.durable</code> and its core modules depend only on Pydantic, Loguru,
+and the standard library. The integrations load on first use from their own
+modules: <code>create_durable_router</code> needs FastAPI, <code>hayhooks.durable.haystack</code>
+needs Haystack, and <code>hayhooks.durable.redis</code> needs Redis.</p>
+<h2 id="durable-mode">Durable mode<a class="headerlink" href="#durable-mode" title="Permanent link">&para;</a></h2>
+<p>Durable mode fixes the pipeline set when the server starts. Stage the complete
+pipelines directory, then start the server with durable mode enabled:</p>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>examples/durable-compose.yaml<span class="w"> </span>up<span class="w"> </span>-d
+<span class="nb">export</span><span class="w"> </span><span class="nv">HAYHOOKS_DURABLE_MODE</span><span class="o">=</span><span class="nb">true</span>
+hayhooks<span class="w"> </span>run<span class="w"> </span>--pipelines-dir<span class="w"> </span>examples/durable_execution/pipelines
+</code></pre></div>
+<p>A durable wrapper sets a <code>durable_revision</code> and implements exactly one of
+<code>run_durable</code> or <code>run_durable_async</code>, taking a <code>DurableContext</code> and a Pydantic
+request model:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">haystack</span><span class="w"> </span><span class="kn">import</span> <span class="n">Pipeline</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">hayhooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">BasePipelineWrapper</span><span class="p">,</span> <span class="n">DurableContext</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Request</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Result</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PipelineWrapper</span><span class="p">(</span><span class="n">BasePipelineWrapper</span><span class="p">):</span>
+    <span class="n">durable_revision</span> <span class="o">=</span> <span class="s2">"jobs-v1"</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pipeline</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_durable_async</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">DurableContext</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="n">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Result</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Result</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">request</span><span class="o">.</span><span class="n">value</span> <span class="o">*</span> <span class="mi">2</span><span class="p">)</span>
+</code></pre></div>
+<p>Each durable wrapper gets <code>POST /{name}/run-durable</code> and the execution routes
+under <code>/{name}/executions/</code>. A wrapper that also implements <code>run_api</code> keeps its
+ordinary <code>/{name}/run</code> endpoint, which still runs synchronously; durable mode
+never reroutes ordinary requests. Set <code>durable_resume_model</code> to accept typed
+resume input. The <a href="https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_execution">durable execution example</a>
+covers checkpoints, retries, approval, and cancellation.</p>
+<h3 id="owner-scoping">Owner scoping<a class="headerlink" href="#owner-scoping" title="Permanent link">&para;</a></h3>
+<p>Durable routes use bearer-ID access unless the wrapper overrides
+<code>durable_owner_id</code>, synchronously or asynchronously. Hayhooks uses that method
+as a FastAPI dependency for <code>run-durable</code> and <code>/executions/...</code> only; ordinary
+<code>/run</code>, chat, and compatibility routes are unaffected. Return a stable user or
+tenant ID. The runner receives it as <code>context.owner_id</code>, executions belonging
+to another owner return <code>404</code>, and idempotency keys are scoped per owner. Raise
+<code>HTTPException(401)</code> or <code>HTTPException(403)</code> to reject a request.</p>
+<p>An authenticating proxy can supply a trusted identity header. It must remove
+any caller-supplied copy and set <code>x-user</code> only after authentication:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">HTTPException</span><span class="p">,</span> <span class="n">Request</span> <span class="k">as</span> <span class="n">HTTPRequest</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PipelineWrapper</span><span class="p">(</span><span class="n">BasePipelineWrapper</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">durable_owner_id</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="n">HTTPRequest</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">owner</span> <span class="o">:=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"x-user"</span><span class="p">)):</span>
+            <span class="k">raise</span> <span class="n">HTTPException</span><span class="p">(</span><span class="n">status_code</span><span class="o">=</span><span class="mi">401</span><span class="p">,</span> <span class="n">detail</span><span class="o">=</span><span class="s2">"Authentication required"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">owner</span>
+</code></pre></div>
+<p>For bearer authentication, declare a security dependency and validate the
+token before returning its principal. <code>HTTPBearer</code> only extracts credentials;
+it does not authenticate them. The <code>Security</code> annotation also exposes the
+scheme in OpenAPI:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotated</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">Security</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi.security</span><span class="w"> </span><span class="kn">import</span> <span class="n">HTTPAuthorizationCredentials</span><span class="p">,</span> <span class="n">HTTPBearer</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">my_app.auth</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_token</span>
+
+<span class="n">bearer</span> <span class="o">=</span> <span class="n">HTTPBearer</span><span class="p">()</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PipelineWrapper</span><span class="p">(</span><span class="n">BasePipelineWrapper</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">durable_owner_id</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">credentials</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="n">HTTPAuthorizationCredentials</span><span class="p">,</span> <span class="n">Security</span><span class="p">(</span><span class="n">bearer</span><span class="p">)],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">principal</span> <span class="o">=</span> <span class="n">validate_token</span><span class="p">(</span><span class="n">credentials</span><span class="o">.</span><span class="n">credentials</span><span class="p">)</span>  <span class="c1"># Raises 401 or 403 when invalid.</span>
+        <span class="k">return</span> <span class="n">principal</span><span class="o">.</span><span class="n">subject</span>
+</code></pre></div>
+<p>FastAPI treats parameters without its annotations as query parameters.
+Browser <code>EventSource</code> cannot send authorization headers, so use an authenticated
+cookie or a fetch-based SSE client when the owner dependency needs credentials.
+Adding owner scoping to an existing pipeline makes its earlier unscoped
+executions unreachable over HTTP. Roll every replica over together: an older
+unscoped replica still grants bearer-ID access, including to executions created
+with an owner ID.</p>
+<h3 id="what-durable-mode-changes">What durable mode changes<a class="headerlink" href="#what-durable-mode-changes" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Default mode</th>
+<th>Durable mode</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pipeline set</td>
+<td>Startup directory plus live deploy/undeploy</td>
+<td>The startup directory, fixed until restart</td>
+</tr>
+<tr>
+<td>Deploy/undeploy HTTP routes</td>
+<td>Available</td>
+<td>Absent, including from OpenAPI (<code>404</code>)</td>
+</tr>
+<tr>
+<td>MCP <code>deploy_pipeline</code>/<code>undeploy_pipeline</code> tools</td>
+<td>Available</td>
+<td>Neither listed nor callable</td>
+</tr>
+<tr>
+<td>Python deployment helpers</td>
+<td>Available</td>
+<td>Raise <code>PipelineModeError</code> before any side effect</td>
+</tr>
+<tr>
+<td>Durable wrappers</td>
+<td>Rejected</td>
+<td>Served by the main HTTP server</td>
+</tr>
+<tr>
+<td>Startup</td>
+<td><code>HAYHOOKS_STARTUP_DEPLOY_*</code> strategy; failing pipelines are skipped, but a durable wrapper stops startup because it requires durable mode</td>
+<td>Sequential, and any failure stops startup</td>
+</tr>
+<tr>
+<td>Source directory</td>
+<td>Deployments may write to it</td>
+<td>Never written, including automatic bytecode</td>
+</tr>
+</tbody>
+</table>
+<p>Ordinary run, OpenAI-compatible, streaming, file, dashboard, and Chainlit
+endpoints behave the same in both modes. <code>GET /status</code> reports <code>durable_mode</code>,
+so clients can tell which kind of server they are talking to.</p>
+<p>Remote CLI commands such as <code>hayhooks pipeline deploy-files</code> stay available
+whatever the local setting is: the target server decides. Against a
+durable-mode server they fail with <code>404 Not Found</code>, because the deployment
+endpoints do not exist there.</p>
+<h3 id="startup">Startup<a class="headerlink" href="#startup" title="Permanent link">&para;</a></h3>
+<p>Startup loads every entry of <code>HAYHOOKS_PIPELINES_DIR</code> and fails if any of them
+fails, so a typo never becomes a silently missing pipeline:</p>
+<ul>
+<li>The directory must exist and be readable; an empty directory is valid.</li>
+<li>Top-level <code>.yml</code>/<code>.yaml</code> files are YAML pipelines, and first-level
+  directories are wrapper pipelines. A directory without <code>pipeline_wrapper.py</code>
+  fails startup, including a leftover one that holds only <code>__pycache__</code>. Entries starting with a dot and <code>__pycache__</code> are skipped;
+  other files are ignored.</li>
+<li>Names are the file stem or directory name, restricted to letters, digits,
+  <code>_</code>, and <code>-</code>. Two definitions with the same name, or a name whose routes a
+  server route or mount would shadow (such as <code>status</code> or the dashboard path),
+  fail startup.</li>
+<li><code>files_to_ignore_patterns</code> and the startup deployment strategy settings do
+  not apply.</li>
+</ul>
+<p>A failed startup exits the process: fix the pipeline and restart. To change the
+pipeline set, replace the directory and restart or replace the process. Ordinary
+wrappers need neither Redis nor the durable extra; the server creates its
+durable runtime and Redis clients only when at least one durable wrapper is
+loaded.</p>
+<h3 id="imports-and-source-files">Imports and source files<a class="headerlink" href="#imports-and-source-files" title="Permanent link">&para;</a></h3>
+<p>Wrapper packages load under a private import root, <code>_hayhooks_registry</code>, instead
+of their public names, and their directories are not added to <code>sys.path</code>. Use
+relative imports for wrapper-local modules (<code>from .helpers import tool</code>), and
+installed packages or <code>HAYHOOKS_ADDITIONAL_PYTHON_PATH</code> for shared code. A
+pipeline can therefore be named after a real module, such as <code>json</code>, without
+shadowing it.</p>
+<p>The module path of a pipeline's wrapper depends only on its name, never on the
+source location, so checkpoints written before a restart or a move of the
+source still resolve. The server logs each wrapper module at startup, and
+<code>hayhooks.server.pipelines.loader.registry_module_name(name)</code> returns it.
+Haystack's deserialization allowlist treats a name as a prefix, so allowlist
+the pipeline's package, the module path without <code>.pipeline_wrapper</code>, to cover
+the wrapper and its wrapper-local modules such as <code>helpers</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">HAYSTACK_DESERIALIZATION_ALLOWLIST</span><span class="o">=</span><span class="s2">"_hayhooks_registry.p_6a6f6273"</span>
+</code></pre></div>
+<p>Durable mode sets <code>sys.dont_write_bytecode</code> for the whole process before
+loading, so neither the wrappers nor anything they import later write
+<code>__pycache__</code> files into the source tree. Existing bytecode is still read.
+Hayhooks is not a sandbox, though: wrapper code can write files deliberately.
+Serve production pipelines from an immutable image or a read-only, versioned
+mount.</p>
+<p>Run one durable-mode app per process. The import root, the bytecode policy,
+and the dashboard trace stream are process-wide, so building a second app in
+the same process replaces the first app's pipeline modules.
+<code>hayhooks run --workers N</code> exits with an error when <code>N &gt; 1</code> in durable mode.
+Scale with replicas that share Redis, and do not use another multi-worker
+supervisor such as <code>uvicorn --workers</code> or gunicorn. Standalone
+<code>hayhooks mcp run</code> and <code>hayhooks a2a run</code> also honor <code>HAYHOOKS_DURABLE_MODE</code>:
+they load the directory the same way and serve its ordinary pipelines, but a
+durable wrapper fails their startup, since only the main HTTP server runs
+durable workers.</p>
+<h3 id="revisions">Revisions<a class="headerlink" href="#revisions" title="Permanent link">&para;</a></h3>
+<p><code>durable_revision</code> is a compatibility key chosen by the wrapper author, not a
+code hash. Keep it across edits whose workers can still continue existing
+inputs and checkpoints, and change it only when they cannot. Claims and resumes
+require an exact match, so after a change, nonterminal work of the old revision
+needs a process that still serves it. The pipeline name and the module paths of
+serialized symbols are part of the same contract: renaming either is a
+definition change for persisted work. Keep unrelated deployments apart with
+names or <code>HAYHOOKS_DURABLE_REDIS_KEY_PREFIX</code>, not with the import root.</p>
+<h2 id="design-goals">Design goals<a class="headerlink" href="#design-goals" title="Permanent link">&para;</a></h2>
+<p>The engine is deliberately focused on long-running Haystack work:</p>
+<ul>
+<li><strong>Stay close to Haystack.</strong> Pipeline snapshots and Agent state are the
+  checkpoint model; authors do not have to rewrite their application as a
+  separate workflow DSL.</li>
+<li><strong>Embed cleanly.</strong> Any asyncio application can host the runtime and store
+  without the Hayhooks server; a FastAPI host adds the typed router.</li>
+<li><strong>Recover safely across replicas.</strong> Atomic transitions, leases, and fencing
+  prevent an expired worker from committing after another worker has taken over.</li>
+<li><strong>Keep the operational footprint small.</strong> A Python service and Redis provide
+  the API, workers, scheduling indexes, checkpoints, retention, and recovery.</li>
+</ul>
+<p>This is not transparent persistence of an arbitrary Python call stack. Authors
+choose meaningful checkpoint boundaries, and external side effects must be
+idempotent because execution is at least once.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Detached execution</td>
+<td>Submission returns <code>202</code> while work continues in worker slots</td>
+</tr>
+<tr>
+<td>Restart recovery</td>
+<td>Redis-backed work is reclaimed after an expired lease</td>
+</tr>
+<tr>
+<td>Pipeline checkpoints</td>
+<td>Resume from one selected component boundary or a Haystack failure snapshot</td>
+</tr>
+<tr>
+<td>Agent checkpoints</td>
+<td>Restore Agent state around continuing tool and LLM loops</td>
+</tr>
+<tr>
+<td>Retry control</td>
+<td>Separate budgets for crash recovery and retries requested by application code</td>
+</tr>
+<tr>
+<td>Human-in-the-loop</td>
+<td>Persist a public wait reason and continue with typed resume input</td>
+</tr>
+<tr>
+<td>Cancellation</td>
+<td>Cooperative cancellation with a durable terminal result</td>
+</tr>
+<tr>
+<td>Client recovery</td>
+<td>Inspect authoritative state or reconnect an SSE stream with <code>Last-Event-ID</code></td>
+</tr>
+<tr>
+<td>Safe submission retries</td>
+<td>Caller-supplied idempotency keys reject conflicting work</td>
+</tr>
+<tr>
+<td>Multi-replica safety</td>
+<td>Revision-aware claims, renewable leases, and monotonic fences</td>
+</tr>
+<tr>
+<td>Bounded storage</td>
+<td>Limits for admission, payloads, progress, stream chunks, and terminal retention</td>
+</tr>
+</tbody>
+</table>
+<h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart LR
+    Client[API client] --&gt; Router[Typed FastAPI router]
+    Router --&gt; Deployment[Durable deployment]
+    Deployment --&gt; Store[(Redis execution store)]
+    Workers[Worker slots and lease maintenance] &lt;--&gt; Store
+    Workers --&gt; Runner[Pipeline or Agent runner]
+    Runner --&gt; Adapter[Haystack checkpoint adapter]
+    Adapter --&gt; Haystack[Pipeline or Agent]
+    Runner --&gt; Context[DurableContext]
+    Context --&gt; Store
+    Router --&gt; Store</code></pre>
+<p>One <code>DurableDeployment</code> binds a name and immutable revision to a Pydantic
+request model, a runner, a Haystack adapter, and an execution store.</p>
+<ol>
+<li>The FastAPI router authenticates the caller, validates the request, and
+   atomically stores a queued execution. An idempotency key can bind retries of
+   the same submission to that execution.</li>
+<li>A worker claims runnable work for its exact deployment revision. The claim
+   receives a renewable lease and a fence number.</li>
+<li><code>DurableContext</code> checkpoints Pipeline or Agent state, application state,
+   progress, waits, and retry decisions. Redis applies every lifecycle change
+   atomically through the same state reducer used by the memory store.</li>
+<li>A worker may commit only while it still owns the current fence. Each
+   worker-owned Redis write, including heartbeats and stream chunks, re-checks
+   ownership and Redis time against the lease inside one script before it
+   writes. After a crash, lease maintenance requeues the execution or fails it
+   on its <code>max_run_attempts</code>-th lost lease.</li>
+<li>Inspection and SSE read Redis-backed state. They do not depend on the worker
+   or client connection that originally submitted the work.</li>
+</ol>
+<h2 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>stateDiagram-v2
+    [*] --&gt; queued: submit
+    queued --&gt; running: fenced claim
+    queued --&gt; canceled: cancel
+    running --&gt; queued: retry or expired lease
+    running --&gt; waiting: suspend
+    running --&gt; completed: complete
+    running --&gt; failed: error or max_run_attempts-th lost lease
+    running --&gt; canceled: requested cancellation wins
+    waiting --&gt; queued: resume
+    waiting --&gt; canceled: cancel</code></pre>
+<p>The state reducer is the lifecycle authority. Redis adds authoritative time,
+runnable and lease indexes, atomic transactions, retention, and cross-process
+recovery.</p>
+<h2 id="write-a-durable-runner">Write a durable runner<a class="headerlink" href="#write-a-durable-runner" title="Permanent link">&para;</a></h2>
+<p>A runner takes a <code>DurableContext</code> and a validated Pydantic request. A
+deployment binds it to a name, an immutable revision, and a store; a Pydantic
+resume model is optional.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">haystack</span><span class="w"> </span><span class="kn">import</span> <span class="n">Pipeline</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">hayhooks.durable</span><span class="w"> </span><span class="kn">import</span> <span class="n">DurableContext</span><span class="p">,</span> <span class="n">DurableDeployment</span><span class="p">,</span> <span class="n">DurableRuntime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">hayhooks.durable.haystack</span><span class="w"> </span><span class="kn">import</span> <span class="n">HaystackDurableAdapter</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Request</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Approval</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">approved</span><span class="p">:</span> <span class="nb">bool</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">context</span><span class="p">:</span> <span class="n">DurableContext</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="n">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">context</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"approved"</span><span class="p">):</span>
+        <span class="n">resume_input</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">resume_input</span>
+        <span class="k">if</span> <span class="n">resume_input</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">context</span><span class="o">.</span><span class="n">suspend</span><span class="p">({</span><span class="s2">"kind"</span><span class="p">:</span> <span class="s2">"approval"</span><span class="p">,</span> <span class="s2">"message"</span><span class="p">:</span> <span class="s2">"Continue?"</span><span class="p">})</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">Approval</span><span class="o">.</span><span class="n">model_validate</span><span class="p">(</span><span class="n">resume_input</span><span class="p">)</span><span class="o">.</span><span class="n">approved</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"execution was rejected"</span><span class="p">)</span>
+        <span class="n">context</span><span class="o">.</span><span class="n">state</span><span class="p">[</span><span class="s2">"approved"</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">await</span> <span class="n">context</span><span class="o">.</span><span class="n">checkpoint</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"value"</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">value</span><span class="p">}</span>
+
+
+<span class="n">adapter</span> <span class="o">=</span> <span class="n">HaystackDurableAdapter</span><span class="p">(</span><span class="n">Pipeline</span><span class="p">())</span>
+<span class="n">deployment</span> <span class="o">=</span> <span class="n">DurableDeployment</span><span class="p">(</span>
+    <span class="s2">"jobs"</span><span class="p">,</span> <span class="s2">"jobs-v1"</span><span class="p">,</span> <span class="n">store</span><span class="p">,</span> <span class="n">Request</span><span class="p">,</span> <span class="n">run</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="n">adapter</span><span class="o">.</span><span class="n">kind</span><span class="p">,</span> <span class="n">resume_model</span><span class="o">=</span><span class="n">Approval</span><span class="p">,</span> <span class="n">adapter</span><span class="o">=</span><span class="n">adapter</span>
+<span class="p">)</span>
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">DurableRuntime</span><span class="p">((</span><span class="n">deployment</span><span class="p">,))</span>
+</code></pre></div>
+<p><code>context.resume_input</code> returns the resume input on its first read and <code>None</code>
+afterwards, so read it once into a variable, as above.</p>
+<p>For a Pipeline, call
+<code>context.run_pipeline[_async](data, checkpoint_at="component")</code>. The adapter
+persists a Haystack <code>PipelineSnapshot</code> before that component and also saves a
+snapshot supplied by <code>PipelineRuntimeError</code>. On recovery, completed components
+are not run again.</p>
+<p>For an Agent, call <code>context.run_agent[_async](...)</code>. The adapter restores Agent
+state and checkpoints continuing loops after tools, on continuation exits, and
+after the final run. Resume <code>messages</code> are applied even when the Agent suspended
+before its first step checkpoint.</p>
+<p><code>context.retry()</code> / <code>retry_sync()</code> and <code>context.suspend()</code> / <code>suspend_sync()</code>
+work inside Pipeline components and Agent tools. Their control signals are not
+<code>Exception</code> subclasses, so <code>except Exception</code> does not intercept them; never
+catch <code>BaseException</code> around durable calls. A retry from a component resumes at
+the last explicit checkpoint and re-runs later components. A retry from a tool
+resumes at the last Agent step checkpoint.</p>
+<p>The adapter methods also take the context explicitly, so a runner can build its
+own <code>HaystackDurableAdapter</code> for each execution, for example from a Pipeline
+definition carried in the request, and call <code>adapter.run_pipeline_async(context,
+data)</code>. The deployment then needs no shared adapter, and a new deployment
+instance with the same name and revision completes queued executions and resumes
+waiting ones with their original definition. The
+<a href="../../examples/durable-fastapi/">standalone FastAPI example</a> runs a complete
+Pipeline with approval, checkpoint recovery, and cancellation.</p>
+<h2 id="reliability-semantics">Reliability semantics<a class="headerlink" href="#reliability-semantics" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>At least once:</strong> a process can fail after an external effect and before its
+  checkpoint. Use an idempotency key derived from the execution ID and logical
+  step for every external write.</li>
+<li><strong>Two retry budgets:</strong> <code>max_run_attempts</code> bounds lost leases, so an execution
+  fails on its Nth expired lease. Graceful handoffs, resumes, and
+  <code>context.retry()</code> do not count toward it. <code>max_application_retries</code> bounds
+  <code>context.retry()</code> separately, while <code>attempt</code> numbers every claim. While a
+  retry is waiting, its public error is the retryable <code>RetryRequestedError</code>.
+  Exhausting the budget fails the run with <code>ApplicationRetriesExhaustedError</code>
+  and code <code>application_retries_exhausted</code>. The message passed to <code>retry()</code> is
+  logged and never stored. An ordinary unhandled application exception fails
+  the execution; it is not automatically retried.</li>
+<li><strong>Cooperative cancellation:</strong> call <code>context.check_cancelled()</code> around long
+  operations. The engine cannot safely interrupt an arbitrary external call.</li>
+<li><strong>Bounded lease ownership:</strong> the local lease window starts before the claim
+  request. A worker stops treating the claim as its own once
+  <code>lease_duration_ms - lease_commit_safety_ms</code> passes without store
+  confirmation, regardless of socket timeouts. Preparation reads and pre-start
+  failure or release writes use the same bound, so a hung preparation frees its
+  worker slot on expiry and never starts user code. Durable calls then raise
+  <code>ExecutionLeaseLostError</code>; async applications are cancelled, and thread work
+  fails at its next durable call. Embedders should still set a worker-client
+  <code>socket_timeout</code> so half-open connections fail promptly.</li>
+<li><strong>Store error retries:</strong> heartbeats and commits retry transient store errors,
+  from <code>operational_backoff_min_seconds</code> up to
+  <code>operational_backoff_max_seconds</code>, until the lease window ends. A commit whose
+  reply was lost may log lease loss even when it landed; the stored status is
+  authoritative.</li>
+<li><strong>Contained thread exits:</strong> <code>SystemExit</code>, <code>KeyboardInterrupt</code>,
+  <code>GeneratorExit</code>, <code>StopIteration</code>, and <code>StopAsyncIteration</code> from a synchronous
+  runner or adapter thread fail the run as <code>RuntimeError</code>; the host keeps
+  running. Async code, including the threads an async Haystack Agent starts
+  for synchronous tools, is not covered: <code>SystemExit</code> there stops the server.</li>
+<li><strong>Invalid stored data:</strong> unreadable or invalid claimed input, checkpoint, or
+  progress data fails with a publicly readable <code>stored_execution_invalid</code>
+  error. Guarded recovery may discard unusable progress, and corrupt
+  best-effort chunks cannot block terminal recovery or capacity release.
+  Claims and maintenance instead remove undecodable controls from scheduling
+  indexes, log an error with the execution ID, and leave those records for
+  operator cleanup.</li>
+<li><strong>Cancellation errors:</strong> <code>DurableExecutionCancelledError</code> without a pending
+  cancellation request fails the run. With a pending request, cancellation
+  still wins and the run ends <code>canceled</code>.</li>
+<li><strong>Buffered progress:</strong> <code>report_progress</code> is persisted with the next
+  checkpoint or terminal transition. Call <code>checkpoint</code> when progress must be
+  durable immediately.</li>
+<li><strong>Display-only streaming:</strong> streaming callbacks check ownership, encode and
+  queue chunks in the calling thread, and never wait for Redis or the event
+  loop. The first chunk after a quiet period flushes immediately; later chunks
+  flush at most once per 100 ms while work is pending, and always before the run
+  leaves <code>running</code>. Buffer size and pending wake-ups stay bounded even when the
+  event loop stalls. Chunks may be dropped without failing the execution, so
+  the terminal result remains the source of truth.</li>
+</ul>
+<p>Queued, running, and waiting executions are pinned to their deployment
+revision, and workers claim only a matching revision. Change the revision only
+for incompatible runner or Pipeline behavior, and keep serving the old revision
+until its live work drains. Terminal results remain readable until their
+configured TTL.</p>
+<h2 id="rest-sse-and-ownership">REST, SSE, and ownership<a class="headerlink" href="#rest-sse-and-ownership" title="Permanent link">&para;</a></h2>
+<p><code>create_durable_router(deployment, ...)</code> exposes typed submit, inspect,
+cancel, resume, and stream routes. Submission returns a random execution ID, <code>Location</code>, and links.
+The request and resume models appear in OpenAPI. See the
+<a href="../../reference/api-reference/#durable-execution">API reference</a> for the route
+and status-code contract.</p>
+<p>SSE streams are reattachable with <code>Last-Event-ID</code>. Viewers block on the chunk
+stream and receive chunks as soon as a worker flushes them. A <code>gap</code> event means
+that the requested bounded history has expired and the retained tail follows. A
+terminal <code>completed</code>, <code>failed</code>, or <code>canceled</code> event contains the authoritative
+execution projection. The first frame and every idle 15 seconds are heartbeat
+comments; undecodable entries are skipped. A finished run replays retained
+history and ends immediately. If its history expired, a new stream receives
+only the terminal event, while a resumed cursor receives <code>gap</code> and then the
+terminal event. A stream failure sends an <code>error</code> event without an <code>id</code> and
+ends; a deployment close ends the stream without a terminal event. Reconnect
+with the last cursor on any replica.</p>
+<p>Portable Python callers can use <code>DurableDeployment.get_control(...)</code> to read
+only the control snapshot with the same authorization checks as <code>get()</code>.
+Unlike <code>get()</code>, it allows a revision mismatch by default. <code>submit()</code> raises
+<code>ExecutionAdmissionError</code> when the deployment is not accepting submissions.</p>
+<p>Without an owner dependency, the router uses bearer-ID access: possession of a
+random execution ID grants access. Execution IDs appear in logs and in the
+tracing dashboard as <code>hayhooks.durable.execution_id</code>, so restrict access to
+both. A multi-user host should pass an
+<code>owner_id_dependency</code> to <code>create_durable_router</code>. The host authenticates the request and returns a stable
+user or tenant ID. The router scopes execution access and idempotency to that ID
+and hides owner mismatches as <code>404</code>.</p>
+<p>An idempotency key binds the deployment, owner, and request fields that the
+client actually sent. Unset defaults and the deployment revision are excluded,
+so a replay during a rolling deploy returns the existing execution and adding
+an optional field does not break clients that omit it. Sending a field
+explicitly, even with its default value, is a different request and returns
+<code>409</code>. Without an owner dependency, every caller shares one idempotency-key
+namespace; use unguessable keys such as UUIDs.</p>
+<h2 id="host-lifecycle">Host lifecycle<a class="headerlink" href="#host-lifecycle" title="Permanent link">&para;</a></h2>
+<p>The portable package does not manage the host application. The host owns
+runtime startup and shutdown, authentication, Redis client lifetime, and health
+reporting. The <a href="../../examples/durable-fastapi/">standalone FastAPI example</a>
+shows the complete integration; durable mode follows the same sequence in the
+Hayhooks server's lifespan.</p>
+<ul>
+<li><strong>Fixed membership.</strong> Pass every deployment to <code>DurableRuntime(...)</code> when you
+  construct it; a runtime cannot add or remove deployments. A host that binds
+  its pipeline late constructs the runtime at that moment.</li>
+<li><strong>One-way lifecycle.</strong> <code>start()</code> opens admission once and does nothing while
+  already active. <code>quiesce()</code> and <code>close()</code> stop a deployment for good, and a
+  later <code>start()</code> raises: use a new instance for a new lifecycle. When
+  <code>runtime.start()</code> fails, it closes every deployment and re-raises.</li>
+<li><strong>Close, then drain.</strong> <code>close()</code> stops admission, ends open streams, and gives
+  workers <code>shutdown_grace_seconds</code> to finish; it then cancels async work that is
+  still running and waits up to another grace period for it to stop. Repeated
+  calls share that deadline instead of starting a new one. <code>close()</code> can return while retained work
+  still runs, so a host that owns a shared Redis client awaits <code>wait_drained()</code>
+  after <code>close()</code>, even when <code>close()</code> raised, and only then closes the client.
+  Cancelling that wait does not cancel the work, and the wait can be repeated.</li>
+<li><strong>Stopped work is handed back.</strong> Async work that stops in response to
+  cancellation at the end of the grace releases its claim: its buffered chunks
+  are flushed, and the run returns to the queue
+  without counting toward <code>max_run_attempts</code>; the next claim is a new <code>attempt</code>,
+  so another process can claim it immediately. Progress since the last
+  checkpoint is lost, as after a crash. A pending cancellation wins, and the
+  run ends <code>canceled</code>.
+  A coroutine that suppresses cancellation or awaits cleanup keeps its claim,
+  heartbeats, and context access until it exits; <code>wait_drained()</code> waits for it.
+  An exception raised during shutdown cleanup also hands the claim back.
+  If release outlasts the close deadline, <code>wait_drained()</code> waits for that release.</li>
+<li><strong>Thread-backed work keeps its claim.</strong> Python cannot interrupt a thread, so
+  a synchronous runner, or a Pipeline thread started by <code>run_pipeline_async</code>,
+  keeps its claim, heartbeats, and Redis access after <code>close()</code>, and
+  <code>wait_drained()</code> waits for it to exit. Once its last Pipeline thread exits, an
+  async runner receives cancellation; it cannot start new engine threads after
+  the shutdown grace expires. If the host cancels a worker task
+  directly, its heartbeat stops, so that claim is handed back as well.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="nd">@asynccontextmanager</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">_app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">runtime</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+        <span class="k">yield</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">runtime</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">runtime</span><span class="o">.</span><span class="n">wait_drained</span><span class="p">()</span>
+            <span class="k">await</span> <span class="n">redis</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
+</code></pre></div>
+<p>In durable mode, the server reports readiness only after every durable
+deployment has started. On SIGTERM, uvicorn first stops accepting connections
+and waits up to <code>HAYHOOKS_GRACEFUL_SHUTDOWN_TIMEOUT</code> (5 seconds by default) for
+open requests. Durable SSE streams hold that wait and are then cancelled, while
+workers continue claiming. The server then closes all deployments, even when
+one fails, waits for retained work to drain, and only then closes its Redis
+clients: retained work keeps Redis and the event loop until it no longer owns a
+claim. Clients resume cancelled streams from their cursor.
+Graceful shutdown can therefore outlast <code>HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS</code>,
+which is the grace before cancelling workers, not a bound on shutdown. The
+server logs while it waits. Budget the process kill deadline for at least the
+HTTP grace plus twice the durable shutdown grace, with additional time for
+retained work. When a hard deadline is required, terminate the process
+externally, or set <code>HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN=true</code> (below);
+forced termination resumes through lease and checkpoint recovery and cannot
+promise exactly-once external side effects.</p>
+<p>The server uses two Redis clients built from <code>HAYHOOKS_DURABLE_REDIS_URL</code>: one
+for workers, and one for SSE viewers, whose connection pool of
+<code>HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS</code> connections bounds the concurrent durable
+streams per process. Durable routes use bearer-ID access unless the wrapper
+implements <code>durable_owner_id</code>. Multi-user deployments should implement it and
+still authenticate at the edge.</p>
+<h3 id="hosts-with-short-kill-deadlines">Hosts with short kill deadlines<a class="headerlink" href="#hosts-with-short-kill-deadlines" title="Permanent link">&para;</a></h3>
+<p>A platform that kills the process shortly after SIGTERM, such as Kubernetes with
+its default 30-second grace period, can cut retained threads off before they
+finish, leaving their runs to wait for lease expiry. Set
+<code>RuntimeConfig(release_running_on_close=True)</code>, or
+<code>HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN=true</code> in durable mode, to hand
+those runs over as well:
+at the end of the shutdown grace, <code>close()</code> releases the claims of threads that
+are still running. <code>wait_drained()</code> then returns once every claim is finished or
+released, without waiting for released threads, and the host can close Redis.</p>
+<p>A released thread keeps running user code until its next durable call
+(<code>checkpoint</code>, <code>report_progress</code>, <code>check_cancelled</code>, <code>stream_chunk</code>, <code>retry</code>, or
+<code>suspend</code>), which raises <code>ExecutionLeaseLostError</code> without touching Redis; the
+lease guard rejects any write already in flight. Until that call, its LLM and
+tool calls can overlap with the process that took the run over. Writes cannot
+overlap, which keeps the at-least-once contract. Engine threads are daemon
+threads, but Python waits at interpreter exit for threads a runner starts
+itself, such as <code>asyncio.to_thread</code> executor threads; the orchestrator's kill
+deadline bounds that delay.</p>
+<h2 id="comparison-with-temporal">Comparison with Temporal<a class="headerlink" href="#comparison-with-temporal" title="Permanent link">&para;</a></h2>
+<p>Temporal is a general distributed workflow platform based on deterministic
+<a href="https://docs.temporal.io/workflows">event-history replay</a>. Hayhooks durable
+execution is a smaller engine designed specifically for Haystack work.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Hayhooks durable execution</th>
+<th>Temporal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Best fit</td>
+<td>Long-running Haystack Pipelines and Agents hosted in Python/FastAPI</td>
+<td>General workflows spanning services, teams, and long periods</td>
+</tr>
+<tr>
+<td>Recovery model</td>
+<td>Explicit Pipeline/Agent snapshots in Redis</td>
+<td>Deterministic workflow replay plus Activities</td>
+</tr>
+<tr>
+<td>Included here</td>
+<td>Typed REST, checkpoints, retries, waits, cancellation, SSE, ownership, revision fencing</td>
+<td>These concerns are part of a broader workflow platform</td>
+</tr>
+<tr>
+<td>Not offered here</td>
+<td>Child workflows, durable timers and schedules, Signals/Queries/Updates, task-queue routing, search visibility, or multi-cluster operation</td>
+<td>Provides these broader orchestration capabilities</td>
+</tr>
+<tr>
+<td>Operational shape</td>
+<td>Embed the runtime and operate Redis</td>
+<td>Run or buy a separate Temporal Service and operate SDK workers</td>
+</tr>
+</tbody>
+</table>
+<p>Use Temporal when those orchestration features are requirements. Use the
+Hayhooks engine when the durable unit is already a Pipeline or Agent and you
+want restart recovery, human waits, retries, and reconnectable clients without
+introducing a general workflow platform.</p>
+<h2 id="operations-and-limitations">Operations and limitations<a class="headerlink" href="#operations-and-limitations" title="Permanent link">&para;</a></h2>
+<p>Read <a href="../../deployment/durable-operations/">Durable Operations</a> before changing
+polling, leases, capacity, retention, or Redis persistence. It covers rollout,
+recovery timing, monitoring, and incident response.</p>
+<p>Long-running A2A execution, A2A task persistence, push delivery, and A2A resume
+are not supported in this release. Existing A2A execution remains request-bound.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/deepset-ai/hayhooks" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://hub.docker.com/r/deepset/hayhooks" target="_blank" rel="noopener" title="hub.docker.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M349.9 236.3h-66.1v-59.4h66.1zm0-204.3h-66.1v60.7h66.1zm78.2 144.8H362v59.4h66.1zm-156.3-72.1h-66.1v60.1h66.1zm78.1 0h-66.1v60.1h66.1zm276.8 100c-14.4-9.7-47.6-13.2-73.1-8.4-3.3-24-16.7-44.9-41.1-63.7l-14-9.3-9.3 14c-18.4 27.8-23.4 73.6-3.7 103.8-8.7 4.7-25.8 11.1-48.4 10.7H2.4c-8.7 50.8 5.8 116.8 44 162.1 37.1 43.9 92.7 66.2 165.4 66.2 157.4 0 273.9-72.5 328.4-204.2 21.4.4 67.6.1 91.3-45.2 1.5-2.5 6.6-13.2 8.5-17.1zm-511.1-27.9h-66v59.4h66.1v-59.4zm78.1 0h-66.1v59.4h66.1zm78.1 0h-66.1v59.4h66.1zm-78.1-72.1h-66.1v60.1h66.1z"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://twitter.com/deepset_ai" target="_blank" rel="noopener" title="twitter.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M459.4 151.7c.3 4.5.3 9.1.3 13.6 0 138.7-105.6 298.6-298.6 298.6-59.5 0-114.7-17.2-161.1-47.1 8.4 1 16.6 1.3 25.3 1.3 49.1 0 94.2-16.6 130.3-44.8-46.1-1-84.8-31.2-98.1-72.8 6.5 1 13 1.6 19.8 1.6 9.4 0 18.8-1.3 27.6-3.6-48.1-9.7-84.1-52-84.1-103v-1.3c14 7.8 30.2 12.7 47.4 13.3-28.3-18.8-46.8-51-46.8-87.4 0-19.5 5.2-37.4 14.3-53C87.4 130.8 165 172.4 252.1 176.9c-1.6-7.8-2.6-15.9-2.6-24C249.5 95.1 296.3 48 354.4 48c30.2 0 57.5 12.7 76.7 33.1 23.7-4.5 46.5-13.3 66.6-25.3-7.8 24.4-24.4 44.8-46.1 57.8 21.1-2.3 41.6-8.1 60.4-16.2-14.3 20.8-32.2 39.3-52.6 54.3"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.instant", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "toc.integrate"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
