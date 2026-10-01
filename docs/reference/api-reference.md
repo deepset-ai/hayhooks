@@ -156,9 +156,10 @@ models and appear in OpenAPI. The execution projection keeps `result` as
 JSON so results written by an older immutable revision remain readable; the
 active revision still validates new results before committing them. A
 projection includes status, attempt, sequence, progress, public wait data,
-result or sanitized error, timestamps, and links. It never exposes input,
-checkpoints, application state, lease/fence data, ownership, or idempotency
-material.
+result or sanitized error, timestamps, and links. A new submission has
+`attempt: 0`; claims start at 1, and every resume, retry, handoff, and crash
+recovery claim increments it. It never exposes input, checkpoints, application
+state, lease/fence data, ownership, or idempotency material.
 
 Status codes:
 
@@ -169,8 +170,10 @@ Status codes:
 - `422`: request, resume, header, cursor, or payload validation failure;
 - `503`: admission closed or durable store unavailable.
 
-SSE accepts `Last-Event-ID`. Events are `chunk`, optional `gap`, and one
-terminal `completed`, `failed`, or `canceled` event. See
+SSE accepts `Last-Event-ID`. Every `chunk` carries `attempt`. A higher attempt
+means the run restarted from its last checkpoint, so clients discard text from
+lower attempts. Events are `chunk`, optional `gap`, and one terminal
+`completed`, `failed`, or `canceled` event. See
 [Durable Execution](../features/durable-execution.md) for semantics and
 ownership modes.
 

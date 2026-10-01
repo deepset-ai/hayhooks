@@ -78,7 +78,8 @@ much memory or bandwidth.
 
 Lease duration must exceed the commit safety margin and comfortably cover Redis
 latency and scheduler pauses. A short lease recovers faster but raises false
-lease-loss risk. Application retry and run-attempt budgets are separate.
+lease-loss risk. Application retry and run-attempt budgets are separate; only
+lost leases count toward `max_run_attempts`.
 
 ## Redis traffic
 
@@ -288,8 +289,8 @@ pinned revision so that it uses the matching resume schema.
 
 At the end of the shutdown grace, `close()` cancels async work and waits up to
 another grace period for it to stop. Work that stops releases its claim: the run
-is queued again at once, without spending a run attempt, and a pending
-cancellation ends it `canceled`.
+is queued again at once without counting toward `max_run_attempts`; its next
+claim is a new `attempt`. A pending cancellation ends it `canceled`.
 Thread-backed work keeps its claim
 until it exits, as does async work that suppresses cancellation or awaits cleanup;
 `wait_drained()` waits for that retained work. On hosts that kill processes
@@ -298,13 +299,13 @@ those claims are released too; see
 [Hosts with short kill deadlines](../features/durable-execution.md#hosts-with-short-kill-deadlines)
 for the overlap trade-off.
 
-Because a released run does not spend an attempt, a run that never reaches a
-checkpoint can restart on every shutdown: on a fleet that replaces processes
-routinely, a run whose first checkpoint takes longer than a process lifetime
-never completes and never fails. Inspection shows it alternating between
-`queued` and `running` while `attempt` does not increase. Cancel it through the
-cancel endpoint, then add a checkpoint before its first long step so each
-restart resumes further along.
+Because a handoff does not count toward `max_run_attempts`, a run that never
+reaches a checkpoint can restart on every shutdown: on a fleet that replaces
+processes routinely, a run whose first checkpoint takes longer than a process
+lifetime never completes and never fails. Inspection shows it alternating
+between `queued` and `running`; `attempt` increases with each handoff. Cancel it
+through the cancel endpoint, then add a checkpoint before its first long step
+so each restart resumes further along.
 
 ## Incident checklist
 

@@ -237,7 +237,7 @@ request model, a runner, a Haystack adapter, and an execution store.
    worker-owned Redis write, including heartbeats and stream chunks, re-checks
    ownership and Redis time against the lease inside one script before it
    writes. After a crash, lease maintenance requeues the execution or fails it
-   when the run attempt budget is exhausted.
+   on its `max_run_attempts`-th lost lease.
 5. Inspection and SSE read Redis-backed state. They do not depend on the worker
    or client connection that originally submitted the work.
 
@@ -251,7 +251,7 @@ stateDiagram-v2
     running --> queued: retry or expired lease
     running --> waiting: suspend
     running --> completed: complete
-    running --> failed: error or attempt budget
+    running --> failed: error or max_run_attempts-th lost lease
     running --> canceled: requested cancellation wins
     waiting --> queued: resume
     waiting --> canceled: cancel
@@ -329,10 +329,15 @@ Pipeline with approval, checkpoint recovery, and cancellation.
 - **At least once:** a process can fail after an external effect and before its
   checkpoint. Use an idempotency key derived from the execution ID and logical
   step for every external write.
-- **Two retry budgets:** an expired lease consumes a run attempt. Application
-  code requests a bounded delayed retry with `context.retry(...)`. An ordinary
-  unhandled application exception fails the execution; it is not automatically
-  retried.
+- **Two retry budgets:** `max_run_attempts` bounds lost leases, so an execution
+  fails on its Nth expired lease. Graceful handoffs, resumes, and
+  `context.retry()` do not count toward it. `max_application_retries` bounds
+  `context.retry()` separately, while `attempt` numbers every claim. While a
+  retry is waiting, its public error is the retryable `RetryRequestedError`.
+  Exhausting the budget fails the run with `ApplicationRetriesExhaustedError`
+  and code `application_retries_exhausted`. The message passed to `retry()` is
+  logged and never stored. An ordinary unhandled application exception fails
+  the execution; it is not automatically retried.
 - **Cooperative cancellation:** call `context.check_cancelled()` around long
   operations. The engine cannot safely interrupt an arbitrary external call.
 - **Buffered progress:** `report_progress` is persisted with the next
@@ -397,8 +402,10 @@ Hayhooks server's lifespan.
 - **Stopped work is handed back.** Async work that stops in response to
   cancellation at the end of the grace releases its claim: its buffered chunks
   are flushed, and the run returns to the queue
-  without spending a run attempt, so another process can claim it immediately. Progress since the last checkpoint is lost,
-  as after a crash. A pending cancellation wins, and the run ends `canceled`.
+  without counting toward `max_run_attempts`; the next claim is a new `attempt`,
+  so another process can claim it immediately. Progress since the last
+  checkpoint is lost, as after a crash. A pending cancellation wins, and the
+  run ends `canceled`.
   A coroutine that suppresses cancellation or awaits cleanup keeps its claim,
   heartbeats, and context access until it exits; `wait_drained()` waits for it.
   An exception raised during shutdown cleanup also hands the claim back.
