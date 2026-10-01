@@ -426,7 +426,8 @@ Pipeline with approval, checkpoint recovery, and cancellation.
 - **Contained thread exits:** `SystemExit`, `KeyboardInterrupt`,
   `GeneratorExit`, `StopIteration`, and `StopAsyncIteration` from a synchronous
   runner or adapter thread fail the run as `RuntimeError`; the host keeps
-  running.
+  running. Async code, including the threads an async Haystack Agent starts
+  for synchronous tools, is not covered: `SystemExit` there stops the server.
 - **Invalid stored data:** unreadable or invalid claimed input, checkpoint, or
   progress data fails with a publicly readable `stored_execution_invalid`
   error. Guarded recovery may discard unusable progress, and corrupt
