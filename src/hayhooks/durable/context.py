@@ -65,9 +65,24 @@ class _ExecutionSuspendedError(BaseException):
 
 
 def _track(bucket: MutableSet[Any], future: asyncio.Future[Any]) -> None:
-    """Keep ``future`` in ``bucket`` until it is done."""
+    """Keep ``future`` in ``bucket`` until it is done; its exception counts as retrieved."""
+
+    def done(finished: asyncio.Future[Any]) -> None:
+        bucket.discard(finished)
+        if not finished.cancelled():
+            finished.exception()
+
     bucket.add(future)
-    future.add_done_callback(bucket.discard)
+    future.add_done_callback(done)
+
+
+def lease_timing(lease_duration_ms: int, commit_safety_ms: int) -> tuple[float, float]:
+    """Heartbeat interval and safe lease duration in seconds; the lease must outlast one heartbeat."""
+    heartbeat_interval = max(0.01, lease_duration_ms / 3_000)
+    safe_duration = (lease_duration_ms - commit_safety_ms) / 1_000
+    if safe_duration <= heartbeat_interval:
+        raise ValueError("lease duration must leave more than one safe heartbeat interval")
+    return heartbeat_interval, safe_duration
 
 
 class _ClaimedExecution:
@@ -83,12 +98,9 @@ class _ClaimedExecution:
         confirmed_at: float,
         backoff: tuple[float, float] = (0.05, 5.0),
     ) -> None:
-        heartbeat_interval = max(0.01, lease_duration_ms / 3_000)
-        safe_duration = (lease_duration_ms - store.config.lease_commit_safety_ms) / 1_000
         if control.status is not ExecutionStatus.RUNNING or control.lease_owner != worker_id:
             raise ValueError("a claimed execution requires its running control and lease owner")
-        if safe_duration <= heartbeat_interval:
-            raise ValueError("lease duration must leave more than one safe heartbeat interval")
+        heartbeat_interval, safe_duration = lease_timing(lease_duration_ms, store.config.lease_commit_safety_ms)
         self.store = store
         self.control = control
         self.worker_id = worker_id
@@ -122,6 +134,27 @@ class _ClaimedExecution:
     def progress_snapshot(self) -> tuple[int, tuple[bytes, ...]]:
         """Return pending events with the sequence of the first one."""
         return self.control.progress_sequence + 1, tuple(self.pending_progress)
+
+    async def commit(self, command_cls: Callable[..., ExecutionCommand], **fields: Any) -> TransitionPlan:
+        """Commit a fenced command carrying the pending progress events."""
+        first, events = self.progress_snapshot()
+        return await self.transition(
+            command_cls(
+                fence=self.control.fence,
+                worker_id=self.worker_id,
+                now_ms=0,
+                progress_events=events,
+                first_progress_sequence=first,
+                **fields,
+            )
+        )
+
+    async def heartbeat(self) -> TransitionPlan:
+        return await self.transition(
+            Heartbeat(
+                fence=self.control.fence, worker_id=self.worker_id, now_ms=0, lease_duration_ms=self.lease_duration_ms
+            )
+        )
 
     async def start(self) -> None:
         """Keep the claimed lease alive and flush chunks in the background."""
@@ -336,14 +369,7 @@ class _ClaimedExecution:
             await asyncio.sleep(max(0.0, min(delay, self._confirmed_until - time.monotonic())))
             delay = self._heartbeat_interval
             try:
-                await self.transition(
-                    Heartbeat(
-                        fence=self.control.fence,
-                        worker_id=self.worker_id,
-                        now_ms=0,
-                        lease_duration_ms=self.lease_duration_ms,
-                    )
-                )
+                await self.heartbeat()
             except ExecutionLeaseLostError:
                 return
             except Exception as error:
@@ -406,19 +432,12 @@ class DurableContext:
         async with self._operation_lock:
             self._claim.require_owned()
             snapshot = self._snapshot(adapter_checkpoint)
-            first, events = self._claim.progress_snapshot()
-            await self._claim.transition(
-                Checkpoint(
-                    fence=self._claim.control.fence,
-                    worker_id=self._claim.worker_id,
-                    now_ms=0,
-                    lease_duration_ms=self._claim.lease_duration_ms,
-                    checkpoint=encode_json(
-                        snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
-                    ),
-                    progress_events=events,
-                    first_progress_sequence=first,
-                )
+            await self._claim.commit(
+                Checkpoint,
+                lease_duration_ms=self._claim.lease_duration_ms,
+                checkpoint=encode_json(
+                    snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
+                ),
             )
             self._checkpoint = snapshot
 
@@ -451,14 +470,7 @@ class DurableContext:
     async def check_cancelled(self) -> None:
         self._claim.require_owned()
         if time.monotonic() - self._claim.confirmed_at >= _CANCEL_CHECK_REUSE_SECONDS:
-            await self._claim.transition(
-                Heartbeat(
-                    fence=self._claim.control.fence,
-                    worker_id=self._claim.worker_id,
-                    now_ms=0,
-                    lease_duration_ms=self._claim.lease_duration_ms,
-                )
-            )
+            await self._claim.heartbeat()
         if self._claim.control.cancel_requested_at_ms is not None:
             raise DurableExecutionCancelledError("durable execution cancellation was requested")
 
@@ -479,19 +491,12 @@ class DurableContext:
         async with self._operation_lock:
             self._claim.require_owned()
             snapshot = self._snapshot(adapter_checkpoint, {**self._state, **dict(update or {})})
-            first, events = self._claim.progress_snapshot()
-            await self._claim.transition(
-                Suspend(
-                    fence=self._claim.control.fence,
-                    worker_id=self._claim.worker_id,
-                    now_ms=0,
-                    checkpoint=encode_json(
-                        snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
-                    ),
-                    wait=encode_json(dict(wait), max_bytes=self._claim.store.config.max_payload_bytes),
-                    progress_events=events,
-                    first_progress_sequence=first,
-                )
+            await self._claim.commit(
+                Suspend,
+                checkpoint=encode_json(
+                    snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
+                ),
+                wait=encode_json(dict(wait), max_bytes=self._claim.store.config.max_payload_bytes),
             )
             self._checkpoint = snapshot
             self._state = snapshot.application_state.copy()

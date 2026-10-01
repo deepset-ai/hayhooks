@@ -32,6 +32,7 @@ from hayhooks.durable.context import (
     _track,
     backoff_delay,
     durable_context_scope,
+    lease_timing,
 )
 from hayhooks.durable.engine import (
     MAX_CONTROL_SCALAR_BYTES,
@@ -189,10 +190,7 @@ class DurableDeployment:
         if adapter is not None and adapter.kind is not self.kind:
             raise ValueError("Haystack adapter kind does not match the deployment")
         self.config = config or RuntimeConfig()
-        heartbeat_interval_ms = max(10, self.config.lease_duration_ms / 3)
-        safe_lease_ms = self.config.lease_duration_ms - store.config.lease_commit_safety_ms
-        if safe_lease_ms <= heartbeat_interval_ms:
-            raise ValueError("lease duration must leave more than one safe heartbeat interval")
+        lease_timing(self.config.lease_duration_ms, store.config.lease_commit_safety_ms)
         self._fallback_error = encode_json(
             PersistedError(type="Error", message="").model_dump(mode="json"),
             max_bytes=store.config.max_payload_bytes,
@@ -203,6 +201,11 @@ class DurableDeployment:
             code="run_attempts_exhausted",
         )
         self._retry_error = self._encode_error("RetryRequestedError", "retry requested", retryable=True)
+        self._invalid_error = self._encode_error(
+            "ExecutionStoreCorruptionError",
+            "Durable execution failed",
+            code="stored_execution_invalid",
+        )
         self._retries_exhausted_error = self._encode_error(
             "ApplicationRetriesExhaustedError",
             "application retries exhausted",
@@ -374,15 +377,13 @@ class DurableDeployment:
         allow_revision_mismatch: bool = False,
     ) -> StoredExecution:
         """Read one execution's public snapshot after deployment, owner, and revision checks."""
-        stored = await self.store.read_public(run_id)
-        self._authorize(
+        return self._authorize_stored(
             run_id,
-            None if stored is None else stored.control,
+            await self.store.read_public(run_id),
             owner_id=owner_id,
             enforce_owner=enforce_owner,
             allow_revision_mismatch=allow_revision_mismatch,
         )
-        return cast(StoredExecution, stored)
 
     async def get_control(
         self,
@@ -435,25 +436,20 @@ class DurableDeployment:
         enforce_owner: bool = True,
     ) -> TransitionPlan:
         """Validate resume input and atomically requeue a waiting execution."""
-        stored = await self.store.read(run_id)
-        self._authorize(
+        stored = self._authorize_stored(
             run_id,
-            None if stored is None else stored.control,
+            await self.store.read(run_id),
             owner_id=owner_id,
             enforce_owner=enforce_owner,
             allow_revision_mismatch=False,
         )
-        stored = cast(StoredExecution, stored)
         if stored.control.status is not ExecutionStatus.WAITING:
             raise InvalidExecutionTransitionError("only waiting executions can resume")
         try:
             checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
             if checkpoint_payload is None:
                 raise ValueError("waiting execution has no checkpoint")
-            # Reads never re-apply write limits, which may have been lowered since the write.
-            checkpoint = CheckpointEnvelope.model_validate(decode_json(checkpoint_payload, max_bytes=sys.maxsize))
-            if checkpoint.adapter_kind is not self.kind:
-                raise ValueError("checkpoint kind does not match the deployment")
+            checkpoint = self._decode_checkpoint(checkpoint_payload)
         except (ExecutionPayloadSizeError, TypeError, ValueError) as error:
             raise ExecutionStoreCorruptionError("stored checkpoint payload is invalid") from error
         if self.resume_model is not None:
@@ -526,6 +522,17 @@ class DurableDeployment:
         if not allow_revision_mismatch and not control.terminal and control.definition_revision != self.revision:
             raise InvalidExecutionTransitionError("execution definition revision is incompatible")
         return control
+
+    def _authorize_stored(self, run_id: str, stored: StoredExecution | None, **checks: Any) -> StoredExecution:
+        self._authorize(run_id, None if stored is None else stored.control, **checks)
+        return cast(StoredExecution, stored)
+
+    def _decode_checkpoint(self, payload: bytes) -> CheckpointEnvelope:
+        # Reads never re-apply write limits, which may have been lowered since the write.
+        checkpoint = CheckpointEnvelope.model_validate(decode_json(payload, max_bytes=sys.maxsize))
+        if checkpoint.adapter_kind is not self.kind:
+            raise ValueError("checkpoint kind does not match the deployment")
+        return checkpoint
 
     def _undrained(self) -> set[asyncio.Future[Any]]:
         tracked: set[asyncio.Future[Any]] = {*self._workers.values(), *self._draining_runs}
@@ -698,12 +705,10 @@ class DurableDeployment:
             )
             checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
             checkpoint = (
-                CheckpointEnvelope.model_validate(decode_json(checkpoint_payload, max_bytes=sys.maxsize))
+                self._decode_checkpoint(checkpoint_payload)
                 if checkpoint_payload is not None
                 else CheckpointEnvelope(schema_version=1, adapter_kind=self.kind, adapter_checkpoint=None)
             )
-            if checkpoint.adapter_kind is not self.kind:
-                raise ValueError("checkpoint kind does not match the deployment")
         except (KeyError, TypeError, ValueError, ExecutionPayloadSizeError) as error:
             await self._fail_invalid(claim, error)
             return None
@@ -725,11 +730,7 @@ class DurableDeployment:
                 fence=claim.control.fence,
                 worker_id=claim.worker_id,
                 now_ms=0,
-                error=self._encode_error(
-                    "ExecutionStoreCorruptionError",
-                    "Durable execution failed",
-                    code="stored_execution_invalid",
-                ),
+                error=self._invalid_error,
                 progress_events=() if discard_progress else events,
                 first_progress_sequence=first,
                 discard_progress=discard_progress,
@@ -768,13 +769,12 @@ class DurableDeployment:
             claim.require_owned()
             # Include the post-claim read in cancellation cleanup.
             await claim.start()
-            await self._run_claim(claim, context, request, worker_id)
+            await self._run_claim(claim, context, request)
         except asyncio.CancelledError:
             # The heartbeat stops with this worker, so hand the run back rather than let its lease expire.
             claim.stopping = True
             release = asyncio.create_task(claim.release())
             _track(self._draining_runs, release)
-            release.add_done_callback(lambda done: None if done.cancelled() else done.exception())
             await asyncio.shield(release)
             raise
         finally:
@@ -789,11 +789,10 @@ class DurableDeployment:
         claim: _ClaimedExecution,
         context: DurableContext,
         request: BaseModel,
-        worker_id: str,
     ) -> None:
         if claim.control.cancel_requested_at_ms is not None:
             error = DurableExecutionCancelledError("durable execution cancellation was requested")
-            await self._acknowledge_cancellation(claim, worker_id, error)
+            await self._acknowledge_cancellation(claim, error)
             return
         try:
             result = await self._invoke_application(claim, context, request)
@@ -805,9 +804,9 @@ class DurableDeployment:
         except _ExecutionSuspendedError:
             pass
         except DurableExecutionCancelledError as error:
-            await self._acknowledge_cancellation(claim, worker_id, error)
+            await self._acknowledge_cancellation(claim, error)
         except _RetryRequestedError as error:
-            await self._schedule_retry(claim, error, worker_id)
+            await self._schedule_retry(claim, error)
         except Exception as error:
             if claim.application_cancelled:
                 raise asyncio.CancelledError from error
@@ -819,49 +818,22 @@ class DurableDeployment:
                 deployment=self.name, run_id=claim.control.run_id, exception_type=type(error).__name__, error=str(error)
             ).error("Durable execution failed")
             code = "payload_too_large" if isinstance(error, ExecutionPayloadSizeError) else None
-            first, events = claim.progress_snapshot()
-            await claim.transition(
-                Fail(
-                    fence=claim.control.fence,
-                    worker_id=worker_id,
-                    now_ms=0,
-                    error=self._encode_exception(error, code=code),
-                    progress_events=events,
-                    first_progress_sequence=first,
-                )
-            )
+            await claim.commit(Fail, error=self._encode_exception(error, code=code))
         else:
             # Runtime commit errors raised here are not application failures.
-            first, events = claim.progress_snapshot()
-            await claim.transition(
-                Complete(
-                    fence=claim.control.fence,
-                    worker_id=worker_id,
-                    now_ms=0,
-                    result=encoded,
-                    progress_events=events,
-                    first_progress_sequence=first,
-                )
-            )
+            await claim.commit(Complete, result=encoded)
 
-    async def _schedule_retry(self, claim: _ClaimedExecution, error: _RetryRequestedError, worker_id: str) -> None:
+    async def _schedule_retry(self, claim: _ClaimedExecution, error: _RetryRequestedError) -> None:
         """Requeue with backoff and wake a local worker once the retry is due."""
         exponent = min(claim.control.application_retry_count, 30)
         delay = self.config.retry_base_delay_seconds * (2**exponent) if error.delay is None else error.delay
         delay_ms = math.ceil(min(delay, self.config.retry_max_delay_seconds) * 1_000)
-        first, events = claim.progress_snapshot()
-        plan = await claim.transition(
-            ScheduleRetry(
-                fence=claim.control.fence,
-                worker_id=worker_id,
-                now_ms=0,
-                delay_ms=delay_ms,
-                max_application_retries=self.config.max_application_retries,
-                error=self._retry_error,
-                exhausted_error=self._retries_exhausted_error,
-                progress_events=events,
-                first_progress_sequence=first,
-            )
+        plan = await claim.commit(
+            ScheduleRetry,
+            delay_ms=delay_ms,
+            max_application_retries=self.config.max_application_retries,
+            error=self._retry_error,
+            exhausted_error=self._retries_exhausted_error,
         )
         logger = log.bind(deployment=self.name, run_id=plan.next_control.run_id, retry_message=str(error))
         if plan.next_control.status is ExecutionStatus.QUEUED:
@@ -872,24 +844,9 @@ class DurableDeployment:
         elif plan.next_control.status is ExecutionStatus.FAILED:
             logger.warning("Durable execution failed: application retries are exhausted")
 
-    async def _acknowledge_cancellation(
-        self,
-        claim: _ClaimedExecution,
-        worker_id: str,
-        error: BaseException,
-    ) -> None:
+    async def _acknowledge_cancellation(self, claim: _ClaimedExecution, error: BaseException) -> None:
         """Cancel through cancellation-wins; without a pending request the run fails."""
-        first, events = claim.progress_snapshot()
-        plan = await claim.transition(
-            Fail(
-                fence=claim.control.fence,
-                worker_id=worker_id,
-                now_ms=0,
-                error=self._encode_exception(error),
-                progress_events=events,
-                first_progress_sequence=first,
-            )
-        )
+        plan = await claim.commit(Fail, error=self._encode_exception(error))
         if plan.next_control.status is ExecutionStatus.FAILED:
             log.bind(deployment=self.name, run_id=plan.next_control.run_id).warning(
                 "Durable execution raised DurableExecutionCancelledError without a cancellation request; failed it"
@@ -946,7 +903,6 @@ class DurableDeployment:
         if application.done():
             return
         _track(self._draining_runs, application)
-        application.add_done_callback(lambda done: None if done.cancelled() else done.exception())
 
     async def _backoff_worker(self, worker_id: str, error: ExecutionStoreError, operation: str) -> None:
         self._worker_store_error_streaks[worker_id] += 1
@@ -971,19 +927,8 @@ class DurableDeployment:
         except ExecutionPayloadSizeError:
             return self._fallback_error
 
-    def _encode_exception(
-        self,
-        error: BaseException,
-        *,
-        retryable: bool = False,
-        code: str | None = None,
-    ) -> bytes:
-        return self._encode_error(
-            type(error).__name__,
-            "Durable execution failed",
-            retryable=retryable,
-            code=code,
-        )
+    def _encode_exception(self, error: BaseException, *, code: str | None = None) -> bytes:
+        return self._encode_error(type(error).__name__, "Durable execution failed", code=code)
 
     async def _backoff(self, error: BaseException, streak: int, operation: str) -> None:
         delay = backoff_delay(
