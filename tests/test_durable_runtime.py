@@ -246,6 +246,33 @@ async def test_submission_is_detached_idempotent_and_owner_scoped(deployment_fac
     assert decode_json(stored.payloads[PayloadKind.RESULT], max_bytes=1_000) == {"value": 2}
 
 
+@pytest.mark.parametrize("exit_kind", ["exit", "stopiteration"])
+async def test_sync_runner_exit_fails_the_run_and_keeps_the_loop(deployment_factory, exit_kind: str) -> None:
+    def runner(_context: DurableContext, request: Request) -> Result:
+        if request.value == 1:
+            if exit_kind == "exit":
+                sys.exit(2)
+            next(iter(()))
+        return Result(value=request.value)
+
+    deployment = await deployment_factory(runner)
+    failed_submission = await deployment.submit({"value": 1})
+    failed = await wait_for_execution(
+        deployment, failed_submission.control.run_id, lambda value: value.control.terminal
+    )
+    assert failed.control.status is ExecutionStatus.FAILED
+    assert PersistedError.model_validate(decode_json(failed.payloads[PayloadKind.ERROR], max_bytes=1_000)).type == (
+        "RuntimeError"
+    )
+
+    good_submission = await deployment.submit({"value": 2})
+    completed = await wait_for_execution(
+        deployment, good_submission.control.run_id, lambda value: value.control.terminal
+    )
+    assert completed.control.status is ExecutionStatus.COMPLETED
+    assert (await deployment.health())["healthy"] is True
+
+
 async def test_cancellation_wins_the_result_race(deployment_factory) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
@@ -704,7 +731,6 @@ async def test_idle_workers_returning_from_claim_do_not_delay_close(deployment_f
         if calls == 2:
             claiming.set()
         await release.wait()
-        return None
 
     monkeypatch.setattr(deployment.store, "claim", empty_claim)
     await deployment.start()

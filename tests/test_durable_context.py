@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from hayhooks.durable._threading import start_daemon_thread
 from hayhooks.durable.context import (
     DurableContext,
     DurableExecutionCancelledError,
@@ -38,6 +39,36 @@ def test_root_exports_durable_streaming_callback() -> None:
     from hayhooks import durable_streaming_callback as public_callback
 
     assert public_callback is durable_streaming_callback
+
+
+@pytest.mark.parametrize(
+    "exception_type",
+    [SystemExit, KeyboardInterrupt, GeneratorExit, StopIteration, StopAsyncIteration],
+)
+async def test_daemon_thread_converts_exit_exceptions(exception_type: type[BaseException]) -> None:
+    error = exception_type()
+
+    def raise_error() -> None:
+        raise error
+
+    result, exited = start_daemon_thread(raise_error, name="test-exit")
+    with pytest.raises(RuntimeError, match=f"^durable work raised {exception_type.__name__}$") as raised:
+        await asyncio.wait_for(result, 1)
+    assert raised.value.__cause__ is error
+    await asyncio.wait_for(exited, 1)
+
+
+async def test_daemon_thread_forwards_control_signals() -> None:
+    error = _RetryRequestedError("x", None, ())
+
+    def raise_error() -> None:
+        raise error
+
+    result, exited = start_daemon_thread(raise_error, name="test-signal")
+    with pytest.raises(_RetryRequestedError) as raised:
+        await result
+    assert raised.value is error
+    await asyncio.wait_for(exited, 1)
 
 
 async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancellation(
