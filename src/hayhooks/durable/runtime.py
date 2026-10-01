@@ -984,7 +984,7 @@ class DurableRuntime:
     async def close(self) -> None:
         """Close every deployment concurrently, then raise the first failure in reverse membership order."""
         self._closed = True
-        deployments = tuple(reversed(self._deployments.values()))
+        deployments = tuple(reversed(tuple(self._deployments.values())))
         results = await asyncio.gather(*(deployment.close() for deployment in deployments), return_exceptions=True)
         failures = [
             (deployment, result)
