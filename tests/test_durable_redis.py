@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,7 +22,6 @@ from tests.durable_store_contract import ATTEMPTS_ERROR, contract_control
 def test_redis_keys_are_private_cluster_safe_and_strict() -> None:
     keys = RedisKeys("tenant:durable", "unsafe deployment/name")
     generated = (
-        keys.runnable,
         keys.runnable_revision("v1"),
         keys.lease_expiry,
         keys.capacity,
@@ -32,6 +32,9 @@ def test_redis_keys_are_private_cluster_safe_and_strict() -> None:
     assert len(hash_tags) == 1
     assert "unsafe" not in " ".join(generated)
     assert "raw-client-material" not in generated[-1]
+    field = RedisKeys.revision_nonterminal_field("v1")
+    assert re.fullmatch(r"nonterminal:[0-9a-f]{64}", field)
+    assert field.removeprefix("nonterminal:") == generated[0].rsplit(":", 1)[-1]
     with pytest.raises(ValueError):
         RedisKeys("unsafe prefix", "jobs")
     with pytest.raises(ValueError):
@@ -219,13 +222,13 @@ async def test_future_scheduling_scores_use_redis_time_and_are_not_processed() -
 
 
 @pytest.mark.parametrize("score", [float("inf"), -1.0, 1.5])
-async def test_invalid_runnable_scores_report_corruption(score: float) -> None:
+async def test_invalid_runnable_scores_are_removed(score: float) -> None:
     redis = mock_redis()
-    redis.zrange.return_value = [(b"run_1", score)]
+    redis.zrange.side_effect = [[(b"run_1", score)], []]
     store = RedisExecutionStore(redis, "jobs")
 
-    with pytest.raises(ExecutionStoreCorruptionError, match="runnable index"):
-        await store.claim(Claim("worker", 0, 30_000, 3, "v1", ATTEMPTS_ERROR))
+    assert await store.claim(Claim("worker", 0, 30_000, 3, "v1", ATTEMPTS_ERROR)) is None
+    redis.zrem.assert_awaited_once_with(store.keys.runnable_revision("v1"), b"run_1")
     redis.time.assert_not_awaited()
 
 

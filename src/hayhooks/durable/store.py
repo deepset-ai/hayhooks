@@ -164,7 +164,9 @@ class ExecutionStore(Protocol):
         """Like ``read_chunks``, but block up to ``timeout`` seconds for a first entry; empty on timeout."""
         ...
 
-    async def operational_counts(self) -> dict[str, int]: ...
+    async def operational_counts(self, *, revision: str) -> dict[str, int]:
+        """Return deployment and revision nonterminal, runnable, and lease counts."""
+        ...
 
 
 class MemoryExecutionStore:
@@ -340,11 +342,16 @@ class MemoryExecutionStore:
                 )
         return self._chunks_after(run_id, after)
 
-    async def operational_counts(self) -> dict[str, int]:
+    async def operational_counts(self, *, revision: str) -> dict[str, int]:
         self._cleanup_terminal(self._clock())
         return {
             "nonterminal": self._nonterminal,
-            "runnable": len(self._runnable),
+            "revision_nonterminal": sum(
+                not control.terminal and control.definition_revision == revision for control in self._controls.values()
+            ),
+            "revision_runnable": sum(
+                self._controls[run_id].definition_revision == revision for run_id in self._runnable
+            ),
             "lease_expiry": len(self._lease_expiry),
         }
 

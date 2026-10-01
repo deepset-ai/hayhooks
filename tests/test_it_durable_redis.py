@@ -132,7 +132,7 @@ async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) ->
     )
     winners = [plan for plan in claims if plan is not None and plan.next_control.status is ExecutionStatus.RUNNING]
     assert len(winners) == 1
-    assert await redis.zcard(store.keys.runnable) == 0
+    assert await redis.zcard(store.keys.runnable_revision("v1")) == 0
     assert await redis.zcard(store.keys.lease_expiry) == 1
 
 
@@ -272,7 +272,7 @@ async def test_concurrent_progress_and_cancellation_remain_atomic(redis_store) -
 
     terminal = await store.transition(control.run_id, Complete(fence, "worker", 0, b"ignored"))
     assert terminal.next_control.status is ExecutionStatus.CANCELED
-    assert (await store.operational_counts())["nonterminal"] == 0
+    assert (await store.operational_counts(revision="v1"))["nonterminal"] == 0
     with pytest.raises(ExecutionLeaseLostError):
         await store.append_chunks(control.run_id, 1, fence, "worker", [b"late"])
     assert [chunk.terminal for chunk in await store.read_chunks(control.run_id, CHUNK_CURSOR_START)] == [True]
@@ -322,7 +322,12 @@ async def test_control_key_identity_corruption_is_rejected(redis_store, operatio
             await store.submit(control, b"input")
 
     assert not await redis.exists(store.keys.control("run_2"))
-    assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 1,
+        "revision_nonterminal": 1,
+        "revision_runnable": 1,
+        "lease_expiry": 0,
+    }
 
 
 async def test_admission_heartbeat_and_stale_lease_repair_are_transactional(redis_store, monkeypatch) -> None:
@@ -463,18 +468,27 @@ async def test_changed_control_snapshot_retries_from_a_fresh_read(redis_store, m
 
 
 @pytest.mark.parametrize(
-    "key", ["chunks", "progress", "runnable", "revision", "lease_expiry", "capacity-fraction", "capacity-leading-zero"]
+    "key",
+    [
+        "chunks",
+        "progress",
+        "revision",
+        "lease_expiry",
+        "capacity-fraction",
+        "capacity-leading-zero",
+        "capacity-revision",
+    ],
 )
 async def test_corrupt_commit_targets_leave_every_key_unchanged(redis_store, key: str) -> None:
     redis, store = redis_store
     control = await claim_one(store, lease_ms=10_000)
     if key.startswith("capacity-"):
-        await redis.hset(store.keys.capacity, "nonterminal", "1.5" if key == "capacity-fraction" else "01")
+        field = RedisKeys.revision_nonterminal_field("v1") if key == "capacity-revision" else "nonterminal"
+        await redis.hset(store.keys.capacity, field, "1.5" if key == "capacity-fraction" else "01")
     else:
         target = {
             "chunks": store.keys.chunks("run_1"),
             "progress": store.keys.progress("run_1"),
-            "runnable": store.keys.runnable,
             "revision": store.keys.runnable_revision("v1"),
             "lease_expiry": store.keys.lease_expiry,
         }[key]
@@ -513,7 +527,7 @@ async def test_claim_ignores_unrelated_submissions_during_its_commit(redis_store
 
     assert claimed is not None and claimed.next_control.status is ExecutionStatus.RUNNING
     assert calls[0][0] == 1
-    assert (await store.operational_counts())["runnable"] == 1
+    assert (await store.operational_counts(revision="v1"))["revision_runnable"] == 1
 
 
 @pytest.fixture

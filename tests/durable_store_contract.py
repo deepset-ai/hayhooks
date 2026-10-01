@@ -86,13 +86,23 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     snapshot = await store.read(control.run_id)
     assert snapshot is not None and snapshot.payloads[PayloadKind.INPUT] == b"input"
     assert await store.read_public(control.run_id) == replace(snapshot, payloads={})
-    assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 1,
+        "revision_nonterminal": 1,
+        "revision_runnable": 1,
+        "lease_expiry": 0,
+    }
 
     claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert claimed is not None and claimed.next_control.status is ExecutionStatus.RUNNING
     released = await store.transition(control.run_id, ReleaseClaim(claimed.next_control.fence, "worker"))
     assert (released.next_control.run_attempt, released.next_control.lease_recoveries) == (1, 0)
-    assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 1,
+        "revision_nonterminal": 1,
+        "revision_runnable": 1,
+        "lease_expiry": 0,
+    }
 
     claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert claimed is not None
@@ -108,7 +118,12 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
         before_heartbeat,
         control=replace(before_heartbeat.control, lease_expires_at_ms=heartbeat.next_control.lease_expires_at_ms),
     )
-    assert await store.operational_counts() == {"nonterminal": 1, "runnable": 0, "lease_expiry": 1}
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 1,
+        "revision_nonterminal": 1,
+        "revision_runnable": 0,
+        "lease_expiry": 1,
+    }
 
     before_chunks = await store.read(control.run_id)
     await store.append_chunks(
@@ -177,7 +192,12 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     snapshot = await store.read(control.run_id)
     assert snapshot is not None
     assert not ({PayloadKind.RESULT, PayloadKind.ERROR, PayloadKind.WAIT} & snapshot.payloads.keys())
-    assert await store.operational_counts() == {"nonterminal": 0, "runnable": 0, "lease_expiry": 0}
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 0,
+        "revision_nonterminal": 0,
+        "revision_runnable": 0,
+        "lease_expiry": 0,
+    }
 
 
 async def assert_revision_routing_contract(store: ExecutionStore) -> None:
@@ -189,10 +209,19 @@ async def assert_revision_routing_contract(store: ExecutionStore) -> None:
     )
     await store.submit(old, b"input")
     await store.submit(new, b"input")
+    expected = {"nonterminal": 2, "revision_nonterminal": 1, "revision_runnable": 1, "lease_expiry": 0}
+    assert await store.operational_counts(revision="v1") == expected
+    assert await store.operational_counts(revision="v2") == expected
 
     new_claim = await store.claim(Claim("worker-v2", 0, 500, 3, "v2", ATTEMPTS_ERROR))
     assert new_claim is not None
     assert (new_claim.next_control.run_id, new_claim.next_control.status) == ("run_b_new", ExecutionStatus.RUNNING)
+    assert await store.operational_counts(revision="v2") == {
+        "nonterminal": 2,
+        "revision_nonterminal": 1,
+        "revision_runnable": 0,
+        "lease_expiry": 1,
+    }
     old_snapshot = await store.read(old.run_id)
     assert old_snapshot is not None and old_snapshot.control.status is ExecutionStatus.QUEUED
 

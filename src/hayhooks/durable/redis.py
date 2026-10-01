@@ -148,7 +148,7 @@ return redis.call('HGETALL', KEYS[1])
 """
 
 # KEYS: control, capacity, then every key the commands touch.
-# ARGV: worker ('' when unowned), fence, safety margin, releases capacity (0/1), snapshot field count,
+# ARGV: worker ('' when unowned), fence, safety margin, released revision field ('' when none), snapshot field count,
 # the snapshot field/value pairs, then each command as argument count, name, key index, arguments.
 _APPLY_LUA = """
 local stored = redis.call('HGETALL', KEYS[1])
@@ -170,10 +170,13 @@ end
 if ARGV[1] ~= '' and not owned_now(KEYS[1], ARGV[1], ARGV[2], ARGV[3]) then
   return -1
 end
-if ARGV[4] == '1' then
-  local capacity = redis.call('HGET', KEYS[2], 'nonterminal')
-  if not capacity or not string.match(capacity, '^[1-9]%d*$') or tonumber(capacity) > 2^53 - 1 then
-    return -2
+if ARGV[4] ~= '' then
+  local counts = redis.call('HMGET', KEYS[2], 'nonterminal', ARGV[4])
+  for index = 1, 2 do
+    local count = counts[index]
+    if not count or not string.match(count, '^[1-9]%d*$') or tonumber(count) > 2^53 - 1 then
+      return -2
+    end
   end
 end
 -- Check each type-sensitive target before any mutation: Redis scripts have no rollback.
@@ -219,13 +222,16 @@ class RedisKeys:
         deployment_digest = hashlib.sha256(b"hayhooks-durable:deployment:" + deployment_bytes).hexdigest()
         self.base = f"{prefix}:{{{deployment_digest}}}"
 
-    @property
-    def runnable(self) -> str:
-        return f"{self.base}:runnable"
-
     def runnable_revision(self, revision: str) -> str:
-        digest = hashlib.sha256(b"hayhooks-durable:revision:" + revision.encode()).hexdigest()
-        return f"{self.base}:runnable:{digest}"
+        return f"{self.base}:runnable:{self._revision_digest(revision)}"
+
+    @staticmethod
+    def revision_nonterminal_field(revision: str) -> str:
+        return f"nonterminal:{RedisKeys._revision_digest(revision)}"
+
+    @staticmethod
+    def _revision_digest(revision: str) -> str:
+        return hashlib.sha256(b"hayhooks-durable:revision:" + revision.encode()).hexdigest()
 
     @property
     def lease_expiry(self) -> str:
@@ -532,7 +538,7 @@ class RedisExecutionStore:
                 if deadline > now_ms:
                     break
                 try:
-                    plan = await self._transition(
+                    plan = await self.transition(
                         run_id,
                         RecoverExpiredLease(
                             0,
@@ -552,7 +558,6 @@ class RedisExecutionStore:
                         "Removed an undecodable durable execution from the lease index"
                     )
                 else:
-                    assert plan is not None
                     requeued += plan.next_control.status is ExecutionStatus.QUEUED
         return requeued
 
@@ -616,16 +621,23 @@ class RedisExecutionStore:
             raise ChunkCursorExpiredError(after)
         return self._decode_chunks(streams[0][1] if streams else ())
 
-    async def operational_counts(self) -> dict[str, int]:
+    async def operational_counts(self, *, revision: str) -> dict[str, int]:
         with _redis_errors():
             async with self.redis.pipeline(transaction=False) as pipe:
-                pipe.hget(self.keys.capacity, "nonterminal")
-                pipe.zcard(self.keys.runnable)
+                pipe.hmget(
+                    self.keys.capacity,
+                    "nonterminal",
+                    RedisKeys.revision_nonterminal_field(revision),
+                )
+                pipe.zcard(self.keys.runnable_revision(revision))
                 pipe.zcard(self.keys.lease_expiry)
-                nonterminal, runnable, lease_expiry = await pipe.execute()
+                (nonterminal, revision_nonterminal), revision_runnable, lease_expiry = await pipe.execute()
         return {
             "nonterminal": 0 if nonterminal is None else _nonnegative_int(nonterminal, "nonterminal"),
-            "runnable": _nonnegative_int(runnable, "runnable"),
+            "revision_nonterminal": (
+                0 if revision_nonterminal is None else _nonnegative_int(revision_nonterminal, "revision nonterminal")
+            ),
+            "revision_runnable": _nonnegative_int(revision_runnable, "revision runnable"),
             "lease_expiry": _nonnegative_int(lease_expiry, "lease_expiry"),
         }
 
@@ -703,7 +715,7 @@ class RedisExecutionStore:
                 raise now
             current = self._control(values, run_id)
             plan = None
-            releases_capacity = False
+            released = ""
             try:
                 if current is None:
                     raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
@@ -716,8 +728,9 @@ class RedisExecutionStore:
             else:
                 validate_transition_plan(plan, self.config)
                 commands = self._plan_commands(current, plan)
-                releases_capacity = not current.terminal and plan.next_control.terminal
-            outcome = await self._commit(run_id, values, commands, owner=owner, releases_capacity=releases_capacity)
+                if not current.terminal and plan.next_control.terminal:
+                    released = RedisKeys.revision_nonterminal_field(current.definition_revision)
+            outcome = await self._commit(run_id, values, commands, owner=owner, released=released)
             if outcome == _STALE_SNAPSHOT:
                 await self._backoff(attempt)
                 continue
@@ -772,7 +785,7 @@ class RedisExecutionStore:
         commands: Sequence[_Command],
         *,
         owner: tuple[str, int] | None,
-        releases_capacity: bool,
+        released: str,
     ) -> int:
         """Run ``commands`` only if control still equals ``snapshot`` and every guard holds."""
         keys = [self.keys.control(run_id), self.keys.capacity]
@@ -781,7 +794,7 @@ class RedisExecutionStore:
             worker_id,
             fence,
             self.config.lease_commit_safety_ms,
-            int(releases_capacity),
+            released,
             len(snapshot),
             *chain.from_iterable(snapshot.items()),
         ]
@@ -832,9 +845,25 @@ class RedisExecutionStore:
 
         if new_submission:
             commands.append(("HINCRBY", self.keys.capacity, "nonterminal", 1))
+            commands.append(
+                (
+                    "HINCRBY",
+                    self.keys.capacity,
+                    RedisKeys.revision_nonterminal_field(control.definition_revision),
+                    1,
+                )
+            )
         elif not current.terminal and control.terminal:
             chunks_key = self.keys.chunks(run_id)
             commands.append(("HINCRBY", self.keys.capacity, "nonterminal", -1))
+            commands.append(
+                (
+                    "HINCRBY",
+                    self.keys.capacity,
+                    RedisKeys.revision_nonterminal_field(control.definition_revision),
+                    -1,
+                )
+            )
             # The marker wakes blocked stream viewers; it is written even when chunk persistence is disabled.
             commands.append(
                 (
@@ -868,10 +897,9 @@ class RedisExecutionStore:
         control: ExecutionControl | None,
     ) -> list[_Command]:
         """Drop ``run_id`` from its runnable indexes and re-add it when ``control`` is queued."""
-        commands: list[_Command] = [("ZREM", self.keys.runnable, run_id), ("ZREM", indexed_revision_key, run_id)]
+        commands: list[_Command] = [("ZREM", indexed_revision_key, run_id)]
         if control is not None and control.status is ExecutionStatus.QUEUED:
             score = runnable_score(control)
-            commands.append(("ZADD", self.keys.runnable, score, run_id))
             commands.append(("ZADD", self.keys.runnable_revision(control.definition_revision), score, run_id))
         return commands
 

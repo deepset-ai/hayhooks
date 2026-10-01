@@ -460,7 +460,7 @@ class DurableDeployment:
             "store_error_streak": max(worker_error_streak, self._maintenance_error_streak),
         }
         try:
-            health["counts"] = await self.store.operational_counts()
+            health["counts"] = await self.store.operational_counts(revision=self.revision)
         except ExecutionStoreError as error:
             health["healthy"] = False
             health["operational_error"] = type(error).__name__
