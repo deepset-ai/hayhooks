@@ -918,6 +918,19 @@ async def test_corrupt_commit_targets_leave_every_key_unchanged(redis_store, key
     assert await dump_keys(redis, store) == before
 
 
+async def test_corrupt_chunks_are_not_repaired_when_another_commit_target_is_invalid(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await redis.set(store.keys.chunks("run_1"), b"wrong type")
+    await redis.set(store.keys.runnable_revision("v1"), b"wrong type")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionStoreError):
+        await store.transition("run_1", Complete(control.fence, "worker", 0, b"done", (b"progress",)))
+
+    assert await dump_keys(redis, store) == before
+
+
 async def test_heartbeat_rejects_a_corrupt_lease_index_without_renewing(redis_store) -> None:
     redis, store = redis_store
     control = await claim_one(store, lease_ms=10_000)
