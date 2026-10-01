@@ -431,7 +431,8 @@ def _add_immutable_pipelines(app: FastAPI, pipeline_registry: ImmutablePipelineR
 
     # Durable-only and chat-only wrappers have no ordinary run endpoint.
     for name, wrapper in wrappers.items():
-        if route := _build_run_route(name, wrapper):
+        metadata = pipeline_registry.get_metadata(name) or {}
+        if route := _build_run_route(name, wrapper, request_model=metadata.get("request_model")):
             route_kwargs, _metadata = route
             app.add_api_route(**route_kwargs)
     _add_durable_deployments(app, {name: wrapper for name, wrapper in wrappers.items() if is_durable_wrapper(wrapper)})

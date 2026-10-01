@@ -563,10 +563,12 @@ def create_run_endpoint_handler(
 
 
 def _build_run_route(
-    pipeline_name: str, pipeline_wrapper: BasePipelineWrapper
+    pipeline_name: str, pipeline_wrapper: BasePipelineWrapper, *, request_model: type[BaseModel] | None = None
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
     """
     Build the ``add_api_route`` arguments of the ordinary /{pipeline_name}/run endpoint.
+
+    Pass the ``request_model`` that ``create_pipeline_metadata`` built to reuse it instead of building another.
 
     Returns:
         The route arguments and the request/response metadata they derive, or ``None`` when the
@@ -579,7 +581,9 @@ def _build_run_route(
 
     docstring_content = inspect.getdoc(run_method_to_inspect) or ""
     docstring = docstring_parser.parse(docstring_content)
-    RunRequest = create_request_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
+    RunRequest = request_model or create_request_model_from_callable(
+        run_method_to_inspect, f"{pipeline_name}Run", docstring
+    )
     RunResponse = create_response_model_from_callable(run_method_to_inspect, f"{pipeline_name}Run", docstring)
     RunResponseClass = get_response_class_from_callable(run_method_to_inspect)
 
@@ -639,7 +643,8 @@ def add_pipeline_api_route(
         PipelineModeError: In durable mode, before any route or metadata changes.
     """
     require_live_deployment(app)
-    route = _build_run_route(pipeline_name, pipeline_wrapper)
+    metadata = registry.get_metadata(pipeline_name) or {}
+    route = _build_run_route(pipeline_name, pipeline_wrapper, request_model=metadata.get("request_model"))
     if route is None:
         # If neither run_api nor run_api_async is implemented,
         # this pipeline will not have a generic /<pipeline_name>/run endpoint.

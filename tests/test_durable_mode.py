@@ -532,3 +532,19 @@ async def test_concurrent_status_probes_share_one_health_read(
         responses = await asyncio.gather(*probes)
     assert [response.status_code for response in responses] == [200] * 5
     assert len(calls) == 1
+
+
+def test_immutable_run_route_reuses_the_registry_request_model(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def rebuilt(*_args: Any, **_kwargs: Any) -> None:
+        message = "the run route rebuilt the request model"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(deploy_utils, "create_request_model_from_callable", rebuilt)
+    write_tree(durable_pipelines_dir, {"double/pipeline_wrapper.py": ORDINARY_WRAPPER})
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.post("/double/run", json={"value": 21}).json() == {"result": 42}
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert app.state.pipeline_registry.get_metadata("double")["request_model"].__name__ in schemas
