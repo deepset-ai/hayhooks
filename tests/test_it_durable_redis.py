@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from dataclasses import replace
 from unittest.mock import AsyncMock
@@ -16,6 +17,7 @@ from redis.asyncio import ConnectionPool, Redis
 from redis.asyncio.client import Pipeline
 
 from hayhooks.durable import DurableContext, create_durable_router
+from hayhooks.durable.context import _ClaimedExecution
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -97,6 +99,105 @@ async def redis_store():
 async def test_redis_store_matches_shared_contract(redis_store) -> None:
     _, store = redis_store
     await assert_store_contract(store)
+
+
+async def test_black_holed_connection_loses_the_lease_within_its_window(redis_store) -> None:  # noqa: PLR0915
+    redis, store = redis_store
+    connection = redis.connection_pool.connection_kwargs
+    black_holed = asyncio.Event()
+    proxy_tasks: set[asyncio.Task] = set()
+
+    async def proxy_connection(client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter) -> None:
+        server_reader, server_writer = await asyncio.open_connection(connection["host"], connection["port"])
+
+        async def forward(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                while data := await reader.read(64 * 1_024):
+                    if black_holed.is_set():
+                        continue
+                    writer.write(data)
+                    await writer.drain()
+            finally:
+                writer.close()
+
+        tasks = {
+            asyncio.create_task(forward(client_reader, server_writer)),
+            asyncio.create_task(forward(server_reader, client_writer)),
+        }
+        proxy_tasks.update(tasks)
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            proxy_tasks.difference_update(tasks)
+
+    proxy = await asyncio.start_server(proxy_connection, "127.0.0.1", 0)
+    proxy_port = proxy.sockets[0].getsockname()[1]
+    proxied_redis = Redis(
+        host="127.0.0.1",
+        port=proxy_port,
+        db=connection["db"],
+        decode_responses=False,
+        socket_timeout=None,
+        retry=None,
+    )
+    proxied_store = RedisExecutionStore(
+        proxied_redis,
+        "jobs",
+        config=store.config,
+        key_prefix=store_prefix(store),
+    )
+    claim = fresh_claim = None
+    try:
+        await store.submit(contract_control("jobs", "blackhole"), b"input")
+        confirmed_at = time.monotonic()
+        claimed = await proxied_store.claim(Claim("worker", 0, 600, 3, "v1", ATTEMPTS_ERROR))
+        assert claimed is not None
+        claim = _ClaimedExecution(
+            proxied_store,
+            claimed.next_control,
+            "worker",
+            600,
+            confirmed_at=confirmed_at,
+        )
+        await claim.start()
+        black_holed.set()
+
+        await asyncio.wait_for(claim.lease_lost.wait(), 1)
+        assert claim.owned is False
+        await asyncio.wait_for(claim.stop(), 1)
+
+        black_holed.clear()
+        await asyncio.sleep(0.1)
+        await asyncio.wait_for(store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR), 1)
+        fresh_at = time.monotonic()
+        reclaimed = await asyncio.wait_for(
+            proxied_store.claim(Claim("worker-2", 0, 600, 3, "v1", ATTEMPTS_ERROR)),
+            1,
+        )
+        assert reclaimed is not None and reclaimed.next_control.fence > claim.control.fence
+        fresh_claim = _ClaimedExecution(
+            proxied_store,
+            reclaimed.next_control,
+            "worker-2",
+            600,
+            confirmed_at=fresh_at,
+        )
+        await asyncio.wait_for(fresh_claim.start(), 1)
+        assert fresh_claim.owned
+    finally:
+        if fresh_claim is not None:
+            await asyncio.wait_for(fresh_claim.stop(), 1)
+        if claim is not None:
+            await asyncio.wait_for(claim.stop(), 1)
+        await asyncio.wait_for(proxied_redis.aclose(), 1)
+        proxy.close()
+        for task in tuple(proxy_tasks):
+            task.cancel()
+        await asyncio.wait_for(asyncio.gather(*proxy_tasks, return_exceptions=True), 1)
+        await asyncio.wait_for(proxy.wait_closed(), 1)
 
 
 async def test_redis_store_routes_claims_by_revision(redis_store) -> None:

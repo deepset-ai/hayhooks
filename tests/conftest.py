@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from time import sleep
+from time import monotonic, sleep
 from typing import Any
 
 import pytest
@@ -118,6 +118,14 @@ def caplog(caplog: LogCaptureFixture):
 
 
 @pytest.fixture
+def log_records():
+    records = []
+    handler_id = log.add(lambda message: records.append(message.record), level="DEBUG")
+    yield records
+    log.remove(handler_id)
+
+
+@pytest.fixture
 async def context_factory():
     store = MemoryExecutionStore(
         "jobs",
@@ -144,6 +152,7 @@ async def context_factory():
                 b"{}",
             )
         worker_id = f"worker-{run_id}"
+        confirmed_at = monotonic()
         plan = await store.claim(Claim(worker_id, 0, lease_duration_ms, 3, "v1", ATTEMPTS_ERROR))
         assert plan is not None and plan.next_control.run_id == run_id
         stored = await store.read(run_id)
@@ -157,7 +166,13 @@ async def context_factory():
                 adapter_checkpoint=None,
             )
         )
-        claim = _ClaimedExecution(store, plan.next_control, worker_id, lease_duration_ms)
+        claim = _ClaimedExecution(
+            store,
+            plan.next_control,
+            worker_id,
+            lease_duration_ms,
+            confirmed_at=confirmed_at,
+        )
         await claim.start()
         claims.append(claim)
         return DurableContext(claim, checkpoint), claim

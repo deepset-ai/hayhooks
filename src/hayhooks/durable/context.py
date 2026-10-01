@@ -69,6 +69,8 @@ class _ClaimedExecution:
         control: ExecutionControl,
         worker_id: str,
         lease_duration_ms: int,
+        *,
+        confirmed_at: float,
     ) -> None:
         heartbeat_interval = max(0.01, lease_duration_ms / 3_000)
         safe_duration = (lease_duration_ms - store.config.lease_commit_safety_ms) / 1_000
@@ -91,7 +93,7 @@ class _ClaimedExecution:
         self.threads: set[asyncio.Future[None]] = set()
         self._heartbeat_interval = heartbeat_interval
         self._safe_duration = safe_duration
-        self._confirmed_until = time.monotonic() + safe_duration
+        self._confirmed_until = confirmed_at + safe_duration
         self._transition_lock = asyncio.Lock()
         self._chunks: deque[bytes] = deque(maxlen=store.config.max_stream_chunks)
         self._flush_lock = asyncio.Lock()
@@ -120,6 +122,21 @@ class _ClaimedExecution:
                 await task
 
     async def transition(self, command: ExecutionCommand) -> TransitionPlan:
+        """Commit one fenced command within the confirmed lease window."""
+        if time.monotonic() >= self._confirmed_until:
+            self.mark_lost("the lease window passed without a store confirmation")
+        self.require_owned()
+        name = type(command).__name__
+        try:
+            # ponytail: the bound is fixed when the call starts; re-arm it if a concurrent renewal ever matters.
+            return await asyncio.wait_for(self._commit(command), self._confirmed_until - time.monotonic())
+        except asyncio.TimeoutError:
+            self.mark_lost(f"the store did not confirm {name} within the lease window")
+            raise ExecutionLeaseLostError(
+                f"execution lease for '{self.control.run_id}' expired before {name} was confirmed"
+            ) from None
+
+    async def _commit(self, command: ExecutionCommand) -> TransitionPlan:
         if not isinstance(command, (Heartbeat, Checkpoint)):
             # Buffered chunks must reach the stream before viewers can observe the status change.
             await self.flush_chunks()
@@ -129,21 +146,39 @@ class _ClaimedExecution:
             try:
                 plan = await self.store.transition(self.control.run_id, command)
             except ExecutionLeaseLostError:
-                self.mark_lost()
+                self.mark_lost("the store no longer grants this worker's lease")
                 raise
             except ExecutionNotFoundError as error:
-                self.mark_lost()
+                self.mark_lost("the execution no longer exists")
                 raise ExecutionLeaseLostError(f"execution '{self.control.run_id}' no longer exists") from error
             self.control = plan.next_control
             self._confirmed_until = confirmed_at + self._safe_duration
             self._finished = self.control.status is not ExecutionStatus.RUNNING
             return plan
 
+    @property
+    def owned(self) -> bool:
+        """Whether this claim may still act. Plain reads make this safe for engine threads."""
+        return not (
+            self.lease_lost.is_set()
+            or self._finished
+            or self.control.status is not ExecutionStatus.RUNNING
+            or time.monotonic() >= self._confirmed_until
+        )
+
     def require_owned(self) -> None:
-        if self.lease_lost.is_set() or self._finished or self.control.status is not ExecutionStatus.RUNNING:
+        if not self.owned:
             raise ExecutionLeaseLostError(f"execution lease for '{self.control.run_id}' was lost")
 
-    def mark_lost(self) -> None:
+    def mark_lost(self, reason: str | None = None) -> None:
+        """Stop owning the claim; the event-loop caller may log the reason once."""
+        if reason is not None and not self.lease_lost.is_set() and not self._finished:
+            log.bind(
+                deployment=self.store.deployment,
+                run_id=self.control.run_id,
+                fence=self.control.fence,
+                reason=reason,
+            ).warning("Durable execution lease lost; another worker may take the run over")
         self.lease_lost.set()
 
     async def release(self) -> None:
@@ -213,7 +248,7 @@ class _ClaimedExecution:
                     chunks,
                 )
             except ExecutionLeaseLostError:
-                self.mark_lost()
+                self.mark_lost("the store rejected a display chunk after the lease was lost")
             except Exception as error:
                 self.report_dropped_chunks(error)
 
@@ -231,7 +266,7 @@ class _ClaimedExecution:
 
     async def _heartbeat_loop(self) -> None:
         while not self._finished and not self.lease_lost.is_set():
-            await asyncio.sleep(self._heartbeat_interval)
+            await asyncio.sleep(min(self._heartbeat_interval, max(0.0, self._confirmed_until - time.monotonic())))
             try:
                 await self.transition(
                     Heartbeat(
@@ -243,10 +278,13 @@ class _ClaimedExecution:
                 )
             except ExecutionLeaseLostError:
                 return
-            except Exception:
-                if time.monotonic() >= self._confirmed_until:
-                    self.mark_lost()
-                    return
+            except Exception as error:
+                log.bind(
+                    deployment=self.store.deployment,
+                    run_id=self.control.run_id,
+                    exception_type=type(error).__name__,
+                    error=str(error),
+                ).warning("Durable heartbeat failed")
 
 
 class DurableContext:

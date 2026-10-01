@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -19,10 +20,12 @@ from hayhooks.durable.context import (
     durable_streaming_callback,
 )
 from hayhooks.durable.engine import (
+    Checkpoint,
     Complete,
     ExecutionLeaseLostError,
     ExecutionStatus,
     Fail,
+    Heartbeat,
     PayloadKind,
     ReleaseClaim,
     RequestCancellation,
@@ -163,7 +166,13 @@ async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context
     persisted = await store.read(context.execution_id)
     assert persisted is not None
     reconstructed = DurableContext(
-        _ClaimedExecution(store, persisted.control, claim.worker_id, claim.lease_duration_ms),
+        _ClaimedExecution(
+            store,
+            persisted.control,
+            claim.worker_id,
+            claim.lease_duration_ms,
+            confirmed_at=time.monotonic(),
+        ),
         decode_checkpoint(persisted.payloads[PayloadKind.CHECKPOINT]),
     )
     assert reconstructed.resume_input == {"approved": True}
@@ -224,6 +233,54 @@ async def test_lost_claim_rejects_owned_context_operations(
     claim.mark_lost()
     with pytest.raises(ExecutionLeaseLostError):
         await getattr(context, method)(*args)
+
+
+async def test_claim_stops_owning_once_its_window_passes(context_factory, monkeypatch, log_records) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = AsyncMock(wraps=store.transition)
+    monkeypatch.setattr(store, "transition", transition)
+    claim._confirmed_until = time.monotonic() - 0.001
+
+    assert claim.owned is False
+    for operation in (
+        context.stream_chunk({"chunk": 1}),
+        context.report_progress("late"),
+        context.checkpoint(),
+    ):
+        with pytest.raises(ExecutionLeaseLostError):
+            await operation
+    with pytest.raises(ExecutionLeaseLostError):
+        await claim.transition(Heartbeat(claim.control.fence, claim.worker_id, 0, claim.lease_duration_ms))
+
+    assert claim.lease_lost.is_set()
+    transition.assert_not_awaited()
+    losses = [record for record in log_records if record["message"].startswith("Durable execution lease lost")]
+    assert len(losses) == 1 and "window" in losses[0]["extra"]["reason"]
+
+
+@pytest.mark.parametrize("command_type", [Heartbeat, Checkpoint], ids=["heartbeat", "checkpoint"])
+async def test_hung_store_call_loses_the_lease_within_its_window(context_factory, monkeypatch, command_type) -> None:
+    store, create = context_factory
+    context, claim = await create(lease_duration_ms=120)
+    transition = store.transition
+
+    async def hang(run_id, command):
+        if isinstance(command, command_type):
+            await asyncio.Event().wait()
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", hang)
+    if command_type is Heartbeat:
+        await asyncio.wait_for(claim.lease_lost.wait(), 0.3)
+    else:
+        with pytest.raises(ExecutionLeaseLostError):
+            await asyncio.wait_for(context.checkpoint(), 1)
+
+    assert claim.lease_lost.is_set()
+    assert not claim._transition_lock.locked()
+    with pytest.raises(ExecutionLeaseLostError):
+        await context.stream_chunk({"late": True})
 
 
 async def test_heartbeat_marks_a_rejected_claim_lost(context_factory) -> None:

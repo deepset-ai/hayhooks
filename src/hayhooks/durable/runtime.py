@@ -9,6 +9,7 @@ import inspect
 import math
 import random
 import secrets
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -41,7 +42,6 @@ from hayhooks.durable.engine import (
     Fail,
     InvalidExecutionTransitionError,
     PayloadKind,
-    ReleaseClaim,
     RequestCancellation,
     Resume,
     ScheduleRetry,
@@ -546,13 +546,14 @@ class DurableDeployment:
     async def _worker(self, worker_id: str) -> None:
         self._worker_store_error_streaks[worker_id] = 0
         while self.accepting:
+            claimed_at = time.monotonic()
             control = await self._claim_next_execution(worker_id)
             if control is None:
                 continue
 
             self._active_claims += 1
             try:
-                await self._execute_claim(control, worker_id)
+                await self._execute_claim(control, worker_id, confirmed_at=claimed_at)
             except asyncio.CancelledError:
                 raise
             except ExecutionLeaseLostError:
@@ -590,25 +591,26 @@ class DurableDeployment:
 
     async def _read_claimed_execution(
         self,
-        control: ExecutionControl,
-        worker_id: str,
+        claim: _ClaimedExecution,
     ) -> StoredExecution | None:
         """Load a claim, releasing it when the post-claim read cannot complete."""
         try:
-            stored = await self.store.read(control.run_id)
+            stored = await asyncio.wait_for(
+                self.store.read(claim.control.run_id),
+                claim._confirmed_until - time.monotonic(),
+            )
+        except asyncio.TimeoutError:
+            claim.mark_lost("the store did not complete the preparation read within the lease window")
+            raise ExecutionLeaseLostError(
+                f"execution lease for '{claim.control.run_id}' expired before its preparation read completed"
+            ) from None
         except ExecutionStoreError as error:
-            with suppress(ExecutionLeaseLostError, ExecutionNotFoundError, ExecutionStoreError):
-                await self.store.transition(control.run_id, ReleaseClaim(fence=control.fence, worker_id=worker_id))
-            await self._backoff_worker(worker_id, error, "read")
+            await claim.release()
+            await self._backoff_worker(claim.worker_id, error, "read")
             return None
         if stored is not None:
             return stored
-        try:
-            await self.store.transition(control.run_id, ReleaseClaim(fence=control.fence, worker_id=worker_id))
-        except (ExecutionLeaseLostError, ExecutionNotFoundError):
-            pass
-        except ExecutionStoreError as error:
-            await self._backoff_worker(worker_id, error, "release")
+        await claim.release()
         return None
 
     async def _prepare_execution(
@@ -633,8 +635,7 @@ class DurableDeployment:
             if checkpoint.adapter_kind is not self.kind:
                 raise ValueError("checkpoint kind does not match the deployment")
         except (KeyError, TypeError, ValueError, ExecutionPayloadSizeError) as error:
-            await self.store.transition(
-                control.run_id,
+            await claim.transition(
                 Fail(fence=control.fence, worker_id=worker_id, now_ms=0, error=self._encode_exception(error)),
             )
             return None
@@ -646,19 +647,28 @@ class DurableDeployment:
         self,
         control: ExecutionControl,
         worker_id: str,
+        *,
+        confirmed_at: float,
     ) -> None:
-        claim = _ClaimedExecution(self.store, control, worker_id, self.config.lease_duration_ms)
+        claim = _ClaimedExecution(
+            self.store,
+            control,
+            worker_id,
+            self.config.lease_duration_ms,
+            confirmed_at=confirmed_at,
+        )
         worker = cast(asyncio.Task[None], asyncio.current_task())
         self._claims[worker] = claim
         release: asyncio.Task[None] | None = None
         try:
-            stored = await self._read_claimed_execution(control, worker_id)
+            stored = await self._read_claimed_execution(claim)
             if stored is None:
                 return
             prepared = await self._prepare_execution(stored, claim, worker_id)
             if prepared is None:
                 return
             context, request = prepared
+            claim.require_owned()
             # Include the post-claim read and initial heartbeat in cancellation cleanup.
             await claim.start()
             await self._run_claim(claim, context, request, worker_id)
