@@ -142,6 +142,10 @@ async def benchmark(port, duration, submissions):  # noqa: C901, PLR0915
                 key_prefix=prefix,
                 config=StoreConfig(max_nonterminal_executions=0),
             )
+            pool = clients[0].connection_pool
+            burst_connections = [await pool.get_connection() for _ in range(submissions)]
+            for connection in burst_connections:
+                await pool.release(connection)
             measuring = True
             batches = metrics["client_batches"]
             results = await asyncio.gather(
