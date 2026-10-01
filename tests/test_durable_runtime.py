@@ -895,6 +895,28 @@ async def test_store_failure_logs_carry_the_error_text(deployment_factory, log_r
     assert failures[0]["extra"]["operation"] == "claim"
 
 
+async def test_health_reports_per_revision_counts(deployment_factory, monkeypatch) -> None:
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    operational_counts = store.operational_counts
+    revisions: list[str] = []
+
+    async def record_revision(*, revision: str):
+        revisions.append(revision)
+        return await operational_counts(revision=revision)
+
+    monkeypatch.setattr(store, "operational_counts", record_revision)
+    deployment = await deployment_factory(store=store, revision="revision-a")
+    health = await deployment.health()
+
+    assert health["counts"].keys() == {
+        "nonterminal",
+        "revision_nonterminal",
+        "revision_runnable",
+        "lease_expiry",
+    }
+    assert revisions == ["revision-a"]
+
+
 @pytest.mark.parametrize("exit_mode", ["cancel", "crash"])
 async def test_worker_slots_restart(deployment_factory, exit_mode: str) -> None:
     store = ControlledStore("jobs")
