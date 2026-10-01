@@ -378,7 +378,6 @@ def decode_control(values: Mapping[str | bytes, str | bytes | int], *, expected_
         or control.created_at_ms > control.updated_at_ms
         or (control.available_at_ms is not None and control.status is not ExecutionStatus.QUEUED)
         or (control.cancel_requested_at_ms is not None and control.cancel_requested_at_ms > control.updated_at_ms)
-        or (control.lease_expires_at_ms is not None and control.lease_expires_at_ms <= control.updated_at_ms)
     ):
         raise ExecutionStoreCorruptionError("control Hash contains contradictory values")
     return control

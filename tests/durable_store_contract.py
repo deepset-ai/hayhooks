@@ -326,6 +326,20 @@ async def assert_terminal_markers_contract(store: ExecutionStore) -> None:
         assert [(chunk.terminal, chunk.attempt) for chunk in chunks] == [(True, stored.control.run_attempt)]
 
 
+async def assert_cancel_after_lease_expiry_contract(store: ExecutionStore) -> None:
+    """Cancelling a run whose lease expired before recovery stays readable and maintenance cancels it."""
+    await store.submit(contract_control(store.deployment), b"input")
+    assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await asyncio.sleep(0.06)
+    await store.transition("run_1", RequestCancellation(0, "user"))
+    assert await store.read_control("run_1") is not None
+    await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR)
+    stored = await store.read("run_1")
+    assert stored is not None and stored.control.status is ExecutionStatus.CANCELED
+    counts = await store.operational_counts(revision="v1")
+    assert (counts["nonterminal"], counts["lease_expiry"]) == (0, 0)
+
+
 async def assert_raced_recovery_contract(store: ExecutionStore) -> None:
     """A lease recovery that loses its race skips that entry and still recovers the rest of the batch."""
     for run_id in ("run_a", "run_b"):

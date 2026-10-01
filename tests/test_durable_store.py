@@ -29,6 +29,7 @@ from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
     assert_discard_progress_contract,
+    assert_cancel_after_lease_expiry_contract,
     assert_lost_lease_budget_contract,
     assert_lowered_limits_keep_data_readable,
     assert_maintenance_backlog_contract,
@@ -71,6 +72,10 @@ async def test_memory_store_marks_every_terminal_path(max_stream_chunks: int) ->
 
 async def test_memory_store_skips_raced_lease_recovery() -> None:
     await assert_raced_recovery_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
+
+
+async def test_memory_store_cancels_a_run_whose_lease_expired() -> None:
+    await assert_cancel_after_lease_expiry_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
 
 
 async def test_memory_store_fails_on_the_last_lost_lease() -> None:
