@@ -301,6 +301,28 @@ async def test_submission_is_detached_idempotent_and_owner_scoped(deployment_fac
     assert decode_json(stored.payloads[PayloadKind.RESULT], max_bytes=1_000) == {"value": 2}
 
 
+async def test_idempotent_replay_ignores_revision_and_unset_fields() -> None:
+    class RequestV2(Request):
+        note: str = ""
+
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    config = RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300)
+    v1 = DurableDeployment("jobs", "v1", store, Request, echo_runner, result_model=Result, config=config)
+    v2 = DurableDeployment("jobs", "v2", store, RequestV2, echo_runner, result_model=Result, config=config)
+    await asyncio.gather(v1.start(), v2.start())
+    try:
+        created = await v1.submit({"value": 1}, idempotency_key="same")
+        replayed = await v2.submit({"value": 1}, idempotency_key="same")
+        assert created.created is True
+        assert replayed.created is False
+        assert replayed.control.run_id == created.control.run_id
+        with pytest.raises(ExecutionIdempotencyConflictError):
+            await v2.submit({"value": 1, "note": ""}, idempotency_key="same")
+    finally:
+        await asyncio.gather(v1.close(), v2.close())
+        await asyncio.gather(v1.wait_drained(), v2.wait_drained())
+
+
 @pytest.mark.parametrize("exit_kind", ["exit", "stopiteration"])
 async def test_sync_runner_exit_fails_the_run_and_keeps_the_loop(deployment_factory, exit_kind: str) -> None:
     def runner(_context: DurableContext, request: Request) -> Result:

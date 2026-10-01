@@ -306,9 +306,8 @@ class DurableDeployment:
         input_payload = encode_json(json_input, max_bytes=self.store.config.max_payload_bytes)
         binding = operation_fingerprint(
             self.name,
-            self.revision,
             owner_id,
-            request,
+            request.model_dump(mode="python", exclude_unset=True),
             max_bytes=self.store.config.max_payload_bytes + 3 * MAX_CONTROL_SCALAR_BYTES + 256,
         )
         idempotency_material = idempotency_key if idempotency_key is not None else secrets.token_urlsafe(32)

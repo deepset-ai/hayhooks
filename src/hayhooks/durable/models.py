@@ -138,16 +138,14 @@ def decode_json(payload: bytes, *, max_bytes: int) -> JsonValue:
 
 def operation_fingerprint(
     deployment: str,
-    revision: str,
     owner_id: str | None,
     validated_input: object,
     *,
     max_bytes: int = DEFAULT_MAX_JSON_BYTES,
 ) -> str:
-    """Hash the operation scope and canonical validated input."""
+    """Hash the operation scope and canonical validated input, excluding the definition revision."""
     value = {
         "deployment": deployment,
-        "revision": revision,
         "owner_id": owner_id,
         "input": _canonical_json(validated_input, max_bytes=max_bytes),
     }
