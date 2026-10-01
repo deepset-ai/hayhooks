@@ -654,7 +654,12 @@ class DurableDeployment:
         stored: StoredExecution,
         claim: _ClaimedExecution,
     ) -> tuple[DurableContext, BaseModel] | None:
-        claim.control = stored.control
+        control = stored.control
+        owner = (ExecutionStatus.RUNNING, claim.worker_id, claim.control.fence)
+        if (control.status, control.lease_owner, control.fence) != owner:
+            claim.mark_lost("the post-claim read shows the claim has ended")
+            raise ExecutionLeaseLostError(f"execution lease for '{control.run_id}' was lost")
+        claim.control = control
         try:
             for event in stored.progress:
                 value = decode_json(event.data, max_bytes=sys.maxsize)
@@ -741,7 +746,7 @@ class DurableDeployment:
                 return
             context, request = prepared
             claim.require_owned()
-            # Include the post-claim read and initial heartbeat in cancellation cleanup.
+            # Include the post-claim read in cancellation cleanup.
             await claim.start()
             await self._run_claim(claim, context, request, worker_id)
         except asyncio.CancelledError:

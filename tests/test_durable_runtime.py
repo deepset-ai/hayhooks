@@ -833,7 +833,7 @@ async def test_heartbeat_outage_shorter_than_the_lease_keeps_the_claim(deploymen
         async def transition(self, run_id, command):
             if isinstance(command, Heartbeat):
                 self.heartbeats += 1
-                if 2 <= self.heartbeats <= 6:
+                if 1 <= self.heartbeats <= 5:
                     message = "heartbeat outage"
                     raise ExecutionStoreError(message)
             return await super().transition(run_id, command)
@@ -1349,11 +1349,10 @@ async def test_close_releases_async_work_it_cancels(deployment_factory, cancel_r
     assert reclaimed is not None and reclaimed.next_control.run_attempt == 2
 
 
-@pytest.mark.parametrize("stage", ["read", "heartbeat"])
-async def test_close_releases_claim_before_application_starts(deployment_factory, monkeypatch, stage) -> None:
+async def test_close_releases_claim_before_application_starts(deployment_factory, monkeypatch) -> None:
     store = ControlledStore("jobs")
     entered = asyncio.Event()
-    read, transition = store.read, store.transition
+    read = store.read
 
     async def blocked_read(run_id):
         if not entered.is_set():
@@ -1361,14 +1360,7 @@ async def test_close_releases_claim_before_application_starts(deployment_factory
             await asyncio.Event().wait()
         return await read(run_id)
 
-    async def blocked_heartbeat(run_id, command):
-        if isinstance(command, Heartbeat):
-            entered.set()
-            await asyncio.Event().wait()
-        return await transition(run_id, command)
-
-    attribute, blocked = {"read": ("read", blocked_read), "heartbeat": ("transition", blocked_heartbeat)}[stage]
-    monkeypatch.setattr(store, attribute, blocked)
+    monkeypatch.setattr(store, "read", blocked_read)
     runner = AsyncMock(return_value=Result(value=1))
     deployment = await deployment_factory(runner, store=store, config=RuntimeConfig(shutdown_grace_seconds=0))
     run_id = (await deployment.submit({"value": 1})).control.run_id
@@ -1446,17 +1438,19 @@ async def test_worker_cancellation_cannot_interrupt_claim_release(
     started, releasing, proceed = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
     deployment = await deployment_factory(start=False, config=RuntimeConfig(shutdown_grace_seconds=0))
-    transition = deployment.store.transition
+    read, transition = deployment.store.read, deployment.store.transition
+
+    async def blocked_read(_run_id):
+        started.set()
+        await asyncio.Event().wait()
 
     async def slow_release(execution_id, command):
-        if isinstance(command, Heartbeat):
-            started.set()
-            await asyncio.Event().wait()
         if isinstance(command, ReleaseClaim):
             releasing.set()
             await proceed.wait()
         return await transition(execution_id, command)
 
+    monkeypatch.setattr(deployment.store, "read", blocked_read)
     monkeypatch.setattr(deployment.store, "transition", slow_release)
     await deployment.start()
     run_id = (await deployment.submit({"value": 1})).control.run_id
@@ -1480,7 +1474,7 @@ async def test_worker_cancellation_cannot_interrupt_claim_release(
         await asyncio.wait_for(deployment.wait_drained(), timeout=1)
         if drain is not None:
             await drain
-    assert (await deployment.store.read(run_id)).control.status is ExecutionStatus.QUEUED
+    assert (await read(run_id)).control.status is ExecutionStatus.QUEUED
 
 
 @pytest.mark.parametrize("threaded", [False, True], ids=["async", "thread"])
@@ -2156,3 +2150,67 @@ async def test_locally_requeued_work_wakes_idle_workers(deployment_factory, sour
     await wait_for_execution(
         deployment, run_id, lambda stored: stored.control.status is ExecutionStatus.COMPLETED, timeout=0.5
     )
+
+
+async def test_claim_runs_without_an_initial_heartbeat(deployment_factory, monkeypatch) -> None:
+    store = ControlledStore("jobs")
+    transition, commands = store.transition, []
+
+    async def recorded(run_id, command):
+        commands.append(type(command).__name__)
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", recorded)
+    deployment = await deployment_factory(store=store, config=RuntimeConfig(poll_interval_seconds=60))
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    stored = await wait_for_execution(deployment, run_id, lambda value: value.control.terminal)
+
+    assert stored.control.status is ExecutionStatus.COMPLETED
+    assert "Heartbeat" not in commands
+
+
+async def test_lease_window_starts_before_the_claim_request(deployment_factory, monkeypatch) -> None:
+    store = ControlledStore("jobs")
+    started, entered = asyncio.Event(), []
+    claim = store.claim
+
+    async def timed_claim(command):
+        entered.append(time.monotonic())
+        return await claim(command)
+
+    async def runner(_context: DurableContext, _request: Request) -> Result:
+        started.set()
+        await asyncio.Event().wait()
+        return Result(value=0)
+
+    monkeypatch.setattr(store, "claim", timed_claim)
+    deployment = await deployment_factory(runner, store=store, config=RuntimeConfig(shutdown_grace_seconds=0))
+    await deployment.submit({"value": 1})
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    [running] = deployment._claims.values()
+    assert running.confirmed_at <= entered[-1]
+
+
+async def test_run_reclaimed_before_the_post_claim_read_does_not_start(deployment_factory, monkeypatch) -> None:
+    store = ControlledStore("jobs")
+    read, reclaimed = store.read, asyncio.Event()
+
+    async def read_after_takeover(run_id):
+        stored = await read(run_id)
+        if stored is not None and not reclaimed.is_set():
+            await store.transition(run_id, ReleaseClaim(stored.control.fence, stored.control.lease_owner))
+            assert await store.claim(SUCCESSOR) is not None
+            reclaimed.set()
+            stored = await read(run_id)
+        return stored
+
+    monkeypatch.setattr(store, "read", read_after_takeover)
+    runner = AsyncMock(return_value=Result(value=1))
+    deployment = await deployment_factory(runner, store=store)
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    await asyncio.wait_for(reclaimed.wait(), timeout=1)
+    await wait_for_health(deployment, lambda health: health["active_executions"] == 0)
+
+    runner.assert_not_called()
+    assert (await read(run_id)).control.lease_owner == SUCCESSOR.worker_id

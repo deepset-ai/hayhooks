@@ -673,3 +673,30 @@ async def test_chunk_wake_is_bounded_while_the_event_loop_is_stalled(context_fac
         chunks += page
         cursor = page[-1].cursor
     assert [chunk.data for chunk in chunks[-3:]] == [b'{"chunk":"race"}', b'{"chunk":"terminal"}', b""]
+
+
+async def test_first_heartbeat_is_due_one_interval_after_the_claim(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    _, claim = await create()
+    await claim.stop()
+    beat = asyncio.Event()
+    transition = store.transition
+
+    async def recorded(run_id, command):
+        if isinstance(command, Heartbeat):
+            beat.set()
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", recorded)
+    slow = _ClaimedExecution(
+        store,
+        claim.control,
+        claim.worker_id,
+        claim.lease_duration_ms,
+        confirmed_at=time.monotonic() - 10,
+    )
+    await slow.start()
+    try:
+        await asyncio.wait_for(beat.wait(), timeout=1)
+    finally:
+        await slow.stop()

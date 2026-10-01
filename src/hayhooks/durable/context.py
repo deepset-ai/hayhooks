@@ -122,12 +122,8 @@ class _ClaimedExecution:
         return self.control.progress_sequence + 1, tuple(self.pending_progress)
 
     async def start(self) -> None:
-        """Confirm the lease, then keep it alive and flush chunks in the background."""
-        await self.transition(
-            Heartbeat(
-                fence=self.control.fence, worker_id=self.worker_id, now_ms=0, lease_duration_ms=self.lease_duration_ms
-            )
-        )
+        """Keep the claimed lease alive and flush chunks in the background."""
+        self.require_owned()
         self._tasks = (
             asyncio.create_task(self._heartbeat_loop(), name=f"durable-heartbeat:{self.control.run_id}"),
             asyncio.create_task(self._flush_loop(), name=f"durable-chunks:{self.control.run_id}"),
@@ -208,6 +204,11 @@ class _ClaimedExecution:
             or self.control.status is not ExecutionStatus.RUNNING
             or time.monotonic() >= self._confirmed_until
         )
+
+    @property
+    def confirmed_at(self) -> float:
+        """Conservative monotonic timestamp of the most recent store confirmation."""
+        return self._confirmed_until - self._safe_duration
 
     def require_owned(self) -> None:
         if not self.owned:
@@ -328,8 +329,10 @@ class _ClaimedExecution:
             await asyncio.sleep(_CHUNK_FLUSH_SECONDS)
 
     async def _heartbeat_loop(self) -> None:
+        delay = self.confirmed_at + self._heartbeat_interval - time.monotonic()
         while not self._finished and not self.lease_lost.is_set():
-            await asyncio.sleep(min(self._heartbeat_interval, max(0.0, self._confirmed_until - time.monotonic())))
+            await asyncio.sleep(max(0.0, min(delay, self._confirmed_until - time.monotonic())))
+            delay = self._heartbeat_interval
             try:
                 await self.transition(
                     Heartbeat(
