@@ -40,12 +40,14 @@ from hayhooks.durable.store import (
     ChunkCursorExpiredError,
     ExecutionAdmissionError,
     ExecutionIdempotencyConflictError,
+    ExecutionProgressCorruptionError,
     ExecutionStoreCorruptionError,
     ExecutionStoreError,
 )
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
+    assert_discard_progress_contract,
     assert_lost_lease_budget_contract,
     assert_lowered_limits_keep_data_readable,
     assert_raced_recovery_contract,
@@ -125,6 +127,72 @@ async def test_redis_store_fails_on_the_last_lost_lease(redis_store) -> None:
 async def test_redis_store_keeps_data_readable_after_lowering_limits(redis_store) -> None:
     _, store = redis_store
     await assert_lowered_limits_keep_data_readable(store)
+
+
+async def test_redis_store_discards_progress_only_when_requested(redis_store) -> None:
+    _, store = redis_store
+    await assert_discard_progress_contract(store)
+
+
+@pytest.mark.parametrize("corruption", ["wrong-type", "malformed"])
+async def test_invalid_data_failure_repairs_public_progress(redis_store, corruption: str) -> None:
+    redis, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    await store.transition("run_1", Checkpoint(1, "worker", 0, 10_000, b"checkpoint", (b"progress",)))
+    progress_key = store.keys.progress("run_1")
+    if corruption == "wrong-type":
+        await redis.delete(progress_key)
+        await redis.set(progress_key, b"wrong type")
+    else:
+        await redis.rpush(progress_key, b"bad")
+
+    with pytest.raises(ExecutionProgressCorruptionError):
+        await store.read_public("run_1")
+    error = b'{"type":"stored_execution_invalid"}'
+    await store.transition("run_1", Fail(1, "worker", 0, error, discard_progress=True))
+
+    public = await store.read_public("run_1")
+    assert public is not None and public.control.status is ExecutionStatus.FAILED
+    assert public.control.progress_sequence == 0 and public.progress == ()
+    assert public.payloads[PayloadKind.ERROR] == error
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 0,
+        "revision_nonterminal": 0,
+        "revision_runnable": 0,
+        "lease_expiry": 0,
+    }
+
+
+async def test_stale_invalid_data_failure_does_not_clear_progress(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await redis.set(store.keys.progress("run_1"), b"wrong type")
+    await store.transition("run_1", ReleaseClaim(control.fence, "worker"))
+    assert await store.claim(Claim("other", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is not None
+
+    with pytest.raises(ExecutionLeaseLostError):
+        await store.transition("run_1", Fail(control.fence, "worker", 0, b"invalid", discard_progress=True))
+
+    assert await redis.type(store.keys.progress("run_1")) == b"string"
+
+
+async def test_cancellation_wins_invalid_data_failure_and_clears_progress(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.transition("run_1", RequestCancellation(0, "cancel"))
+    await redis.set(store.keys.progress("run_1"), b"wrong type")
+
+    canceled = await store.transition(
+        "run_1",
+        Fail(control.fence, "worker", 0, b"invalid", discard_progress=True),
+    )
+
+    assert canceled.next_control.status is ExecutionStatus.CANCELED
+    public = await store.read_public("run_1")
+    assert public is not None and public.control.status is ExecutionStatus.CANCELED
+    assert public.control.progress_sequence == 0 and public.progress == ()
 
 
 async def test_chunk_reads_skip_undecodable_entries(redis_store) -> None:

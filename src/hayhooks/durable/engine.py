@@ -169,6 +169,7 @@ class TransitionPlan:
     payload_deletes: tuple[PayloadKind, ...] = ()
     progress_events: tuple[ProgressEvent, ...] = ()
     lease_index_update: LeaseIndexUpdate | None = None
+    discard_progress: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +271,7 @@ class Fail:
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
     first_progress_sequence: int | None = None
+    discard_progress: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,6 +516,9 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
     if isinstance(command, (Complete, Fail)):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         completed = isinstance(command, Complete)
+        discard_progress = isinstance(command, Fail) and command.discard_progress
+        if discard_progress and command.progress_events:
+            raise InvalidExecutionTransitionError("discarding progress cannot append new progress events")
         progress_events = _progress_events(
             control.progress_sequence, command.progress_events, command.first_progress_sequence
         )
@@ -525,6 +530,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
                 None,
                 None,
                 progress_events=progress_events,
+                discard_progress=discard_progress,
             )
         return _terminal(
             control,
@@ -533,6 +539,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             PayloadKind.RESULT if completed else PayloadKind.ERROR,
             command.result if isinstance(command, Complete) else command.error,
             progress_events=progress_events,
+            discard_progress=discard_progress,
         )
     if isinstance(command, RecoverExpiredLease):
         if control.status is not ExecutionStatus.RUNNING or control.fence != command.indexed_fence:
@@ -572,6 +579,7 @@ def _terminal(
     *,
     increment_version: bool = True,
     progress_events: tuple[ProgressEvent, ...] = (),
+    discard_progress: bool = False,
 ) -> TransitionPlan:
     if control.terminal:
         raise InvalidExecutionTransitionError("terminal execution cannot transition")
@@ -581,7 +589,9 @@ def _terminal(
         "lease_owner": None,
         "lease_expires_at_ms": None,
     }
-    if progress_events:
+    if discard_progress:
+        kwargs["progress_sequence"] = 0
+    elif progress_events:
         kwargs["progress_sequence"] = progress_events[-1].sequence
     next_control = (
         _business(control, now_ms, **kwargs) if increment_version else replace(control, updated_at_ms=now_ms, **kwargs)
@@ -600,6 +610,7 @@ def _terminal(
         payload_deletes=(*deletes, PayloadKind.WAIT),
         progress_events=progress_events,
         lease_index_update=LeaseIndexUpdate(None, control.fence),
+        discard_progress=discard_progress,
     )
 
 

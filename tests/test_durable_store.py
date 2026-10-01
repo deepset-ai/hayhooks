@@ -21,6 +21,7 @@ from hayhooks.durable.store import ExecutionStoreCorruptionError, MemoryExecutio
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
+    assert_discard_progress_contract,
     assert_lost_lease_budget_contract,
     assert_lowered_limits_keep_data_readable,
     assert_raced_recovery_contract,
@@ -70,6 +71,10 @@ async def test_memory_store_fails_on_the_last_lost_lease() -> None:
 
 async def test_memory_store_keeps_data_readable_after_lowering_limits() -> None:
     await assert_lowered_limits_keep_data_readable(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
+
+
+async def test_memory_store_discards_progress_only_when_requested() -> None:
+    await assert_discard_progress_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
 
 
 def test_chunk_reads_are_bounded_by_bytes_entries_and_retention() -> None:

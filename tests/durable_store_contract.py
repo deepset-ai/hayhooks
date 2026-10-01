@@ -15,6 +15,7 @@ from hayhooks.durable.engine import (
     ExecutionCommand,
     ExecutionPayloadSizeError,
     ExecutionStatus,
+    Fail,
     Heartbeat,
     InvalidExecutionTransitionError,
     PayloadKind,
@@ -263,6 +264,28 @@ async def assert_lowered_limits_keep_data_readable(store: ExecutionStore) -> Non
         await store.transition("run_1", Complete(1, "worker", 0, b"xx"))
 
 
+async def assert_discard_progress_contract(store: ExecutionStore) -> None:
+    """Explicit invalid-data failure clears progress while ordinary failure preserves it."""
+    for run_id in ("run_keep", "run_discard"):
+        await store.submit(contract_control(store.deployment, run_id, idempotency=run_id, binding=run_id), b"input")
+        claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
+        assert claimed is not None and claimed.next_control.run_id == run_id
+        await store.transition(run_id, Checkpoint(1, "worker", 0, 500, b"checkpoint", (b"progress",)))
+
+    await store.transition("run_keep", Fail(1, "worker", 0, b"failed"))
+    kept = await store.read_public("run_keep")
+    assert kept is not None and [event.data for event in kept.progress] == [b"progress"]
+
+    discarded = await store.transition(
+        "run_discard",
+        Fail(1, "worker", 0, b"invalid", discard_progress=True),
+    )
+    assert discarded.next_control.progress_sequence == 0 and discarded.discard_progress
+    stored = await store.read_public("run_discard")
+    assert stored is not None and stored.control.status is ExecutionStatus.FAILED
+    assert stored.control.progress_sequence == 0 and not stored.progress
+
+
 async def assert_terminal_markers_contract(store: ExecutionStore) -> None:
     """Every terminal path appends one marker, even when chunk persistence is disabled."""
     for index in range(4):
@@ -300,7 +323,8 @@ async def assert_raced_recovery_contract(store: ExecutionStore) -> None:
 
     async def raced(run_id: str, command: ExecutionCommand) -> TransitionPlan:
         if run_id == "run_a":
-            raise InvalidExecutionTransitionError("lease renewed after the index scan")
+            message = "lease renewed after the index scan"
+            raise InvalidExecutionTransitionError(message)
         return await transition(run_id, command)
 
     with patch.object(store, "transition", raced):

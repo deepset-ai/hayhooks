@@ -57,6 +57,10 @@ class ExecutionStoreCorruptionError(ExecutionStoreError):
     """Persisted state cannot be decoded without violating durable invariants."""
 
 
+class ExecutionProgressCorruptionError(ExecutionStoreCorruptionError):
+    """Retained progress cannot be decoded consistently with its control."""
+
+
 class ExecutionContentionError(ExecutionStoreError):
     """A bounded optimistic transaction could not obtain a stable snapshot."""
 
@@ -364,7 +368,9 @@ class MemoryExecutionStore:
             "lease_expiry": len(self._lease_expiry),
         }
 
-    def _apply(self, current: ExecutionControl, plan: TransitionPlan, *, new_submission: bool = False) -> None:
+    def _apply(  # noqa: C901
+        self, current: ExecutionControl, plan: TransitionPlan, *, new_submission: bool = False
+    ) -> None:
         control = plan.next_control
         self._controls[control.run_id] = control
         payloads = self._payloads.setdefault(control.run_id, {})
@@ -373,7 +379,9 @@ class MemoryExecutionStore:
         for kind in plan.payload_deletes:
             payloads.pop(kind, None)
 
-        if plan.progress_events:
+        if plan.discard_progress:
+            self._progress.pop(control.run_id, None)
+        elif plan.progress_events:
             progress = self._progress.setdefault(control.run_id, [])
             progress.extend(plan.progress_events)
             del progress[: -self.config.max_progress_events]

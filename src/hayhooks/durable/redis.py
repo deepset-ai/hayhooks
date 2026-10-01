@@ -50,6 +50,7 @@ from hayhooks.durable.store import (
     ExecutionAdmissionError,
     ExecutionContentionError,
     ExecutionIdempotencyConflictError,
+    ExecutionProgressCorruptionError,
     ExecutionStoreCorruptionError,
     ExecutionStoreError,
     StoreConfig,
@@ -690,8 +691,10 @@ class RedisExecutionStore:
         with _redis_errors():
             if any(isinstance(reply, Exception) and not _wrong_type(reply) for reply in replies):
                 raise next(reply for reply in replies if isinstance(reply, Exception) and not _wrong_type(reply))
-        if any(isinstance(reply, Exception) for reply in replies):
+        if isinstance(values, Exception) or any(isinstance(reply, Exception) for reply in raw_payloads):
             raise ExecutionStoreCorruptionError("stored execution keys have invalid types")
+        if isinstance(raw_progress, Exception):
+            raise ExecutionProgressCorruptionError("stored progress key has an invalid type")
         control = self._decode(values, run_id)
         payloads: dict[PayloadKind, bytes] = {}
         for kind, payload in zip(kinds, raw_payloads, strict=True):
@@ -703,13 +706,13 @@ class RedisExecutionStore:
         progress = []
         for entry in raw_progress:
             if not isinstance(entry, bytes) or len(entry) < _PROGRESS_SEQUENCE_BYTES:
-                raise ExecutionStoreCorruptionError("stored progress event is invalid")
+                raise ExecutionProgressCorruptionError("stored progress event is invalid")
             event = ProgressEvent(
                 int.from_bytes(entry[:_PROGRESS_SEQUENCE_BYTES], "big"),
                 entry[_PROGRESS_SEQUENCE_BYTES:],
             )
             if event.sequence < 1:
-                raise ExecutionStoreCorruptionError("stored progress event is invalid")
+                raise ExecutionProgressCorruptionError("stored progress event is invalid")
             progress.append(event)
         sequences = [event.sequence for event in progress]
         if (control.progress_sequence and not progress) or sequences != list(
@@ -718,7 +721,7 @@ class RedisExecutionStore:
                 control.progress_sequence + 1,
             )
         ):
-            raise ExecutionStoreCorruptionError("progress sequence contradicts control state")
+            raise ExecutionProgressCorruptionError("progress sequence contradicts control state")
         stored = StoredExecution(control, payloads, tuple(progress))
         validate_stored_execution(stored, private=private)
         return stored
@@ -780,6 +783,7 @@ class RedisExecutionStore:
                     or plan.payload_deletes
                     or plan.progress_events
                     or plan.lease_index_update
+                    or plan.discard_progress
                 )
             ):
                 log.bind(
@@ -853,7 +857,9 @@ class RedisExecutionStore:
             commands.append(("HDEL", control_key, *removed_fields))
         commands.extend(("SET", self.keys.payload(run_id, write.kind), write.data) for write in plan.payload_writes)
         commands.extend(("DEL", self.keys.payload(run_id, kind)) for kind in plan.payload_deletes)
-        if plan.progress_events:
+        if plan.discard_progress:
+            commands.append(("DEL", progress_key))
+        elif plan.progress_events:
             entries = [
                 event.sequence.to_bytes(_PROGRESS_SEQUENCE_BYTES, "big") + event.data for event in plan.progress_events
             ]

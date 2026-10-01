@@ -183,6 +183,23 @@ def test_terminal_state_is_irreversible_and_payloads_are_exclusive(claimed_contr
     assert failed.payload_deletes == (PayloadKind.RESULT, PayloadKind.WAIT)
 
 
+def test_invalid_data_failure_can_discard_progress(claimed_control) -> None:
+    current = replace(claimed_control, progress_sequence=2)
+    failed = decide(current, Fail(1, "worker-a", 300, b"invalid", discard_progress=True))
+    assert failed.next_control.status is ExecutionStatus.FAILED
+    assert failed.next_control.progress_sequence == 0
+    assert failed.discard_progress and not failed.progress_events
+
+    canceled = decide(current, RequestCancellation(250)).next_control
+    canceled = decide(canceled, Fail(1, "worker-a", 300, b"invalid", discard_progress=True))
+    assert canceled.next_control.status is ExecutionStatus.CANCELED
+    assert canceled.next_control.progress_sequence == 0
+    assert canceled.discard_progress
+
+    with pytest.raises(InvalidExecutionTransitionError, match="cannot append"):
+        decide(current, Fail(1, "worker-a", 300, b"invalid", (b"new",), discard_progress=True))
+
+
 def test_revision_mismatch_never_grants_a_fence() -> None:
     current = control()
     with pytest.raises(InvalidExecutionTransitionError, match="revision"):
