@@ -422,7 +422,9 @@ Unlike `get()`, it allows a revision mismatch by default. `submit()` raises
 `ExecutionAdmissionError` when the deployment is not accepting submissions.
 
 Without an owner dependency, the router uses bearer-ID access: possession of a
-random execution ID grants access. A multi-user host should pass an
+random execution ID grants access. Execution IDs appear in logs and in the
+tracing dashboard as `hayhooks.durable.execution_id`, so restrict access to
+both. A multi-user host should pass an
 `owner_id_dependency` to `create_durable_router`. The host authenticates the request and returns a stable
 user or tenant ID. The router scopes execution access and idempotency to that ID
 and hides owner mismatches as `404`.
