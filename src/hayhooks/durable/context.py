@@ -194,7 +194,7 @@ class _ClaimedExecution:
             del self.pending_progress[: max(0, plan.next_control.progress_sequence - self.control.progress_sequence)]
             self.control = plan.next_control
             self._confirmed_until = confirmed_at + self._safe_duration
-            self._finished = self.control.status is not ExecutionStatus.RUNNING
+            self._finished = self._finished or self.control.status is not ExecutionStatus.RUNNING
             return plan
 
     @property
