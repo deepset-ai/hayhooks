@@ -406,3 +406,30 @@ def test_idle_stream_stays_open_past_the_default_redis_socket_timeout(
     [text] = streamed
     assert "event: error" not in text
     assert "event: completed" in text
+
+
+async def test_an_extra_viewer_waits_briefly_for_a_pooled_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    from hayhooks.server.app import _redis_clients
+
+    monkeypatch.setattr(settings, "durable_redis_max_viewers", 1)
+    worker, viewer = _redis_clients(REDIS_URL)
+    key = f"hayhooks:test:{uuid.uuid4().hex}:chunks"
+    try:
+        # A viewer that releases within the wait serves the next one.
+        first = asyncio.create_task(viewer.xread({key: "0-0"}, block=300))
+        await asyncio.sleep(0.05)
+        assert await viewer.xread({key: "0-0"}, block=10) == []
+        await first
+        # One that holds its connection longer makes the extra viewer fail after the wait.
+        first = asyncio.create_task(viewer.xread({key: "0-0"}, block=3_000))
+        await asyncio.sleep(0.05)
+        started = time.monotonic()
+        with pytest.raises(RedisConnectionError):
+            await viewer.xread({key: "0-0"}, block=10)
+        assert 0.9 < time.monotonic() - started < 2
+        await first
+    finally:
+        await worker.aclose()
+        await viewer.aclose()

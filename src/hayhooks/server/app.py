@@ -67,6 +67,8 @@ if TYPE_CHECKING:
 
 # Worker commands and connection attempts are short; redis-py 8 uses the same default.
 _REDIS_TIMEOUT_SECONDS = 5.0
+# An extra viewer waits this long for a pooled connection before its stream ends with an error event.
+_VIEWER_POOL_WAIT_SECONDS = 1.0
 
 
 def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
@@ -541,7 +543,7 @@ def _redis_clients(url: str) -> tuple[Any, Any]:
     Blocking SSE reads use the viewer client, so viewers cannot starve worker heartbeats of connections.
     Neither client retries commands or negotiates RESP3, on every supported redis-py version.
     """
-    from redis.asyncio import Redis
+    from redis.asyncio import BlockingConnectionPool, Redis
 
     from hayhooks.durable.fastapi import _STREAM_BLOCK_SECONDS
 
@@ -551,12 +553,17 @@ def _redis_clients(url: str) -> tuple[Any, Any]:
         "socket_keepalive": True,
         "socket_keepalive_options": _keepalive_options(),
     }
-    worker = Redis.from_url(url, socket_timeout=_REDIS_TIMEOUT_SECONDS, **common)
-    viewer = Redis.from_url(
-        url,
-        max_connections=settings.durable_redis_max_viewers,
-        socket_timeout=_STREAM_BLOCK_SECONDS + 15,
-        **common,
+    # ponytail: unbounded worker pool (redis-py 8 caps it at 100); bound HTTP concurrency upstream if Redis
+    # connections must be capped, since exhausting this pool would fail heartbeats.
+    worker = Redis.from_url(url, socket_timeout=_REDIS_TIMEOUT_SECONDS, max_connections=2**31, **common)
+    viewer = Redis.from_pool(
+        BlockingConnectionPool.from_url(
+            url,
+            max_connections=settings.durable_redis_max_viewers,
+            timeout=_VIEWER_POOL_WAIT_SECONDS,
+            socket_timeout=_STREAM_BLOCK_SECONDS + 15,
+            **common,
+        )
     )
     viewer_timeout = viewer.connection_pool.connection_kwargs.get("socket_timeout")
     if viewer_timeout is not None and viewer_timeout <= _STREAM_BLOCK_SECONDS:

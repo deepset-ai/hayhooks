@@ -413,21 +413,26 @@ def _redis_durable_app(durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPa
 def test_durable_redis_clients_have_explicit_timeouts_and_never_retry(
     durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from redis.asyncio import BlockingConnectionPool
+
     worker, viewer = _redis_durable_app(
         durable_pipelines_dir, monkeypatch, "redis://localhost:6379/15"
     ).state.durable_redis_clients
 
     # The viewer outlasts the 15 s SSE block; nothing connects at construction.
-    expected = {"worker": 5.0, "viewer": 30.0}
+    expected = {"worker": (5.0, 2**31), "viewer": (30.0, 7)}
     for name, client in (("worker", worker), ("viewer", viewer)):
         pool = client.connection_pool
         kwargs = pool.connection_kwargs
-        assert kwargs["socket_timeout"] == expected[name]
+        assert (kwargs["socket_timeout"], pool.max_connections) == expected[name]
         assert (kwargs["socket_connect_timeout"], kwargs["socket_keepalive"], kwargs["protocol"]) == (5.0, True, 2)
         connection = pool.make_connection()
         assert connection.retry._retries == 0
         assert not connection.is_connected
         assert client.auto_close_connection_pool
+    assert isinstance(viewer.connection_pool, BlockingConnectionPool)
+    assert viewer.connection_pool.timeout == 1.0
+    assert not isinstance(worker.connection_pool, BlockingConnectionPool)
 
 
 @pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")

@@ -49,7 +49,7 @@ a2a = [
 ]
 durable = [
   "haystack-ai>=3.1,<4",
-  "redis>=5,<9",
+  "redis>=5.0.1,<9",
 ]
 chainlit = [
   "chainlit>=2.0.0",
@@ -135,7 +135,7 @@ extra-dependencies = [
   "pytest-asyncio",
   "pytest-cov",
   "pytest-mock",
-  "redis>=5,<9",
+  "redis>=5.0.1,<9",
   "ty",
 ]
 
