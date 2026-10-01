@@ -7,7 +7,6 @@ import asyncio
 import hashlib
 import inspect
 import math
-import random
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -28,6 +27,7 @@ from hayhooks.durable.context import (
     _ExecutionSuspendedError,
     _RetryRequestedError,
     _track,
+    backoff_delay,
     durable_context_scope,
 )
 from hayhooks.durable.engine import (
@@ -656,6 +656,10 @@ class DurableDeployment:
             worker_id,
             self.config.lease_duration_ms,
             confirmed_at=confirmed_at,
+            backoff=(
+                self.config.operational_backoff_min_seconds,
+                self.config.operational_backoff_max_seconds,
+            ),
         )
         worker = cast(asyncio.Task[None], asyncio.current_task())
         self._claims[worker] = claim
@@ -865,11 +869,11 @@ class DurableDeployment:
         )
 
     async def _backoff(self, error: BaseException, streak: int, operation: str) -> None:
-        ceiling = min(
+        delay = backoff_delay(
+            streak,
+            self.config.operational_backoff_min_seconds,
             self.config.operational_backoff_max_seconds,
-            self.config.operational_backoff_min_seconds * (2 ** min(streak - 1, 20)),
         )
-        delay = random.uniform(self.config.operational_backoff_min_seconds, ceiling)  # noqa: S311
         log.bind(
             deployment=self.name,
             operation=operation,

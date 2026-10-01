@@ -155,6 +155,20 @@ class PreparationStore(MemoryExecutionStore):
         return await super().transition(run_id, command)
 
 
+class FlakyCommitStore(MemoryExecutionStore):
+    def __init__(self, command_name: str) -> None:
+        super().__init__("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+        self.command_name = command_name
+        self.failed = False
+
+    async def transition(self, run_id, command):
+        if type(command).__name__ == self.command_name and not self.failed:
+            self.failed = True
+            message = "blip"
+            raise ExecutionStoreError(message)
+        return await super().transition(run_id, command)
+
+
 async def echo_runner(_context: DurableContext, request: BaseModel) -> Result:
     return Result(value=Request.model_validate(request).value)
 
@@ -508,6 +522,102 @@ async def test_hung_heartbeat_stops_the_application_and_drains(  # noqa: C901
 
     await asyncio.wait_for(deployment.close(), 1)
     await asyncio.wait_for(deployment.wait_drained(), 1)
+
+
+@pytest.mark.parametrize(
+    ("command_name", "expected_status", "expected_calls"),
+    [
+        ("Complete", ExecutionStatus.COMPLETED, 1),
+        ("Fail", ExecutionStatus.FAILED, 1),
+        ("Suspend", ExecutionStatus.WAITING, 1),
+        ("ScheduleRetry", ExecutionStatus.COMPLETED, 2),
+    ],
+)
+async def test_transient_commit_error_is_retried_within_the_lease(
+    deployment_factory,
+    log_records,
+    command_name: str,
+    expected_status: ExecutionStatus,
+    expected_calls: int,
+) -> None:
+    calls = 0
+
+    async def runner(context: DurableContext, request: Request) -> Result:
+        nonlocal calls
+        calls += 1
+        if command_name == "Fail":
+            raise RuntimeError
+        if command_name == "Suspend":
+            await context.suspend({"kind": "approval"})
+        if command_name == "ScheduleRetry" and calls == 1:
+            await context.retry("again", delay=0)
+        return Result(value=request.value)
+
+    store = FlakyCommitStore(command_name)
+    deployment = await deployment_factory(
+        runner,
+        store=store,
+        config=RuntimeConfig(
+            poll_interval_seconds=0.005,
+            lease_duration_ms=300,
+            operational_backoff_min_seconds=0.005,
+            operational_backoff_max_seconds=0.01,
+        ),
+    )
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(
+        deployment,
+        submitted.control.run_id,
+        lambda value: value.control.status is expected_status,
+    )
+
+    assert stored.control.status is expected_status
+    assert calls == expected_calls
+    retries = [
+        record
+        for record in log_records
+        if record["message"] == "Durable store commit failed; retrying within the lease window"
+    ]
+    assert retries and retries[0]["extra"]["error"] == "blip"
+
+
+async def test_heartbeat_outage_shorter_than_the_lease_keeps_the_claim(deployment_factory) -> None:
+    class HeartbeatOutageStore(MemoryExecutionStore):
+        def __init__(self) -> None:
+            super().__init__("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+            self.heartbeats = 0
+
+        async def transition(self, run_id, command):
+            if isinstance(command, Heartbeat):
+                self.heartbeats += 1
+                if 2 <= self.heartbeats <= 6:
+                    message = "heartbeat outage"
+                    raise ExecutionStoreError(message)
+            return await super().transition(run_id, command)
+
+    calls = 0
+
+    async def runner(_context: DurableContext, request: Request) -> Result:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.45)
+        return Result(value=request.value)
+
+    deployment = await deployment_factory(
+        runner,
+        store=HeartbeatOutageStore(),
+        config=RuntimeConfig(
+            poll_interval_seconds=0.005,
+            lease_duration_ms=300,
+            operational_backoff_min_seconds=0.005,
+            operational_backoff_max_seconds=0.01,
+        ),
+    )
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+
+    assert stored.control.status is ExecutionStatus.COMPLETED
+    assert (stored.control.run_attempt, calls) == (1, 1)
 
 
 async def test_exhausted_claim_fails_without_running_application(deployment_factory) -> None:

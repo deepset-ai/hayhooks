@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterator, Mapping, MutableSet
@@ -30,11 +31,17 @@ from hayhooks.durable.engine import (
     TransitionPlan,
 )
 from hayhooks.durable.models import CheckpointEnvelope, ExecutionProgress, JsonValue, encode_json
-from hayhooks.durable.store import ExecutionStore, ExecutionStoreError
+from hayhooks.durable.store import ExecutionStore, ExecutionStoreCorruptionError, ExecutionStoreError
 
 _T = TypeVar("_T")
 # With push delivery to stream viewers, this is also the display latency of a chunk.
 _CHUNK_FLUSH_SECONDS = 0.1
+
+
+def backoff_delay(streak: int, minimum: float, maximum: float) -> float:
+    """Jittered exponential backoff for the ``streak``-th consecutive store failure."""
+    ceiling = min(maximum, minimum * (2 ** min(streak - 1, 20)))
+    return random.uniform(minimum, ceiling)  # noqa: S311
 
 
 class DurableExecutionCancelledError(RuntimeError):
@@ -62,7 +69,7 @@ def _track(bucket: MutableSet[Any], future: asyncio.Future[Any]) -> None:
 class _ClaimedExecution:
     """Fenced store handle, heartbeat, chunk flusher, and engine threads owned by one runtime worker."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         store: ExecutionStore,
         control: ExecutionControl,
@@ -70,6 +77,7 @@ class _ClaimedExecution:
         lease_duration_ms: int,
         *,
         confirmed_at: float,
+        backoff: tuple[float, float] = (0.05, 5.0),
     ) -> None:
         heartbeat_interval = max(0.01, lease_duration_ms / 3_000)
         safe_duration = (lease_duration_ms - store.config.lease_commit_safety_ms) / 1_000
@@ -93,6 +101,7 @@ class _ClaimedExecution:
         self._heartbeat_interval = heartbeat_interval
         self._safe_duration = safe_duration
         self._confirmed_until = confirmed_at + safe_duration
+        self._backoff = backoff
         self._transition_lock = asyncio.Lock()
         self._chunks: deque[bytes] = deque(maxlen=store.config.max_stream_chunks)
         self._flush_lock = asyncio.Lock()
@@ -145,17 +154,41 @@ class _ClaimedExecution:
         if not isinstance(command, (Heartbeat, Checkpoint)):
             # Buffered chunks must reach the stream before viewers can observe the status change.
             await self.flush_chunks()
+        name = type(command).__name__
         async with self._transition_lock:
             self.require_owned()
-            confirmed_at = time.monotonic()
-            try:
-                plan = await self.store.transition(self.control.run_id, command)
-            except ExecutionLeaseLostError:
-                self.mark_lost("the store no longer grants this worker's lease")
-                raise
-            except ExecutionNotFoundError as error:
-                self.mark_lost("the execution no longer exists")
-                raise ExecutionLeaseLostError(f"execution '{self.control.run_id}' no longer exists") from error
+            failures = 0
+            while True:
+                confirmed_at = time.monotonic()
+                try:
+                    plan = await self.store.transition(self.control.run_id, command)
+                    break
+                except ExecutionStoreCorruptionError:
+                    raise
+                except ExecutionStoreError as error:
+                    if isinstance(command, Checkpoint):
+                        raise
+                    failures += 1
+                    remaining = max(0.0, self._confirmed_until - time.monotonic())
+                    delay = min(backoff_delay(failures, *self._backoff), remaining / 2)
+                    log.bind(
+                        deployment=self.store.deployment,
+                        run_id=self.control.run_id,
+                        command=name,
+                        error=str(error),
+                        retry_in=round(delay, 3),
+                    ).warning("Durable store commit failed; retrying within the lease window")
+                    await asyncio.sleep(delay)
+                except ExecutionLeaseLostError as error:
+                    if failures and not isinstance(command, (Heartbeat, Checkpoint)):
+                        reason = f"ownership ended after an unconfirmed {name}; it may already have committed"
+                        self.mark_lost(reason)
+                        raise ExecutionLeaseLostError(reason) from error
+                    self.mark_lost("the store no longer grants this worker's lease")
+                    raise
+                except ExecutionNotFoundError as error:
+                    self.mark_lost("the execution no longer exists")
+                    raise ExecutionLeaseLostError(f"execution '{self.control.run_id}' no longer exists") from error
             del self.pending_progress[: max(0, plan.next_control.progress_sequence - self.control.progress_sequence)]
             self.control = plan.next_control
             self._confirmed_until = confirmed_at + self._safe_duration

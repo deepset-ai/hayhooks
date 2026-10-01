@@ -310,6 +310,30 @@ async def test_heartbeat_drops_progress_the_store_already_holds(context_factory)
     assert [event.sequence for event in stored.progress] == [1, 2]
 
 
+async def test_unconfirmed_finishing_commit_ends_the_claim(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    reply_lost = False
+
+    async def lose_first_reply(run_id, command):
+        nonlocal reply_lost
+        plan = await transition(run_id, command)
+        if isinstance(command, Complete) and not reply_lost:
+            reply_lost = True
+            message = "reply lost"
+            raise ExecutionStoreError(message)
+        return plan
+
+    monkeypatch.setattr(store, "transition", lose_first_reply)
+    with pytest.raises(ExecutionLeaseLostError, match="unconfirmed Complete"):
+        await claim.transition(Complete(claim.control.fence, claim.worker_id, 0, b"null"))
+
+    stored = await store.read(context.execution_id)
+    assert stored is not None and stored.control.status is ExecutionStatus.COMPLETED
+    assert claim.lease_lost.is_set()
+
+
 async def test_heartbeat_marks_a_rejected_claim_lost(context_factory) -> None:
     store, create = context_factory
     context, claim = await create(lease_duration_ms=60)
