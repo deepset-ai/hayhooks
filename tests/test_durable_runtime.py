@@ -2214,3 +2214,41 @@ async def test_run_reclaimed_before_the_post_claim_read_does_not_start(deploymen
 
     runner.assert_not_called()
     assert (await read(run_id)).control.lease_owner == SUCCESSOR.worker_id
+
+
+async def wait_for_idle_workers(deployment: DurableDeployment, count: int) -> None:
+    async def parked() -> None:
+        while len(deployment._idle_workers) < count:
+            await asyncio.sleep(0.001)
+
+    await asyncio.wait_for(parked(), timeout=1)
+
+
+async def test_submission_wakes_one_idle_worker(deployment_factory) -> None:
+    store = ControlledStore("jobs")
+    deployment = await deployment_factory(
+        store=store,
+        config=RuntimeConfig(
+            worker_concurrency=4,
+            poll_interval_seconds=60,
+            maintenance_interval_seconds=60,
+            lease_duration_ms=300,
+        ),
+    )
+    await wait_for_idle_workers(deployment, 4)
+    store.claim_calls = 0
+
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    await wait_for_execution(deployment, run_id, lambda stored: stored.control.terminal)
+    await wait_for_idle_workers(deployment, 4)
+
+    assert store.claim_calls == 2
+
+
+async def test_close_wakes_every_idle_worker(deployment_factory) -> None:
+    deployment = await deployment_factory(
+        config=RuntimeConfig(worker_concurrency=3, poll_interval_seconds=60, shutdown_grace_seconds=60)
+    )
+    await wait_for_idle_workers(deployment, 3)
+    await asyncio.wait_for(deployment.close(), timeout=1)
+    assert all(worker.done() for worker in deployment._workers.values())

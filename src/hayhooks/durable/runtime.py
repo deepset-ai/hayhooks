@@ -10,6 +10,7 @@ import math
 import secrets
 import sys
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -195,8 +196,10 @@ class DurableDeployment:
         )
         self._runner_is_async = is_async_callable(runner)
         self._submission_condition = asyncio.Condition()
-        # Local submissions and shutdown wake idle workers before their next poll.
-        self._work_available = asyncio.Event()
+        # Idle workers parked until local work or shutdown wakes them, or their poll interval elapses.
+        self._idle_workers: deque[asyncio.Future[None]] = deque()
+        # Bumped by every wake-up, so a worker whose claim raced one claims again instead of parking.
+        self._wake_generation = 0
         self._chunk_waits: set[asyncio.Task[tuple[StreamChunk, ...]]] = set()
         self._active_claims = 0
         self._admitted_submissions = 0
@@ -241,7 +244,7 @@ class DurableDeployment:
         """Permanently close admission, wait for admitted submissions, and stop new claims."""
         async with self._submission_condition:
             self._state = _DeploymentState.STOPPED
-            self._work_available.set()
+            self._wake_workers(len(self._idle_workers))
             await self._submission_condition.wait_for(lambda: self._admitted_submissions == 0)
         # Maintenance serves claims this deployment will never make again.
         if self._maintenance_task is not None:
@@ -340,7 +343,7 @@ class DurableDeployment:
             self._admitted_submissions += 1
         try:
             submission = await self.store.submit(control, input_payload)
-            self._work_available.set()
+            self._wake_workers()
             return submission
         finally:
             async with self._submission_condition:
@@ -455,7 +458,7 @@ class DurableDeployment:
                 expected_version=stored.control.version,
             ),
         )
-        self._work_available.set()
+        self._wake_workers()
         return plan
 
     async def health(self) -> dict[str, object]:
@@ -562,11 +565,12 @@ class DurableDeployment:
     async def _maintenance(self) -> None:
         while self.accepting:
             try:
-                if await self.store.maintain(
+                requeued = await self.store.maintain(
                     max_run_attempts=self.config.max_run_attempts,
                     attempts_error=self._attempts_error,
-                ):
-                    self._work_available.set()
+                )
+                if requeued:
+                    self._wake_workers(requeued)
             except asyncio.CancelledError:
                 raise
             except ExecutionStoreError as error:
@@ -575,6 +579,12 @@ class DurableDeployment:
             else:
                 self._maintenance_error_streak = 0
                 await asyncio.sleep(self.config.maintenance_interval_seconds)
+
+    def _wake_workers(self, count: int = 1) -> None:
+        """Wake up to ``count`` parked workers; workers still claiming notice the new generation."""
+        self._wake_generation += 1
+        for _ in range(min(count, len(self._idle_workers))):
+            self._idle_workers.popleft().set_result(None)
 
     async def _worker(self, worker_id: str) -> None:
         self._worker_store_error_streaks[worker_id] = 0
@@ -597,6 +607,7 @@ class DurableDeployment:
                 self._active_claims -= 1
 
     async def _claim_next_execution(self, worker_id: str) -> ExecutionControl | None:
+        generation = self._wake_generation
         try:
             claimed = await self.store.claim(
                 Claim(
@@ -613,11 +624,14 @@ class DurableDeployment:
             return None
         self._worker_store_error_streaks[worker_id] = 0
         if claimed is None:
-            if self.accepting:
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(self._work_available.wait(), self.config.poll_interval_seconds)
-            # Consume the wake-up here, so one that arrived while every worker was busy is not lost.
-            self._work_available.clear()
+            if self.accepting and generation == self._wake_generation:
+                waiter = asyncio.get_running_loop().create_future()
+                self._idle_workers.append(waiter)
+                try:
+                    await asyncio.wait({waiter}, timeout=self.config.poll_interval_seconds)
+                finally:
+                    with suppress(ValueError):
+                        self._idle_workers.remove(waiter)
             return None
         control = claimed.next_control
         return control if control.status is ExecutionStatus.RUNNING else None
@@ -851,7 +865,7 @@ class DurableDeployment:
             logger.bind(retry=plan.next_control.application_retry_count, delay_ms=delay_ms).info(
                 "Durable execution scheduled an application retry"
             )
-            asyncio.get_running_loop().call_later(delay_ms / 1_000, self._work_available.set)
+            asyncio.get_running_loop().call_later(delay_ms / 1_000, self._wake_workers)
         elif plan.next_control.status is ExecutionStatus.FAILED:
             logger.warning("Durable execution failed: application retries are exhausted")
 
