@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from hayhooks.durable.context import DurableContext
+from hayhooks.durable.context import DurableContext, DurableExecutionCancelledError
 from hayhooks.durable.engine import (
     Claim,
     ExecutionLeaseLostError,
@@ -1273,6 +1273,54 @@ async def test_cancellation_raised_by_the_application_fails_the_execution(deploy
 
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
     assert (stored.control.status, stored.control.run_attempt, calls) == (ExecutionStatus.FAILED, 1, 1)
+
+
+@pytest.mark.parametrize("threaded", [False, True], ids=["async", "thread"])
+@pytest.mark.parametrize("requested", [False, True], ids=["unrequested", "requested"])
+async def test_cancellation_error_without_a_request_fails_the_run(
+    deployment_factory, log_records, threaded: bool, requested: bool
+) -> None:
+    started = threading.Event()
+    async_release = asyncio.Event()
+    thread_release = threading.Event()
+
+    async def async_runner(context: DurableContext, _request: Request) -> Result:
+        started.set()
+        await async_release.wait()
+        if requested:
+            await context.check_cancelled()
+        message = "application raised cancellation"
+        raise DurableExecutionCancelledError(message)
+
+    def sync_runner(context: DurableContext, _request: Request) -> Result:
+        started.set()
+        thread_release.wait()
+        if requested:
+            context.check_cancelled_sync()
+        message = "application raised cancellation"
+        raise DurableExecutionCancelledError(message)
+
+    deployment = await deployment_factory(sync_runner if threaded else async_runner)
+    submitted = await deployment.submit({"value": 1})
+    assert await asyncio.to_thread(started.wait, 1)
+    if requested:
+        await deployment.cancel(submitted.control.run_id)
+    async_release.set()
+    thread_release.set()
+
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    expected = ExecutionStatus.CANCELED if requested else ExecutionStatus.FAILED
+    assert stored.control.status is expected
+    assert PayloadKind.RESULT not in stored.payloads
+    if requested:
+        assert PayloadKind.ERROR not in stored.payloads
+    else:
+        error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+        assert error.type == "DurableExecutionCancelledError"
+        assert any(
+            record["message"].startswith("Durable execution raised DurableExecutionCancelledError")
+            for record in log_records
+        )
 
 
 @pytest.mark.parametrize("outcome", ["suppressed", "cancelled", "exception"])

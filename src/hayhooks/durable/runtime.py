@@ -699,7 +699,11 @@ class DurableDeployment:
     ) -> None:
         try:
             if claim.control.cancel_requested_at_ms is not None:
-                await self._acknowledge_cancellation(claim, context, worker_id)
+                await self._acknowledge_cancellation(
+                    claim,
+                    worker_id,
+                    DurableExecutionCancelledError("durable execution cancellation was requested"),
+                )
                 return
 
             result = await self._invoke_application(claim, context, request)
@@ -719,8 +723,8 @@ class DurableDeployment:
             )
         except _ExecutionSuspendedError:
             return
-        except DurableExecutionCancelledError:
-            await self._acknowledge_cancellation(claim, context, worker_id)
+        except DurableExecutionCancelledError as error:
+            await self._acknowledge_cancellation(claim, worker_id, error)
         except _RetryRequestedError as error:
             await self._schedule_retry(claim, error, worker_id)
         except (asyncio.CancelledError, ExecutionLeaseLostError, ExecutionStoreError):
@@ -767,20 +771,24 @@ class DurableDeployment:
     async def _acknowledge_cancellation(
         self,
         claim: _ClaimedExecution,
-        _context: DurableContext,
         worker_id: str,
+        error: BaseException,
     ) -> None:
-        """Commit pending progress through the reducer's cancellation-wins rule."""
+        """Cancel through cancellation-wins; without a pending request the run fails."""
         _, events = claim.progress_snapshot()
-        await claim.transition(
-            Complete(
+        plan = await claim.transition(
+            Fail(
                 fence=claim.control.fence,
                 worker_id=worker_id,
                 now_ms=0,
-                result=b"null",
+                error=self._encode_exception(error),
                 progress_events=events,
             )
         )
+        if plan.next_control.status is ExecutionStatus.FAILED:
+            log.bind(deployment=self.name, run_id=plan.next_control.run_id).warning(
+                "Durable execution raised DurableExecutionCancelledError without a cancellation request; failed it"
+            )
 
     async def _invoke_application(
         self,
