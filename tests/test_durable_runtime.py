@@ -27,6 +27,7 @@ from hayhooks.durable.engine import (
     ExecutionStatus,
     Fail,
     Heartbeat,
+    InvalidExecutionTransitionError,
     PayloadKind,
     ReleaseClaim,
     initial_control,
@@ -275,6 +276,57 @@ def test_lease_config_leaves_a_safe_heartbeat_window() -> None:
     store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
     with pytest.raises(ValueError, match="safe heartbeat"):
         DurableDeployment("jobs", "v1", store, Request, echo_runner, config=RuntimeConfig(lease_duration_ms=20))
+
+
+@pytest.mark.parametrize(
+    ("run_id", "kwargs", "error"),
+    [
+        pytest.param("current", {"owner_id": "owner"}, None, id="owner"),
+        pytest.param("missing", {"owner_id": "owner"}, ExecutionNotFoundError, id="missing"),
+        pytest.param("current", {"owner_id": "other"}, ExecutionNotFoundError, id="owner-mismatch"),
+        pytest.param("current", {"owner_id": "other", "enforce_owner": False}, None, id="unscoped"),
+        pytest.param("foreign", {"owner_id": "owner"}, ExecutionNotFoundError, id="deployment-mismatch"),
+        pytest.param("legacy", {"owner_id": "owner"}, None, id="revision-mismatch-allowed"),
+        pytest.param(
+            "legacy",
+            {"owner_id": "owner", "allow_revision_mismatch": False},
+            InvalidExecutionTransitionError,
+            id="revision-mismatch-rejected",
+        ),
+    ],
+)
+async def test_get_control_authorizes_like_get_without_reading_payloads(
+    deployment_factory, run_id: str, kwargs: dict[str, object], error: type[Exception] | None
+) -> None:
+    deployment = await deployment_factory(start=False)
+    store = deployment.store
+    for identifier, revision in (("current", "v1"), ("legacy", "v0"), ("foreign", "v1")):
+        control = initial_control(
+            run_id=identifier,
+            idempotency_digest=identifier,
+            idempotency_binding_digest=identifier,
+            deployment=deployment.name,
+            definition_revision=revision,
+            owner_id="owner",
+            kind=deployment.kind.value,
+            now_ms=0,
+        )
+        await store.submit(control, b"{}")
+    store._controls["foreign"] = replace(store._controls["foreign"], deployment="other")
+    get_kwargs = {"allow_revision_mismatch": True, **kwargs}
+    read_public = AsyncMock(wraps=store.read_public)
+    store.read_public = read_public
+
+    if error is None:
+        control = await deployment.get_control(run_id, **kwargs)
+        assert not read_public.await_count
+        assert control == (await deployment.get(run_id, **get_kwargs)).control
+    else:
+        with pytest.raises(error):
+            await deployment.get_control(run_id, **kwargs)
+        assert not read_public.await_count
+        with pytest.raises(error):
+            await deployment.get(run_id, **get_kwargs)
 
 
 async def test_submission_is_detached_idempotent_and_owner_scoped(deployment_factory) -> None:

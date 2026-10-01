@@ -356,9 +356,28 @@ class DurableDeployment:
         allow_revision_mismatch: bool = False,
     ) -> StoredExecution:
         """Read one execution's public snapshot after deployment, owner, and revision checks."""
+        stored = await self.store.read_public(run_id)
+        self._authorize(
+            run_id,
+            None if stored is None else stored.control,
+            owner_id=owner_id,
+            enforce_owner=enforce_owner,
+            allow_revision_mismatch=allow_revision_mismatch,
+        )
+        return cast(StoredExecution, stored)
+
+    async def get_control(
+        self,
+        run_id: str,
+        *,
+        owner_id: str | None = None,
+        enforce_owner: bool = True,
+        allow_revision_mismatch: bool = True,
+    ) -> ExecutionControl:
+        """Read only the control snapshot, with the same checks as ``get()``."""
         return self._authorize(
             run_id,
-            await self.store.read_public(run_id),
+            await self.store.read_control(run_id),
             owner_id=owner_id,
             enforce_owner=enforce_owner,
             allow_revision_mismatch=allow_revision_mismatch,
@@ -386,7 +405,7 @@ class DurableDeployment:
         reason: str | None = None,
     ) -> TransitionPlan:
         """Request cancellation without exposing owner mismatches."""
-        await self.get(run_id, owner_id=owner_id, enforce_owner=enforce_owner, allow_revision_mismatch=True)
+        await self.get_control(run_id, owner_id=owner_id, enforce_owner=enforce_owner)
         return await self.store.transition(run_id, RequestCancellation(now_ms=0, reason=reason))
 
     async def resume(
@@ -398,13 +417,15 @@ class DurableDeployment:
         enforce_owner: bool = True,
     ) -> TransitionPlan:
         """Validate resume input and atomically requeue a waiting execution."""
-        stored = self._authorize(
+        stored = await self.store.read(run_id)
+        self._authorize(
             run_id,
-            await self.store.read(run_id),
+            None if stored is None else stored.control,
             owner_id=owner_id,
             enforce_owner=enforce_owner,
             allow_revision_mismatch=False,
         )
+        stored = cast(StoredExecution, stored)
         if stored.control.status is not ExecutionStatus.WAITING:
             raise InvalidExecutionTransitionError("only waiting executions can resume")
         try:
@@ -476,25 +497,25 @@ class DurableDeployment:
     def _authorize(
         self,
         run_id: str,
-        stored: StoredExecution | None,
+        control: ExecutionControl | None,
         *,
         owner_id: str | None,
         enforce_owner: bool,
         allow_revision_mismatch: bool,
-    ) -> StoredExecution:
+    ) -> ExecutionControl:
         if (
-            stored is None
-            or stored.control.deployment != self.name
-            or (enforce_owner and stored.control.owner_id != owner_id)
+            control is None
+            or control.deployment != self.name
+            or (enforce_owner and control.owner_id != owner_id)
         ):
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
         if (
             not allow_revision_mismatch
-            and not stored.control.terminal
-            and stored.control.definition_revision != self.revision
+            and not control.terminal
+            and control.definition_revision != self.revision
         ):
             raise InvalidExecutionTransitionError("execution definition revision is incompatible")
-        return stored
+        return control
 
     def _undrained(self) -> set[asyncio.Future[Any]]:
         tracked: set[asyncio.Future[Any]] = {*self._workers.values(), *self._draining_runs}
