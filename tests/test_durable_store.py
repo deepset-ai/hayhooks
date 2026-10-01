@@ -17,7 +17,14 @@ from hayhooks.durable.engine import (
     PayloadKind,
     ScheduleRetry,
 )
-from hayhooks.durable.store import ExecutionStoreCorruptionError, MemoryExecutionStore, StoreConfig, chunk_read_count
+from hayhooks.durable.store import (
+    CHUNK_CURSOR_START,
+    ChunkCursorExpiredError,
+    ExecutionStoreCorruptionError,
+    MemoryExecutionStore,
+    StoreConfig,
+    chunk_read_count,
+)
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
@@ -150,6 +157,28 @@ async def test_memory_store_keeps_timestamps_monotonic_when_the_clock_steps_back
 
     clock.now = 1_000
     assert await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR)) is not None
+
+
+async def test_memory_store_expires_chunk_streams_before_the_execution(clock: Clock) -> None:
+    store = MemoryExecutionStore(
+        "jobs",
+        clock=clock,
+        config=StoreConfig(lease_commit_safety_ms=10, terminal_ttl_seconds=10, stream_ttl_seconds=1),
+    )
+    await store.submit(contract_control("jobs"), b"input")
+    assert await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await store.append_chunks("run_1", 1, 1, "worker", [b"chunk"])
+    chunks = await store.read_chunks("run_1", CHUNK_CURSOR_START)
+    await store.transition("run_1", Complete(1, "worker", 0, b"done"))
+
+    clock.now += 1_000
+    assert await store.read_chunks("run_1", CHUNK_CURSOR_START) == ()
+    with pytest.raises(ChunkCursorExpiredError):
+        await store.read_chunks("run_1", chunks[0].cursor)
+    assert await store.read("run_1") is not None
+
+    clock.now += 9_000
+    assert await store.read("run_1") is None
 
 
 @pytest.mark.parametrize(

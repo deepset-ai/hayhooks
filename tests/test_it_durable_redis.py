@@ -490,6 +490,33 @@ async def test_noop_transitions_write_nothing(redis_store, monkeypatch) -> None:
     assert await dump_keys(redis, store) == before
 
 
+async def test_terminal_chunk_streams_expire_before_the_execution(redis_store) -> None:
+    redis, fixture_store = redis_store
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(fixture_store.config, terminal_ttl_seconds=60, stream_ttl_seconds=1),
+        key_prefix=store_prefix(fixture_store),
+    )
+    control = await claim_one(store, lease_ms=10_000)
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b"chunk"])
+    await store.transition("run_1", Complete(control.fence, "worker", 0, b"done"))
+    assert 0 < await redis.pttl(store.keys.chunks("run_1")) <= 1_000
+    assert await redis.pttl(store.keys.control("run_1")) > 1_000
+
+    short = RedisExecutionStore(
+        redis,
+        "short",
+        config=replace(fixture_store.config, terminal_ttl_seconds=1),
+        key_prefix=f"{store_prefix(fixture_store)}:short",
+    )
+    await short.submit(contract_control("short"), b"input")
+    claimed = await short.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    await short.transition("run_1", Complete(1, "worker", 0, b"done"))
+    assert 0 < await redis.pttl(short.keys.chunks("run_1")) <= 1_000
+
+
 async def test_stepped_back_redis_time_keeps_controls_decodable(redis_store, monkeypatch) -> None:
     _, store = redis_store
     await store.submit(contract_control("jobs"), b"input")

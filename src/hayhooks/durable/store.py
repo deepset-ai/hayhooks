@@ -84,6 +84,7 @@ class StoreConfig:
 
     lease_commit_safety_ms: int = 1_500
     terminal_ttl_seconds: int = 604_800
+    stream_ttl_seconds: int = 3_600
     max_nonterminal_executions: int = 1_000
     max_payload_bytes: int = 1_000_000
     max_progress_events: int = 100
@@ -96,6 +97,7 @@ class StoreConfig:
             raise ValueError("durable store limits cannot be negative")
         for name in (
             "terminal_ttl_seconds",
+            "stream_ttl_seconds",
             "max_payload_bytes",
             "max_progress_events",
             "max_progress_event_bytes",
@@ -203,7 +205,7 @@ class MemoryExecutionStore:
         self._runnable: dict[str, int] = {}
         self._lease_expiry: dict[tuple[str, int], int] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
-        self._terminal_cleanup: dict[str, tuple[int, str, tuple[str, str]]] = {}
+        self._terminal_cleanup: dict[str, tuple[int, int, str, tuple[str, str]]] = {}
         self._nonterminal = 0
 
     async def initialize(self) -> None:
@@ -350,9 +352,11 @@ class MemoryExecutionStore:
         await self._write_chunks(run_id, attempt, chunks)
 
     async def read_chunks(self, run_id: str, after: str) -> tuple[StreamChunk, ...]:
+        self._cleanup_terminal(self._clock())
         return self._chunks_after(run_id, after)
 
     async def wait_chunks(self, run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...]:
+        self._cleanup_terminal(self._clock())
         async with self._chunks_written:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
@@ -412,6 +416,7 @@ class MemoryExecutionStore:
             binding = (control.run_id, control.idempotency_binding_digest)
             self._terminal_cleanup[control.run_id] = (
                 control.updated_at_ms + self.config.terminal_ttl_seconds * 1_000,
+                control.updated_at_ms + min(self.config.stream_ttl_seconds, self.config.terminal_ttl_seconds) * 1_000,
                 control.idempotency_digest,
                 binding,
             )
@@ -450,7 +455,9 @@ class MemoryExecutionStore:
             self._chunks_written.notify_all()
 
     def _cleanup_terminal(self, now_ms: int) -> None:
-        for run_id, (expires_at, digest, binding) in tuple(self._terminal_cleanup.items()):
+        for run_id, (expires_at, chunks_expire_at, digest, binding) in tuple(self._terminal_cleanup.items()):
+            if chunks_expire_at <= now_ms:
+                self._chunks.pop(run_id, None)
             if expires_at > now_ms:
                 continue
             self._terminal_cleanup.pop(run_id)

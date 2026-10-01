@@ -936,9 +936,15 @@ class RedisExecutionStore:
                 for key in (
                     control_key,
                     progress_key,
-                    chunks_key,
                     *(self.keys.payload(run_id, kind) for kind in PayloadKind),
                     self.keys.idempotency(control.idempotency_digest),
+                )
+            )
+            commands.append(
+                (
+                    "EXPIRE",
+                    chunks_key,
+                    min(self.config.stream_ttl_seconds, self.config.terminal_ttl_seconds),
                 )
             )
         return commands
