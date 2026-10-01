@@ -155,7 +155,10 @@ mount.
 
 Run one durable-mode app per process. The import root, the bytecode policy,
 and the dashboard trace stream are process-wide, so building a second app in
-the same process replaces the first app's pipeline modules. Standalone
+the same process replaces the first app's pipeline modules.
+`hayhooks run --workers N` exits with an error when `N > 1` in durable mode.
+Scale with replicas that share Redis, and do not use another multi-worker
+supervisor such as `uvicorn --workers` or gunicorn. Standalone
 `hayhooks mcp run` and `hayhooks a2a run` also honor `HAYHOOKS_DURABLE_MODE`:
 they load the directory the same way and serve its ordinary pipelines, but a
 durable wrapper fails their startup, since only the main HTTP server runs

@@ -80,6 +80,10 @@ Best for:
 hayhooks run --workers 4
 ```
 
+Durable mode rejects `--workers` values above 1. Scale durable work with
+replicas that share Redis, and do not run a durable-mode app under another
+multi-worker supervisor such as `uvicorn --workers` or gunicorn.
+
 Best for:
 
 - CPU-bound pipelines (embedding generation, heavy computation)

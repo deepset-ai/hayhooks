@@ -540,7 +540,7 @@ HAYHOOKS_LOG_FORMAT=default
 ```
 
 !!! info "Configuration Note"
-    - Worker count, timeouts, and other server process settings are CLI flags (e.g., `hayhooks run --workers 4`).
+    - Worker count, timeouts, and other server process settings are CLI flags (e.g., `hayhooks run --workers 4` in default mode; durable mode uses replicas).
     - YAML/file saving and MCP exposure are controlled per-deploy via API/CLI flags, not global env vars.
 
 ## Next Steps

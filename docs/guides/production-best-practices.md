@@ -124,7 +124,10 @@ Pipelines that perform heavy computation locally -- embedding generation, docume
     hayhooks run --workers 4
     ```
 
-    A common starting point is `(2 x CPU_cores) + 1`. Monitor actual CPU usage and adjust.
+    A common starting point is `(2 x CPU_cores) + 1`. Monitor actual CPU usage
+    and adjust. This applies to default mode. Durable mode rejects `--workers`
+    values above 1; scale it with replicas that share Redis, and do not use
+    another multi-worker supervisor.
 
 - **On Kubernetes, keep one worker per pod and scale via replicas.** This gives the orchestrator full control over scheduling, resource limits, and rolling updates.
 - **Move heavy initialization into `setup()`.** Loading models or building indexes in `setup()` runs once at startup. Doing it inside `run_api()` would repeat the cost on every request.
