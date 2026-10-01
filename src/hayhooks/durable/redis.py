@@ -155,6 +155,8 @@ return redis.call('HGETALL', KEYS[1])
 # ARGV: worker ('' when unowned), fence, safety margin, released revision field ('' when none), snapshot field count,
 # the snapshot field/value pairs, then each command as argument count, name, key index, arguments.
 _APPLY_LUA = """
+-- Returns _STALE_SNAPSHOT (0), _LEASE_LOST (-1), _CAPACITY_UNDERFLOW (-2) or 1 once committed.
+-- 1. Compare-and-set: the control must still equal the snapshot the Python reducer planned from.
 local stored = redis.call('HGETALL', KEYS[1])
 local size = tonumber(ARGV[5])
 if #stored ~= 2 * size then
@@ -171,9 +173,11 @@ for _ = 1, size do
   end
   cursor = cursor + 2
 end
+-- 2. Owned commands also need the lease, with room left for the safety margin.
 if ARGV[1] ~= '' and not owned_now(KEYS[1], ARGV[1], ARGV[2], ARGV[3]) then
   return -1
 end
+-- 3. A terminal transition releases capacity: both counters must be positive integers to decrement.
 if ARGV[4] ~= '' then
   local counts = redis.call('HMGET', KEYS[2], 'nonterminal', ARGV[4])
   for index = 1, 2 do
@@ -183,7 +187,7 @@ if ARGV[4] ~= '' then
     end
   end
 end
--- Check each type-sensitive target before any mutation: Redis scripts have no rollback.
+-- 4. Check each type-sensitive target before any mutation: Redis scripts have no rollback.
 -- HGETALL and HGET above already validate the control and capacity hashes.
 local checks = {RPUSH = 'LLEN', ZADD = 'ZCARD', ZREM = 'ZCARD'}
 local checked = {}
@@ -193,6 +197,7 @@ while probe <= #ARGV do
   local name = ARGV[probe + 1]
   local key = KEYS[tonumber(ARGV[probe + 2])]
   if name == 'XADD' and not checked[key] then
+    -- Chunks are best effort: a wrong-type chunk key is reset rather than blocking the commit.
     local kind = redis.call('TYPE', key)
     kind = type(kind) == 'table' and kind.ok or kind
     if kind ~= 'none' and kind ~= 'stream' then
@@ -208,6 +213,7 @@ end
 for key in pairs(reset_streams) do
   redis.call('DEL', key)
 end
+-- 5. Run the planned commands, each encoded as argument count, name, key index, arguments.
 while cursor <= #ARGV do
   local count = tonumber(ARGV[cursor])
   local command = {ARGV[cursor + 1], KEYS[tonumber(ARGV[cursor + 2])]}
@@ -223,6 +229,8 @@ return 1
 # KEYS: binding, control, input, revision runnable index, capacity.
 # ARGV: limit, revision count field, input, run ID, binding digest, score, then control pairs.
 _SUBMIT_LUA = """
+-- Returns {_SUBMITTED, created stamp}, {_REPLAYED, binding}, {_RUN_ID_TAKEN}, {_ADMISSION_FULL} or {_CAPACITY_INVALID}.
+-- An existing idempotency binding replays its run instead of submitting a new one.
 local binding = redis.call('HGETALL', KEYS[1])
 if #binding > 0 then
   return {2, binding}
@@ -230,6 +238,7 @@ end
 if redis.call('EXISTS', KEYS[2]) == 1 then
   return {3}
 end
+-- Missing counters read as zero; anything else must be a non-negative integer below 2^53 - 1.
 local counts = redis.call('HMGET', KEYS[5], 'nonterminal', ARGV[2])
 for index = 1, 2 do
   local count = counts[index]
@@ -241,6 +250,7 @@ local limit = tonumber(ARGV[1])
 if limit > 0 and tonumber(counts[1] or '0') >= limit then
   return {4}
 end
+-- Validate the runnable index type before the first write, since scripts have no rollback.
 redis.call('ZCARD', KEYS[4])
 local time = redis.call('TIME')
 local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
@@ -248,6 +258,7 @@ local stamp = string.format('%d', now)
 redis.call('HSET', KEYS[1], 'run_id', ARGV[4], 'binding', ARGV[5])
 redis.call('HSET', KEYS[2], 'created_at_ms', stamp, 'updated_at_ms', stamp, unpack(ARGV, 7))
 redis.call('SET', KEYS[3], ARGV[3])
+-- A delayed submission is scored by its availability time; otherwise it is runnable now.
 redis.call('ZADD', KEYS[4], ARGV[6] ~= '' and ARGV[6] or stamp, ARGV[4])
 redis.call('HINCRBY', KEYS[5], 'nonterminal', 1)
 redis.call('HINCRBY', KEYS[5], ARGV[2], 1)
