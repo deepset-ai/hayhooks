@@ -8,6 +8,7 @@ import hashlib
 import inspect
 import math
 import secrets
+import sys
 import time
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
@@ -403,9 +404,8 @@ class DurableDeployment:
             checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
             if checkpoint_payload is None:
                 raise ValueError("waiting execution has no checkpoint")
-            checkpoint = CheckpointEnvelope.model_validate(
-                decode_json(checkpoint_payload, max_bytes=self.store.config.max_payload_bytes)
-            )
+            # Reads never re-apply write limits, which may have been lowered since the write.
+            checkpoint = CheckpointEnvelope.model_validate(decode_json(checkpoint_payload, max_bytes=sys.maxsize))
             if checkpoint.adapter_kind is not self.kind:
                 raise ValueError("checkpoint kind does not match the deployment")
         except (ExecutionPayloadSizeError, TypeError, ValueError) as error:
@@ -621,14 +621,13 @@ class DurableDeployment:
     ) -> tuple[DurableContext, BaseModel] | None:
         control = stored.control
         try:
+            # Reads never re-apply write limits, which may have been lowered since the write.
             request = self.request_model.model_validate(
-                decode_json(stored.payloads[PayloadKind.INPUT], max_bytes=self.store.config.max_payload_bytes)
+                decode_json(stored.payloads[PayloadKind.INPUT], max_bytes=sys.maxsize)
             )
             checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
             checkpoint = (
-                CheckpointEnvelope.model_validate(
-                    decode_json(checkpoint_payload, max_bytes=self.store.config.max_payload_bytes)
-                )
+                CheckpointEnvelope.model_validate(decode_json(checkpoint_payload, max_bytes=sys.maxsize))
                 if checkpoint_payload is not None
                 else CheckpointEnvelope(schema_version=1, adapter_kind=self.kind, adapter_checkpoint=None)
             )

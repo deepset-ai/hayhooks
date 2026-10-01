@@ -21,6 +21,7 @@ from hayhooks.durable.engine import (
     Claim,
     ExecutionLeaseLostError,
     ExecutionNotFoundError,
+    ExecutionPayloadSizeError,
     ExecutionStatus,
     Fail,
     Heartbeat,
@@ -423,6 +424,84 @@ async def test_failed_post_claim_read_releases_without_spending_the_run_budget(d
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
     control = stored.control
     assert (control.status, control.run_attempt, control.lease_recoveries) == (ExecutionStatus.COMPLETED, 2, 0)
+
+
+async def test_lowered_payload_limit_still_runs_stored_work() -> None:
+    class TextRequest(BaseModel):
+        text: str
+
+    input_store = MemoryExecutionStore(
+        "payload-input",
+        config=StoreConfig(lease_commit_safety_ms=10, max_payload_bytes=1_000),
+    )
+
+    async def input_runner(_context: DurableContext, request: TextRequest) -> dict[str, int]:
+        return {"length": len(request.text)}
+
+    input_deployment = DurableDeployment(
+        "payload-input",
+        "v1",
+        input_store,
+        TextRequest,
+        input_runner,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+    control = initial_control(
+        run_id="large-input",
+        idempotency_digest="large-input",
+        idempotency_binding_digest="large-input",
+        deployment="payload-input",
+        definition_revision="v1",
+        owner_id=None,
+        kind="pipeline",
+        now_ms=0,
+    )
+    await input_store.submit(control, b'{"text":"' + b"x" * 300 + b'"}')
+    input_store.config = replace(input_store.config, max_payload_bytes=100)
+    await input_deployment.start()
+    try:
+        completed = await wait_for_execution(
+            input_deployment,
+            control.run_id,
+            lambda value: value.control.status is ExecutionStatus.COMPLETED,
+        )
+        assert decode_json(completed.payloads[PayloadKind.RESULT], max_bytes=100) == {"length": 300}
+    finally:
+        await input_deployment.close()
+        await input_deployment.wait_drained()
+
+    resume_store = MemoryExecutionStore(
+        "payload-resume",
+        config=StoreConfig(lease_commit_safety_ms=10, max_payload_bytes=1_000),
+    )
+
+    async def resume_runner(context: DurableContext, _request: TextRequest) -> dict[str, bool]:
+        if context.resume_input is None:
+            await context.suspend({"kind": "approval"}, update={"blob": "x" * 300})
+        return {"done": True}
+
+    resume_deployment = DurableDeployment(
+        "payload-resume",
+        "v1",
+        resume_store,
+        TextRequest,
+        resume_runner,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+    await resume_deployment.start()
+    try:
+        submitted = await resume_deployment.submit({"text": "hold"})
+        await wait_for_execution(
+            resume_deployment,
+            submitted.control.run_id,
+            lambda value: value.control.status is ExecutionStatus.WAITING,
+        )
+        resume_store.config = replace(resume_store.config, max_payload_bytes=100)
+        with pytest.raises(ExecutionPayloadSizeError):
+            await resume_deployment.resume(submitted.control.run_id)
+    finally:
+        await resume_deployment.close()
+        await resume_deployment.wait_drained()
 
 
 @pytest.mark.parametrize("stage", ["claim", "read", "fail", "release"])
