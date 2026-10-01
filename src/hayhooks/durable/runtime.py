@@ -59,6 +59,7 @@ from hayhooks.durable.models import (
     operation_fingerprint,
 )
 from hayhooks.durable.store import (
+    ExecutionAdmissionError,
     ExecutionProgressCorruptionError,
     ExecutionStore,
     ExecutionStoreCorruptionError,
@@ -335,7 +336,7 @@ class DurableDeployment:
         )
         async with self._submission_condition:
             if not self.accepting:
-                raise RuntimeError(f"durable deployment '{self.name}' is not accepting submissions")
+                raise ExecutionAdmissionError(f"durable deployment '{self.name}' is not accepting submissions")
             self._admitted_submissions += 1
         try:
             submission = await self.store.submit(control, input_payload)

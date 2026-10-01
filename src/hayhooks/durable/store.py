@@ -67,7 +67,7 @@ class ExecutionContentionError(ExecutionStoreError):
 
 
 class ExecutionAdmissionError(RuntimeError):
-    """The configured nonterminal execution limit has been reached."""
+    """Admission was refused: the nonterminal limit is reached or the deployment stopped accepting submissions."""
 
 
 class ExecutionIdempotencyConflictError(RuntimeError):

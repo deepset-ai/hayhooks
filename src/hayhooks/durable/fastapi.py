@@ -61,7 +61,7 @@ def _validated_owner(owner_id: object, *, enforce_owner: bool) -> str | None:
     return cast(str, owner_id)
 
 
-def _translate_errors(handler: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+def _translate_errors(handler: Callable[..., Awaitable[Any]], deployment: str) -> Callable[..., Awaitable[Any]]:
     @wraps(handler)
     async def translated(*args: Any, **kwargs: Any) -> Any:
         try:
@@ -80,15 +80,34 @@ def _translate_errors(handler: Callable[..., Awaitable[Any]]) -> Callable[..., A
                 detail=str(error),
                 headers={"Retry-After": "1"},
             ) from error
+        except ExecutionStoreCorruptionError as error:
+            _log_failure("Durable execution state is invalid", error, deployment, kwargs.get("execution_id"))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Durable execution state is invalid",
+            ) from error
         except ExecutionStoreError as error:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Durable execution store is unavailable",
             ) from error
         except RuntimeError as error:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+            _log_failure("Durable execution request failed", error, deployment, kwargs.get("execution_id"))
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Durable execution service is unavailable",
+            ) from error
 
     return translated
+
+
+def _log_failure(message: str, error: BaseException, deployment: str, run_id: object) -> None:
+    log.opt(exception=error).bind(
+        deployment=deployment,
+        run_id=run_id,
+        exception_type=type(error).__name__,
+        error=str(error),
+    ).error(message)
 
 
 def _project(
@@ -389,7 +408,7 @@ def create_durable_router(  # noqa: C901
     ):
         router.add_api_route(
             path,
-            _translate_errors(endpoint),
+            _translate_errors(endpoint, deployment.name),
             methods=methods,
             name=name,
             response_model=model,

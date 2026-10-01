@@ -19,9 +19,24 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from hayhooks.durable import DurableContext, create_durable_router
-from hayhooks.durable.engine import PayloadKind
+from hayhooks.durable.engine import (
+    ExecutionLeaseLostError,
+    ExecutionNotFoundError,
+    ExecutionPayloadSizeError,
+    InvalidExecutionTransitionError,
+    PayloadKind,
+)
 from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
-from hayhooks.durable.store import ExecutionStoreError, MemoryExecutionStore, StoreConfig, StreamChunk
+from hayhooks.durable.store import (
+    ExecutionAdmissionError,
+    ExecutionContentionError,
+    ExecutionIdempotencyConflictError,
+    ExecutionStoreCorruptionError,
+    ExecutionStoreError,
+    MemoryExecutionStore,
+    StoreConfig,
+    StreamChunk,
+)
 
 
 class JobRequest(BaseModel):
@@ -269,7 +284,9 @@ def test_terminal_result_remains_readable_after_result_schema_revision() -> None
             store._controls[execution_id],
             definition_revision="v2",
         )
-        assert client.get(f"/jobs/executions/{execution_id}").status_code == 503
+        rejected = client.get(f"/jobs/executions/{execution_id}")
+        assert rejected.status_code == 500
+        assert rejected.json() == {"detail": "Durable execution state is invalid"}
 
 
 @pytest.mark.parametrize(
@@ -515,8 +532,8 @@ def test_chunk_failures_are_display_only_and_midstream_errors_are_framed(
         assert events == [{"event": "error", "data": '{"detail":"Execution stream interrupted"}'}]
 
 
-def test_admission_and_store_failures_are_service_unavailable(
-    durable_app_factory, monkeypatch, wait_for_execution
+def test_corruption_is_an_internal_error_and_store_failures_are_unavailable(
+    durable_app_factory, monkeypatch, wait_for_execution, caplog
 ) -> None:
     app, deployment = durable_app_factory(max_nonterminal=1)
     with TestClient(app) as client:
@@ -526,18 +543,65 @@ def test_admission_and_store_failures_are_service_unavailable(
         projected_corruption = client.get(first["links"]["self"])
         deployment.store._payloads[first["execution_id"]][PayloadKind.CHECKPOINT] = b"not-json"
         resumed_corruption = client.post(first["links"]["resume"], json={"approved": True})
-        assert projected_corruption.status_code == resumed_corruption.status_code == 503
+        assert projected_corruption.status_code == resumed_corruption.status_code == 500
         assert (
             projected_corruption.json()
             == resumed_corruption.json()
-            == {"detail": "Durable execution store is unavailable"}
+            == {"detail": "Durable execution state is invalid"}
         )
+        assert "stored checkpoint payload is invalid" in caplog.text
         admission = client.post("/api/jobs/run-durable", json={"value": 2})
         assert admission.status_code == 503 and admission.headers["retry-after"] == "1"
-        monkeypatch.setattr(deployment.store, "read", AsyncMock(side_effect=ExecutionStoreError("down")))
+        monkeypatch.setattr(deployment.store, "read_public", AsyncMock(side_effect=ExecutionStoreError("down")))
         unavailable = client.get(first["links"]["self"])
-        assert unavailable.status_code == 503
+        assert unavailable.status_code == 503 and "retry-after" not in unavailable.headers
         assert unavailable.json() == {"detail": "Durable execution store is unavailable"}
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "detail"),
+    [
+        pytest.param(ExecutionNotFoundError("hidden"), 404, "Execution not found", id="not-found"),
+        pytest.param(ExecutionIdempotencyConflictError("bound"), 409, "bound", id="idempotency"),
+        pytest.param(InvalidExecutionTransitionError("state"), 409, "state", id="transition"),
+        pytest.param(ExecutionPayloadSizeError("too big"), 422, "too big", id="payload-size"),
+        pytest.param(ValueError("invalid"), 422, "invalid", id="value"),
+        pytest.param(ExecutionAdmissionError("full"), 503, "full", id="admission"),
+        pytest.param(
+            ExecutionStoreCorruptionError("secret"), 500, "Durable execution state is invalid", id="corruption"
+        ),
+        pytest.param(
+            ExecutionContentionError("secret"), 503, "Durable execution store is unavailable", id="contention"
+        ),
+        pytest.param(ExecutionStoreError("secret"), 503, "Durable execution store is unavailable", id="store"),
+        pytest.param(
+            ExecutionLeaseLostError("secret"), 503, "Durable execution service is unavailable", id="lease-lost"
+        ),
+        pytest.param(RuntimeError("secret"), 503, "Durable execution service is unavailable", id="runtime"),
+    ],
+)
+def test_route_errors_map_to_stable_responses(
+    durable_app_factory, monkeypatch, caplog, error: Exception, status_code: int, detail: str
+) -> None:
+    app, deployment = durable_app_factory()
+    monkeypatch.setattr(deployment, "get", AsyncMock(side_effect=error))
+    with TestClient(app) as client:
+        response = client.get(f"/api/jobs/executions/{'a' * 32}")
+    assert response.status_code == status_code
+    assert response.json() == {"detail": detail}
+    assert ("retry-after" in response.headers) is isinstance(error, ExecutionAdmissionError)
+    assert "secret" not in response.text
+    logged = detail in ("Durable execution state is invalid", "Durable execution service is unavailable")
+    assert ("secret" in caplog.text) is logged
+
+
+def test_closed_admission_is_retryable(durable_app_factory) -> None:
+    app, deployment = durable_app_factory()
+    with TestClient(app) as client:
+        client.portal.call(deployment.quiesce)
+        response = client.post("/api/jobs/run-durable", json={"value": 1})
+    assert response.status_code == 503 and response.headers["retry-after"] == "1"
+    assert response.json() == {"detail": "durable deployment 'jobs' is not accepting submissions"}
 
 
 def test_waiting_stream_disconnect_does_not_cancel(durable_app_factory, wait_for_execution) -> None:
