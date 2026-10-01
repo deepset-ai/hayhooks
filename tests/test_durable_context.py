@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from unittest.mock import AsyncMock, Mock
 
@@ -538,3 +539,45 @@ async def test_release_rejects_a_write_waiting_behind_it(context_factory, monkey
         await checkpoint
     assert commands == ["ReleaseClaim"]
     assert (await store.read(context.execution_id)).control.status is ExecutionStatus.QUEUED
+
+
+async def test_stream_chunk_sync_hands_off_without_waiting_for_the_event_loop(context_factory) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    returned = threading.Event()
+    thread = threading.Thread(
+        target=lambda: (context.stream_chunk_sync({"chunk": 1}), returned.set()),
+        daemon=True,
+    )
+    thread.start()
+    assert returned.wait(timeout=5)
+    await claim.transition(Complete(claim.control.fence, claim.worker_id, 0, b"null"))
+
+    chunks = await store.read_chunks(context.execution_id, CHUNK_CURSOR_START)
+    assert [chunk.data for chunk in chunks] == [b'{"chunk":1}', b""]
+
+
+async def test_chunk_queued_before_lease_loss_is_never_sent(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    append = AsyncMock()
+    monkeypatch.setattr(store, "append_chunks", append)
+    returned = threading.Event()
+    thread = threading.Thread(
+        target=lambda: (context.stream_chunk_sync({"chunk": 1}), returned.set()),
+        daemon=True,
+    )
+    thread.start()
+    assert returned.wait(timeout=5)
+    claim.mark_lost()
+    await claim.flush_chunks()
+    append.assert_not_called()
+    with pytest.raises(ExecutionLeaseLostError):
+        await asyncio.to_thread(context.stream_chunk_sync, {"chunk": 2})
+
+
+async def test_stream_chunk_sync_on_the_event_loop_buffers_directly(context_factory) -> None:
+    _, create = context_factory
+    context, claim = await create()
+    context.stream_chunk_sync({"chunk": 1})
+    assert list(claim._chunks) == [b'{"chunk":1}']

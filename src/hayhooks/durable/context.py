@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterator, Mapping, MutableSet
@@ -91,6 +92,7 @@ class _ClaimedExecution:
         self.lease_duration_ms = lease_duration_ms
         self.lease_lost = asyncio.Event()
         self.event_loop = asyncio.get_running_loop()
+        self._loop_thread = threading.get_ident()
         self.application: asyncio.Future[object] | None = None
         # Shutdown or worker cancellation: reject new threads and hand back interrupted work.
         self.stopping = False
@@ -269,16 +271,17 @@ class _ClaimedExecution:
         return result
 
     def buffer_chunk(self, data: bytes) -> None:
-        """Queue one display chunk; the oldest are dropped beyond the stream limit."""
+        """Queue one display chunk from any thread; the oldest are dropped beyond the stream limit."""
         self.require_owned()
+        if threading.get_ident() != self._loop_thread and self.event_loop.is_closed():
+            raise RuntimeError("the durable runtime event loop is closed")
         self._chunks.append(data)
 
     async def flush_chunks(self) -> None:
         async with self._flush_lock:
-            if not self._chunks or self.lease_lost.is_set():
+            if not self._chunks or not self.owned:
                 return
-            chunks = tuple(self._chunks)
-            self._chunks.clear()
+            chunks = tuple(self._chunks.popleft() for _ in range(len(self._chunks)))
             try:
                 await self.store.append_chunks(
                     self.control.run_id,
@@ -472,6 +475,10 @@ class DurableContext:
 
     async def stream_chunk(self, payload: object) -> None:
         """Buffer one best-effort display chunk without waiting on the store."""
+        self.stream_chunk_sync(payload)
+
+    def stream_chunk_sync(self, payload: object) -> None:
+        """Buffer one best-effort display chunk without waiting on the event loop or store."""
         self._claim.require_owned()
         try:
             converter = getattr(payload, "to_dict", None)
@@ -530,9 +537,6 @@ class DurableContext:
         adapter_checkpoint: JsonValue = None,
     ) -> None:
         self._sync(self.suspend(wait, update=update, adapter_checkpoint=adapter_checkpoint))
-
-    def stream_chunk_sync(self, payload: object) -> None:
-        self._sync(self.stream_chunk(payload))
 
     def _snapshot(
         self,
