@@ -9,6 +9,7 @@ import pytest
 from redis.asyncio import ConnectionPool, Redis
 from redis.backoff import NoBackoff
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import ResponseError
 from redis.retry import Retry
 
 from hayhooks.durable.engine import Claim
@@ -139,8 +140,26 @@ async def test_redis_client_errors_are_normalized() -> None:
     redis = mock_redis()
     redis.info.side_effect = RedisConnectionError("secret endpoint")
     store = RedisExecutionStore(redis, "jobs")
-    with pytest.raises(ExecutionStoreError, match="Redis durable store operation failed"):
+    with pytest.raises(ExecutionStoreError) as raised:
         await store.initialize()
+    assert str(raised.value) == "Redis durable store operation failed: ConnectionError"
+    assert "secret" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (ResponseError("WRONGTYPE Operation against a key holding the wrong kind of value"), "ResponseError WRONGTYPE"),
+        (ResponseError("hash value is not an integer"), "ResponseError"),
+    ],
+)
+async def test_redis_errors_name_the_response_code(error: ResponseError, message: str) -> None:
+    redis = mock_redis()
+    redis.info.side_effect = error
+    store = RedisExecutionStore(redis, "jobs")
+    with pytest.raises(ExecutionStoreError) as raised:
+        await store.initialize()
+    assert str(raised.value) == f"Redis durable store operation failed: {message}"
 
 
 @pytest.mark.parametrize(

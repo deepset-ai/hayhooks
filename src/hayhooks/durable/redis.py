@@ -933,7 +933,9 @@ def _redis_errors() -> Iterator[None]:
     try:
         yield
     except RedisError as error:
-        raise ExecutionStoreError("Redis durable store operation failed") from error
+        code = str(error).partition(" ")[0]
+        cause = f"{type(error).__name__} {code}" if code.isalpha() and code.isupper() else type(error).__name__
+        raise ExecutionStoreError(f"Redis durable store operation failed: {cause}") from error
 
 
 __all__ = ["RedisExecutionStore", "decode_control", "encode_control"]
