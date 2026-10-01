@@ -311,6 +311,7 @@ async def test_heartbeat_drops_progress_the_store_already_holds(context_factory)
             events,
         ),
     )
+    claim._confirmed_until -= 0.5
     await context.check_cancelled()
 
     assert claim.pending_progress == []
@@ -700,3 +701,25 @@ async def test_first_heartbeat_is_due_one_interval_after_the_claim(context_facto
         await asyncio.wait_for(beat.wait(), timeout=1)
     finally:
         await slow.stop()
+
+
+async def test_check_cancelled_reuses_a_recently_confirmed_control(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    heartbeats = 0
+
+    async def counted(run_id, command):
+        nonlocal heartbeats
+        heartbeats += isinstance(command, Heartbeat)
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", counted)
+    await store.transition(context.execution_id, RequestCancellation(0, "stop"))
+    await context.check_cancelled()
+    assert heartbeats == 0
+
+    claim._confirmed_until -= 0.5
+    with pytest.raises(DurableExecutionCancelledError):
+        await context.check_cancelled()
+    assert heartbeats == 1

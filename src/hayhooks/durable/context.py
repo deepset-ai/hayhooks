@@ -37,6 +37,8 @@ from hayhooks.durable.store import ExecutionStore, ExecutionStoreCorruptionError
 # Minimum spacing between background chunk flushes. The first chunk after a quiet interval flushes at once;
 # later ones wait up to this long, which bounds their display latency with push delivery to viewers.
 _CHUNK_FLUSH_SECONDS = 0.1
+# Checks within this long of the last store confirmation trust that control instead of sending a heartbeat.
+_CANCEL_CHECK_REUSE_SECONDS = 0.5
 _T = TypeVar("_T")
 
 
@@ -448,7 +450,7 @@ class DurableContext:
 
     async def check_cancelled(self) -> None:
         self._claim.require_owned()
-        control = (
+        if time.monotonic() - self._claim.confirmed_at >= _CANCEL_CHECK_REUSE_SECONDS:
             await self._claim.transition(
                 Heartbeat(
                     fence=self._claim.control.fence,
@@ -457,8 +459,7 @@ class DurableContext:
                     lease_duration_ms=self._claim.lease_duration_ms,
                 )
             )
-        ).next_control
-        if control.cancel_requested_at_ms is not None:
+        if self._claim.control.cancel_requested_at_ms is not None:
             raise DurableExecutionCancelledError("durable execution cancellation was requested")
 
     async def retry(self, message: str, *, delay: float | None = None) -> None:
