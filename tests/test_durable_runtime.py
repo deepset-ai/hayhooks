@@ -477,6 +477,24 @@ async def test_retry_delay_and_application_budget(deployment_factory, log_record
     )
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup needs Python 3.11")
+async def test_retry_raised_inside_a_task_group_schedules_a_retry(deployment_factory) -> None:
+    async def runner(context: DurableContext, request: Request) -> Result:
+        if context.attempt == 1:
+            async with asyncio.TaskGroup() as group:
+                group.create_task(context.retry("again", delay=0))
+        return Result(value=request.value)
+
+    deployment = await deployment_factory(runner)
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    assert (stored.control.status, stored.control.application_retry_count, stored.control.lease_recoveries) == (
+        ExecutionStatus.COMPLETED,
+        1,
+        0,
+    )
+
+
 async def test_explicit_zero_retry_delay_is_immediate(deployment_factory) -> None:
     attempts = 0
 

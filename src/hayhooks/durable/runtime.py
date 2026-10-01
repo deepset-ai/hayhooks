@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import hashlib
 import inspect
 import math
@@ -127,6 +128,18 @@ class _DeploymentState(Enum):
     STARTING = auto()
     ACTIVE = auto()
     STOPPED = auto()
+
+
+_BASE_EXCEPTION_GROUP: Any = getattr(builtins, "BaseExceptionGroup", ())
+
+
+def _signal_in(error: BaseException) -> BaseException | None:
+    """The first retry or suspend signal in *error*, looking inside exception groups."""
+    if isinstance(error, (_RetryRequestedError, _ExecutionSuspendedError)):
+        return error
+    if isinstance(error, _BASE_EXCEPTION_GROUP):
+        return next(filter(None, map(_signal_in, error.exceptions)), None)
+    return None
 
 
 class DurableDeployment:
@@ -923,6 +936,11 @@ class DurableDeployment:
             if claim.application_cancelled:
                 raise
             raise RuntimeError("the durable application was cancelled") from error
+        except BaseException as error:
+            # asyncio.TaskGroup wraps retry and suspend signals in an exception group.
+            if (signal := _signal_in(error)) is None or signal is error:
+                raise
+            raise signal from error
 
     def _cancel_application(self, application: asyncio.Future[object]) -> None:
         """Stop waiting for the application; cancellation-resistant async work stays tracked until it exits."""
