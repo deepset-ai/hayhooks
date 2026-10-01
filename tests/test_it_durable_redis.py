@@ -427,13 +427,44 @@ async def test_claim_that_loses_a_race_takes_the_next_runnable_execution(redis_s
             contract_control("jobs", f"run_{index}", idempotency=str(index), binding=str(index)), b"input"
         )
     first = await store.claim(Claim("worker-0", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
-    assert first is not None and first.next_control.run_id == "run_0"
-    # A worker that read the index head before worker-0 committed still sees run_0 first.
-    await redis.zadd(store.keys.runnable_revision("v1"), {"run_0": 0})
+    assert first is not None
+    # A worker that read this candidate before worker-0 committed can still see it in the index.
+    await redis.zadd(store.keys.runnable_revision("v1"), {first.next_control.run_id: 0})
 
     second = await store.claim(Claim("worker-1", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
 
-    assert second is not None and second.next_control.run_id == "run_1"
+    assert second is not None and second.next_control.run_id != first.next_control.run_id
+
+
+@pytest.mark.parametrize(
+    ("member", "score"),
+    [
+        pytest.param("bad_inf", float("inf"), id="infinite"),
+        pytest.param("bad_negative", -1, id="negative"),
+        pytest.param("bad_fraction", 1.5, id="fraction"),
+        pytest.param("bad:id", 0, id="invalid-id"),
+    ],
+)
+async def test_claim_drops_invalid_runnable_entries(redis_store, member: str, score: float) -> None:
+    redis, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    await redis.zadd(store.keys.runnable_revision("v1"), {member: score})
+
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+
+    assert claimed is not None and claimed.next_control.run_id == "run_1"
+    assert await redis.zscore(store.keys.runnable_revision("v1"), member) is None
+
+
+async def test_claim_ignores_executions_that_are_not_due_yet(redis_store) -> None:
+    redis, store = redis_store
+    submitted = await store.submit(contract_control("jobs"), b"input")
+    future = submitted.control.updated_at_ms + 3_600_000
+    await redis.zadd(store.keys.runnable_revision("v1"), {"run_1": future})
+
+    assert await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is None
+    assert await redis.zscore(store.keys.runnable_revision("v1"), "run_1") == future
+    assert await store.read_control("run_1") == submitted.control
 
 
 async def test_stepped_back_redis_time_keeps_controls_decodable(redis_store, monkeypatch) -> None:

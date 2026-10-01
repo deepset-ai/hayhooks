@@ -95,6 +95,7 @@ _DEFAULT_TRANSACTION_RETRIES = 8
 _DEFAULT_TRANSACTION_BACKOFF_MS = 25
 _PROGRESS_SEQUENCE_BYTES = 8
 _MAX_COMMAND_VALUES = 1_000
+_CLAIM_CANDIDATES = 8
 
 # Refusals of the guarded apply script, which returns 1 once it commits.
 _STALE_SNAPSHOT, _LEASE_LOST, _CAPACITY_UNDERFLOW = 0, -1, -2
@@ -502,25 +503,30 @@ class RedisExecutionStore:
             raise ValueError("lease duration must exceed the commit safety margin")
         candidate_index = self.keys.runnable_revision(command.worker_revision)
         with _redis_errors():
-            # A head that another worker claimed first is dropped from the index, so try the next one.
             for _ in range(self._transaction_retries):
-                entries = await self.redis.zrange(candidate_index, 0, 0, withscores=True)
-                if not entries:
-                    return None
-                try:
-                    member, raw_score = entries[0]
-                    run_id = _text(member)
-                    validate_run_id(run_id)
-                    available_at_ms = _index_score_ms(raw_score, "runnable score")
-                except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError):
-                    await self.redis.zrem(candidate_index, member)
-                    log.bind(operation="claim", entries=1).error(
+                entries, now_ms = await self._scan(candidate_index, _CLAIM_CANDIDATES)
+                due: list[str] = []
+                invalid = []
+                for member, raw_score in entries:
+                    try:
+                        run_id = _text(member)
+                        validate_run_id(run_id)
+                        available_at_ms = _index_score_ms(raw_score, "runnable score")
+                    except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError):
+                        invalid.append(member)
+                        continue
+                    if available_at_ms <= now_ms:
+                        due.append(run_id)
+                if invalid:
+                    await self.redis.zrem(candidate_index, *invalid)
+                    log.bind(operation="claim", entries=len(invalid)).error(
                         "Removed invalid entries from a durable scheduling index"
                     )
-                    continue
-                now_ms = _milliseconds(await self.redis.time())
-                if available_at_ms > now_ms:
+                if not due:
+                    if invalid:
+                        continue
                     return None
+                run_id = random.choice(due)  # noqa: S311
                 try:
                     plan = await self._transition(run_id, command, candidate_index=candidate_index)
                 except _UndecodableControlError as error:
@@ -532,6 +538,14 @@ class RedisExecutionStore:
                 if plan is not None:
                     return plan
             return None
+
+    async def _scan(self, index: str, count: int) -> tuple[list[tuple[Any, Any]], int]:
+        """Read the earliest index entries and Redis time in one round trip."""
+        async with self.redis.pipeline(transaction=False) as pipe:
+            pipe.zrange(index, 0, count - 1, withscores=True)
+            pipe.time()
+            entries, now = await pipe.execute()
+        return entries, _milliseconds(now)
 
     async def maintain(
         self,

@@ -13,10 +13,9 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
 from redis.retry import Retry
 
-from hayhooks.durable.engine import Claim
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys, decode_control, encode_control
 from hayhooks.durable.store import ExecutionStoreCorruptionError, ExecutionStoreError, StoreConfig, StreamChunk
-from tests.durable_store_contract import ATTEMPTS_ERROR, contract_control
+from tests.durable_store_contract import contract_control
 
 
 def test_redis_keys_are_private_cluster_safe_and_strict() -> None:
@@ -206,64 +205,3 @@ def test_undecodable_stream_entries_are_skipped() -> None:
         StreamChunk("5-0", 2, b"", terminal=True),
         StreamChunk("6-0", 3, b"oversized"),
     )
-
-
-async def test_empty_scheduling_indexes_do_not_request_redis_time() -> None:
-    redis = mock_redis()
-    redis.zrange.return_value = []
-    store = RedisExecutionStore(redis, "jobs")
-
-    claimed = await store.claim(Claim("worker", 0, 30_000, 3, "v1", ATTEMPTS_ERROR))
-    await store.maintain(
-        max_run_attempts=3,
-        attempts_error=ATTEMPTS_ERROR,
-    )
-
-    assert claimed is None
-    assert redis.zrange.await_count == 2
-    redis.time.assert_not_awaited()
-
-
-async def test_future_scheduling_scores_use_redis_time_and_are_not_processed() -> None:
-    redis = mock_redis()
-    redis.time.return_value = (1, 0)
-    store = RedisExecutionStore(redis, "jobs")
-    store._transition = AsyncMock()  # type: ignore[method-assign]
-
-    redis.zrange.return_value = [(b"run_1", 2_000.0)]
-    claimed = await store.claim(Claim("worker", 0, 30_000, 3, "v1", ATTEMPTS_ERROR))
-    assert claimed is None
-
-    redis.zrange.return_value = [(b"run_1|1", 2_000.0)]
-    await store.maintain(
-        max_run_attempts=3,
-        attempts_error=ATTEMPTS_ERROR,
-    )
-
-    assert redis.time.await_count == 2
-    store._transition.assert_not_awaited()
-
-
-@pytest.mark.parametrize("score", [float("inf"), -1.0, 1.5])
-async def test_invalid_runnable_scores_are_removed(score: float) -> None:
-    redis = mock_redis()
-    redis.zrange.side_effect = [[(b"run_1", score)], []]
-    store = RedisExecutionStore(redis, "jobs")
-
-    assert await store.claim(Claim("worker", 0, 30_000, 3, "v1", ATTEMPTS_ERROR)) is None
-    redis.zrem.assert_awaited_once_with(store.keys.runnable_revision("v1"), b"run_1")
-    redis.time.assert_not_awaited()
-
-
-async def test_invalid_lease_entries_are_removed_without_requesting_time() -> None:
-    redis = mock_redis()
-    redis.zrange.return_value = [(b"run_1|1", float("inf"))]
-    store = RedisExecutionStore(redis, "jobs")
-
-    await store.maintain(
-        max_run_attempts=3,
-        attempts_error=ATTEMPTS_ERROR,
-    )
-
-    redis.zrem.assert_awaited_once_with(store.keys.lease_expiry, b"run_1|1")
-    redis.time.assert_not_awaited()
