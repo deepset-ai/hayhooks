@@ -16,6 +16,7 @@ from loguru import logger as log
 
 from hayhooks.durable.engine import (
     RUN_ID_PATTERN,
+    ExecutionControl,
     ExecutionNotFoundError,
     ExecutionPayloadSizeError,
     ExecutionStatus,
@@ -151,7 +152,7 @@ async def _stream_events(  # noqa: C901, PLR0913
     deployment: DurableDeployment,
     route_names: dict[str, str],
     response_model: type[ExecutionResult],
-    stored: StoredExecution,
+    control: ExecutionControl,
     owner_id: str | None,
     enforce_owner: bool,
     cursor: str,
@@ -159,57 +160,62 @@ async def _stream_events(  # noqa: C901, PLR0913
     """
     Push chunks as workers flush them and end on the terminal marker.
 
-    A resumed cursor first catches up with bounded pages. After that every
-    iteration blocks on the stream, and a block timeout sends a keepalive and
-    checks control once, so a terminal run that lost its marker still ends.
+    A resumed cursor, or a run that is already terminal, first catches up with bounded
+    pages; a terminal run with no marker left ends once caught up. Otherwise every
+    iteration blocks on the stream, and a block timeout sends a keepalive and checks the
+    control, so a run that ends without a visible marker still ends its stream.
     """
-    execution_id = stored.control.run_id
-    visible_attempt = stored.control.run_attempt
+    execution_id = control.run_id
+    visible_attempt = control.run_attempt
+    terminal = control.terminal
     store = deployment.store
     page_size = chunk_read_count(store.config)
     chunk_bytes = sys.maxsize
 
-    async def read() -> StoredExecution:
-        return await deployment.get(
+    async def terminal_event() -> str:
+        stored = await deployment.get(
             execution_id,
             owner_id=owner_id,
             enforce_owner=enforce_owner,
             allow_revision_mismatch=True,
         )
-
-    def terminal_event(stored: StoredExecution) -> str:
         public = _project(request, deployment, route_names, stored, response_model)
         return _sse(stored.control.status.value, public.model_dump_json())
 
     try:
         yield _SSE_HEARTBEAT
-        catching_up = cursor != CHUNK_CURSOR_START
+        catching_up = terminal or cursor != CHUNK_CURSOR_START
         while True:
             try:
                 if catching_up:
                     chunks = await store.read_chunks(execution_id, cursor)
                     catching_up = len(chunks) == page_size
+                elif terminal:
+                    yield await terminal_event()
+                    return
                 else:
                     waited = await deployment.wait_chunks(execution_id, cursor, _STREAM_BLOCK_SECONDS)
                     if waited is None:
                         return
                     if not waited:
                         yield _SSE_HEARTBEAT
-                        stored = await read()
-                        if stored.control.terminal:
-                            yield terminal_event(stored)
-                            return
+                        control = await deployment.get_control(
+                            execution_id,
+                            owner_id=owner_id,
+                            enforce_owner=enforce_owner,
+                        )
+                        terminal = catching_up = control.terminal
                         continue
                     chunks = waited
             except ChunkCursorExpiredError:
                 yield _sse("gap", '{"detail":"Requested stream history is no longer available"}')
-                cursor, catching_up = CHUNK_CURSOR_START, False
+                cursor, catching_up = CHUNK_CURSOR_START, terminal
                 continue
 
             for chunk in chunks:
                 cursor = chunk.cursor
                 if chunk.terminal:
-                    yield terminal_event(await read())
+                    yield await terminal_event()
                     return
                 if chunk.skipped or chunk.attempt < visible_attempt:
                     continue
@@ -359,19 +365,14 @@ def create_durable_router(  # noqa: C901
         owner = _validated_owner(owner_id, enforce_owner=enforce_owner)
         cursor = CHUNK_CURSOR_START if last_event_id is None else last_event_id
         parse_chunk_cursor(cursor)
-        stored = await deployment.get(
-            execution_id,
-            owner_id=owner,
-            enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
-        )
+        control = await deployment.get_control(execution_id, owner_id=owner, enforce_owner=enforce_owner)
         return StreamingResponse(
             _stream_events(
                 request,
                 deployment,
                 route_names,
                 response_model,
-                stored,
+                control,
                 owner,
                 enforce_owner,
                 cursor,

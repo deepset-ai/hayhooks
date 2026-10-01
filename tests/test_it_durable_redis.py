@@ -1499,3 +1499,24 @@ async def test_sse_delivers_a_large_redis_chunk_after_the_write_limit_is_lowered
     assert f"id: {large_cursor}" in body
     assert json.loads(data_lines[0])["payload"] == {"blob": "x" * 5_000_000}
     assert caplog.messages.count("Skipped an undecodable durable stream chunk") == 1
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        pytest.param(None, ["completed"], id="fresh"),
+        pytest.param({"Last-Event-ID": "1-0"}, ["gap", "completed"], id="resumed"),
+    ],
+)
+async def test_sse_ends_a_terminal_run_with_expired_history_at_once(redis_store, headers, expected) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.transition("run_1", Complete(control.fence, "worker", 0, b"{}"))
+    await redis.delete(store.keys.chunks("run_1"))
+
+    started = asyncio.get_running_loop().time()
+    body = await _stream_body(store, headers)
+
+    events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
+    assert events == expected
+    assert asyncio.get_running_loop().time() - started < 2

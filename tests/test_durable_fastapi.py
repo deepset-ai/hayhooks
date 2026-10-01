@@ -6,11 +6,11 @@ import asyncio
 import json
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -39,6 +39,29 @@ from hayhooks.durable.store import (
 )
 
 SKIPPED = object()
+
+
+class CountingStore(MemoryExecutionStore):
+    """Count the reads HTTP routes make; workers use none of these methods."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.calls: Counter[str] = Counter()
+        self.on_read_control: Callable[[int], None] | None = None
+
+    async def submit(self, control, input_payload):
+        self.calls["submit"] += 1
+        return await super().submit(control, input_payload)
+
+    async def read_public(self, run_id):
+        self.calls["read_public"] += 1
+        return await super().read_public(run_id)
+
+    async def read_control(self, run_id):
+        self.calls["read_control"] += 1
+        if self.on_read_control is not None:
+            self.on_read_control(self.calls["read_control"])
+        return await super().read_control(run_id)
 
 
 class JobRequest(BaseModel):
@@ -93,8 +116,9 @@ def durable_app_factory() -> Iterator[Callable[..., tuple[FastAPI, DurableDeploy
         max_nonterminal: int = 0,
         max_stream_chunks: int = 10_000,
         max_stream_chunk_bytes: int = 64_000,
+        store_class: type[MemoryExecutionStore] = MemoryExecutionStore,
     ) -> tuple[FastAPI, DurableDeployment]:
-        store = MemoryExecutionStore(
+        store = store_class(
             "jobs",
             config=StoreConfig(
                 lease_commit_safety_ms=10,
@@ -541,19 +565,67 @@ def test_blocked_viewer_wakes_on_the_final_flush_and_terminal_marker(
     assert time.monotonic() - started < 2
 
 
-def test_block_timeout_keeps_alive_and_ends_on_terminal_control_without_marker(
-    durable_app_factory, monkeypatch, wait_for_execution
+@pytest.mark.parametrize(
+    ("cursor", "expected_events"),
+    [
+        pytest.param(None, ["completed"], id="fresh"),
+        pytest.param("0-1", ["gap", "completed"], id="expired-cursor"),
+    ],
+)
+def test_terminal_run_without_history_ends_without_blocking(
+    durable_app_factory,
+    monkeypatch,
+    wait_for_execution,
+    cursor: str | None,
+    expected_events: list[str],
 ) -> None:
     app, deployment = durable_app_factory()
-    monkeypatch.setattr("hayhooks.durable.fastapi._STREAM_BLOCK_SECONDS", 0.05)
+    monkeypatch.setattr(deployment, "wait_chunks", AsyncMock(side_effect=AssertionError("terminal streams never block")))
     with TestClient(app) as client:
         submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
         wait_for_execution(client, submitted["links"]["self"], "completed")
         deployment.store._chunks.pop(submitted["execution_id"])
-        events, comments, _ = read_sse(client, submitted["links"]["stream"])
+        headers = {"Last-Event-ID": cursor} if cursor is not None else None
+        events, comments, _ = read_sse(client, submitted["links"]["stream"], headers=headers)
+
+    assert [event["event"] for event in events] == expected_events
+    assert comments == [": heartbeat"]
+
+
+def test_idle_stream_reads_only_the_control_until_the_run_ends_without_a_marker(
+    durable_app_factory, monkeypatch
+) -> None:
+    app, deployment = durable_app_factory(store_class=CountingStore)
+    store = cast(CountingStore, deployment.store)
+    monkeypatch.setattr("hayhooks.durable.fastapi._STREAM_BLOCK_SECONDS", 0.01)
+    release_runner = threading.Event()
+
+    async def controlled_run(context: DurableContext, request: JobRequest) -> JobResult:
+        await asyncio.to_thread(release_runner.wait)
+        return JobResult(value=request.value, owner_id=context.owner_id)
+
+    deployment.runner = controlled_run
+    wait_chunks = store.wait_chunks
+
+    async def wait_without_markers(run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...]:
+        return tuple(chunk for chunk in await wait_chunks(run_id, after, timeout) if not chunk.terminal)
+
+    monkeypatch.setattr(store, "wait_chunks", wait_without_markers)
+    store.on_read_control = lambda count: count == 3 and release_runner.set()
+    fallback = threading.Timer(5, release_runner.set)
+    fallback.start()
+    try:
+        with TestClient(app) as client:
+            submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
+            store.calls.clear()
+            events, comments, _ = read_sse(client, submitted["links"]["stream"])
+    finally:
+        fallback.cancel()
 
     assert [event["event"] for event in events] == ["completed"]
-    assert len(comments) == 2
+    assert store.calls["read_public"] == 1
+    assert store.calls["read_control"] >= 4
+    assert len(comments) == store.calls["read_control"]
 
 
 @pytest.mark.parametrize(
@@ -609,7 +681,7 @@ def test_chunk_failures_are_display_only_and_midstream_errors_are_framed(
         monkeypatch.setattr(deployment.store, "append_chunks", append_chunks)
         oversized = client.post("/api/jobs/run-durable", json={"value": 1, "action": "oversized"}).json()
         assert wait_for_execution(client, oversized["links"]["self"], "completed")["attempt"] == 1
-        monkeypatch.setattr(deployment.store, "wait_chunks", AsyncMock(side_effect=ExecutionStoreError("down")))
+        monkeypatch.setattr(deployment.store, "read_chunks", AsyncMock(side_effect=ExecutionStoreError("down")))
         events, _, _ = read_sse(client, oversized["links"]["stream"])
         assert events == [{"event": "error", "data": '{"detail":"Execution stream interrupted"}'}]
 
