@@ -698,19 +698,20 @@ class RedisExecutionStore:
                 for kind in kinds:
                     pipe.get(self.keys.payload(run_id, kind))
                 pipe.lrange(self.keys.progress(run_id), 0, -1)
-                # Collect per-command errors so a missing control wins over wrong-type orphan keys.
+                # Collect per-command errors so wrong-type orphan keys can be ignored with a missing control.
                 values, *raw_payloads, raw_progress = await pipe.execute(raise_on_error=False)
-        if values == {}:
-            return None
         replies = (values, *raw_payloads, raw_progress)
         with _redis_errors():
             if any(isinstance(reply, Exception) and not _wrong_type(reply) for reply in replies):
                 raise next(reply for reply in replies if isinstance(reply, Exception) and not _wrong_type(reply))
-        if isinstance(values, Exception) or any(isinstance(reply, Exception) for reply in raw_payloads):
+        if values == {}:
+            return None
+        if isinstance(values, Exception):
             raise ExecutionStoreCorruptionError("stored execution keys have invalid types")
-        if isinstance(raw_progress, Exception):
-            raise ExecutionProgressCorruptionError("stored progress key has an invalid type")
         control = self._decode(values, run_id)
+        progress = _decode_progress(raw_progress, control)
+        if any(isinstance(reply, Exception) for reply in raw_payloads):
+            raise ExecutionStoreCorruptionError("stored execution keys have invalid types")
         payloads: dict[PayloadKind, bytes] = {}
         for kind, payload in zip(kinds, raw_payloads, strict=True):
             if payload is None:
@@ -718,26 +719,7 @@ class RedisExecutionStore:
             if not isinstance(payload, bytes):
                 raise ExecutionStoreCorruptionError(f"stored {kind.value} payload is invalid")
             payloads[kind] = payload
-        progress = []
-        for entry in raw_progress:
-            if not isinstance(entry, bytes) or len(entry) < _PROGRESS_SEQUENCE_BYTES:
-                raise ExecutionProgressCorruptionError("stored progress event is invalid")
-            event = ProgressEvent(
-                int.from_bytes(entry[:_PROGRESS_SEQUENCE_BYTES], "big"),
-                entry[_PROGRESS_SEQUENCE_BYTES:],
-            )
-            if event.sequence < 1:
-                raise ExecutionProgressCorruptionError("stored progress event is invalid")
-            progress.append(event)
-        sequences = [event.sequence for event in progress]
-        if (control.progress_sequence and not progress) or sequences != list(
-            range(
-                control.progress_sequence - len(progress) + 1,
-                control.progress_sequence + 1,
-            )
-        ):
-            raise ExecutionProgressCorruptionError("progress sequence contradicts control state")
-        stored = StoredExecution(control, payloads, tuple(progress))
+        stored = StoredExecution(control, payloads, progress)
         validate_stored_execution(stored, private=private)
         return stored
 
@@ -1073,6 +1055,31 @@ def _index_score_ms(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or int(value) != value:
         raise ExecutionStoreCorruptionError(f"{name} is not an integer millisecond timestamp")
     return _nonnegative_int(str(int(value)), name)
+
+
+def _decode_progress(raw_progress: Any, control: ExecutionControl) -> tuple[ProgressEvent, ...]:
+    if isinstance(raw_progress, Exception):
+        raise ExecutionProgressCorruptionError("stored progress key has an invalid type")
+    progress = []
+    for entry in raw_progress:
+        if not isinstance(entry, bytes) or len(entry) < _PROGRESS_SEQUENCE_BYTES:
+            raise ExecutionProgressCorruptionError("stored progress event is invalid")
+        event = ProgressEvent(
+            int.from_bytes(entry[:_PROGRESS_SEQUENCE_BYTES], "big"),
+            entry[_PROGRESS_SEQUENCE_BYTES:],
+        )
+        if event.sequence < 1:
+            raise ExecutionProgressCorruptionError("stored progress event is invalid")
+        progress.append(event)
+    sequences = [event.sequence for event in progress]
+    if (control.progress_sequence and not progress) or sequences != list(
+        range(
+            control.progress_sequence - len(progress) + 1,
+            control.progress_sequence + 1,
+        )
+    ):
+        raise ExecutionProgressCorruptionError("progress sequence contradicts control state")
+    return tuple(progress)
 
 
 def _wrong_type(reply: object) -> bool:

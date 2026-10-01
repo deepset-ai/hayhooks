@@ -343,6 +343,30 @@ async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(
         await deployment.close()
 
 
+@pytest.mark.parametrize("corruption", ["wrong-type", "malformed", "sequence"])
+async def test_progress_corruption_precedes_payload_type_corruption(redis_store, corruption: str) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.transition(
+        "run_1",
+        Checkpoint(control.fence, "worker", 0, 10_000, b"checkpoint", (b"progress",)),
+    )
+    input_key = store.keys.payload("run_1", PayloadKind.INPUT)
+    await redis.delete(input_key)
+    await redis.rpush(input_key, b"wrong type")
+    progress_key = store.keys.progress("run_1")
+    await redis.delete(progress_key)
+    if corruption == "wrong-type":
+        await redis.set(progress_key, b"wrong type")
+    elif corruption == "malformed":
+        await redis.rpush(progress_key, b"bad")
+    else:
+        await redis.rpush(progress_key, (2).to_bytes(8, "big") + b"progress")
+
+    with pytest.raises(ExecutionProgressCorruptionError):
+        await store.read("run_1")
+
+
 async def test_stale_invalid_data_failure_does_not_clear_progress(redis_store) -> None:
     redis, store = redis_store
     control = await claim_one(store, lease_ms=10_000)
@@ -1281,7 +1305,7 @@ async def test_wrong_type_keys_fail_closed_only_for_existing_executions(
     await redis.set(store.keys.progress("run_1"), b"wrong type")
 
     if control_present:
-        with pytest.raises(ExecutionStoreCorruptionError, match="invalid types"):
+        with pytest.raises(ExecutionProgressCorruptionError, match="progress key has an invalid type"):
             await getattr(store, read)("run_1")
     else:
         assert await getattr(store, read)("run_1") is None
