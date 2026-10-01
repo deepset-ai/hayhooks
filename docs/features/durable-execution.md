@@ -90,7 +90,7 @@ covers checkpoints, retries, approval, and cancellation.
 | MCP `deploy_pipeline`/`undeploy_pipeline` tools | Available | Neither listed nor callable |
 | Python deployment helpers | Available | Raise `PipelineModeError` before any side effect |
 | Durable wrappers | Rejected | Served by the main HTTP server |
-| Startup | `HAYHOOKS_STARTUP_DEPLOY_*` strategy; failing pipelines are skipped | Sequential, and any failure stops startup |
+| Startup | `HAYHOOKS_STARTUP_DEPLOY_*` strategy; failing pipelines are skipped, but a durable wrapper stops startup because it requires durable mode | Sequential, and any failure stops startup |
 | Source directory | Deployments may write to it | Never written, including automatic bytecode |
 
 Ordinary run, OpenAI-compatible, streaming, file, dashboard, and Chainlit
