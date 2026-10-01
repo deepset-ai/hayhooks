@@ -550,12 +550,9 @@ def _redis_clients(url: str) -> tuple[Any, Any]:
 
     from hayhooks.durable.fastapi import _STREAM_BLOCK_SECONDS
 
-    common: dict[str, Any] = {
-        "protocol": 2,
-        "socket_connect_timeout": _REDIS_TIMEOUT_SECONDS,
-        "socket_keepalive": True,
-        "socket_keepalive_options": _keepalive_options(),
-    }
+    common: dict[str, Any] = {"protocol": 2, "socket_connect_timeout": _REDIS_TIMEOUT_SECONDS}
+    if not url.startswith("unix:"):  # Unix socket connections reject TCP keepalive options
+        common |= {"socket_keepalive": True, "socket_keepalive_options": _keepalive_options()}
     # ponytail: unbounded worker pool (redis-py 8 caps it at 100); bound HTTP concurrency upstream if Redis
     # connections must be capped, since exhausting this pool would fail heartbeats.
     worker = Redis.from_url(url, socket_timeout=_REDIS_TIMEOUT_SECONDS, max_connections=2**31, **common)

@@ -634,3 +634,11 @@ def test_durable_owner_id_requires_a_durable_wrapper(durable_pipelines_dir: Path
     write_tree(durable_pipelines_dir, {"double/pipeline_wrapper.py": source})
     with pytest.raises(Exception, match="durable_owner_id requires run_durable or run_durable_async"):
         create_app()
+
+
+async def test_durable_redis_clients_accept_unix_socket_urls() -> None:
+    from hayhooks.server.app import _redis_clients
+
+    for client in _redis_clients("unix:///tmp/redis.sock?db=15"):
+        client.connection_pool.make_connection()  # raises TypeError on TCP-only options
+        await client.aclose()
