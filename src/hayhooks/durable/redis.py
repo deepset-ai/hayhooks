@@ -777,6 +777,8 @@ class RedisExecutionStore:
                 commands = self._runnable_commands(run_id, candidate_index, current)
             else:
                 validate_transition_plan(plan, self.config)
+                if _changes_nothing(plan, current, lease_member_indexed=True):
+                    return plan
                 commands = self._plan_commands(current, plan)
                 if not current.terminal and plan.next_control.terminal:
                     released = RedisKeys.revision_nonterminal_field(current.definition_revision)
@@ -1059,6 +1061,15 @@ def _index_score_ms(value: object, name: str) -> int:
 
 def _wrong_type(reply: object) -> bool:
     return isinstance(reply, ResponseError) and str(reply).startswith("WRONGTYPE")
+
+
+def _changes_nothing(plan: TransitionPlan, current: ExecutionControl, *, lease_member_indexed: bool) -> bool:
+    lease = plan.lease_index_update
+    return (
+        plan.next_control == current
+        and not (plan.payload_writes or plan.payload_deletes or plan.progress_events or plan.discard_progress)
+        and (lease is None or (lease.deadline_ms is None and not lease_member_indexed))
+    )
 
 
 @contextmanager

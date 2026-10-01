@@ -6,6 +6,7 @@ import asyncio
 import os
 import uuid
 from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -465,6 +466,21 @@ async def test_claim_ignores_executions_that_are_not_due_yet(redis_store) -> Non
     assert await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is None
     assert await redis.zscore(store.keys.runnable_revision("v1"), "run_1") == future
     assert await store.read_control("run_1") == submitted.control
+
+
+async def test_noop_transitions_write_nothing(redis_store, monkeypatch) -> None:
+    redis, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    await store.transition("run_1", RequestCancellation(0, "done"))
+    before = await dump_keys(redis, store)
+    apply = AsyncMock(wraps=store._apply_script)
+    monkeypatch.setattr(store, "_apply_script", apply)
+
+    plan = await store.transition("run_1", RequestCancellation(0, "again"))
+
+    assert plan.next_control.status is ExecutionStatus.CANCELED
+    apply.assert_not_awaited()
+    assert await dump_keys(redis, store) == before
 
 
 async def test_stepped_back_redis_time_keeps_controls_decodable(redis_store, monkeypatch) -> None:
