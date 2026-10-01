@@ -413,6 +413,14 @@ random execution ID grants access. A multi-user host should pass an
 user or tenant ID. The router scopes execution access and idempotency to that ID
 and hides owner mismatches as `404`.
 
+An idempotency key binds the deployment, owner, and request fields that the
+client actually sent. Unset defaults and the deployment revision are excluded,
+so a replay during a rolling deploy returns the existing execution and adding
+an optional field does not break clients that omit it. Sending a field
+explicitly, even with its default value, is a different request and returns
+`409`. Without an owner dependency, every caller shares one idempotency-key
+namespace; use unguessable keys such as UUIDs.
+
 ## Host lifecycle
 
 The portable package does not manage the host application. The host owns

@@ -166,7 +166,9 @@ Status codes:
 - `200`: inspection, terminal replay, or terminal cancellation result;
 - `202`: accepted submission, cancellation request, or resume;
 - `404`: missing execution or owner mismatch;
-- `409`: idempotency, revision, or resume-state conflict;
+- `409`: an idempotency key was reused within the same deployment and owner
+  with different explicitly sent request fields, or a revision or resume-state
+  conflict occurred;
 - `422`: request, resume, header, cursor, or payload validation failure;
 - `503`: admission closed or durable store unavailable.
 
