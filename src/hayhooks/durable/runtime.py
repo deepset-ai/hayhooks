@@ -243,9 +243,9 @@ class DurableDeployment:
         Quiesce, end open streams, and give workers ``shutdown_grace_seconds`` to finish.
 
         Async work still running then is cancelled and gets up to another grace period to stop;
-        work that stops releases its claim, so another process can take the run over without
-        spending an attempt. Cancellation-resistant async work keeps its claim until it exits, and
-        so do threads, unless ``release_running_on_close`` hands their claims over. Async runners
+        work that stops releases its claim, so another process can take the run over without it
+        counting toward ``max_run_attempts``. Cancellation-resistant async work keeps its claim until
+        it exits, and so do threads, unless ``release_running_on_close`` hands their claims over. Async runners
         awaiting thread work are cancelled when their last thread exits; no new threads may start.
         A repeated call completes cleanup that an earlier one left unfinished, within the same deadline;
         ``wait_drained()`` waits for the work that close() retains.

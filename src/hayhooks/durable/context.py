@@ -145,7 +145,7 @@ class _ClaimedExecution:
         self.lease_lost.set()
 
     async def release(self) -> None:
-        """Requeue the run without spending its attempt, flushing buffered chunks first, then stop owning it."""
+        """Requeue the run without counting a lost lease, flushing buffered chunks first, then stop owning it."""
         try:
             await self.transition(ReleaseClaim(fence=self.control.fence, worker_id=self.worker_id))
         except (ExecutionLeaseLostError, InvalidExecutionTransitionError):

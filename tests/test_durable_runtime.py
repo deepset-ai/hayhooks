@@ -763,9 +763,9 @@ async def test_close_releases_async_work_it_cancels(deployment_factory, cancel_r
     if cancel_requested:
         assert stored.control.status is ExecutionStatus.CANCELED
         return
-    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
+    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 1)
     reclaimed = await store.claim(SUCCESSOR)
-    assert reclaimed is not None and reclaimed.next_control.run_attempt == 1
+    assert reclaimed is not None and reclaimed.next_control.run_attempt == 2
 
 
 @pytest.mark.parametrize("stage", ["read", "heartbeat"])
@@ -797,9 +797,9 @@ async def test_close_releases_claim_before_application_starts(deployment_factory
     await asyncio.wait_for(deployment.wait_drained(), timeout=1)
 
     stored = await read(run_id)
-    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
+    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 1)
     reclaimed = await store.claim(SUCCESSOR)
-    assert reclaimed is not None and reclaimed.next_control.run_attempt == 1
+    assert reclaimed is not None and reclaimed.next_control.run_attempt == 2
     runner.assert_not_called()
 
 
@@ -966,7 +966,7 @@ async def test_cancelled_async_work_keeps_ownership_until_it_exits(deployment_fa
         "cleanup": True
     }
     expected = ExecutionStatus.COMPLETED if outcome == "suppressed" else ExecutionStatus.QUEUED
-    assert (stored.control.status, stored.control.run_attempt) == (expected, int(outcome == "suppressed"))
+    assert (stored.control.status, stored.control.run_attempt) == (expected, 1)
 
 
 THREAD_SOURCES = [
@@ -1060,7 +1060,7 @@ async def test_close_cancels_async_remainder_after_retained_thread_exits(
     finally:
         extra_thread_release.set()
     stored = await deployment.store.read(run_id)
-    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
+    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 1)
     assert outcomes == [None]
     assert not next_thread.is_set()
 
@@ -1151,7 +1151,7 @@ async def test_thread_work_is_handed_over_when_its_claim_is_released(
         await asyncio.wait({worker})
 
     reclaimed = await store.claim(SUCCESSOR)
-    assert reclaimed is not None and reclaimed.next_control.run_attempt == running.run_attempt
+    assert reclaimed is not None and reclaimed.next_control.run_attempt == running.run_attempt + 1
     transitions = AsyncMock(wraps=store.transition)
     store.transition = transitions
     release.set()
