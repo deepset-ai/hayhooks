@@ -36,6 +36,7 @@ from hayhooks.durable.engine import (
     ScheduleRetry,
     Suspend,
 )
+from hayhooks.durable.models import PersistedError, decode_json
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys
 from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
 from hayhooks.durable.store import (
@@ -67,6 +68,10 @@ pytestmark = pytest.mark.integration
 
 class SSERequest(BaseModel):
     chunks: int
+
+
+class RuntimeRequest(BaseModel):
+    value: int
 
 
 def store_prefix(store: RedisExecutionStore) -> str:
@@ -272,6 +277,70 @@ async def test_invalid_data_failure_repairs_public_progress(redis_store, corrupt
         "revision_runnable": 0,
         "lease_expiry": 0,
     }
+
+
+@pytest.mark.parametrize("corruption", ["wrong-type", "malformed", "invalid-json", "invalid-model"])
+async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(redis_store, corruption: str) -> None:
+    redis, fixture_store = redis_store
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(fixture_store.config, max_payload_bytes=1_000),
+        key_prefix=store_prefix(fixture_store),
+    )
+    await store.submit(contract_control("jobs"), b'{"value":1}')
+    await redis.hset(store.keys.control("run_1"), "progress_sequence", 1)
+    progress_key = store.keys.progress("run_1")
+    if corruption == "wrong-type":
+        await redis.set(progress_key, b"wrong type")
+    else:
+        payload = {
+            "malformed": b"bad",
+            "invalid-json": (1).to_bytes(8, "big") + b"not-json",
+            "invalid-model": (1).to_bytes(8, "big") + b'{"message":1}',
+        }[corruption]
+        await redis.rpush(progress_key, payload)
+    await redis.set(store.keys.chunks("run_1"), b"wrong type")
+    calls = 0
+
+    async def runner(_context: DurableContext, _request: RuntimeRequest) -> None:
+        nonlocal calls
+        calls += 1
+
+    deployment = DurableDeployment(
+        "jobs",
+        "v1",
+        store,
+        RuntimeRequest,
+        runner,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+    await deployment.start()
+    try:
+        deadline = asyncio.get_running_loop().time() + 1
+        public = None
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                public = await store.read_public("run_1")
+            except ExecutionStoreCorruptionError:
+                public = None
+            if public is not None and public.control.terminal:
+                break
+            await asyncio.sleep(0.005)
+        assert public is not None and public.control.status is ExecutionStatus.FAILED
+        error = PersistedError.model_validate(decode_json(public.payloads[PayloadKind.ERROR], max_bytes=1_000))
+        assert (public.control.run_attempt, public.control.progress_sequence, public.progress, calls) == (1, 0, (), 0)
+        assert (error.type, error.code) == ("ExecutionStoreCorruptionError", "stored_execution_invalid")
+        assert (await store.read_chunks("run_1", CHUNK_CURSOR_START))[-1].terminal
+        assert await store.operational_counts(revision="v1") == {
+            "nonterminal": 0,
+            "revision_nonterminal": 0,
+            "revision_runnable": 0,
+            "lease_expiry": 0,
+        }
+        assert (await deployment.health())["store_error_streak"] == 0
+    finally:
+        await deployment.close()
 
 
 async def test_stale_invalid_data_failure_does_not_clear_progress(redis_store) -> None:

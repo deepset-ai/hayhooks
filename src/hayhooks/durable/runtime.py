@@ -52,12 +52,14 @@ from hayhooks.durable.engine import (
 from hayhooks.durable.models import (
     CheckpointEnvelope,
     ExecutionKind,
+    ExecutionProgress,
     PersistedError,
     decode_json,
     encode_json,
     operation_fingerprint,
 )
 from hayhooks.durable.store import (
+    ExecutionProgressCorruptionError,
     ExecutionStore,
     ExecutionStoreCorruptionError,
     ExecutionStoreError,
@@ -613,6 +615,9 @@ class DurableDeployment:
             raise ExecutionLeaseLostError(
                 f"execution lease for '{claim.control.run_id}' expired before its preparation read completed"
             ) from None
+        except ExecutionStoreCorruptionError as error:
+            await self._fail_invalid(claim, error)
+            return None
         except ExecutionStoreError as error:
             await claim.release()
             await self._backoff_worker(claim.worker_id, error, "read")
@@ -626,9 +631,19 @@ class DurableDeployment:
         self,
         stored: StoredExecution,
         claim: _ClaimedExecution,
-        worker_id: str,
     ) -> tuple[DurableContext, BaseModel] | None:
-        control = stored.control
+        claim.control = stored.control
+        try:
+            for event in stored.progress:
+                value = decode_json(event.data, max_bytes=sys.maxsize)
+                if not isinstance(value, dict):
+                    raise ValueError("progress payload must be a JSON object")
+                ExecutionProgress.model_validate({**value, "sequence": event.sequence})
+        except (TypeError, ValueError, ExecutionPayloadSizeError) as error:
+            corruption = ExecutionProgressCorruptionError("stored progress event is invalid")
+            corruption.__cause__ = error
+            await self._fail_invalid(claim, corruption)
+            return None
         try:
             # Reads never re-apply write limits, which may have been lowered since the write.
             request = self.request_model.model_validate(
@@ -643,21 +658,36 @@ class DurableDeployment:
             if checkpoint.adapter_kind is not self.kind:
                 raise ValueError("checkpoint kind does not match the deployment")
         except (KeyError, TypeError, ValueError, ExecutionPayloadSizeError) as error:
-            first, events = claim.progress_snapshot()
-            await claim.transition(
-                Fail(
-                    fence=control.fence,
-                    worker_id=worker_id,
-                    now_ms=0,
-                    error=self._encode_exception(error),
-                    progress_events=events,
-                    first_progress_sequence=first,
-                ),
-            )
+            await self._fail_invalid(claim, error)
             return None
 
-        claim.control = control
         return DurableContext(claim, checkpoint, adapter=self.adapter), request
+
+    async def _fail_invalid(self, claim: _ClaimedExecution, error: BaseException) -> None:
+        """Fail unreadable work while its original ownership window is still valid."""
+        discard_progress = isinstance(error, ExecutionProgressCorruptionError)
+        first, events = claim.progress_snapshot()
+        log.opt(exception=error).bind(
+            deployment=self.name,
+            run_id=claim.control.run_id,
+            exception_type=type(error).__name__,
+            error=str(error),
+        ).error("Durable execution has invalid stored data; failing it")
+        await claim.transition(
+            Fail(
+                fence=claim.control.fence,
+                worker_id=claim.worker_id,
+                now_ms=0,
+                error=self._encode_error(
+                    "ExecutionStoreCorruptionError",
+                    "Durable execution failed",
+                    code="stored_execution_invalid",
+                ),
+                progress_events=() if discard_progress else events,
+                first_progress_sequence=first,
+                discard_progress=discard_progress,
+            )
+        )
 
     async def _execute_claim(
         self,
@@ -684,7 +714,7 @@ class DurableDeployment:
             stored = await self._read_claimed_execution(claim)
             if stored is None:
                 return
-            prepared = await self._prepare_execution(stored, claim, worker_id)
+            prepared = await self._prepare_execution(stored, claim)
             if prepared is None:
                 return
             context, request = prepared

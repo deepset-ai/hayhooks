@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from hayhooks.durable.context import DurableContext, DurableExecutionCancelledError
 from hayhooks.durable.engine import (
+    Checkpoint,
     Claim,
     ExecutionLeaseLostError,
     ExecutionNotFoundError,
@@ -35,6 +36,7 @@ from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, RuntimeC
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     ExecutionIdempotencyConflictError,
+    ExecutionStoreCorruptionError,
     ExecutionStoreError,
     MemoryExecutionStore,
     StoreConfig,
@@ -418,7 +420,9 @@ async def test_retry_delay_and_application_budget(deployment_factory, log_record
     )
     retry_logs = [record for record in log_records if record["extra"].get("retry_message") == "again"]
     assert any(record["message"] == "Durable execution scheduled an application retry" for record in retry_logs)
-    assert any(record["message"] == "Durable execution failed: application retries are exhausted" for record in retry_logs)
+    assert any(
+        record["message"] == "Durable execution failed: application retries are exhausted" for record in retry_logs
+    )
 
 
 async def test_explicit_zero_retry_delay_is_immediate(deployment_factory) -> None:
@@ -456,6 +460,82 @@ async def test_failed_post_claim_read_releases_without_spending_the_run_budget(d
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
     control = stored.control
     assert (control.status, control.run_attempt, control.lease_recoveries) == (ExecutionStatus.COMPLETED, 2, 0)
+
+
+@pytest.mark.parametrize("source", ["corrupt-read", "invalid-input"])
+async def test_unreadable_claimed_execution_fails_as_invalid(deployment_factory, log_records, source: str) -> None:
+    calls = 0
+
+    async def runner(_context: DurableContext, _request: Request) -> Result:
+        nonlocal calls
+        calls += 1
+        return Result(value=1)
+
+    store = ControlledStore("jobs")
+    control = initial_control(
+        run_id="run_1",
+        idempotency_digest="idem",
+        idempotency_binding_digest="binding",
+        deployment="jobs",
+        definition_revision="v1",
+        owner_id=None,
+        kind="pipeline",
+        now_ms=0,
+    )
+    await store.submit(control, b'{"value":1}' if source == "corrupt-read" else b'{"value":"x"}')
+    if source == "corrupt-read":
+        store.read_error = ExecutionStoreCorruptionError("bad")
+    deployment = await deployment_factory(runner, store=store, start=False)
+    await deployment.start()
+
+    stored = await wait_for_execution(deployment, control.run_id, lambda value: value.control.terminal)
+    error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    health = await deployment.health()
+    failures = [
+        record
+        for record in log_records
+        if record["message"] == "Durable execution has invalid stored data; failing it"
+    ]
+    assert (stored.control.status, stored.control.run_attempt, calls) == (ExecutionStatus.FAILED, 1, 0)
+    assert (error.type, error.code) == ("ExecutionStoreCorruptionError", "stored_execution_invalid")
+    assert health["store_error_streak"] == 0
+    assert any(record["extra"].get("run_id") == control.run_id for record in failures)
+
+
+@pytest.mark.parametrize("progress", ["healthy", "invalid-json", "invalid-model"])
+async def test_invalid_preparation_discards_only_corrupt_progress(deployment_factory, progress: str) -> None:
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    control = initial_control(
+        run_id="run_1",
+        idempotency_digest="idem",
+        idempotency_binding_digest="binding",
+        deployment="jobs",
+        definition_revision="v1",
+        owner_id=None,
+        kind="pipeline",
+        now_ms=0,
+    )
+    await store.submit(control, b'{"value":"invalid"}')
+    claimed = await store.claim(Claim("seeder", 0, 300, 3, "v1", b"{}"))
+    assert claimed is not None
+    event = {
+        "healthy": b'{"message":"kept","timestamp":"2026-01-01T00:00:00Z","metadata":{}}',
+        "invalid-json": b"not-json",
+        "invalid-model": b'{"message":1,"timestamp":"not-a-date","metadata":{}}',
+    }[progress]
+    await store.transition(
+        control.run_id,
+        Checkpoint(claimed.next_control.fence, "seeder", 0, 300, b"checkpoint", (event,)),
+    )
+    await store.transition(control.run_id, ReleaseClaim(claimed.next_control.fence, "seeder"))
+    deployment = await deployment_factory(store=store, start=False)
+    await deployment.start()
+
+    stored = await wait_for_execution(deployment, control.run_id, lambda value: value.control.terminal)
+    error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    assert (stored.control.status, error.code) == (ExecutionStatus.FAILED, "stored_execution_invalid")
+    assert stored.control.progress_sequence == (1 if progress == "healthy" else 0)
+    assert [event.data for event in stored.progress] == ([event] if progress == "healthy" else [])
 
 
 async def test_lowered_payload_limit_still_runs_stored_work() -> None:
