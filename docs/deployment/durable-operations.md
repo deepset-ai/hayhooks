@@ -340,6 +340,13 @@ nonterminal count, repeated store errors, or sustained draining work. Redis
 store errors name their cause, for example
 `Redis durable store operation failed: TimeoutError`.
 
+`GET /status` always returns HTTP 200 and is safe for liveness probes. Its
+durable data is at most one second old, and concurrent probes share one read. A
+store read that exceeds one second reports the deployment as unhealthy with
+`"operational_error": "TimeoutError"` and sets the top-level `status` to
+`Degraded`. Use `status` or `durable.healthy` from the body for readiness and
+alerts, not the HTTP code.
+
 After process loss, another worker recovers an expired lease and requeues or
 fails the execution according to attempt rules. Revision-specific runnable
 indexes ensure only a worker serving the pinned revision can claim it. Old

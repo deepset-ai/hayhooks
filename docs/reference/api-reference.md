@@ -100,16 +100,44 @@ Get status of all deployed pipelines, the server mode, and durable deployment he
 {
   "status": "Up!",
   "pipelines": [
-    "pipeline1",
-    "pipeline2"
+    "jobs"
   ],
-  "durable_mode": false,
-  "durable": {"healthy": true, "deployments": {}}
+  "durable_mode": true,
+  "durable": {
+    "healthy": true,
+    "deployments": {
+      "jobs": {
+        "healthy": true,
+        "configured_slots": 1,
+        "running_slots": 1,
+        "draining_slots": 0,
+        "draining_runs": 0,
+        "active_executions": 0,
+        "maintenance_running": true,
+        "accepting": true,
+        "store_error_streak": 0,
+        "counts": {
+          "nonterminal": 0,
+          "revision_nonterminal": 0,
+          "revision_runnable": 0,
+          "lease_expiry": 0
+        }
+      }
+    }
+  }
 }
 ```
 
-`durable_mode` is `true` when the pipeline set is fixed at startup. `durable` reports each durable deployment in
-[durable mode](../features/durable-execution.md#durable-mode); `status` is `Degraded` when one is unhealthy.
+`durable_mode` is `true` when the pipeline set is fixed at startup. `durable`
+reports each durable deployment in
+[durable mode](../features/durable-execution.md#durable-mode); `status` is
+`Degraded` when one is unhealthy. The endpoint always returns HTTP 200, so it is
+safe for liveness. Use `status` or `durable.healthy` from the JSON for readiness
+and alerts.
+
+Durable health is at most one second old, and concurrent probes share one read.
+If that read exceeds one second, the deployment reports `"healthy": false` and
+`"operational_error": "TimeoutError"`, and the top-level status is `Degraded`.
 
 ### Pipeline Execution
 
