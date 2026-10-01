@@ -366,6 +366,21 @@ close, and release failure logs include `error`.
 
 ## Shutdown handoff
 
+Under `hayhooks run`, SIGTERM follows the HTTP server lifecycle:
+
+1. uvicorn stops accepting connections and waits up to
+   `HAYHOOKS_GRACEFUL_SHUTDOWN_TIMEOUT` (5 seconds by default) for open
+   requests.
+2. Open durable SSE streams hold that wait and are then cancelled; clients
+   resume from their cursor.
+3. Durable workers keep claiming work during the HTTP drain.
+4. The durable runtime then closes, waits its shutdown grace, cancels remaining
+   async work, and drains retained work.
+
+Set the process kill deadline to at least the graceful HTTP timeout plus twice
+`HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS`, with additional time for work the
+runtime retains.
+
 At the end of the shutdown grace, `close()` cancels async work and waits up to
 another grace period for it to stop. Work that stops releases its claim: the run
 is queued again at once without counting toward `max_run_attempts`; its next

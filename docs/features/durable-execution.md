@@ -491,15 +491,21 @@ async def lifespan(_app: FastAPI):
 ```
 
 In durable mode, the server reports readiness only after every durable
-deployment has started. On shutdown it closes them all, even when one fails,
-waits for retained work to drain, and only then closes its Redis clients:
-retained work keeps Redis and the event loop until it no longer owns a claim.
+deployment has started. On SIGTERM, uvicorn first stops accepting connections
+and waits up to `HAYHOOKS_GRACEFUL_SHUTDOWN_TIMEOUT` (5 seconds by default) for
+open requests. Durable SSE streams hold that wait and are then cancelled, while
+workers continue claiming. The server then closes all deployments, even when
+one fails, waits for retained work to drain, and only then closes its Redis
+clients: retained work keeps Redis and the event loop until it no longer owns a
+claim. Clients resume cancelled streams from their cursor.
 Graceful shutdown can therefore outlast `HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS`,
 which is the grace before cancelling workers, not a bound on shutdown. The
-server logs while it waits. When a hard deadline is required, terminate the
-process externally, or set `HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN=true`
-(below); forced termination resumes through lease and checkpoint recovery and
-cannot promise exactly-once external side effects.
+server logs while it waits. Budget the process kill deadline for at least the
+HTTP grace plus twice the durable shutdown grace, with additional time for
+retained work. When a hard deadline is required, terminate the process
+externally, or set `HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN=true` (below);
+forced termination resumes through lease and checkpoint recovery and cannot
+promise exactly-once external side effects.
 
 The server uses two Redis clients built from `HAYHOOKS_DURABLE_REDIS_URL`: one
 for workers, and one for SSE viewers, whose connection pool of
