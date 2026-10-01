@@ -31,8 +31,19 @@ from hayhooks.durable import (
 from hayhooks.durable.haystack import HaystackDurableAdapter
 from hayhooks.durable.redis import RedisExecutionStore
 
-redis = Redis.from_url("redis://localhost:6379/0", decode_responses=False)
-viewers = Redis.from_url("redis://localhost:6379/0", decode_responses=False, max_connections=100)
+redis_options = {
+    "decode_responses": False,
+    "protocol": 2,
+    "retry": None,
+    "socket_connect_timeout": 5,
+}
+redis = Redis.from_url("redis://localhost:6379/0", socket_timeout=5, **redis_options)
+viewers = Redis.from_url(
+    "redis://localhost:6379/0",
+    socket_timeout=30,
+    max_connections=100,
+    **redis_options,
+)
 store = RedisExecutionStore(redis, "document-analysis", viewer_client=viewers)
 adapter = HaystackDurableAdapter(pipeline)
 deployment = DurableDeployment(
@@ -127,6 +138,9 @@ in your application.
   dependency and return its stable user or tenant ID.
 - Keep `decode_responses=False`; the Redis store validates and persists binary
   payloads.
+- Keep automatic retries disabled and replies RESP2-shaped. The 5-second worker
+  timeout bounds stalled store calls; the 30-second viewer timeout exceeds the
+  SSE read's 15-second block.
 - Keep the revision immutable while work is live. Change it only when deploying
   incompatible runner or Pipeline behavior.
 - Make external writes idempotent with a unique key such as

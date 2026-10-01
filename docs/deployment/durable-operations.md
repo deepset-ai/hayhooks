@@ -43,6 +43,14 @@ With the Hayhooks server, run durable wrappers in
   client, so the host chooses the database number, authentication, and
   topology. Redis Cluster and Sentinel topologies are not validated; test a
   compatible client through the store API.
+- The store rejects clients that retry commands automatically, because
+  resending a script can commit twice. Build clients with `Redis.from_url(...)`
+  or pass `retry=None`; `Redis(host=...)` retries by default on redis-py 6 and
+  newer. `retry_on_timeout`, `retry_on_error`, `protocol=3`, and
+  `legacy_responses=False` are also rejected.
+- Replies must be RESP2-shaped. Leave `protocol` unset, which redis-py 8
+  translates to the legacy reply shapes, or pass `protocol=2`. Keep
+  `decode_responses=False`.
 - Enable persistence appropriate for the recovery objective (AOF, RDB, or both)
   and test restore from backup.
 - Use a TLS Redis URL and authenticated network path outside a trusted local
@@ -219,13 +227,13 @@ for the expected concurrent viewers. Without one, viewers share the worker
 client, and a surge of viewers can starve heartbeats, lose leases, and
 re-execute work; that is acceptable only for a single-viewer development host.
 Exhausting the viewer pool ends the affected stream with an `error` event, and
-the client resumes from its cursor; workers are unaffected. `Redis.from_url`
-creates an unbounded pool, so pass `max_connections` to make that limit real
-instead of exhausting the server's shared `maxclients`. The viewer client must
-use the default RESP2 protocol and a `socket_timeout` longer than 15 seconds,
-or every blocked read fails. When a deployment closes, open streams end without
-a terminal event so that clients resume from their cursor, possibly on another
-replica.
+the client resumes from its cursor; workers are unaffected. The default
+`Redis.from_url` pool is unbounded on redis-py 5–7 and has 100 non-blocking
+connections on redis-py 8, so pass `max_connections` deliberately. The viewer
+client must use RESP2-shaped replies and a `socket_timeout` longer than 15
+seconds, or every blocked read fails. When a deployment closes, open streams
+end without a terminal event so that clients resume from their cursor, possibly
+on another replica.
 
 A host with its own SSE transport or frame format can build it on the store:
 `read_chunks` pages through retained entries, `wait_chunks` blocks for the

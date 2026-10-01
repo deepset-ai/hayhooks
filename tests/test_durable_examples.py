@@ -41,6 +41,13 @@ async def wait_for_execution(deployment: DurableDeployment, run_id: str, expecte
 def test_standalone_fastapi_example_exposes_typed_durable_routes() -> None:
     from examples.durable_fastapi import app as durable_fastapi
 
+    worker_options = durable_fastapi.redis.connection_pool.connection_kwargs
+    viewer_options = durable_fastapi.viewers.connection_pool.connection_kwargs
+    assert worker_options["socket_timeout"] == 5
+    assert viewer_options["socket_timeout"] == 30
+    assert worker_options["protocol"] == viewer_options["protocol"] == 2
+    assert worker_options["retry"] is viewer_options["retry"] is None
+
     openapi = durable_fastapi.app.openapi()
     paths = openapi["paths"]
     prefix = "/jobs/document-analysis"
