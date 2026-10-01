@@ -301,3 +301,13 @@ def test_owned_outcomes_skip_progress_a_failed_checkpoint_already_stored(claimed
     plan = decide(stored, commands[outcome])
     assert [(event.sequence, event.data) for event in plan.progress_events] == [(3, b"c")]
     assert plan.next_control.progress_sequence == 3
+
+
+@pytest.mark.parametrize(("exhausted", "stored"), [(b"exhausted", b"exhausted"), (None, b"retry")])
+def test_exhausted_retry_fails_with_the_exhausted_error(claimed_control, exhausted, stored) -> None:
+    command = ScheduleRetry(1, "worker-a", 300, 0, 1, b"retry", exhausted_error=exhausted)
+    queued = decide(claimed_control, command)
+    assert (queued.next_control.status, queued.payload_writes[0].data) == (ExecutionStatus.QUEUED, b"retry")
+    reclaimed = claim(replace(queued.next_control, available_at_ms=None), now_ms=400).next_control
+    failed = decide(reclaimed, replace(command, fence=reclaimed.fence, now_ms=500))
+    assert (failed.next_control.status, failed.payload_writes[0].data) == (ExecutionStatus.FAILED, stored)

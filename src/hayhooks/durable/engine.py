@@ -226,6 +226,7 @@ class ScheduleRetry:
     error: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    exhausted_error: bytes | None = None
     first_progress_sequence: int | None = None
 
 
@@ -439,7 +440,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
                 command.now_ms,
                 ExecutionStatus.FAILED,
                 PayloadKind.ERROR,
-                command.error,
+                command.error if command.exhausted_error is None else command.exhausted_error,
                 progress_events=progress_events,
             )
         next_control = _business(
