@@ -378,6 +378,7 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
     app.state.pipeline_registry = pipeline_registry
     app.state.durable_runtime = None
     app.state.durable_redis_clients = ()
+    app.state.durable_health = None
 
     app.add_middleware(RequestIdMiddleware)
 

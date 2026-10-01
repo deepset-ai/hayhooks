@@ -452,3 +452,83 @@ def test_a_url_socket_timeout_below_the_sse_block_fails_startup(
 ) -> None:
     with pytest.raises(PipelineModeError, match=r"socket_timeout .* must exceed 15 seconds"):
         _redis_durable_app(durable_pipelines_dir, monkeypatch, "redis://localhost:6379/15?socket_timeout=10")
+
+
+def _memory_durable_app(durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    return create_app()
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_status_caches_durable_health_for_one_second(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hayhooks.server.routers import status as status_router
+
+    app = _memory_durable_app(durable_pipelines_dir, monkeypatch)
+    calls = []
+
+    async def health() -> dict[str, object]:
+        calls.append(1)
+        return {"healthy": True, "deployments": {"jobs": {"healthy": True, "call": len(calls)}}}
+
+    monkeypatch.setattr(app.state.durable_runtime, "health", health)
+    with TestClient(app) as client:
+        first, second = client.get("/status").json(), client.get("/status").json()
+        assert first == second
+        assert first["durable"]["deployments"]["jobs"]["call"] == 1
+        monkeypatch.setattr(status_router, "_DURABLE_HEALTH_TTL_SECONDS", 0.0)
+        assert client.get("/status").json()["durable"]["deployments"]["jobs"]["call"] == 2
+    assert len(calls) == 2
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_status_bounds_a_slow_durable_health_read(durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    from hayhooks.server.routers import status as status_router
+
+    app = _memory_durable_app(durable_pipelines_dir, monkeypatch)
+
+    async def hang() -> dict[str, object]:
+        await asyncio.sleep(30)
+        raise AssertionError
+
+    monkeypatch.setattr(app.state.durable_runtime, "health", hang)
+    monkeypatch.setattr(status_router, "_DURABLE_HEALTH_TIMEOUT_SECONDS", 0.05)
+    with TestClient(app) as client:
+        started = time.monotonic()
+        response = client.get("/status")
+        assert time.monotonic() - started < 1
+    assert response.status_code == 200
+    assert response.json()["status"] == "Degraded"
+    assert response.json()["durable"] == {
+        "healthy": False,
+        "deployments": {"jobs": {"healthy": False, "operational_error": "TimeoutError"}},
+    }
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+async def test_concurrent_status_probes_share_one_health_read(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    app = _memory_durable_app(durable_pipelines_dir, monkeypatch)
+    release = asyncio.Event()
+    calls = []
+
+    async def health() -> dict[str, object]:
+        calls.append(1)
+        await release.wait()
+        return {"healthy": True, "deployments": {}}
+
+    monkeypatch.setattr(app.state.durable_runtime, "health", health)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        probes = [asyncio.create_task(client.get("/status")) for _ in range(5)]
+        await asyncio.sleep(0.05)
+        release.set()
+        responses = await asyncio.gather(*probes)
+    assert [response.status_code for response in responses] == [200] * 5
+    assert len(calls) == 1
