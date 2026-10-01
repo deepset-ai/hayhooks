@@ -41,15 +41,17 @@ class DurableExecutionCancelledError(RuntimeError):
     """Cooperative cancellation was requested for the active execution."""
 
 
-class _RetryRequestedError(Exception):
+class _RetryRequestedError(BaseException):
+    """Retry signal that ordinary application exception handlers cannot swallow."""
+
     def __init__(self, message: str, delay: float | None, progress_events: tuple[bytes, ...]) -> None:
         super().__init__(message)
         self.delay = delay
         self.progress_events = progress_events
 
 
-class _ExecutionSuspendedError(Exception):
-    pass
+class _ExecutionSuspendedError(BaseException):
+    """Suspension signal that ordinary application exception handlers cannot swallow."""
 
 
 def _track(bucket: MutableSet[Any], future: asyncio.Future[Any]) -> None:

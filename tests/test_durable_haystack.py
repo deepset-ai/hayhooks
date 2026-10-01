@@ -7,7 +7,12 @@ from importlib.metadata import version
 import pytest
 from pydantic import BaseModel
 
-from hayhooks.durable.context import DurableContext, _ExecutionSuspendedError, durable_context_scope
+from hayhooks.durable.context import (
+    DurableContext,
+    _ExecutionSuspendedError,
+    current_durable_context,
+    durable_context_scope,
+)
 from hayhooks.durable.engine import ExecutionLeaseLostError, ExecutionStatus, PayloadKind, Resume, ScheduleRetry
 from hayhooks.durable.haystack import HaystackDurableAdapter, _agent_checkpoint
 from hayhooks.durable.models import ExecutionKind, decode_json, encode_json
@@ -65,6 +70,29 @@ if _HAYSTACK_V3:
                 return {"replies": [ChatMessage.from_assistant(tool_calls=[ToolCall(tool_name="work", arguments={})])]}
             return {"replies": [ChatMessage.from_assistant("done")]}
 
+    @component
+    class RetryOnce:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        @component.output_types(value=int)
+        def run(self, value: int) -> dict[str, int]:
+            self.calls += 1
+            if self.calls == 1:
+                current_durable_context().retry_sync("429", delay=0)
+            return {"value": value}
+
+
+async def _wait_for_status(store: MemoryExecutionStore, run_id: str, status: ExecutionStatus):
+    stored = None
+    for _ in range(200):
+        stored = await store.read(run_id)
+        if stored is not None and stored.control.status is status:
+            return stored
+        await asyncio.sleep(0.005)
+    message = f"execution did not reach {status.value}: {stored}"
+    raise AssertionError(message)
+
 
 @pytest.mark.skipif(_HAYSTACK_V3, reason="the supported dependency is installed")
 def test_adapter_reports_the_targeted_haystack_installation_error() -> None:
@@ -76,6 +104,98 @@ def test_adapter_reports_the_targeted_haystack_installation_error() -> None:
 def test_adapter_rejects_non_haystack_targets() -> None:
     with pytest.raises(TypeError, match="real Haystack"):
         HaystackDurableAdapter(object())
+
+
+@requires_haystack_v3
+async def test_retry_from_a_pipeline_component_is_scheduled() -> None:
+    pipeline = Pipeline()
+    retrying = RetryOnce()
+    pipeline.add_component("retrying", retrying)
+    adapter = HaystackDurableAdapter(pipeline)
+    store = MemoryExecutionStore("signals", config=StoreConfig(lease_commit_safety_ms=10))
+
+    async def run(context: DurableContext, request: PipelineDefinition):
+        return await context.run_pipeline_async({"retrying": {"value": request.steps}})
+
+    deployment = DurableDeployment(
+        "signals",
+        "v1",
+        store,
+        PipelineDefinition,
+        run,
+        adapter=adapter,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+    await deployment.start()
+    try:
+        submitted = await deployment.submit({"steps": 1})
+        completed = await _wait_for_status(store, submitted.control.run_id, ExecutionStatus.COMPLETED)
+        assert completed.control.application_retry_count == 1
+        assert retrying.calls == 2
+        assert PayloadKind.ERROR not in completed.payloads
+    finally:
+        await deployment.close()
+        await deployment.wait_drained()
+
+
+@requires_haystack_v3
+@pytest.mark.parametrize("signal", ["retry", "suspend"])
+async def test_agent_tool_signals_are_not_swallowed(signal: str) -> None:
+    calls = 0
+    after_tool_calls = 0
+
+    def work() -> str:
+        nonlocal calls
+        calls += 1
+        context = current_durable_context()
+        if signal == "retry" and calls == 1:
+            context.retry_sync("again", delay=0)
+        if signal == "suspend":
+            context.suspend_sync({"kind": "approval"})
+        return "worked"
+
+    def after_tool(_state: State) -> None:
+        nonlocal after_tool_calls
+        after_tool_calls += 1
+
+    tool = Tool(
+        name="work",
+        description="Complete one step",
+        parameters={"type": "object", "properties": {}},
+        function=work,
+    )
+    agent = Agent(
+        chat_generator=RecordingChatGenerator(tool_on_first_call=True),
+        tools=[tool],
+        hooks={"after_tool": [FunctionHook(function=after_tool)]},
+    )
+    adapter = HaystackDurableAdapter(agent)
+    store = MemoryExecutionStore(f"agent-{signal}", config=StoreConfig(lease_commit_safety_ms=10))
+
+    async def run(context: DurableContext, _request: PipelineDefinition):
+        result = await context.run_agent_async(messages=[ChatMessage.from_user("go")])
+        return {"text": result["last_message"].text}
+
+    deployment = DurableDeployment(
+        f"agent-{signal}",
+        "v1",
+        store,
+        PipelineDefinition,
+        run,
+        kind=ExecutionKind.AGENT,
+        adapter=adapter,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+    await deployment.start()
+    try:
+        submitted = await deployment.submit({"steps": 1})
+        expected = ExecutionStatus.COMPLETED if signal == "retry" else ExecutionStatus.WAITING
+        stored = await _wait_for_status(store, submitted.control.run_id, expected)
+        assert stored.control.application_retry_count == (1 if signal == "retry" else 0)
+        assert after_tool_calls == 0
+    finally:
+        await deployment.close()
+        await deployment.wait_drained()
 
 
 @requires_haystack_v3
