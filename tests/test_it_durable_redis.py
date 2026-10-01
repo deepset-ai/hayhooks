@@ -22,6 +22,7 @@ from hayhooks.durable.engine import (
     ExecutionControl,
     ExecutionLeaseLostError,
     ExecutionStatus,
+    Fail,
     Heartbeat,
     InvalidExecutionTransitionError,
     PayloadKind,
@@ -148,6 +149,77 @@ async def test_chunk_reads_skip_undecodable_entries(redis_store) -> None:
     assert chunks[1].skipped and chunks[1].data == b""
     assert chunks[2].data == b"x" * 100
     assert await reader.read_chunks("run_1", skipped.decode()) == chunks[2:]
+
+
+async def test_corrupt_chunk_stream_does_not_block_an_owned_failure(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await redis.set(store.keys.chunks("run_1"), b"wrong type")
+
+    failed = await store.transition("run_1", Fail(control.fence, "worker", 0, b"failed"))
+
+    assert failed.next_control.status is ExecutionStatus.FAILED
+    assert await redis.type(store.keys.chunks("run_1")) == b"stream"
+    chunks = await store.read_chunks("run_1", CHUNK_CURSOR_START)
+    assert [(chunk.terminal, chunk.attempt) for chunk in chunks] == [(True, 1)]
+    assert (await store.operational_counts(revision="v1"))["nonterminal"] == 0
+
+
+async def test_stale_failure_does_not_repair_a_corrupt_chunk_stream(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.transition("run_1", ReleaseClaim(control.fence, "worker"))
+    assert await store.claim(Claim("other", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await redis.set(store.keys.chunks("run_1"), b"wrong type")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionLeaseLostError):
+        await store.transition("run_1", Fail(control.fence, "worker", 0, b"stale"))
+
+    assert await dump_keys(redis, store) == before
+
+
+async def test_corrupt_chunk_stream_does_not_block_terminal_recovery(redis_store) -> None:
+    redis, store = redis_store
+    for run_id in ("run_bad", "run_a", "run_b"):
+        await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await redis.hset(store.keys.control("run_bad"), "run_attempt", 3)
+    await redis.set(store.keys.chunks("run_bad"), b"wrong type")
+    await asyncio.sleep(0.06)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 2
+    bad = await store.read("run_bad")
+    assert bad is not None and bad.control.status is ExecutionStatus.FAILED
+    assert await redis.type(store.keys.chunks("run_bad")) == b"stream"
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 2,
+        "revision_nonterminal": 2,
+        "revision_runnable": 2,
+        "lease_expiry": 0,
+    }
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+
+    race = replace(
+        contract_control("jobs", "run_race", idempotency="run_race", binding="run_race"),
+        definition_revision="v2",
+    )
+    await store.submit(race, b"input")
+    assert await store.claim(Claim("worker", 0, 50, 3, "v2", ATTEMPTS_ERROR)) is not None
+    await redis.hset(store.keys.control("run_race"), "run_attempt", 3)
+    await redis.set(store.keys.chunks("run_race"), b"wrong type")
+    contender = RedisExecutionStore(redis, "jobs", config=store.config, key_prefix=store_prefix(store))
+    await asyncio.sleep(0.06)
+
+    recovered = await asyncio.gather(
+        store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR),
+        contender.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR),
+    )
+
+    assert sum(recovered) == 0
+    assert (await store.operational_counts(revision="v1"))["nonterminal"] == 2
+    assert await redis.zcard(store.keys.lease_expiry) == 0
+    assert await redis.type(store.keys.chunks("run_race")) == b"stream"
 
 
 async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) -> None:

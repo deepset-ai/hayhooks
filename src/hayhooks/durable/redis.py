@@ -182,17 +182,28 @@ if ARGV[4] ~= '' then
 end
 -- Check each type-sensitive target before any mutation: Redis scripts have no rollback.
 -- HGETALL and HGET above already validate the control and capacity hashes.
-local checks = {RPUSH = 'LLEN', ZADD = 'ZCARD', ZREM = 'ZCARD', XADD = 'XLEN'}
+local checks = {RPUSH = 'LLEN', ZADD = 'ZCARD', ZREM = 'ZCARD'}
 local checked = {}
+local reset_streams = {}
 local probe = cursor
 while probe <= #ARGV do
-  local check = checks[ARGV[probe + 1]]
+  local name = ARGV[probe + 1]
   local key = KEYS[tonumber(ARGV[probe + 2])]
-  if check and not checked[key] then
-    redis.call(check, key)
+  if name == 'XADD' and not checked[key] then
+    local kind = redis.call('TYPE', key)
+    kind = type(kind) == 'table' and kind.ok or kind
+    if kind ~= 'none' and kind ~= 'stream' then
+      reset_streams[key] = true
+    end
+    checked[key] = true
+  elseif checks[name] and not checked[key] then
+    redis.call(checks[name], key)
     checked[key] = true
   end
   probe = probe + 3 + tonumber(ARGV[probe])
+end
+for key in pairs(reset_streams) do
+  redis.call('DEL', key)
 end
 while cursor <= #ARGV do
   local count = tonumber(ARGV[cursor])
