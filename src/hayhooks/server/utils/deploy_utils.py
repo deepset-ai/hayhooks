@@ -27,6 +27,7 @@ from hayhooks.server.exceptions import (
     PipelineRollbackError,
 )
 from hayhooks.server.logger import log, log_elapsed
+from hayhooks.server.pipelines.loader import YAML_SUFFIXES
 from hayhooks.server.pipelines.models import (
     create_pipeline_metadata,
     create_request_model_from_callable,
@@ -53,6 +54,7 @@ from hayhooks.server.utils.models import PreparedPipeline
 from hayhooks.server.utils.module_loader import (
     create_pipeline_wrapper_instance,
     load_pipeline_module,
+    pipeline_modules,
     reject_durable_wrapper,
     unload_pipeline_modules,
 )
@@ -153,7 +155,7 @@ def _is_single_yaml_file(files: dict[str, str]) -> bool:
     if len(files) != 1:
         return False
     filename = next(iter(files.keys()))
-    return filename.endswith((".yml", ".yaml"))
+    return filename.endswith(YAML_SUFFIXES)
 
 
 def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir: str) -> dict[str, str]:
@@ -225,14 +227,15 @@ def remove_pipeline_files(pipeline_name: str, pipelines_dir: str) -> None:
         PipelineModeError: In durable mode
     """
     require_live_deployment()
-    pipelines_path = Path(pipelines_dir)
+    pipeline_dir, *yaml_files = _pipeline_source_paths(Path(pipelines_dir), pipeline_name)
+    shutil.rmtree(pipeline_dir, ignore_errors=True)
+    for path in yaml_files:
+        path.unlink(missing_ok=True)
 
-    # Remove pipeline directory (wrapper-based pipelines)
-    shutil.rmtree(pipelines_path / pipeline_name, ignore_errors=True)
 
-    # Remove YAML files (YAML-based pipelines)
-    for ext in (".yml", ".yaml"):
-        (pipelines_path / f"{pipeline_name}{ext}").unlink(missing_ok=True)
+def _pipeline_source_paths(pipelines_dir: Path, pipeline_name: str) -> tuple[Path, ...]:
+    """Return a pipeline's persisted source paths: its wrapper directory first, then its YAML files."""
+    return (pipelines_dir / pipeline_name, *(pipelines_dir / f"{pipeline_name}{ext}" for ext in YAML_SUFFIXES))
 
 
 def _backup_pipeline_files(pipeline_name: str) -> Path:
@@ -241,11 +244,7 @@ def _backup_pipeline_files(pipeline_name: str) -> Path:
     pipelines_dir.mkdir(parents=True, exist_ok=True)
     backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
     try:
-        for path in (
-            pipelines_dir / pipeline_name,
-            pipelines_dir / f"{pipeline_name}.yml",
-            pipelines_dir / f"{pipeline_name}.yaml",
-        ):
+        for path in _pipeline_source_paths(pipelines_dir, pipeline_name):
             if path.exists():
                 path.replace(backup_dir / path.name)
     except BaseException:
@@ -662,8 +661,7 @@ def add_pipeline_api_route(
 
     if not _defer_openapi_rebuild:
         log.bind(pipeline_name=pipeline_name).debug("Setting up FastAPI app")
-        app.openapi_schema = None
-        app.setup()
+        rebuild_openapi(app)
 
 
 def rebuild_openapi(app: FastAPI) -> None:
@@ -988,11 +986,7 @@ def deploy_pipeline_files(
             msg = f"Pipeline '{pipeline_name}' already exists"
             raise PipelineAlreadyExistsError(msg)
 
-        old_modules = {
-            name: module
-            for name, module in sys.modules.items()
-            if name == pipeline_name or name.startswith(f"{pipeline_name}.")
-        }
+        old_modules = pipeline_modules(pipeline_name)
         backup_dir: Path | None = None
         rolled_back = False
         try:

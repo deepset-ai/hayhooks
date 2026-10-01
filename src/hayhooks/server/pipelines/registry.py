@@ -120,6 +120,9 @@ class ImmutablePipelineRegistry:
     def get_names(self) -> list[str]:
         return list(self._registrations)
 
+    def durable_names(self) -> list[str]:
+        return [name for name, registration in self._registrations.items() if is_durable_wrapper(registration.wrapper)]
+
 
 def require_ordinary_pipelines(pipeline_registry: ImmutablePipelineRegistry, server: str) -> None:
     """
@@ -128,13 +131,12 @@ def require_ordinary_pipelines(pipeline_registry: ImmutablePipelineRegistry, ser
     Raises:
         PipelineModeError: If *pipeline_registry* holds a durable wrapper.
     """
-    for name in pipeline_registry.get_names():
-        if (wrapper := pipeline_registry.get(name)) is not None and is_durable_wrapper(wrapper):
-            msg = (
-                f"Pipeline '{name}' is durable and cannot be served by the standalone {server} server; "
-                "serve durable pipelines with the main HTTP server (hayhooks run)"
-            )
-            raise PipelineModeError(msg)
+    for name in pipeline_registry.durable_names():
+        msg = (
+            f"Pipeline '{name}' is durable and cannot be served by the standalone {server} server; "
+            "serve durable pipelines with the main HTTP server (hayhooks run)"
+        )
+        raise PipelineModeError(msg)
 
 
 PipelineRegistry: TypeAlias = _PipelineRegistry | ImmutablePipelineRegistry

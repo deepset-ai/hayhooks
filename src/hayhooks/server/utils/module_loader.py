@@ -58,6 +58,15 @@ def load_pipeline_module(pipeline_name: str, dir_path: Path | str, *, package_na
     return loader.load()
 
 
+def pipeline_modules(pipeline_name: str) -> dict[str, ModuleType]:
+    """Return the sys.modules entries of a pipeline package: the package itself and its submodules."""
+    return {
+        name: module
+        for name, module in sys.modules.items()
+        if name == pipeline_name or name.startswith(f"{pipeline_name}.")
+    }
+
+
 def unload_pipeline_modules(pipeline_name: str) -> None:
     """
     Remove pipeline modules from sys.modules.
@@ -67,8 +76,7 @@ def unload_pipeline_modules(pipeline_name: str) -> None:
     Args:
         pipeline_name: Name of the pipeline to unload
     """
-    module_names = [name for name in sys.modules if name == pipeline_name or name.startswith(f"{pipeline_name}.")]
-    for module_name in module_names:
+    for module_name in pipeline_modules(pipeline_name):
         log.debug("Removing module '{}' from sys.modules", module_name)
         del sys.modules[module_name]
 

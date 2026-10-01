@@ -5,8 +5,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from starlette.datastructures import State
 
-from hayhooks.server.utils.module_loader import is_durable_wrapper
-
 router = APIRouter()
 
 # Probes within this window share one durable health read, which is bounded by the timeout.
@@ -62,7 +60,7 @@ async def status_all(request: Request) -> StatusResponse:
     description="Returns the status of a specific pipeline. Returns 404 if the pipeline doesn't exist.",
 )
 async def status(pipeline_name: str, request: Request) -> PipelineStatusResponse:
-    if pipeline_name not in request.app.state.pipeline_registry.get_names():
+    if request.app.state.pipeline_registry.get(pipeline_name) is None:
         raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
     return PipelineStatusResponse(status="Up!", pipeline=pipeline_name)
 
@@ -81,8 +79,7 @@ async def _read_durable_health(state: State) -> dict[str, object]:
     try:
         return await asyncio.wait_for(state.durable_runtime.health(), _DURABLE_HEALTH_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
-        registry = state.pipeline_registry
-        durable = [name for name in registry.get_names() if is_durable_wrapper(registry.get(name))]
+        durable = state.pipeline_registry.durable_names()
         return {
             "healthy": False,
             "deployments": {name: {"healthy": False, "operational_error": "TimeoutError"} for name in durable},

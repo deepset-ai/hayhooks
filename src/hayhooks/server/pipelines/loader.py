@@ -33,7 +33,7 @@ REGISTRY_ROOT = "_hayhooks_registry"
 
 # One URL path segment, as in the /{pipeline_name}/run route.
 _PIPELINE_NAME = re.compile(r"[A-Za-z0-9_-]+")
-_YAML_SUFFIXES = (".yml", ".yaml")
+YAML_SUFFIXES = (".yml", ".yaml")
 
 T = TypeVar("T")
 
@@ -103,7 +103,7 @@ def _discover_candidates(pipelines_dir: Path) -> dict[str, Path]:
             continue
         if entry.is_dir():
             name = entry.name
-        elif entry.suffix in _YAML_SUFFIXES:
+        elif entry.suffix in YAML_SUFFIXES:
             name = entry.stem
         else:
             log.debug("Ignoring '{}': not a pipeline definition", entry)

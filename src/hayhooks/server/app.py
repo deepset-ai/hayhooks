@@ -59,11 +59,11 @@ from hayhooks.server.utils.deploy_utils import (
 )
 from hayhooks.server.utils.live_trace_stream import get_trace_stream_broadcaster
 from hayhooks.server.utils.models import PreparedPipeline
-from hayhooks.server.utils.module_loader import durable_owner_dependency, inspect_durable_runner, is_durable_wrapper
+from hayhooks.server.utils.module_loader import durable_owner_dependency, inspect_durable_runner
 from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy, check_cors_settings, settings
 
 if TYPE_CHECKING:
-    from hayhooks.durable.store import ExecutionStore, StoreConfig
+    from hayhooks.durable.store import ExecutionStore
 
 # Worker commands and connection attempts are short; redis-py 8 uses the same default.
 _REDIS_TIMEOUT_SECONDS = 5.0
@@ -412,7 +412,7 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
     if settings.chainlit_enabled:
         _mount_chainlit_ui(app)
 
-    if isinstance(pipeline_registry, ImmutablePipelineRegistry):
+    if durable_mode:
         _add_immutable_pipelines(app, pipeline_registry)
 
     instrument_fastapi_app(app)
@@ -436,7 +436,7 @@ def _add_immutable_pipelines(app: FastAPI, pipeline_registry: ImmutablePipelineR
         if route := _build_run_route(name, wrapper, request_model=metadata.get("request_model")):
             route_kwargs, _metadata = route
             app.add_api_route(**route_kwargs)
-    _add_durable_deployments(app, {name: wrapper for name, wrapper in wrappers.items() if is_durable_wrapper(wrapper)})
+    _add_durable_deployments(app, {name: wrappers[name] for name in pipeline_registry.durable_names()})
 
 
 def _matches_existing_route(app: FastAPI, path: str) -> bool:
@@ -483,6 +483,16 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         release_running_on_close=settings.durable_release_running_on_shutdown,
     )
 
+    if settings.durable_store != "memory":
+        try:
+            # Imported first: it raises the install hint when the durable extra is missing.
+            from hayhooks.durable.redis import RedisExecutionStore
+
+            app.state.durable_redis_clients = _redis_clients(settings.durable_redis_url)
+        except Exception as error:
+            msg = f"Failed to build the durable Redis clients: {error}"
+            raise PipelineModeError(msg) from error
+
     deployments = []
     for name, wrapper in durable_wrappers.items():
         try:
@@ -493,7 +503,14 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
             if settings.durable_store == "memory":
                 store = MemoryExecutionStore(name, config=store_config)
             else:
-                store = _redis_store(app, name, store_config)
+                worker_client, viewer_client = app.state.durable_redis_clients
+                store = RedisExecutionStore(
+                    worker_client,
+                    name,
+                    viewer_client=viewer_client,
+                    config=store_config,
+                    key_prefix=settings.durable_redis_key_prefix,
+                )
             deployment = DurableDeployment(
                 name,
                 revision,
@@ -520,23 +537,6 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         app.include_router(router, prefix=f"/{name}")
         deployments.append(deployment)
     app.state.durable_runtime = DurableRuntime(tuple(deployments))
-
-
-def _redis_store(app: FastAPI, name: str, store_config: "StoreConfig") -> "ExecutionStore":
-    """Build a Redis store on the app's worker and viewer clients, created on first use and unconnected."""
-    # Imported first: it raises the install hint when the durable extra is missing.
-    from hayhooks.durable.redis import RedisExecutionStore
-
-    if not app.state.durable_redis_clients:
-        app.state.durable_redis_clients = _redis_clients(settings.durable_redis_url)
-    worker_client, viewer_client = app.state.durable_redis_clients
-    return RedisExecutionStore(
-        worker_client,
-        name,
-        viewer_client=viewer_client,
-        config=store_config,
-        key_prefix=settings.durable_redis_key_prefix,
-    )
 
 
 def _redis_clients(url: str) -> tuple[Any, Any]:
