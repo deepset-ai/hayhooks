@@ -507,17 +507,9 @@ class DurableDeployment:
         enforce_owner: bool,
         allow_revision_mismatch: bool,
     ) -> ExecutionControl:
-        if (
-            control is None
-            or control.deployment != self.name
-            or (enforce_owner and control.owner_id != owner_id)
-        ):
+        if control is None or control.deployment != self.name or (enforce_owner and control.owner_id != owner_id):
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
-        if (
-            not allow_revision_mismatch
-            and not control.terminal
-            and control.definition_revision != self.revision
-        ):
+        if not allow_revision_mismatch and not control.terminal and control.definition_revision != self.revision:
             raise InvalidExecutionTransitionError("execution definition revision is incompatible")
         return control
 
