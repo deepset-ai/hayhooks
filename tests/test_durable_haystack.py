@@ -391,6 +391,56 @@ async def test_agent_state_resume_and_final_checkpoint_are_recoverable(context_f
 
 
 @requires_haystack_v3
+@pytest.mark.parametrize("run_async", [False, True], ids=["sync", "async"])
+async def test_agent_resume_messages_apply_before_the_first_checkpoint(context_factory, run_async: bool) -> None:
+    store, create = context_factory
+    seen: list[str] = []
+
+    def capture(state: State) -> None:
+        seen.extend(message.text for message in state.data["messages"])
+
+    agent = Agent(
+        chat_generator=RecordingChatGenerator(),
+        tools=[],
+        hooks={"before_run": [FunctionHook(function=capture)]},
+    )
+    adapter = HaystackDurableAdapter(agent)
+    context, _ = await create(kind=ExecutionKind.AGENT)
+    with pytest.raises(_ExecutionSuspendedError):
+        await context.suspend({"kind": "question"})
+
+    waiting = await store.read(context.execution_id)
+    assert waiting is not None
+    checkpoint = decode_checkpoint(waiting.payloads[PayloadKind.CHECKPOINT]).model_copy(
+        update={"resume_input": {"messages": [ChatMessage.from_user("Paris").to_dict()]}}
+    )
+    await store.transition(
+        context.execution_id,
+        Resume(
+            0,
+            "v1",
+            encode_json(checkpoint.model_dump(mode="json"), max_bytes=4_096),
+            expected_version=waiting.control.version,
+        ),
+    )
+    resumed, _ = await create(context.execution_id, submit=False)
+
+    with durable_context_scope(resumed):
+        messages = [ChatMessage.from_user("book a trip")]
+        if run_async:
+            await adapter.run_agent_async(resumed, messages=messages)
+        else:
+            await asyncio.to_thread(adapter.run_agent, resumed, messages=messages)
+
+    assert seen == ["book a trip", "Paris"]
+    assert resumed.resume_input is None
+    await resumed.checkpoint()
+    persisted = await store.read(resumed.execution_id)
+    assert persisted is not None
+    assert decode_checkpoint(persisted.payloads[PayloadKind.CHECKPOINT]).resume_input is None
+
+
+@requires_haystack_v3
 @pytest.mark.parametrize("continuation", ["tool", "on_exit"])
 @pytest.mark.parametrize("run_async", [False, True], ids=["sync", "async"])
 async def test_agent_continuation_checkpoints_before_the_next_llm_call(

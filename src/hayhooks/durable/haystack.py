@@ -48,13 +48,13 @@ def _agent_checkpoint(state: State, *, final: bool = False) -> dict[str, JsonVal
 def _restore_agent_state(context: DurableContext, state: State) -> None:
     checkpoint = context._adapter_checkpoint
     state_payload = checkpoint.get("state") if isinstance(checkpoint, dict) else None
-    if not isinstance(state_payload, dict):
-        return
-    restored = State.from_dict(state_payload)
-    live = {key: state.data.get(key) for key in ("tools", "hook_context")}
-    state.data.clear()
-    state.data.update(restored.data)
-    state.data.update({key: value for key, value in live.items() if value is not None})
+    if isinstance(state_payload, dict):
+        restored = State.from_dict(state_payload)
+        live = {key: state.data.get(key) for key in ("tools", "hook_context")}
+        state.data.clear()
+        state.data.update(restored.data)
+        state.data.update({key: value for key, value in live.items() if value is not None})
+    # Resume messages apply without a step checkpoint and are consumed once either way.
     resume = context.resume_input
     messages = resume.get("messages") if isinstance(resume, dict) else None
     if isinstance(messages, list):
