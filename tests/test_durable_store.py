@@ -24,6 +24,7 @@ from tests.durable_store_contract import (
     assert_discard_progress_contract,
     assert_lost_lease_budget_contract,
     assert_lowered_limits_keep_data_readable,
+    assert_maintenance_backlog_contract,
     assert_raced_recovery_contract,
     assert_revision_routing_contract,
     assert_store_contract,
@@ -75,6 +76,10 @@ async def test_memory_store_keeps_data_readable_after_lowering_limits() -> None:
 
 async def test_memory_store_discards_progress_only_when_requested() -> None:
     await assert_discard_progress_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
+
+
+async def test_memory_store_recovers_a_backlog_larger_than_one_batch() -> None:
+    await assert_maintenance_backlog_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
 
 
 def test_chunk_reads_are_bounded_by_bytes_entries_and_retention() -> None:

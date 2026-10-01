@@ -45,6 +45,7 @@ from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     LEASE_COMMANDS,
     MAINTENANCE_BATCH_SIZE,
+    MAINTENANCE_MAX_BATCHES,
     PUBLIC_PAYLOAD_KINDS,
     ChunkCursorExpiredError,
     ExecutionAdmissionError,
@@ -494,7 +495,7 @@ class RedisExecutionStore:
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         with _redis_errors():
-            plan = await self._transition(run_id, command)
+            _, plan = await self._transition(run_id, command)
         assert plan is not None
         return plan
 
@@ -528,7 +529,7 @@ class RedisExecutionStore:
                     return None
                 run_id = random.choice(due)  # noqa: S311
                 try:
-                    plan = await self._transition(run_id, command, candidate_index=candidate_index)
+                    _, plan = await self._transition(run_id, command, candidate_index=candidate_index)
                 except _UndecodableControlError as error:
                     await self.redis.zrem(candidate_index, run_id)
                     log.bind(run_id=run_id, operation="claim", error=str(error)).error(
@@ -555,58 +556,58 @@ class RedisExecutionStore:
     ) -> int:
         requeued = 0
         with _redis_errors():
-            entries = await self.redis.zrange(
-                self.keys.lease_expiry,
-                0,
-                MAINTENANCE_BATCH_SIZE - 1,
-                withscores=True,
-            )
-            if not entries:
-                return requeued
-            valid_entries: list[tuple[str | bytes | int, str, int, int]] = []
-            for member, raw_deadline in entries:
-                try:
-                    run_id, separator, raw_fence = _text(member).rpartition("|")
-                    validate_run_id(run_id)
-                    if not separator:
-                        raise ValueError
-                    fence = _nonnegative_int(raw_fence, "fence")
-                    deadline = _index_score_ms(raw_deadline, "lease deadline")
-                except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError):
-                    await self.redis.zrem(self.keys.lease_expiry, member)
-                    log.bind(operation="maintenance", entries=1).error(
+            for _ in range(MAINTENANCE_MAX_BATCHES):
+                entries, now_ms = await self._scan(self.keys.lease_expiry, MAINTENANCE_BATCH_SIZE)
+                due: list[tuple[Any, str, int, int]] = []
+                invalid = []
+                for member, raw_deadline in entries:
+                    try:
+                        run_id, separator, raw_fence = _text(member).rpartition("|")
+                        validate_run_id(run_id)
+                        if not separator:
+                            raise ValueError
+                        fence = _nonnegative_int(raw_fence, "fence")
+                        deadline = _index_score_ms(raw_deadline, "lease deadline")
+                    except (TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError):
+                        invalid.append(member)
+                        continue
+                    if deadline <= now_ms:
+                        due.append((member, run_id, fence, deadline))
+                if invalid:
+                    await self.redis.zrem(self.keys.lease_expiry, *invalid)
+                    log.bind(operation="maintenance", entries=len(invalid)).error(
                         "Removed invalid entries from a durable scheduling index"
                     )
-                    continue
-                valid_entries.append((member, run_id, fence, deadline))
-            if not valid_entries:
-                return requeued
-            now_ms = _milliseconds(await self.redis.time())
-            for member, run_id, fence, deadline in valid_entries:
-                if deadline > now_ms:
+                random.shuffle(due)
+                for member, run_id, fence, deadline in due:
+                    try:
+                        current, plan = await self._transition(
+                            run_id,
+                            RecoverExpiredLease(
+                                0,
+                                fence,
+                                deadline,
+                                max_run_attempts,
+                                attempts_error,
+                            ),
+                        )
+                    except ExecutionNotFoundError:
+                        await self.redis.zrem(self.keys.lease_expiry, member)
+                    except InvalidExecutionTransitionError:
+                        continue
+                    except _UndecodableControlError as error:
+                        await self.redis.zrem(self.keys.lease_expiry, member)
+                        log.bind(run_id=run_id, operation="maintenance", error=str(error)).error(
+                            "Removed an undecodable durable execution from the lease index"
+                        )
+                    else:
+                        assert current is not None and plan is not None
+                        requeued += (
+                            current.status is ExecutionStatus.RUNNING
+                            and plan.next_control.status is ExecutionStatus.QUEUED
+                        )
+                if len(entries) < MAINTENANCE_BATCH_SIZE or len(due) + len(invalid) < len(entries):
                     break
-                try:
-                    plan = await self.transition(
-                        run_id,
-                        RecoverExpiredLease(
-                            0,
-                            fence,
-                            deadline,
-                            max_run_attempts,
-                            attempts_error,
-                        ),
-                    )
-                except ExecutionNotFoundError:
-                    await self.redis.zrem(self.keys.lease_expiry, member)
-                except InvalidExecutionTransitionError:
-                    continue
-                except _UndecodableControlError as error:
-                    await self.redis.zrem(self.keys.lease_expiry, member)
-                    log.bind(run_id=run_id, operation="maintenance", error=str(error)).error(
-                        "Removed an undecodable durable execution from the lease index"
-                    )
-                else:
-                    requeued += plan.next_control.status is ExecutionStatus.QUEUED
         return requeued
 
     async def append_chunks(
@@ -740,13 +741,13 @@ class RedisExecutionStore:
         validate_stored_execution(stored, private=private)
         return stored
 
-    async def _transition(
+    async def _transition(  # noqa: PLR0912
         self,
         run_id: str,
         command: ExecutionCommand,
         *,
         candidate_index: str | None = None,
-    ) -> TransitionPlan | None:
+    ) -> tuple[ExecutionControl | None, TransitionPlan | None]:
         """
         Reduce a fresh control snapshot and commit it with one guarded script.
 
@@ -754,13 +755,18 @@ class RedisExecutionStore:
         under the same snapshot guard and yields ``None``.
         """
         if isinstance(command, Heartbeat):
-            return await self._heartbeat(run_id, command)
+            return None, await self._heartbeat(run_id, command)
         owner = (command.worker_id, command.fence) if isinstance(command, LEASE_COMMANDS) else None
+        member = (
+            RedisKeys.lease_member(run_id, command.indexed_fence) if isinstance(command, RecoverExpiredLease) else None
+        )
         for attempt in range(self._transaction_retries):
             async with self.redis.pipeline(transaction=False) as pipe:
                 pipe.hgetall(self.keys.control(run_id))
                 pipe.time()
-                values, now = await pipe.execute(raise_on_error=False)
+                if member is not None:
+                    pipe.zscore(self.keys.lease_expiry, member)
+                values, now, *indexed = await pipe.execute(raise_on_error=False)
             if isinstance(now, Exception):
                 raise now
             current = self._control(values, run_id)
@@ -777,8 +783,12 @@ class RedisExecutionStore:
                 commands = self._runnable_commands(run_id, candidate_index, current)
             else:
                 validate_transition_plan(plan, self.config)
-                if _changes_nothing(plan, current, lease_member_indexed=True):
-                    return plan
+                if _changes_nothing(
+                    plan,
+                    current,
+                    lease_member_indexed=not indexed or indexed[0] is not None,
+                ):
+                    return current, plan
                 commands = self._plan_commands(current, plan)
                 if not current.terminal and plan.next_control.terminal:
                     released = RedisKeys.revision_nonterminal_field(current.definition_revision)
@@ -810,7 +820,7 @@ class RedisExecutionStore:
                     version=plan.next_control.version,
                     fence=plan.next_control.fence,
                 ).debug("Committed durable execution transition")
-            return plan
+            return current, plan
         raise ExecutionContentionError("execution transaction retry budget exhausted")
 
     async def _heartbeat(self, run_id: str, command: Heartbeat) -> TransitionPlan:

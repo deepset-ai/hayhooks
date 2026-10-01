@@ -19,6 +19,7 @@ from hayhooks.durable.engine import (
     Heartbeat,
     InvalidExecutionTransitionError,
     PayloadKind,
+    RecoverExpiredLease,
     ReleaseClaim,
     RequestCancellation,
     Resume,
@@ -286,6 +287,18 @@ async def assert_discard_progress_contract(store: ExecutionStore) -> None:
     assert stored.control.progress_sequence == 0 and not stored.progress
 
 
+async def assert_maintenance_backlog_contract(store: ExecutionStore) -> None:
+    """One maintenance pass drains more than one lease batch."""
+    for index in range(150):
+        run_id = f"run_{index}"
+        await store.submit(contract_control(store.deployment, run_id, idempotency=run_id, binding=run_id), b"input")
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await asyncio.sleep(0.06)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 150
+    assert (await store.operational_counts(revision="v1"))["lease_expiry"] == 0
+
+
 async def assert_terminal_markers_contract(store: ExecutionStore) -> None:
     """Every terminal path appends one marker, even when chunk persistence is disabled."""
     for index in range(4):
@@ -319,16 +332,17 @@ async def assert_raced_recovery_contract(store: ExecutionStore) -> None:
         await store.submit(contract_control(store.deployment, run_id, idempotency=run_id, binding=run_id), b"input")
         assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
     await asyncio.sleep(0.06)
-    transition = store.transition
+    module = f"{type(store).__module__}.decide"
+    from hayhooks.durable.engine import decide as real_decide
 
-    async def raced(run_id: str, command: ExecutionCommand) -> TransitionPlan:
-        if run_id == "run_a":
+    def raced(control, command: ExecutionCommand) -> TransitionPlan:
+        if control.run_id == "run_a" and isinstance(command, RecoverExpiredLease):
             message = "lease renewed after the index scan"
             raise InvalidExecutionTransitionError(message)
-        return await transition(run_id, command)
+        return real_decide(control, command)
 
-    with patch.object(store, "transition", raced):
-        await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR)
+    with patch(module, raced):
+        assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 1
 
     statuses = [(await store.read(run_id)) for run_id in ("run_a", "run_b")]
     assert [stored.control.status for stored in statuses if stored is not None] == [

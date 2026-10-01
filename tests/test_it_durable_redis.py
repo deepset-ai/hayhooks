@@ -27,6 +27,7 @@ from hayhooks.durable.engine import (
     Heartbeat,
     InvalidExecutionTransitionError,
     PayloadKind,
+    RecoverExpiredLease,
     ReleaseClaim,
     RequestCancellation,
     Resume,
@@ -51,6 +52,7 @@ from tests.durable_store_contract import (
     assert_discard_progress_contract,
     assert_lost_lease_budget_contract,
     assert_lowered_limits_keep_data_readable,
+    assert_maintenance_backlog_contract,
     assert_raced_recovery_contract,
     assert_revision_routing_contract,
     assert_store_contract,
@@ -133,6 +135,11 @@ async def test_redis_store_keeps_data_readable_after_lowering_limits(redis_store
 async def test_redis_store_discards_progress_only_when_requested(redis_store) -> None:
     _, store = redis_store
     await assert_discard_progress_contract(store)
+
+
+async def test_redis_store_recovers_a_backlog_larger_than_one_batch(redis_store) -> None:
+    _, store = redis_store
+    await assert_maintenance_backlog_contract(store)
 
 
 @pytest.mark.parametrize("corruption", ["wrong-type", "malformed"])
@@ -546,6 +553,60 @@ async def test_maintenance_drops_an_undecodable_lease_member_and_recovers_the_re
     assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
 
 
+async def test_maintenance_removes_invalid_lease_entries(redis_store) -> None:
+    redis, store = redis_store
+    members = {"run_1|1": float("inf"), "run_1": 0}
+    await redis.zadd(store.keys.lease_expiry, members)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+    assert await redis.zcard(store.keys.lease_expiry) == 0
+
+
+async def test_maintenance_ignores_leases_that_are_not_due(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+    assert (
+        await redis.zscore(
+            store.keys.lease_expiry,
+            RedisKeys.lease_member("run_1", control.fence),
+        )
+        == control.lease_expires_at_ms
+    )
+
+
+async def test_concurrent_maintainers_recover_each_lease_once(redis_store, monkeypatch) -> None:
+    redis, store = redis_store
+    contender = RedisExecutionStore(redis, "jobs", config=store.config, key_prefix=store_prefix(store))
+    for index in range(100):
+        run_id = f"run_{index}"
+        await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await asyncio.sleep(0.06)
+    calls = [0]
+
+    def count_commits(target: RedisExecutionStore) -> None:
+        original = target._commit
+
+        async def counted(*args, **kwargs):
+            calls[0] += 1
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(target, "_commit", counted)
+
+    count_commits(store)
+    count_commits(contender)
+    requeued = await asyncio.gather(
+        store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR),
+        contender.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR),
+    )
+
+    assert sum(requeued) == 100
+    assert calls[0] < 150
+    assert await redis.zcard(store.keys.lease_expiry) == 0
+
+
 async def test_read_keeps_operational_command_errors_visible(redis_store, monkeypatch) -> None:
     _, store = redis_store
     await store.submit(contract_control("jobs"), b"input")
@@ -885,6 +946,73 @@ def _command_name(args: tuple) -> tuple[str, ...]:
     name = args[0].decode() if isinstance(args[0], bytes) else str(args[0])
     key = args[1] if name in {"GET", "HGETALL", "LRANGE", "XRANGE"} else None
     return (name,) if key is None else (name, key.decode() if isinstance(key, bytes) else str(key))
+
+
+async def test_scheduling_paths_cost_one_round_trip_each(redis_store, round_trips) -> None:
+    _, store = redis_store
+    warm = replace(
+        contract_control("jobs", "warm", idempotency="warm", binding="warm"),
+        definition_revision="warm",
+    )
+    await store.submit(warm, b"input")
+    assert await store.claim(Claim("warm", 0, 10_000, 3, "warm", ATTEMPTS_ERROR)) is not None
+
+    control = contract_control("jobs")
+    round_trips.clear()
+    await store.submit(control, b"input")
+    assert round_trips == [[("EVALSHA",)]]
+
+    round_trips.clear()
+    await store.submit(control, b"input")
+    assert round_trips == [[("EVALSHA",)], [("HGETALL", store.keys.control("run_1"))]]
+
+    round_trips.clear()
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    assert round_trips == [
+        [("ZRANGE",), ("TIME",)],
+        [("HGETALL", store.keys.control("run_1")), ("TIME",)],
+        [("EVALSHA",)],
+    ]
+
+    round_trips.clear()
+    assert await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is None
+    assert round_trips == [[("ZRANGE",), ("TIME",)]]
+
+    round_trips.clear()
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+    assert round_trips == [[("ZRANGE",), ("TIME",)]]
+
+    await store.transition("run_1", Complete(1, "worker", 0, b"done"))
+    round_trips.clear()
+    await store.transition("run_1", RequestCancellation(0, "late"))
+    assert round_trips == [[("HGETALL", store.keys.control("run_1")), ("TIME",)]]
+
+    round_trips.clear()
+    assert await store.read_control("run_1") is not None
+    assert round_trips == [[("HGETALL", store.keys.control("run_1"))]]
+
+    recovered = replace(
+        contract_control("jobs", "recovered", idempotency="recovered", binding="recovered"),
+        definition_revision="recovery",
+    )
+    await store.submit(recovered, b"input")
+    claim = await store.claim(Claim("worker", 0, 50, 3, "recovery", ATTEMPTS_ERROR))
+    assert claim is not None and claim.next_control.lease_expires_at_ms is not None
+    await asyncio.sleep(0.06)
+    await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR)
+    command = RecoverExpiredLease(
+        0,
+        claim.next_control.fence,
+        claim.next_control.lease_expires_at_ms,
+        3,
+        ATTEMPTS_ERROR,
+    )
+    round_trips.clear()
+    await store.transition("recovered", command)
+    assert round_trips == [
+        [("HGETALL", store.keys.control("recovered")), ("TIME",), ("ZSCORE",)],
+    ]
 
 
 async def test_hot_paths_cost_one_round_trip(redis_store, round_trips) -> None:

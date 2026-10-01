@@ -41,6 +41,7 @@ from hayhooks.durable.engine import (
 
 CHUNK_CURSOR_START = "0-0"
 MAINTENANCE_BATCH_SIZE = 100
+MAINTENANCE_MAX_BATCHES = 10
 MAX_CHUNK_READ_BYTES = 4_000_000
 MAX_CHUNK_READ_COUNT = 1_000
 _CHUNK_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
@@ -304,10 +305,11 @@ class MemoryExecutionStore:
         now_ms = self._clock()
         requeued = 0
         for (run_id, fence), deadline in sorted(self._lease_expiry.items(), key=lambda item: item[1])[
-            :MAINTENANCE_BATCH_SIZE
+            : MAINTENANCE_BATCH_SIZE * MAINTENANCE_MAX_BATCHES
         ]:
             if deadline > now_ms:
                 break
+            before = self._controls.get(run_id)
             try:
                 plan = await self.transition(
                     run_id,
@@ -324,7 +326,11 @@ class MemoryExecutionStore:
             except InvalidExecutionTransitionError:
                 continue
             else:
-                requeued += plan.next_control.status is ExecutionStatus.QUEUED
+                requeued += (
+                    before is not None
+                    and before.status is ExecutionStatus.RUNNING
+                    and plan.next_control.status is ExecutionStatus.QUEUED
+                )
         self._cleanup_terminal(now_ms)
         return requeued
 
