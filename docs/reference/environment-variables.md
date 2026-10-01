@@ -134,9 +134,9 @@ or tests.
 | Variable | Default | Purpose |
 |---|---:|---|
 | `HAYHOOKS_DURABLE_STORE` | `redis` | `redis` or process-local `memory` storage |
-| `HAYHOOKS_DURABLE_REDIS_URL` | `redis://localhost:6379/0` | URL of the worker and viewer Redis clients |
+| `HAYHOOKS_DURABLE_REDIS_URL` | `redis://localhost:6379/0` | Worker and viewer Redis URL; query options override both clients' defaults |
 | `HAYHOOKS_DURABLE_REDIS_KEY_PREFIX` | `hayhooks:durable` | Private Redis key namespace |
-| `HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS` | `100` | Viewer connection pool: concurrent durable SSE streams per process |
+| `HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS` | `100` | Viewer connection pool: concurrent blocked durable SSE reads per process; an extra stream waits up to 1 s for a connection |
 | `HAYHOOKS_DURABLE_TERMINAL_TTL_SECONDS` | `604800` | Terminal record and idempotency retention |
 | `HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS` | `1000` | Admission ceiling per deployment; `0` opts into unlimited admission |
 | `HAYHOOKS_DURABLE_MAX_PAYLOAD_BYTES` | `1000000` | Maximum encoded input/checkpoint/result/error/wait payload |
@@ -150,10 +150,15 @@ or tests.
 | `HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS` | `5.0` | Grace before cancelling workers on shutdown; not a bound on shutdown time |
 | `HAYHOOKS_DURABLE_LEASE_DURATION_MS` | `30000` | Fenced claim lease duration |
 | `HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS` | `1500` | Minimum lease time remaining for owned commits |
-| `HAYHOOKS_DURABLE_MAX_RUN_ATTEMPTS` | `3` | Claim attempts including crash recovery |
+| `HAYHOOKS_DURABLE_MAX_RUN_ATTEMPTS` | `3` | Lost leases (crash or stall) after which an execution fails; handoffs, resumes, and application retries don't count |
 | `HAYHOOKS_DURABLE_MAX_APPLICATION_RETRIES` | `2` | Retries explicitly requested by application code |
 | `HAYHOOKS_DURABLE_RETRY_BASE_DELAY_SECONDS` | `1.0` | Default exponential retry base delay |
 | `HAYHOOKS_DURABLE_RETRY_MAX_DELAY_SECONDS` | `60.0` | Default retry delay ceiling |
+
+For `HAYHOOKS_DURABLE_REDIS_URL`, a `socket_timeout` must exceed the 15-second
+SSE block or startup fails. Do not set `max_connections`, `timeout`, `protocol`,
+`retry_on_timeout`, or `legacy_responses` in the URL. Use
+`HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS` to bound viewer connections.
 
 See [Durable Operations](../deployment/durable-operations.md) before changing
 polling, leases, retention, capacity, or Redis persistence. Worker polling and
