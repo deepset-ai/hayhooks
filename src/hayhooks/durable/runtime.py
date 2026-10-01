@@ -704,13 +704,14 @@ class DurableDeployment:
                 result = self.result_model.model_validate(result).model_dump(mode="json")
             elif isinstance(result, BaseModel):
                 result = result.model_dump(mode="json")
+            _, events = claim.progress_snapshot()
             await claim.transition(
                 Complete(
                     fence=claim.control.fence,
                     worker_id=worker_id,
                     now_ms=0,
                     result=encode_json(result, max_bytes=self.store.config.max_payload_bytes),
-                    progress_events=context._progress_events,
+                    progress_events=events,
                 )
             )
         except _ExecutionSuspendedError:
@@ -729,13 +730,14 @@ class DurableDeployment:
                 deployment=self.name, run_id=claim.control.run_id, exception_type=type(error).__name__, error=str(error)
             ).error("Durable execution failed")
             code = "payload_too_large" if isinstance(error, ExecutionPayloadSizeError) else None
+            _, events = claim.progress_snapshot()
             await claim.transition(
                 Fail(
                     fence=claim.control.fence,
                     worker_id=worker_id,
                     now_ms=0,
                     error=self._encode_exception(error, code=code),
-                    progress_events=context._progress_events,
+                    progress_events=events,
                 )
             )
 
@@ -744,6 +746,7 @@ class DurableDeployment:
         exponent = min(claim.control.application_retry_count, 30)
         delay = self.config.retry_base_delay_seconds * (2**exponent) if error.delay is None else error.delay
         delay_ms = math.ceil(min(delay, self.config.retry_max_delay_seconds) * 1_000)
+        _, events = claim.progress_snapshot()
         plan = await claim.transition(
             ScheduleRetry(
                 fence=claim.control.fence,
@@ -752,7 +755,7 @@ class DurableDeployment:
                 delay_ms=delay_ms,
                 max_application_retries=self.config.max_application_retries,
                 error=self._encode_exception(error, retryable=True),
-                progress_events=error.progress_events,
+                progress_events=events,
             )
         )
         if plan.next_control.status is ExecutionStatus.QUEUED:
@@ -761,17 +764,18 @@ class DurableDeployment:
     async def _acknowledge_cancellation(
         self,
         claim: _ClaimedExecution,
-        context: DurableContext,
+        _context: DurableContext,
         worker_id: str,
     ) -> None:
         """Commit pending progress through the reducer's cancellation-wins rule."""
+        _, events = claim.progress_snapshot()
         await claim.transition(
             Complete(
                 fence=claim.control.fence,
                 worker_id=worker_id,
                 now_ms=0,
                 result=b"null",
-                progress_events=context._progress_events,
+                progress_events=events,
             )
         )
 

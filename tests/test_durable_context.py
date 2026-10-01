@@ -62,7 +62,7 @@ async def test_daemon_thread_converts_exit_exceptions(exception_type: type[BaseE
 
 
 async def test_daemon_thread_forwards_control_signals() -> None:
-    error = _RetryRequestedError("x", None, ())
+    error = _RetryRequestedError("x", None)
 
     def raise_error() -> None:
         raise error
@@ -118,7 +118,7 @@ async def test_progress_buffer_keeps_only_configured_history(context_factory) ->
     for value in range(limit + 1):
         await context.report_progress(str(value))
 
-    assert len(context._pending_progress) == limit
+    assert len(context._claim.pending_progress) == limit
     await context.checkpoint()
     stored = await store.read(context.execution_id)
     assert stored is not None
@@ -283,6 +283,33 @@ async def test_hung_store_call_loses_the_lease_within_its_window(context_factory
         await context.stream_chunk({"late": True})
 
 
+async def test_heartbeat_drops_progress_the_store_already_holds(context_factory) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    await context.report_progress("one")
+    await context.report_progress("two")
+    _, events = claim.progress_snapshot()
+
+    await store.transition(
+        context.execution_id,
+        Checkpoint(
+            claim.control.fence,
+            claim.worker_id,
+            0,
+            claim.lease_duration_ms,
+            b"{}",
+            events,
+        ),
+    )
+    await context.check_cancelled()
+
+    assert claim.pending_progress == []
+    await context.checkpoint()
+    stored = await store.read(context.execution_id)
+    assert stored is not None
+    assert [event.sequence for event in stored.progress] == [1, 2]
+
+
 async def test_heartbeat_marks_a_rejected_claim_lost(context_factory) -> None:
     store, create = context_factory
     context, claim = await create(lease_duration_ms=60)
@@ -375,7 +402,7 @@ async def test_chunk_buffer_stays_bounded_while_the_store_is_slow(context_factor
     await flush
 
 
-async def test_retry_request_carries_buffered_progress(context_factory) -> None:
+async def test_retry_request_keeps_buffered_progress_for_its_commit(context_factory) -> None:
     _, create = context_factory
     context, _ = await create()
     with pytest.raises(ValueError, match="finite non-negative"):
@@ -383,7 +410,8 @@ async def test_retry_request_carries_buffered_progress(context_factory) -> None:
     await context.report_progress("retrying")
     with pytest.raises(_RetryRequestedError) as raised:
         await context.retry("later", delay=1.5)
-    assert (str(raised.value), raised.value.delay, len(raised.value.progress_events)) == ("later", 1.5, 1)
+    assert (str(raised.value), raised.value.delay) == ("later", 1.5)
+    assert context._claim.progress_snapshot() == (1, (context._claim.pending_progress[0],))
 
 
 async def test_release_rejects_a_write_waiting_behind_it(context_factory, monkeypatch) -> None:

@@ -44,10 +44,9 @@ class DurableExecutionCancelledError(RuntimeError):
 class _RetryRequestedError(BaseException):
     """Retry signal that ordinary application exception handlers cannot swallow."""
 
-    def __init__(self, message: str, delay: float | None, progress_events: tuple[bytes, ...]) -> None:
+    def __init__(self, message: str, delay: float | None) -> None:
         super().__init__(message)
         self.delay = delay
-        self.progress_events = progress_events
 
 
 class _ExecutionSuspendedError(BaseException):
@@ -100,6 +99,12 @@ class _ClaimedExecution:
         self._chunk_drop_reported = False
         self._tasks: tuple[asyncio.Task[None], ...] = ()
         self._finished = False
+        # Progress reported but not committed; its first sequence follows the confirmed control.
+        self.pending_progress: list[bytes] = []
+
+    def progress_snapshot(self) -> tuple[int, tuple[bytes, ...]]:
+        """Return pending events with the sequence of the first one."""
+        return self.control.progress_sequence + 1, tuple(self.pending_progress)
 
     async def start(self) -> None:
         """Confirm the lease, then keep it alive and flush chunks in the background."""
@@ -151,6 +156,7 @@ class _ClaimedExecution:
             except ExecutionNotFoundError as error:
                 self.mark_lost("the execution no longer exists")
                 raise ExecutionLeaseLostError(f"execution '{self.control.run_id}' no longer exists") from error
+            del self.pending_progress[: max(0, plan.next_control.progress_sequence - self.control.progress_sequence)]
             self.control = plan.next_control
             self._confirmed_until = confirmed_at + self._safe_duration
             self._finished = self.control.status is not ExecutionStatus.RUNNING
@@ -298,7 +304,6 @@ class DurableContext:
         self._state = checkpoint.application_state.copy()
         self._resume_input = checkpoint.resume_input
         self._resume_input_consumed = False
-        self._pending_progress: list[bytes] = []
         self._operation_lock = asyncio.Lock()
         self._adapter = adapter
 
@@ -329,11 +334,6 @@ class DurableContext:
     def _adapter_checkpoint(self) -> JsonValue:
         return self._checkpoint.adapter_checkpoint
 
-    @property
-    def _progress_events(self) -> tuple[bytes, ...]:
-        """Snapshot buffered events without removing uncommitted progress."""
-        return tuple(self._pending_progress)
-
     def _require_owned(self) -> None:
         self._claim.require_owned()
 
@@ -344,7 +344,8 @@ class DurableContext:
         async with self._operation_lock:
             self._claim.require_owned()
             snapshot = self._snapshot(adapter_checkpoint)
-            plan = await self._claim.transition(
+            _, events = self._claim.progress_snapshot()
+            await self._claim.transition(
                 Checkpoint(
                     fence=self._claim.control.fence,
                     worker_id=self._claim.worker_id,
@@ -353,11 +354,10 @@ class DurableContext:
                     checkpoint=encode_json(
                         snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
                     ),
-                    progress_events=self._progress_events,
+                    progress_events=events,
                 )
             )
             self._checkpoint = snapshot
-            del self._pending_progress[: len(plan.progress_events)]
 
     async def report_progress(
         self,
@@ -370,20 +370,20 @@ class DurableContext:
             self._claim.require_owned()
             event = ExecutionProgress.model_validate(
                 {
-                    "sequence": self._claim.control.progress_sequence + len(self._pending_progress) + 1,
+                    "sequence": self._claim.control.progress_sequence + len(self._claim.pending_progress) + 1,
                     "kind": kind,
                     "message": message,
                     "timestamp": datetime.now(timezone.utc),
                     "metadata": dict(metadata or {}),
                 }
             )
-            self._pending_progress.append(
+            self._claim.pending_progress.append(
                 encode_json(
                     event.model_dump(mode="json", exclude={"sequence"}),
                     max_bytes=self._claim.store.config.max_progress_event_bytes,
                 )
             )
-            del self._pending_progress[: -self._claim.store.config.max_progress_events]
+            del self._claim.pending_progress[: -self._claim.store.config.max_progress_events]
 
     async def check_cancelled(self) -> None:
         self._claim.require_owned()
@@ -405,7 +405,7 @@ class DurableContext:
             self._claim.require_owned()
             if delay is not None and (delay < 0 or not math.isfinite(delay)):
                 raise ValueError("retry delay must be a finite non-negative number")
-            raise _RetryRequestedError(str(message), delay, self._progress_events)
+            raise _RetryRequestedError(str(message), delay)
 
     async def suspend(
         self,
@@ -417,7 +417,8 @@ class DurableContext:
         async with self._operation_lock:
             self._claim.require_owned()
             snapshot = self._snapshot(adapter_checkpoint, {**self._state, **dict(update or {})})
-            plan = await self._claim.transition(
+            _, events = self._claim.progress_snapshot()
+            await self._claim.transition(
                 Suspend(
                     fence=self._claim.control.fence,
                     worker_id=self._claim.worker_id,
@@ -426,12 +427,11 @@ class DurableContext:
                         snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
                     ),
                     wait=encode_json(dict(wait), max_bytes=self._claim.store.config.max_payload_bytes),
-                    progress_events=self._progress_events,
+                    progress_events=events,
                 )
             )
             self._checkpoint = snapshot
             self._state = snapshot.application_state.copy()
-            del self._pending_progress[: len(plan.progress_events)]
             raise _ExecutionSuspendedError
 
     async def stream_chunk(self, payload: object) -> None:
