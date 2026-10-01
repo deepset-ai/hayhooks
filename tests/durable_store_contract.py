@@ -306,12 +306,12 @@ async def assert_terminal_markers_contract(store: ExecutionStore) -> None:
         await store.submit(contract_control(store.deployment, run_id, idempotency=run_id, binding=run_id), b"input")
 
     await store.transition("run_0", RequestCancellation(0, "queued"))
-    claimed = [await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) for _ in range(3)]
+    claimed = [await store.claim(Claim("worker", 0, 200, 3, "v1", ATTEMPTS_ERROR)) for _ in range(3)]
     fences = {plan.next_control.run_id: plan.next_control.fence for plan in claimed if plan is not None}
     await store.transition("run_1", Suspend(fences["run_1"], "worker", 0, b"checkpoint", b"wait"))
     await store.transition("run_1", RequestCancellation(0, "waiting"))
     await store.transition("run_2", Complete(fences["run_2"], "worker", 0, b"done"))
-    await asyncio.sleep(0.06)
+    await asyncio.sleep(0.21)
     await store.maintain(max_run_attempts=1, attempts_error=ATTEMPTS_ERROR)
 
     for run_id, status in (
