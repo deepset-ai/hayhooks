@@ -276,11 +276,16 @@ def create_durable_router(  # noqa: C901
                     detail="Idempotency-Key must be at most 512 UTF-8 bytes",
                 )
         submission = await deployment.submit(payload, owner_id=owner, idempotency_key=idempotency_key)
-        stored = await deployment.get(
-            submission.control.run_id,
-            owner_id=owner,
-            enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
+        # A new execution is queued with no payloads or progress, so the submitted control is its snapshot.
+        stored = (
+            StoredExecution(submission.control, {}, ())
+            if submission.created
+            else await deployment.get(
+                submission.control.run_id,
+                owner_id=owner,
+                enforce_owner=enforce_owner,
+                allow_revision_mismatch=True,
+            )
         )
         public = _project(request, deployment, route_names, stored, response_model)
         response.status_code = (

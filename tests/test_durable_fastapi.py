@@ -535,6 +535,28 @@ def test_projection_ignores_a_lowered_payload_limit(durable_app_factory, wait_fo
     assert response.json()["result"] == {"value": 1, "owner_id": None}
 
 
+def test_routes_read_only_what_they_project(durable_app_factory, wait_for_execution) -> None:
+    app, deployment = durable_app_factory(store_class=CountingStore)
+    store = cast(CountingStore, deployment.store)
+    headers = {"Idempotency-Key": "same"}
+    with TestClient(app) as client:
+        created = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"}, headers=headers)
+        assert created.status_code == 202 and created.json()["status"] == "queued"
+        assert store.calls == {"submit": 1}
+        wait_for_execution(client, created.json()["links"]["self"], "waiting")
+
+        store.calls.clear()
+        replay = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"}, headers=headers)
+        assert replay.status_code == 202 and replay.headers["idempotent-replay"] == "true"
+        assert replay.json()["status"] == "waiting"
+        assert store.calls == {"submit": 1, "read_public": 1}
+
+        store.calls.clear()
+        canceled = client.post(created.json()["links"]["cancel"])
+        assert canceled.status_code == 200 and canceled.json()["status"] == "canceled"
+        assert store.calls == {"read_control": 1, "read_public": 1}
+
+
 @pytest.mark.parametrize(
     ("action", "expected_events"),
     [
