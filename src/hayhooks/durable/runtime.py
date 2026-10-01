@@ -287,6 +287,8 @@ class DurableDeployment:
             raise RuntimeError("close the durable deployment before waiting for it to drain")
         async with self._submission_condition:
             await self._submission_condition.wait_for(lambda: self._admitted_submissions == 0)
+        if self._undrained():
+            log.bind(deployment=self.name).info("Waiting for retained durable work to finish")
         while undrained := self._undrained():
             await asyncio.wait(undrained)
 
@@ -712,6 +714,10 @@ class DurableDeployment:
         except Exception as error:
             if claim.application_cancelled:
                 raise asyncio.CancelledError from error
+            # The persisted error only names the exception type, so the log is where operators find the cause.
+            log.opt(exception=error).bind(
+                deployment=self.name, run_id=claim.control.run_id, exception_type=type(error).__name__, error=str(error)
+            ).error("Durable execution failed")
             code = "payload_too_large" if isinstance(error, ExecutionPayloadSizeError) else None
             await claim.transition(
                 Fail(

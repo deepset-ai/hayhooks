@@ -2,12 +2,40 @@ import inspect
 from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any, get_origin
 
+import docstring_parser
 from docstring_parser.common import Docstring
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, create_model
 
 from hayhooks.server.exceptions import PipelineWrapperError
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.request_headers import accepts_request_headers
+
+
+def get_run_api_method(pipeline_wrapper: BasePipelineWrapper) -> Callable | None:
+    """Return the wrapper's ``run_api_async`` or ``run_api`` (async preferred), or ``None`` without either."""
+    if pipeline_wrapper._is_run_api_async_implemented:
+        return pipeline_wrapper.run_api_async
+    if pipeline_wrapper._is_run_api_implemented:
+        return pipeline_wrapper.run_api
+    return None
+
+
+def create_pipeline_metadata(pipeline_name: str, pipeline_wrapper: BasePipelineWrapper) -> dict[str, Any]:
+    """Derive the registry metadata that MCP and A2A read: description, request model, and exposure flags."""
+    request_model = None
+    description = ""
+    if run_method := get_run_api_method(pipeline_wrapper):
+        docstring = docstring_parser.parse(inspect.getdoc(run_method) or "")
+        description = docstring.short_description or ""
+        request_model = create_request_model_from_callable(run_method, f"{pipeline_name}Run", docstring)
+    return {
+        "description": description,
+        "request_model": request_model,
+        "skip_mcp": pipeline_wrapper.skip_mcp,
+        "skip_a2a": pipeline_wrapper.skip_a2a,
+        "a2a_card": pipeline_wrapper.a2a_card,
+    }
 
 
 def create_request_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:

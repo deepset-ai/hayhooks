@@ -15,18 +15,162 @@ docker compose -f examples/durable-compose.yaml up -d
 Durable execution requires Haystack 3.1 or newer. Use the memory store only for
 tests and local development; it does not survive process loss.
 
-This release ships the portable engine: an application hosts it with
-`DurableDeployment`, `DurableRuntime`, an execution store, and, for FastAPI,
-`create_durable_router`. Hayhooks-managed hosting of durable pipeline wrappers
-follows in a later release. Until then, live deployment rejects a wrapper that
-implements `run_durable` or `run_durable_async`: `422` over HTTP, and
-`PipelineModeError` from Python, MCP, and server startup, which fails instead of
-skipping the wrapper.
+There are two ways to host durable work:
+
+- **Durable mode.** The Hayhooks server loads a fixed set of pipeline wrappers at
+  startup and serves each durable wrapper with detached-execution routes. See
+  [Durable mode](#durable-mode).
+- **The portable engine.** Any asyncio application hosts it with
+  `DurableDeployment`, `DurableRuntime`, an execution store, and, for FastAPI,
+  `create_durable_router`. See [Write a durable runner](#write-a-durable-runner).
+
+Live deployment, the default server mode, rejects a wrapper that implements
+`run_durable` or `run_durable_async`: `422` over HTTP, and `PipelineModeError`
+from Python, MCP, and server startup, which fails instead of skipping the
+wrapper. The error names `HAYHOOKS_DURABLE_MODE`, the setting that serves it.
 
 `import hayhooks.durable` and its core modules depend only on Pydantic, Loguru,
 and the standard library. The integrations load on first use from their own
 modules: `create_durable_router` needs FastAPI, `hayhooks.durable.haystack`
 needs Haystack, and `hayhooks.durable.redis` needs Redis.
+
+## Durable mode
+
+Durable mode fixes the pipeline set when the server starts. Stage the complete
+pipelines directory, then start the server with durable mode enabled:
+
+```bash
+docker compose -f examples/durable-compose.yaml up -d
+export HAYHOOKS_DURABLE_MODE=true
+hayhooks run --pipelines-dir examples/durable_execution/pipelines
+```
+
+A durable wrapper sets a `durable_revision` and implements exactly one of
+`run_durable` or `run_durable_async`, taking a `DurableContext` and a Pydantic
+request model:
+
+```python
+from haystack import Pipeline
+from pydantic import BaseModel
+
+from hayhooks import BasePipelineWrapper, DurableContext
+
+
+class Request(BaseModel):
+    value: int
+
+
+class Result(BaseModel):
+    value: int
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    durable_revision = "jobs-v1"
+
+    def setup(self) -> None:
+        self.pipeline = Pipeline()
+
+    async def run_durable_async(self, context: DurableContext, request: Request) -> Result:
+        return Result(value=request.value * 2)
+```
+
+Each durable wrapper gets `POST /{name}/run-durable` and the execution routes
+under `/{name}/executions/`. A wrapper that also implements `run_api` keeps its
+ordinary `/{name}/run` endpoint, which still runs synchronously; durable mode
+never reroutes ordinary requests. Set `durable_resume_model` to accept typed
+resume input. The [durable execution example](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_execution)
+covers checkpoints, retries, approval, and cancellation.
+
+### What durable mode changes
+
+| | Default mode | Durable mode |
+|---|---|---|
+| Pipeline set | Startup directory plus live deploy/undeploy | The startup directory, fixed until restart |
+| Deploy/undeploy HTTP routes | Available | Absent, including from OpenAPI (`404`) |
+| MCP `deploy_pipeline`/`undeploy_pipeline` tools | Available | Neither listed nor callable |
+| Python deployment helpers | Available | Raise `PipelineModeError` before any side effect |
+| Durable wrappers | Rejected | Served by the main HTTP server |
+| Startup | `HAYHOOKS_STARTUP_DEPLOY_*` strategy; failing pipelines are skipped | Sequential, and any failure stops startup |
+| Source directory | Deployments may write to it | Never written, including automatic bytecode |
+
+Ordinary run, OpenAI-compatible, streaming, file, dashboard, and Chainlit
+endpoints behave the same in both modes. `GET /status` reports `durable_mode`,
+so clients can tell which kind of server they are talking to.
+
+Remote CLI commands such as `hayhooks pipeline deploy-files` stay available
+whatever the local setting is: the target server decides. Against a
+durable-mode server they fail with `404 Not Found`, because the deployment
+endpoints do not exist there.
+
+### Startup
+
+Startup loads every entry of `HAYHOOKS_PIPELINES_DIR` and fails if any of them
+fails, so a typo never becomes a silently missing pipeline:
+
+- The directory must exist and be readable; an empty directory is valid.
+- Top-level `.yml`/`.yaml` files are YAML pipelines, and first-level
+  directories are wrapper pipelines. A directory without `pipeline_wrapper.py`
+  fails startup, including a leftover one that holds only `__pycache__`. Entries starting with a dot and `__pycache__` are skipped;
+  other files are ignored.
+- Names are the file stem or directory name, restricted to letters, digits,
+  `_`, and `-`. Two definitions with the same name, or a name whose routes a
+  server route or mount would shadow (such as `status` or the dashboard path),
+  fail startup.
+- `files_to_ignore_patterns` and the startup deployment strategy settings do
+  not apply.
+
+A failed startup exits the process: fix the pipeline and restart. To change the
+pipeline set, replace the directory and restart or replace the process. Ordinary
+wrappers need neither Redis nor the durable extra; the server creates its
+durable runtime and Redis clients only when at least one durable wrapper is
+loaded.
+
+### Imports and source files
+
+Wrapper packages load under a private import root, `_hayhooks_registry`, instead
+of their public names, and their directories are not added to `sys.path`. Use
+relative imports for wrapper-local modules (`from .helpers import tool`), and
+installed packages or `HAYHOOKS_ADDITIONAL_PYTHON_PATH` for shared code. A
+pipeline can therefore be named after a real module, such as `json`, without
+shadowing it.
+
+The module path of a pipeline's wrapper depends only on its name, never on the
+source location, so checkpoints written before a restart or a move of the
+source still resolve. The server logs each wrapper module at startup, and
+`hayhooks.server.pipelines.loader.registry_module_name(name)` returns it.
+Haystack's deserialization allowlist treats a name as a prefix, so allowlist
+the pipeline's package, the module path without `.pipeline_wrapper`, to cover
+the wrapper and its wrapper-local modules such as `helpers`:
+
+```bash
+export HAYSTACK_DESERIALIZATION_ALLOWLIST="_hayhooks_registry.p_6a6f6273"
+```
+
+Durable mode sets `sys.dont_write_bytecode` for the whole process before
+loading, so neither the wrappers nor anything they import later write
+`__pycache__` files into the source tree. Existing bytecode is still read.
+Hayhooks is not a sandbox, though: wrapper code can write files deliberately.
+Serve production pipelines from an immutable image or a read-only, versioned
+mount.
+
+Run one durable-mode app per process. The import root, the bytecode policy,
+and the dashboard trace stream are process-wide, so building a second app in
+the same process replaces the first app's pipeline modules. Standalone
+`hayhooks mcp run` and `hayhooks a2a run` also honor `HAYHOOKS_DURABLE_MODE`:
+they load the directory the same way and serve its ordinary pipelines, but a
+durable wrapper fails their startup, since only the main HTTP server runs
+durable workers.
+
+### Revisions
+
+`durable_revision` is a compatibility key chosen by the wrapper author, not a
+code hash. Keep it across edits whose workers can still continue existing
+inputs and checkpoints, and change it only when they cannot. Claims and resumes
+require an exact match, so after a change, nonterminal work of the old revision
+needs a process that still serves it. The pipeline name and the module paths of
+serialized symbols are part of the same contract: renaming either is a
+definition change for persisted work. Keep unrelated deployments apart with
+names or `HAYHOOKS_DURABLE_REDIS_KEY_PREFIX`, not with the import root.
 
 ## Design goals
 
@@ -158,6 +302,9 @@ deployment = DurableDeployment(
 runtime = DurableRuntime((deployment,))
 ```
 
+`context.resume_input` returns the resume input on its first read and `None`
+afterwards, so read it once into a variable, as above.
+
 For a Pipeline, call
 `context.run_pipeline[_async](data, checkpoint_at="component")`. The adapter
 persists a Haystack `PipelineSnapshot` before that component and also saves a
@@ -230,7 +377,8 @@ and hides owner mismatches as `404`.
 The portable package does not manage the host application. The host owns
 runtime startup and shutdown, authentication, Redis client lifetime, and health
 reporting. The [standalone FastAPI example](../examples/durable-fastapi.md)
-shows the complete integration.
+shows the complete integration; durable mode follows the same sequence in the
+Hayhooks server's lifespan.
 
 - **Fixed membership.** Pass every deployment to `DurableRuntime(...)` when you
   construct it; a runtime cannot add or remove deployments. A host that binds
@@ -277,12 +425,31 @@ async def lifespan(_app: FastAPI):
             await redis.aclose()
 ```
 
+In durable mode, the server reports readiness only after every durable
+deployment has started. On shutdown it closes them all, even when one fails,
+waits for retained work to drain, and only then closes its Redis clients:
+retained work keeps Redis and the event loop until it no longer owns a claim.
+Graceful shutdown can therefore outlast `HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS`,
+which is the grace before cancelling workers, not a bound on shutdown. The
+server logs while it waits. When a hard deadline is required, terminate the
+process externally, or set `HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN=true`
+(below); forced termination resumes through lease and checkpoint recovery and
+cannot promise exactly-once external side effects.
+
+The server uses two Redis clients built from `HAYHOOKS_DURABLE_REDIS_URL`: one
+for workers, and one for SSE viewers, whose connection pool of
+`HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS` connections bounds the concurrent durable
+streams per process. Durable routes use bearer-ID access; put authentication in
+front of the server for multi-user deployments.
+
 ### Hosts with short kill deadlines
 
 A platform that kills the process shortly after SIGTERM, such as Kubernetes with
 its default 30-second grace period, can cut retained threads off before they
 finish, leaving their runs to wait for lease expiry. Set
-`RuntimeConfig(release_running_on_close=True)` to hand those runs over as well:
+`RuntimeConfig(release_running_on_close=True)`, or
+`HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN=true` in durable mode, to hand
+those runs over as well:
 at the end of the shutdown grace, `close()` releases the claims of threads that
 are still running. `wait_drained()` then returns once every claim is finished or
 released, without waiting for released threads, and the host can close Redis.

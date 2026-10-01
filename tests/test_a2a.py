@@ -117,27 +117,27 @@ def get_artifact_events(events) -> list:
 
 
 def test_is_a2a_exposable_unknown_pipeline():
-    assert not is_a2a_exposable("non_existent_pipeline")
+    assert not is_a2a_exposable(registry, "non_existent_pipeline")
 
 
 def test_is_a2a_exposable_chat_async():
     register_wrapper("chat_agent", AsyncChatWrapper)
-    assert is_a2a_exposable("chat_agent")
+    assert is_a2a_exposable(registry, "chat_agent")
 
 
 def test_is_a2a_exposable_chat_sync():
     register_wrapper("sync_agent", SyncChatWrapper)
-    assert is_a2a_exposable("sync_agent")
+    assert is_a2a_exposable(registry, "sync_agent")
 
 
 def test_is_a2a_exposable_api_only():
     register_wrapper("api_only", ApiOnlyWrapper)
-    assert not is_a2a_exposable("api_only")
+    assert not is_a2a_exposable(registry, "api_only")
 
 
 def test_is_a2a_exposable_skip_a2a():
     register_wrapper("chat_agent", AsyncChatWrapper, metadata={"skip_a2a": True})
-    assert not is_a2a_exposable("chat_agent")
+    assert not is_a2a_exposable(registry, "chat_agent")
 
 
 # --- Base URL ---
@@ -161,7 +161,7 @@ def test_get_a2a_base_url_external(test_settings):
 
 def test_create_agent_card_defaults():
     register_wrapper("chat_agent", AsyncChatWrapper)
-    card = create_agent_card("chat_agent", "http://test:1418")
+    card = create_agent_card("chat_agent", "http://test:1418", registry)
 
     assert card.name == "chat_agent"
     assert card.description == "chat_agent description"
@@ -178,7 +178,7 @@ def test_create_agent_card_defaults():
 
 def test_create_agent_card_empty_description_fallback():
     register_wrapper("chat_agent", AsyncChatWrapper, metadata={"description": ""})
-    card = create_agent_card("chat_agent", "http://test:1418")
+    card = create_agent_card("chat_agent", "http://test:1418", registry)
     assert card.description == "Haystack pipeline 'chat_agent' deployed with Hayhooks"
 
 
@@ -198,7 +198,7 @@ def test_create_agent_card_overrides():
         ],
     }
     register_wrapper("chat_agent", AsyncChatWrapper, metadata={"a2a_card": overrides})
-    card = create_agent_card("chat_agent", "http://test:1418")
+    card = create_agent_card("chat_agent", "http://test:1418", registry)
 
     assert card.name == "Weather Agent"
     assert card.description == "Provides weather forecasts"
@@ -287,7 +287,7 @@ async def test_execute_agent_task_string_result():
     register_wrapper("sync_agent", SyncChatWrapper)
     queue = RecordingQueue()
 
-    await _execute_agent_task("sync_agent", make_context(), queue)
+    await _execute_agent_task(registry, "sync_agent", make_context(), queue)
 
     assert isinstance(queue.events[0], Task)
     assert get_status_states(queue.events) == [TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_COMPLETED]
@@ -306,7 +306,7 @@ async def test_execute_agent_task_streaming_result():
     register_wrapper("chat_agent", AsyncChatWrapper)
     queue = RecordingQueue()
 
-    await _execute_agent_task("chat_agent", make_context("hi"), queue)
+    await _execute_agent_task(registry, "chat_agent", make_context("hi"), queue)
 
     assert get_status_states(queue.events)[-1] == TaskState.TASK_STATE_COMPLETED
 
@@ -329,7 +329,7 @@ async def test_execute_agent_task_error_sets_failed_state():
     register_wrapper("failing_agent", FailingChatWrapper)
     queue = RecordingQueue()
 
-    await _execute_agent_task("failing_agent", make_context(), queue)
+    await _execute_agent_task(registry, "failing_agent", make_context(), queue)
 
     states = get_status_states(queue.events)
     assert states[-1] == TaskState.TASK_STATE_FAILED
@@ -351,7 +351,7 @@ async def test_execute_agent_task_none_result_fails():
     register_wrapper("none_agent", NoneResultWrapper)
     queue = RecordingQueue()
 
-    await _execute_agent_task("none_agent", make_context(), queue)
+    await _execute_agent_task(registry, "none_agent", make_context(), queue)
 
     assert get_status_states(queue.events)[-1] == TaskState.TASK_STATE_FAILED
 
@@ -361,14 +361,14 @@ async def test_execute_agent_task_unknown_pipeline_fails():
     from a2a.types import TaskState
 
     queue = RecordingQueue()
-    await _execute_agent_task("non_existent", make_context(), queue)
+    await _execute_agent_task(registry, "non_existent", make_context(), queue)
     assert get_status_states(queue.events)[-1] == TaskState.TASK_STATE_FAILED
 
 
 @pytest.mark.asyncio
 async def test_execute_agent_task_emits_trace_span(recording_tracer):
     register_wrapper("sync_agent", SyncChatWrapper)
-    await _execute_agent_task("sync_agent", make_context(), RecordingQueue())
+    await _execute_agent_task(registry, "sync_agent", make_context(), RecordingQueue())
 
     spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_A2A_RUN_AGENT]
     assert spans
@@ -377,7 +377,7 @@ async def test_execute_agent_task_emits_trace_span(recording_tracer):
 
 
 def test_create_agent_executor():
-    executor = create_agent_executor("some_pipeline")
+    executor = create_agent_executor("some_pipeline", registry)
     assert executor.pipeline_name == "some_pipeline"
     assert hasattr(executor, "execute")
     assert hasattr(executor, "cancel")

@@ -1,6 +1,10 @@
 import asyncio
 import json
 
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from hayhooks.server.app import create_app
 from hayhooks.server.routers.dashboard import config, traces_stream
 from hayhooks.server.utils.live_trace_buffer import (
     clear_live_traces,
@@ -10,6 +14,9 @@ from hayhooks.server.utils.live_trace_buffer import (
 )
 from hayhooks.server.utils.live_trace_stream import _TraceStreamBroadcaster, get_trace_stream_broadcaster
 from hayhooks.settings import settings
+from tests.pipeline_sources import DURABLE_WRAPPER, HAYSTACK_V3, write_tree
+
+requires_haystack_v3 = pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
 
 
 def setup_function():
@@ -107,10 +114,14 @@ async def test_record_span_wakes_subscriber_via_buffer_hook():
 # --- SSE endpoint tests (drive the StreamingResponse directly) --------------
 
 
-async def test_stream_emits_snapshot_then_trace_delta():
+async def test_stream_through_the_app_lifespan_receives_a_worker_thread_span(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "pipelines_dir", str(tmp_path))
+    app = create_app()
     broadcaster = get_trace_stream_broadcaster()
-    broadcaster.set_loop(asyncio.get_running_loop())
-    try:
+    baseline = broadcaster.subscriber_count()
+
+    # The lifespan, not the test, binds the broadcaster to the serving loop.
+    async with app.router.lifespan_context(app):
         response = await traces_stream(_FakeRequest())
         body = response.body_iterator
         try:
@@ -118,15 +129,18 @@ async def test_stream_emits_snapshot_then_trace_delta():
             assert snapshot.startswith("event: snapshot")
             assert json.loads(_frame_data(snapshot))["traces"] == []  # buffer cleared in setup
 
-            record_live_span_start(
-                trace_id="t1",
-                span_id="s1",
-                parent_span_id=None,
-                operation_name="hayhooks.pipeline.run",
-                start_time_ms=1000,
-                tags={"hayhooks.pipeline.name": "demo"},
-            )
-            record_live_span_finish(trace_id="t1", span_id="s1", duration_ms=5)
+            def record() -> None:
+                record_live_span_start(
+                    trace_id="t1",
+                    span_id="s1",
+                    parent_span_id=None,
+                    operation_name="hayhooks.pipeline.run",
+                    start_time_ms=1000,
+                    tags={"hayhooks.pipeline.name": "demo"},
+                )
+                record_live_span_finish(trace_id="t1", span_id="s1", duration_ms=5)
+
+            await asyncio.to_thread(record)
 
             trace_frame = await _next_sse_event(body)
             assert trace_frame.startswith("event: trace")
@@ -134,8 +148,65 @@ async def test_stream_emits_snapshot_then_trace_delta():
             assert "t1" in [t["trace_id"] for t in payload["traces"]]
         finally:
             await body.aclose()
-    finally:
-        broadcaster.clear_loop()
+
+    assert broadcaster._loop is None
+    assert broadcaster.subscriber_count() == baseline
+
+
+def _tags(span: dict) -> dict[str, str]:
+    return {tag["key"]: tag["value"] for tag in span["tags"]}
+
+
+@requires_haystack_v3
+async def test_durable_attempt_from_a_worker_thread_reaches_the_dashboard_stream(durable_pipelines_dir, monkeypatch):
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    app = create_app()
+
+    async with app.router.lifespan_context(app):
+        body = (await traces_stream(_FakeRequest())).body_iterator
+        try:
+            await _next_sse_event(body)  # snapshot
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                submitted = await client.post("/jobs/run-durable", json={"value": 1, "wait": True})
+            execution_id = submitted.json()["execution_id"]
+
+            attempt = None
+            while attempt is None:
+                payload = json.loads(_frame_data(await _next_sse_event(body)))
+                spans = [trace["root_span"] for trace in payload["traces"] if not trace["root_span"]["running"]]
+                attempt = next((span for span in spans if span["name"] == "hayhooks.durable.attempt"), None)
+        finally:
+            await body.aclose()
+
+    assert {
+        "hayhooks.pipeline.name": "jobs",
+        "hayhooks.durable.execution_id": execution_id,
+        "hayhooks.durable.attempt": "1",
+        "hayhooks.durable.kind": "pipeline",
+        "hayhooks.success": "true",
+        "hayhooks.checkpoint": "true",
+    }.items() <= _tags(attempt).items()
+
+
+@requires_haystack_v3
+@pytest.mark.parametrize("failure", ["start", "close"])
+async def test_lifespan_clears_the_loop_when_the_durable_runtime_fails(durable_pipelines_dir, monkeypatch, failure):
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    app = create_app()
+
+    async def fail() -> None:
+        raise RuntimeError(failure)
+
+    monkeypatch.setattr(app.state.durable_runtime, failure, fail)
+    broadcaster = get_trace_stream_broadcaster()
+
+    with pytest.raises(RuntimeError, match=failure):
+        async with app.router.lifespan_context(app):
+            assert broadcaster._loop is asyncio.get_running_loop()
+
+    assert broadcaster._loop is None
 
 
 async def test_stream_unsubscribes_on_close():

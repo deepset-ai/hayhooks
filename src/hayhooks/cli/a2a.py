@@ -29,6 +29,7 @@ def run(  # noqa: PLR0913
     import uvicorn
 
     from hayhooks.server.logger import intercept_stdlib_logging, log
+    from hayhooks.server.pipelines.loader import build_immutable_host
     from hayhooks.server.utils.a2a_utils import a2a_import, create_a2a_app
     from hayhooks.server.utils.deploy_utils import deploy_pipelines
     from hayhooks.settings import settings
@@ -53,10 +54,6 @@ def run(  # noqa: PLR0913
         sys.path.append(additional_python_path)
         log.trace("Added '{}' to sys.path", additional_python_path)
 
-    # Deploy the pipelines
-    deploy_pipelines()
-
-    # Setup the Starlette app exposing pipelines as A2A agents
     log.debug(
         "Starting A2A server with host={}, port={}, pipelines_dir={}, external_url={}, v0.3_compat={}",
         host,
@@ -65,7 +62,13 @@ def run(  # noqa: PLR0913
         settings.a2a_external_url or "<derived>",
         settings.a2a_v0_3_compat,
     )
-    app = create_a2a_app(debug=debug)
+    if settings.durable_mode:
+        # The pipeline set is fixed at startup; any loading or agent card error stops the server
+        app = build_immutable_host(pipelines_dir, lambda registry: create_a2a_app(debug=debug, registry=registry))
+    else:
+        # Deploy the pipelines and expose them as A2A agents
+        deploy_pipelines()
+        app = create_a2a_app(debug=debug)
 
     # Run the A2A server
     # NOTE: reload and workers options are not supported in this context

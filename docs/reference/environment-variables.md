@@ -22,7 +22,8 @@ Hayhooks can be configured via environment variables. Most app settings use the 
 ### HAYHOOKS_PIPELINES_DIR
 
 - Default: `./pipelines`
-- Description: Directory containing pipelines to auto-deploy on startup
+- Description: Directory containing pipelines to auto-deploy on startup. In durable mode it must exist,
+  and it is the complete, fixed pipeline set
 
 ### HAYHOOKS_ADDITIONAL_PYTHON_PATH
 
@@ -72,6 +73,9 @@ export HAYHOOKS_STREAMING_COMPONENTS="llm_1, llm_2, llm_3"
 
 ## Deploy Performance
 
+These settings apply to live deployment. Durable mode ignores them: it loads the pipelines
+sequentially at startup and has no deploy or undeploy operations.
+
 ### HAYHOOKS_DEPLOY_CONCURRENCY
 
 - Default: `serialized`
@@ -106,6 +110,55 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=serialized
 # Allow concurrent runtime deploys (advanced)
 export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 ```
+
+## Durable Mode
+
+### HAYHOOKS_DURABLE_MODE
+
+- Default: `false`
+- Description: Fix the pipeline set at startup and host durable wrappers. Pipelines load once from
+  `HAYHOOKS_PIPELINES_DIR`; deploy and undeploy are disabled, so changing a pipeline means restarting
+  the server. See [Durable mode](../features/durable-execution.md#durable-mode).
+
+### HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN
+
+- Default: `false`
+- Description: At the end of the shutdown grace, hand the claims of work that is still running to another
+  process instead of waiting for it. See
+  [Hosts with short kill deadlines](../features/durable-execution.md#hosts-with-short-kill-deadlines).
+
+The remaining durable settings apply only in durable mode, and only when at least one durable wrapper is
+loaded. Redis is the production default; set `HAYHOOKS_DURABLE_STORE=memory` only for local development
+or tests.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `HAYHOOKS_DURABLE_STORE` | `redis` | `redis` or process-local `memory` storage |
+| `HAYHOOKS_DURABLE_REDIS_URL` | `redis://localhost:6379/0` | URL of the worker and viewer Redis clients |
+| `HAYHOOKS_DURABLE_REDIS_KEY_PREFIX` | `hayhooks:durable` | Private Redis key namespace |
+| `HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS` | `100` | Viewer connection pool: concurrent durable SSE streams per process |
+| `HAYHOOKS_DURABLE_TERMINAL_TTL_SECONDS` | `604800` | Terminal record and idempotency retention |
+| `HAYHOOKS_DURABLE_MAX_NONTERMINAL_EXECUTIONS` | `1000` | Admission ceiling per deployment; `0` opts into unlimited admission |
+| `HAYHOOKS_DURABLE_MAX_PAYLOAD_BYTES` | `1000000` | Maximum encoded input/checkpoint/result/error/wait payload |
+| `HAYHOOKS_DURABLE_MAX_PROGRESS_EVENTS` | `100` | Buffered and retained progress events per execution |
+| `HAYHOOKS_DURABLE_MAX_PROGRESS_EVENT_BYTES` | `8192` | Maximum encoded progress event |
+| `HAYHOOKS_DURABLE_MAX_STREAM_CHUNKS` | `100` | Retained SSE display chunks; `0` disables chunks |
+| `HAYHOOKS_DURABLE_MAX_STREAM_CHUNK_BYTES` | `64000` | Maximum encoded display chunk |
+| `HAYHOOKS_DURABLE_WORKER_CONCURRENCY` | `1` | Worker slots per durable deployment and process |
+| `HAYHOOKS_DURABLE_POLL_INTERVAL_SECONDS` | `5.0` | Maximum pickup delay for work submitted on another replica; local submissions wake idle workers immediately |
+| `HAYHOOKS_DURABLE_MAINTENANCE_INTERVAL_SECONDS` | `5.0` | Maximum additional expired-lease recovery delay |
+| `HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS` | `5.0` | Grace before cancelling workers on shutdown; not a bound on shutdown time |
+| `HAYHOOKS_DURABLE_LEASE_DURATION_MS` | `30000` | Fenced claim lease duration |
+| `HAYHOOKS_DURABLE_LEASE_COMMIT_SAFETY_MS` | `1500` | Minimum lease time remaining for owned commits |
+| `HAYHOOKS_DURABLE_MAX_RUN_ATTEMPTS` | `3` | Claim attempts including crash recovery |
+| `HAYHOOKS_DURABLE_MAX_APPLICATION_RETRIES` | `2` | Retries explicitly requested by application code |
+| `HAYHOOKS_DURABLE_RETRY_BASE_DELAY_SECONDS` | `1.0` | Default exponential retry base delay |
+| `HAYHOOKS_DURABLE_RETRY_MAX_DELAY_SECONDS` | `60.0` | Default retry delay ceiling |
+
+See [Durable Operations](../deployment/durable-operations.md) before changing
+polling, leases, retention, capacity, or Redis persistence. Worker polling and
+lease maintenance are independent: lowering one does not make the other run
+more frequently.
 
 ## MCP
 

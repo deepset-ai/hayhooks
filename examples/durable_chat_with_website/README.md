@@ -4,17 +4,13 @@ This opt-in network example fetches up to three public pages with Haystack,
 checkpoints before answer generation, and emits bounded display chunks. It uses
 a deterministic excerpt answer, so no paid model or API key is required.
 
-> [!NOTE]
-> Hayhooks-managed hosting of durable wrappers follows in a later release. In
-> this release, `hayhooks run` rejects this wrapper at startup, so the steps
-> below apply once durable hosting ships. To run durable work today, embed the
-> engine as in the [standalone FastAPI example](../durable_fastapi/).
-
-Start Redis from the repository root. Hayhooks hosting configuration will be
-documented when that feature ships:
+Install the durable extra (it requires Haystack 3.1 or newer), start Redis,
+then Hayhooks in durable mode, from the repository root:
 
 ```bash
+pip install "hayhooks[durable]"
 docker compose -f examples/durable-compose.yaml up -d
+HAYHOOKS_DURABLE_MODE=true hayhooks run --pipelines-dir examples/durable_chat_with_website/pipelines
 ```
 
 ```bash

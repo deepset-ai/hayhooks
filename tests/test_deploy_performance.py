@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.datastructures import State
 
 from hayhooks.server.app import create_app
 from hayhooks.server.pipelines.registry import registry
@@ -133,6 +134,7 @@ async def test_serialized_policy_wraps_with_lock(monkeypatch):
 def test_defer_openapi_rebuild_skips_setup():
     mock_app = MagicMock(spec=FastAPI)
     mock_app.routes = []
+    mock_app.state = State()
 
     deploy_pipeline_yaml(
         pipeline_name="defer_test",
@@ -148,6 +150,7 @@ def test_defer_openapi_rebuild_skips_setup():
 def test_no_defer_calls_setup():
     mock_app = MagicMock(spec=FastAPI)
     mock_app.routes = []
+    mock_app.state = State()
 
     deploy_pipeline_yaml(
         pipeline_name="no_defer_test",

@@ -2,6 +2,10 @@
 
 Hayhooks provides flexible options for deploying Haystack pipelines and agents. This section covers the core concepts of pipeline deployment.
 
+By default the server supports live deployment: it loads the pipelines directory at startup and accepts deploy and
+undeploy requests while running. In [durable mode](../features/durable-execution.md#durable-mode), the pipeline set is
+fixed at startup instead: the deploy and undeploy endpoints and tools are absent, and pipeline changes take a restart.
+
 ## Deployment Methods
 
 ### 1. PipelineWrapper Deployment (Recommended)

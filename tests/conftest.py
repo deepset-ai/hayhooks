@@ -1,4 +1,5 @@
 import shutil
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -18,8 +19,10 @@ from hayhooks.durable.models import CheckpointEnvelope, ExecutionKind
 from hayhooks.durable.store import MemoryExecutionStore, StoreConfig
 from hayhooks.server.app import create_app
 from hayhooks.server.logger import log
+from hayhooks.server.pipelines.loader import REGISTRY_ROOT
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.utils.mcp_utils import create_mcp_server, create_starlette_app
+from hayhooks.server.utils.module_loader import unload_pipeline_modules
 from hayhooks.settings import settings
 from tests.durable_store_contract import ATTEMPTS_ERROR, contract_control, decode_checkpoint
 
@@ -194,6 +197,26 @@ def test_settings():
 @pytest.fixture(scope="session", autouse=True)
 def test_app():
     return create_app()
+
+
+@pytest.fixture
+def durable_pipelines_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """
+    Build apps in durable mode over an empty pipelines directory.
+
+    Immutable loading disables bytecode writing process-wide and replaces the private pipeline
+    modules, so both are restored for the tests that run afterwards.
+    """
+    pipelines_dir = tmp_path / "pipelines"
+    pipelines_dir.mkdir()
+    monkeypatch.setattr(settings, "durable_mode", True)
+    monkeypatch.setattr(settings, "pipelines_dir", str(pipelines_dir))
+    dont_write_bytecode = sys.dont_write_bytecode
+    try:
+        yield pipelines_dir
+    finally:
+        sys.dont_write_bytecode = dont_write_bytecode
+        unload_pipeline_modules(REGISTRY_ROOT)
 
 
 @pytest.fixture

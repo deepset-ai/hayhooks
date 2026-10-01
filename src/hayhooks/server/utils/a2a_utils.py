@@ -11,8 +11,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
+from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.logger import log
-from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.pipelines.registry import (
+    ImmutablePipelineRegistry,
+    PipelineRegistry,
+    require_ordinary_pipelines,
+    resolve_registry,
+)
 from hayhooks.server.tracing import (
     SPAN_A2A_RUN_AGENT,
     build_trace_tags,
@@ -45,18 +51,18 @@ def get_a2a_base_url() -> str:
     return base_url.rstrip("/")
 
 
-def is_a2a_exposable(pipeline_name: str) -> bool:
+def is_a2a_exposable(pipeline_registry: PipelineRegistry, pipeline_name: str) -> bool:
     """
     Whether a deployed pipeline can be exposed as an A2A agent.
 
     A pipeline is exposable when it implements ``run_chat_completion`` or
     ``run_chat_completion_async`` and does not set ``skip_a2a = True``.
     """
-    pipeline_wrapper = registry.get(pipeline_name)
+    pipeline_wrapper = pipeline_registry.get(pipeline_name)
     if pipeline_wrapper is None:
         return False
 
-    metadata = registry.get_metadata(name=pipeline_name) or {}
+    metadata = pipeline_registry.get_metadata(name=pipeline_name) or {}
     if metadata.get("skip_a2a"):
         log.debug("Skipping pipeline '{}': skip_a2a is set", pipeline_name)
         return False
@@ -70,7 +76,7 @@ def is_a2a_exposable(pipeline_name: str) -> bool:
     return exposable
 
 
-def create_agent_card(pipeline_name: str, base_url: str) -> "AgentCard":
+def create_agent_card(pipeline_name: str, base_url: str, pipeline_registry: PipelineRegistry) -> "AgentCard":
     """
     Build an A2A agent card for a deployed pipeline.
 
@@ -79,7 +85,7 @@ def create_agent_card(pipeline_name: str, base_url: str) -> "AgentCard":
     """
     a2a_import.check()
 
-    metadata = registry.get_metadata(name=pipeline_name) or {}
+    metadata = pipeline_registry.get_metadata(name=pipeline_name) or {}
     overrides = metadata.get("a2a_card") or {}
 
     name = overrides.get("name") or pipeline_name
@@ -169,9 +175,11 @@ def _build_openai_messages(context: "RequestContext") -> list[dict]:
     return messages
 
 
-async def _run_chat_completion(pipeline_name: str, context: "RequestContext") -> Any:
+async def _run_chat_completion(
+    pipeline_registry: PipelineRegistry, pipeline_name: str, context: "RequestContext"
+) -> Any:
     """Run the pipeline's chat completion method (async preferred, sync via threadpool)."""
-    pipeline_wrapper: BasePipelineWrapper | None = registry.get(pipeline_name)
+    pipeline_wrapper: BasePipelineWrapper | None = pipeline_registry.get(pipeline_name)
     if pipeline_wrapper is None:
         msg = f"Pipeline '{pipeline_name}' not found"
         raise ValueError(msg)
@@ -252,7 +260,9 @@ async def _stream_result_as_artifact(result: Any, updater: "TaskUpdater") -> Non
     await emit(pending if pending is not None else "", last=True)
 
 
-async def _execute_agent_task(pipeline_name: str, context: "RequestContext", event_queue: "EventQueue") -> None:
+async def _execute_agent_task(
+    pipeline_registry: PipelineRegistry, pipeline_name: str, context: "RequestContext", event_queue: "EventQueue"
+) -> None:
     """
     Run a pipeline's chat completion as an A2A task.
 
@@ -278,7 +288,7 @@ async def _execute_agent_task(pipeline_name: str, context: "RequestContext", eve
         tags=build_trace_tags({"hayhooks.transport": "a2a", "hayhooks.pipeline.name": pipeline_name}),
     ):
         try:
-            result = await _run_chat_completion(pipeline_name, context)
+            result = await _run_chat_completion(pipeline_registry, pipeline_name, context)
             await _stream_result_as_artifact(result, updater)
         except Exception as exc:
             msg = f"Error running pipeline '{pipeline_name}' as A2A agent: {exc}"
@@ -292,7 +302,7 @@ async def _execute_agent_task(pipeline_name: str, context: "RequestContext", eve
     log.debug("Completed A2A task '{}' for pipeline '{}'", task.id, pipeline_name)
 
 
-def create_agent_executor(pipeline_name: str) -> "AgentExecutor":
+def create_agent_executor(pipeline_name: str, pipeline_registry: PipelineRegistry) -> "AgentExecutor":
     """
     Create an ``AgentExecutor`` bridging A2A requests to the given pipeline.
 
@@ -309,7 +319,7 @@ def create_agent_executor(pipeline_name: str) -> "AgentExecutor":
             self.pipeline_name = name
 
         async def execute(self, context: "RequestContext", event_queue: "EventQueue") -> None:
-            await _execute_agent_task(self.pipeline_name, context, event_queue)
+            await _execute_agent_task(pipeline_registry, self.pipeline_name, context, event_queue)
 
         async def cancel(self, context: "RequestContext", event_queue: "EventQueue") -> None:
             # Best-effort: Hayhooks has no pipeline interruption primitive
@@ -320,10 +330,10 @@ def create_agent_executor(pipeline_name: str) -> "AgentExecutor":
     return HayhooksAgentExecutor(pipeline_name)
 
 
-def _create_agent_mount(pipeline_name: str, base_url: str) -> Mount:
-    card = create_agent_card(pipeline_name, base_url)
+def _create_agent_mount(pipeline_registry: PipelineRegistry, pipeline_name: str, base_url: str) -> Mount:
+    card = create_agent_card(pipeline_name, base_url, pipeline_registry)
     request_handler = DefaultRequestHandler(
-        agent_executor=create_agent_executor(pipeline_name),
+        agent_executor=create_agent_executor(pipeline_name, pipeline_registry),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
@@ -340,7 +350,31 @@ def _create_agent_mount(pipeline_name: str, base_url: str) -> Mount:
     return Mount(f"/{pipeline_name}", routes=routes)
 
 
-def create_a2a_app(*, base_url: str | None = None, debug: bool = False) -> Starlette:
+def _mount_exposable_agent(
+    pipeline_registry: PipelineRegistry, pipeline_name: str, base_url: str, *, strict: bool
+) -> Mount | None:
+    """Mount an exposable pipeline's agent; unless *strict*, skip it when it cannot be mounted."""
+    if pipeline_name in _RESERVED_PATHS:
+        if strict:
+            msg = f"Pipeline '{pipeline_name}' uses a path reserved by the A2A server; rename its definition"
+            raise PipelineModeError(msg)
+        log.warning("Skipping pipeline '{}': the path is reserved by the A2A server", pipeline_name)
+        return None
+
+    # One failing agent card (e.g. a malformed a2a_card override) must not
+    # take down the other agents of a mutable registry
+    try:
+        return _create_agent_mount(pipeline_registry, pipeline_name, base_url)
+    except Exception as e:
+        if strict:
+            raise
+        log.opt(exception=True).warning("Skipping pipeline '{}': failed to build A2A agent: {}", pipeline_name, e)
+        return None
+
+
+def create_a2a_app(
+    *, base_url: str | None = None, debug: bool = False, registry: PipelineRegistry | None = None
+) -> Starlette:
     """
     Create a Starlette app exposing deployed pipelines as A2A agents.
 
@@ -350,8 +384,20 @@ def create_a2a_app(*, base_url: str | None = None, debug: bool = False) -> Starl
 
     NOTE: mounts are built from the registry at startup; pipelines deployed or
     undeployed at runtime require a restart to be reflected.
+
+    *registry* defaults to the mutable singleton outside durable mode. With an immutable
+    registry, an exposable pipeline whose agent cannot be mounted fails startup instead of
+    being skipped.
+
+    Raises:
+        PipelineModeError: If an immutable registry has a durable pipeline or a pipeline on a reserved path.
     """
     a2a_import.check()
+
+    pipeline_registry = resolve_registry(registry)
+    strict = isinstance(pipeline_registry, ImmutablePipelineRegistry)
+    if strict:
+        require_ordinary_pipelines(pipeline_registry, "A2A")
 
     base_url = (base_url or get_a2a_base_url()).rstrip("/")
     if "//0.0.0.0" in base_url or "//[::]" in base_url:
@@ -363,22 +409,15 @@ def create_a2a_app(*, base_url: str | None = None, debug: bool = False) -> Starl
 
     agent_names: list[str] = []
     mounts: list[Mount] = []
-    for pipeline_name in registry.get_names():
-        if not is_a2a_exposable(pipeline_name):
+    for pipeline_name in pipeline_registry.get_names():
+        if not is_a2a_exposable(pipeline_registry, pipeline_name):
             continue
 
-        if pipeline_name in _RESERVED_PATHS:
-            log.warning("Skipping pipeline '{}': the path is reserved by the A2A server", pipeline_name)
+        mount = _mount_exposable_agent(pipeline_registry, pipeline_name, base_url, strict=strict)
+        if mount is None:
             continue
 
-        # One failing agent card (e.g. a malformed a2a_card override) must not
-        # take down the other agents
-        try:
-            mounts.append(_create_agent_mount(pipeline_name, base_url))
-        except Exception as e:
-            log.opt(exception=True).warning("Skipping pipeline '{}': failed to build A2A agent: {}", pipeline_name, e)
-            continue
-
+        mounts.append(mount)
         agent_names.append(pipeline_name)
         log.info("Exposing pipeline '{}' as A2A agent at {}/{}/", pipeline_name, base_url, pipeline_name)
 

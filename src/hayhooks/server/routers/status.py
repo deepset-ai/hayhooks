@@ -1,7 +1,5 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-
-from hayhooks.server.pipelines.registry import registry
 
 router = APIRouter()
 
@@ -9,6 +7,7 @@ router = APIRouter()
 class StatusResponse(BaseModel):
     status: str = Field(description="The current status of the system, 'Up!' when operational")
     pipelines: list[str] = Field(description="List of all available pipeline names")
+    durable_mode: bool = Field(description="Whether the pipeline set is fixed at startup and deployment is disabled")
     durable: dict[str, object] = Field(description="Durable deployment health and bounded store counts")
 
     model_config = {
@@ -31,9 +30,16 @@ class PipelineStatusResponse(BaseModel):
     summary="Get status of all pipelines",
     description="Returns the system status and a list of all available pipelines.",
 )
-async def status_all() -> StatusResponse:
-    pipelines = registry.get_names()
-    return StatusResponse(status="Up!", pipelines=pipelines, durable={"healthy": True, "deployments": {}})
+async def status_all(request: Request) -> StatusResponse:
+    state = request.app.state
+    runtime = state.durable_runtime
+    durable = await runtime.health() if runtime is not None else {"healthy": True, "deployments": {}}
+    return StatusResponse(
+        status="Up!" if durable["healthy"] else "Degraded",
+        pipelines=state.pipeline_registry.get_names(),
+        durable_mode=state.durable_mode,
+        durable=durable,
+    )
 
 
 @router.get(
@@ -44,7 +50,7 @@ async def status_all() -> StatusResponse:
     summary="Get status of a specific pipeline",
     description="Returns the status of a specific pipeline. Returns 404 if the pipeline doesn't exist.",
 )
-async def status(pipeline_name: str) -> PipelineStatusResponse:
-    if pipeline_name not in registry.get_names():
+async def status(pipeline_name: str, request: Request) -> PipelineStatusResponse:
+    if pipeline_name not in request.app.state.pipeline_registry.get_names():
         raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_name}' not found")
     return PipelineStatusResponse(status="Up!", pipeline=pipeline_name)

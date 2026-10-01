@@ -1,8 +1,12 @@
-from typing import Any
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, TypeAlias
 
-from hayhooks.server.exceptions import PipelineNotFoundError
+from hayhooks.server.exceptions import PipelineModeError, PipelineNotFoundError
 from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
-from hayhooks.server.utils.module_loader import reject_durable_wrapper
+from hayhooks.server.utils.module_loader import is_durable_wrapper, reject_durable_wrapper
+from hayhooks.settings import settings
 
 
 class _PipelineRegistry:
@@ -79,3 +83,68 @@ class _PipelineRegistry:
 
 
 registry = _PipelineRegistry()
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineRegistration:
+    """One pipeline of an immutable registry; ``metadata`` is a shallow, read-only snapshot."""
+
+    name: str
+    wrapper: BasePipelineWrapper
+    metadata: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+
+class ImmutablePipelineRegistry:
+    """Pipelines fixed at startup, with the read methods of the mutable registry."""
+
+    def __init__(self, registrations: Iterable[PipelineRegistration] = ()) -> None:
+        members: dict[str, PipelineRegistration] = {}
+        for registration in registrations:
+            if registration.name in members:
+                msg = f"Pipeline '{registration.name}' is registered more than once"
+                raise ValueError(msg)
+            members[registration.name] = registration
+        self._registrations = MappingProxyType(members)
+
+    def get(self, name: str) -> BasePipelineWrapper | None:
+        registration = self._registrations.get(name)
+        return None if registration is None else registration.wrapper
+
+    def get_metadata(self, name: str) -> Mapping[str, Any] | None:
+        registration = self._registrations.get(name)
+        return None if registration is None else registration.metadata
+
+    def get_names(self) -> list[str]:
+        return list(self._registrations)
+
+
+def require_ordinary_pipelines(pipeline_registry: ImmutablePipelineRegistry, server: str) -> None:
+    """
+    Reject durable pipelines in a standalone server, which has no durable runtime.
+
+    Raises:
+        PipelineModeError: If *pipeline_registry* holds a durable wrapper.
+    """
+    for name in pipeline_registry.get_names():
+        if (wrapper := pipeline_registry.get(name)) is not None and is_durable_wrapper(wrapper):
+            msg = (
+                f"Pipeline '{name}' is durable and cannot be served by the standalone {server} server; "
+                "serve durable pipelines with the main HTTP server (hayhooks run)"
+            )
+            raise PipelineModeError(msg)
+
+
+PipelineRegistry: TypeAlias = _PipelineRegistry | ImmutablePipelineRegistry
+
+
+def resolve_registry(pipeline_registry: PipelineRegistry | None) -> PipelineRegistry:
+    """Return *pipeline_registry*, defaulting to the mutable singleton outside durable mode."""
+    if pipeline_registry is not None:
+        return pipeline_registry
+    if settings.durable_mode:
+        msg = "Durable mode requires an explicit pipeline registry"
+        raise PipelineModeError(msg)
+    return registry

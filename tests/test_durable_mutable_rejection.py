@@ -153,6 +153,7 @@ def test_http_durable_overwrite_is_rejected_and_preserves_ordinary_pipeline(test
 
         assert rejected.status_code == 422
         assert "cannot be deployed through live deployment" in rejected.json()["detail"]
+        assert "HAYHOOKS_DURABLE_MODE=true" in rejected.json()["detail"]
         assert (Path(test_settings.pipelines_dir) / "demo" / "pipeline_wrapper.py").read_text() == ORDINARY_SOURCE
         assert sys.modules["demo.pipeline_wrapper"] is old_module
         assert registry.get_metadata("demo") is old_metadata
@@ -194,19 +195,33 @@ def test_commit_rejects_durable_overwrite_before_removing_existing_pipeline(
         assert client.post("/demo/run", json={"value": 21}).json() == {"result": 42}
 
 
-def test_ordinary_server_loads_no_durable_runtime_or_redis(tmp_path: Path) -> None:
+@pytest.mark.parametrize("durable_mode", ["false", "true"])
+def test_ordinary_server_loads_no_durable_runtime_redis_or_optional_transports(
+    tmp_path: Path, durable_mode: str
+) -> None:
     (tmp_path / "ordinary").mkdir()
     (tmp_path / "ordinary" / "pipeline_wrapper.py").write_text(ORDINARY_SOURCE)
     script = textwrap.dedent(
         """
         import sys
 
+
+        class BlockOptionalTransports:
+            def find_spec(self, name, path=None, target=None):
+                if name.split(".")[0] in ("mcp", "a2a"):
+                    raise ModuleNotFoundError(name)
+
+
+        sys.meta_path.insert(0, BlockOptionalTransports())
+
         from fastapi.testclient import TestClient
 
         from hayhooks.server.app import create_app
 
-        with TestClient(create_app()) as client:
+        app = create_app()
+        with TestClient(app) as client:
             assert client.post("/ordinary/run", json={"value": 2}).json() == {"result": 4}
+        assert app.state.durable_runtime is None and app.state.durable_redis_clients == ()
 
         # The wrapper base class needs DurableContext; nothing may load the runtime, transports, or Redis.
         durable = {name for name in sys.modules if name.startswith("hayhooks.durable")}
@@ -219,7 +234,7 @@ def test_ordinary_server_loads_no_durable_runtime_or_redis(tmp_path: Path) -> No
     subprocess.run(  # noqa: S603
         [sys.executable, "-c", script],
         check=True,
-        env={**os.environ, "HAYHOOKS_PIPELINES_DIR": str(tmp_path)},
+        env={**os.environ, "HAYHOOKS_PIPELINES_DIR": str(tmp_path), "HAYHOOKS_DURABLE_MODE": durable_mode},
         timeout=60,
     )
 

@@ -4,18 +4,18 @@ This local example demonstrates detached execution, a Pipeline checkpoint,
 one bounded retry, typed approval/resume, cooperative cancellation, durable
 progress, and SSE output without a paid API.
 
-> [!NOTE]
-> Hayhooks-managed hosting of durable wrappers follows in a later release. In
-> this release, `hayhooks run` rejects this wrapper at startup, so the steps
-> below apply once durable hosting ships. To run durable work today, embed the
-> engine as in the [standalone FastAPI example](../durable_fastapi/).
-
-Start Redis from the repository root. Hayhooks hosting configuration will be
-documented when that feature ships:
+Install the durable extra (it requires Haystack 3.1 or newer), start Redis,
+then Hayhooks in durable mode, from the repository root:
 
 ```bash
+pip install "hayhooks[durable]"
 docker compose -f examples/durable-compose.yaml up -d
+HAYHOOKS_DURABLE_MODE=true hayhooks run --pipelines-dir examples/durable_execution/pipelines
 ```
+
+Durable mode loads the pipelines directory once at startup and serves the
+durable wrapper's `/run-durable` and execution routes; see
+[Durable mode](../../docs/features/durable-execution.md#durable-mode).
 
 Submit work:
 
@@ -33,7 +33,8 @@ curl -X POST http://localhost:1416/durable_execution/executions/EXECUTION_ID/res
 curl -N http://localhost:1416/durable_execution/executions/EXECUTION_ID/stream
 ```
 
-Restart Hayhooks after the `checkpoint` progress event to exercise recovery.
+Restart Hayhooks with the same command after the `checkpoint` progress event
+to exercise recovery.
 The `prepare` component is not repeated after its saved boundary. Execution is
 at least once: any real external write should use an idempotency key such as
 `f"{context.execution_id}:publish"`.

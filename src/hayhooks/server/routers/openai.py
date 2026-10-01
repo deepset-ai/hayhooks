@@ -17,7 +17,7 @@ from haystack.dataclasses import StreamingChunk
 from starlette.datastructures import Headers
 
 from hayhooks.server.logger import log
-from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.pipelines.registry import PipelineRegistry
 from hayhooks.server.tracing import (
     SPAN_OPENAI_FILE_UPLOAD,
     SPAN_OPENAI_RUN,
@@ -62,10 +62,6 @@ _RESPONSE_DISPATCH = _OpenAIDispatch(
 )
 
 
-def _list_models() -> list[str]:
-    return registry.get_names()
-
-
 def _chunk_to_text(chunk: Any) -> str:
     if hasattr(chunk, "content"):
         return chunk.content
@@ -84,9 +80,9 @@ async def _collect_async_generator(gen: AsyncGenerator) -> str:
     return "".join([_chunk_to_text(chunk) async for chunk in gen])
 
 
-def _resolve_pipeline_wrapper(model: str) -> BasePipelineWrapper:
+def _resolve_pipeline_wrapper(pipeline_registry: PipelineRegistry, model: str) -> BasePipelineWrapper:
     """Look up *model* in the registry, raising 404 if it isn't a pipeline wrapper."""
-    pipeline_wrapper = registry.get(model)
+    pipeline_wrapper = pipeline_registry.get(model)
     if not isinstance(pipeline_wrapper, BasePipelineWrapper):
         raise HTTPException(status_code=404, detail=f"Pipeline '{model}' not found or not a pipeline wrapper")
     return pipeline_wrapper
@@ -143,7 +139,8 @@ async def _normalize_result(result: Any, *, stream_requested: bool) -> str | Gen
     return result
 
 
-async def _run_pipeline_method(
+async def _run_pipeline_method(  # noqa: PLR0913
+    pipeline_registry: PipelineRegistry,
     dispatch: _OpenAIDispatch,
     *,
     model: str,
@@ -164,7 +161,7 @@ async def _run_pipeline_method(
     )
     if stream_requested:
         try:
-            wrapper = _resolve_pipeline_wrapper(model)
+            wrapper = _resolve_pipeline_wrapper(pipeline_registry, model)
             mode, method_name = _select_execution_mode(wrapper, dispatch)
             result = await _invoke_pipeline_method(
                 wrapper, mode=mode, method_name=method_name, call_kwargs=call_kwargs, headers=headers
@@ -191,7 +188,7 @@ async def _run_pipeline_method(
         return normalized_result
 
     with trace_operation(SPAN_OPENAI_RUN, tags=trace_tags) as span:
-        wrapper = _resolve_pipeline_wrapper(model)
+        wrapper = _resolve_pipeline_wrapper(pipeline_registry, model)
         mode, method_name = _select_execution_mode(wrapper, dispatch)
         span.set_tag("hayhooks.openai.execution_mode", mode)
         result = await _invoke_pipeline_method(
@@ -200,32 +197,18 @@ async def _run_pipeline_method(
         return await _normalize_result(result, stream_requested=stream_requested)
 
 
-async def _run_completion(
-    model: str, messages: list[dict[str, Any]], body: dict[str, Any], headers: dict[str, str] | None = None
-) -> str | Generator | AsyncGenerator:
-    return await _run_pipeline_method(
-        _CHAT_COMPLETION_DISPATCH, model=model, kwargs={"messages": messages}, body=body, headers=headers
-    )
-
-
-async def _run_response(
-    model: str, input_items: list[dict[str, Any]], body: dict[str, Any], headers: dict[str, str] | None = None
-) -> str | Generator | AsyncGenerator:
-    return await _run_pipeline_method(
-        _RESPONSE_DISPATCH, model=model, kwargs={"input_items": input_items}, body=body, headers=headers
-    )
-
-
-def _find_file_upload_wrapper() -> BasePipelineWrapper | None:
+def _find_file_upload_wrapper(pipeline_registry: PipelineRegistry) -> BasePipelineWrapper | None:
     """Find the first registered pipeline wrapper that implements ``run_file_upload``."""
-    for name in registry.get_names():
-        wrapper = registry.get(name)
+    for name in pipeline_registry.get_names():
+        wrapper = pipeline_registry.get(name)
         if isinstance(wrapper, BasePipelineWrapper) and wrapper._is_run_file_upload_implemented:
             return wrapper
     return None
 
 
-async def _run_file_upload(filename: str | None, content_type: str | None, content: bytes, purpose: str) -> FileObject:
+async def _run_file_upload(
+    pipeline_registry: PipelineRegistry, filename: str | None, content_type: str | None, content: bytes, purpose: str
+) -> FileObject:
     with trace_operation(
         SPAN_OPENAI_FILE_UPLOAD,
         tags=build_trace_tags(
@@ -238,7 +221,7 @@ async def _run_file_upload(filename: str | None, content_type: str | None, conte
             }
         ),
     ):
-        wrapper = _find_file_upload_wrapper()
+        wrapper = _find_file_upload_wrapper(pipeline_registry)
         if wrapper is not None:
             result = await run_in_threadpool(wrapper.run_file_upload, filename, content_type, content, purpose)
             if isinstance(result, FileObject):
@@ -269,39 +252,60 @@ async def _run_file_upload(filename: str | None, content_type: str | None, conte
         )
 
 
-router = APIRouter()
+def create_openai_router(pipeline_registry: PipelineRegistry) -> APIRouter:
+    """Create the OpenAI-compatible routes, looking pipelines up in *pipeline_registry* on every call."""
 
-router.include_router(
-    create_models_router(
-        list_models=_list_models,
-        owned_by="hayhooks",
-        tags=["openai"],
-    )
-)
+    def list_models() -> list[str]:
+        return pipeline_registry.get_names()
 
-router.include_router(
-    create_chat_completion_router(
-        list_models=_list_models,
-        run_completion=_run_completion,
-        owned_by="hayhooks",
-        tags=["openai"],
-        include_models_endpoints=False,
-    )
-)
+    async def run_completion(
+        model: str, messages: list[dict[str, Any]], body: dict[str, Any], headers: dict[str, str] | None = None
+    ) -> str | Generator | AsyncGenerator:
+        return await _run_pipeline_method(
+            pipeline_registry,
+            _CHAT_COMPLETION_DISPATCH,
+            model=model,
+            kwargs={"messages": messages},
+            body=body,
+            headers=headers,
+        )
 
-router.include_router(
-    create_responses_router(
-        list_models=_list_models,
-        run_response=_run_response,
-        owned_by="hayhooks",
-        tags=["openai"],
-        include_models_endpoints=False,
-    )
-)
+    async def run_response(
+        model: str, input_items: list[dict[str, Any]], body: dict[str, Any], headers: dict[str, str] | None = None
+    ) -> str | Generator | AsyncGenerator:
+        return await _run_pipeline_method(
+            pipeline_registry,
+            _RESPONSE_DISPATCH,
+            model=model,
+            kwargs={"input_items": input_items},
+            body=body,
+            headers=headers,
+        )
 
-router.include_router(
-    create_files_router(
-        run_file_upload=_run_file_upload,
-        tags=["openai"],
+    async def run_file_upload(
+        filename: str | None, content_type: str | None, content: bytes, purpose: str
+    ) -> FileObject:
+        return await _run_file_upload(pipeline_registry, filename, content_type, content, purpose)
+
+    router = APIRouter()
+    router.include_router(create_models_router(list_models=list_models, owned_by="hayhooks", tags=["openai"]))
+    router.include_router(
+        create_chat_completion_router(
+            list_models=list_models,
+            run_completion=run_completion,
+            owned_by="hayhooks",
+            tags=["openai"],
+            include_models_endpoints=False,
+        )
     )
-)
+    router.include_router(
+        create_responses_router(
+            list_models=list_models,
+            run_response=run_response,
+            owned_by="hayhooks",
+            tags=["openai"],
+            include_models_endpoints=False,
+        )
+    )
+    router.include_router(create_files_router(run_file_upload=run_file_upload, tags=["openai"]))
+    return router

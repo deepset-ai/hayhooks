@@ -3,10 +3,12 @@ import os
 import sys
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AsyncExitStack
 from contextvars import Context, copy_context
 from functools import lru_cache
 from os import PathLike
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 # Set CHAINLIT_APP_ROOT before any Chainlit imports (must be done before import)
 # ruff: noqa: E402
@@ -18,15 +20,19 @@ if _chainlit_app_dir.exists():
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Match, Mount, compile_path
 
 from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
+from hayhooks.server.pipelines.loader import build_immutable_host
+from hayhooks.server.pipelines.registry import ImmutablePipelineRegistry, PipelineRegistry, registry
 from hayhooks.server.routers import (
+    create_openai_router,
     dashboard_router,
     deploy_router,
     draw_router,
-    openai_router,
     status_router,
     undeploy_router,
 )
@@ -35,9 +41,12 @@ from hayhooks.server.tracing import (
     build_trace_tags,
     configure_tracing,
     instrument_fastapi_app,
+    trace_durable_runner,
     trace_operation,
 )
+from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
 from hayhooks.server.utils.deploy_utils import (
+    _build_run_route,
     commit_prepared_pipeline,
     deploy_pipeline_files,
     deploy_pipeline_yaml,
@@ -45,10 +54,15 @@ from hayhooks.server.utils.deploy_utils import (
     prepare_pipeline_yaml,
     read_pipeline_files_from_dir,
     rebuild_openapi,
+    require_live_deployment,
 )
 from hayhooks.server.utils.live_trace_stream import get_trace_stream_broadcaster
 from hayhooks.server.utils.models import PreparedPipeline
+from hayhooks.server.utils.module_loader import inspect_durable_runner, is_durable_wrapper
 from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy, check_cors_settings, settings
+
+if TYPE_CHECKING:
+    from hayhooks.durable.store import ExecutionStore, StoreConfig
 
 
 def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
@@ -108,7 +122,11 @@ def init_pipeline_dir(pipelines_dir: PathLike | str) -> str:
 
     Returns:
         str: Path to the pipelines directory
+
+    Raises:
+        PipelineModeError: In durable mode, which never creates the directory.
     """
+    require_live_deployment()
     pipelines_dir = Path(pipelines_dir)
 
     if not pipelines_dir.exists():
@@ -215,7 +233,11 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
     Args:
         app: FastAPI application instance
         pipelines_dir: Path to the pipelines directory
+
+    Raises:
+        PipelineModeError: In durable mode, or if a wrapper is durable.
     """
+    require_live_deployment(app)
     pipelines_dir = init_pipeline_dir(pipelines_dir)
     log.info("Pipelines dir set to: '{}'", pipelines_dir)
     pipelines_path = Path(pipelines_dir)
@@ -250,15 +272,31 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    if settings.pipelines_dir:
-        deploy_pipelines(app, settings.pipelines_dir)
-
     # Capture the running loop so synchronous span recording can wake SSE
     # subscribers via call_soon_threadsafe.
     broadcaster = get_trace_stream_broadcaster()
     broadcaster.set_loop(asyncio.get_running_loop())
     try:
-        yield
+        runtime = app.state.durable_runtime
+        try:
+            if not app.state.durable_mode and settings.pipelines_dir:
+                deploy_pipelines(app, settings.pipelines_dir)
+            if runtime is not None:
+                await runtime.start()
+            yield
+        finally:
+            if runtime is not None:
+                try:
+                    # Closing also ends open durable SSE streams before their viewer client goes away.
+                    await runtime.close()
+                finally:
+                    # ponytail: retained threads can delay graceful shutdown past the grace period;
+                    # process isolation is the upgrade path for an enforceable execution deadline.
+                    await runtime.wait_drained()
+                    # Reached only after drainage: retained work keeps Redis until it no longer owns claims.
+                    async with AsyncExitStack() as clients:
+                        for client in app.state.durable_redis_clients:
+                            clients.push_async_callback(client.aclose)
     finally:
         broadcaster.clear_loop()
 
@@ -293,9 +331,14 @@ def create_app() -> FastAPI:
     - Configures root path from settings if provided
     - Includes all router endpoints (status, draw, deploy, undeploy)
 
+    With ``durable_mode`` enabled, the pipelines load once from ``pipelines_dir``: deploy and
+    undeploy routes are absent, and durable wrappers are hosted by a fixed durable runtime.
+    The mode is read once here; changing the setting later does not change a built app.
+
     Returns:
         FastAPI: Configured FastAPI application instance
     """
+    # Durable mode runs wrapper setup() while building the app, so logging, shared code, and tracing come first.
     intercept_stdlib_logging(
         settings.intercepted_loggers,
         access_log_excluded_path_prefixes=settings.access_log_excluded_path_prefixes,
@@ -305,6 +348,15 @@ def create_app() -> FastAPI:
         sys.path.append(additional_path)
         log.trace("Added '{}' to sys.path", additional_path)
 
+    configure_tracing()
+
+    if settings.durable_mode:
+        return build_immutable_host(settings.pipelines_dir, _build_app)
+    return _build_app(registry)
+
+
+def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
+    durable_mode = isinstance(pipeline_registry, ImmutablePipelineRegistry)
     app_params: dict = {
         "lifespan": lifespan,
         "title": APP_TITLE,
@@ -316,8 +368,11 @@ def create_app() -> FastAPI:
         app_params["root_path"] = root_path
 
     app = FastAPI(**app_params)
+    app.state.durable_mode = durable_mode
+    app.state.pipeline_registry = pipeline_registry
+    app.state.durable_runtime = None
+    app.state.durable_redis_clients = ()
 
-    configure_tracing()
     app.add_middleware(RequestIdMiddleware)
 
     # Check CORS settings before adding middleware
@@ -337,9 +392,10 @@ def create_app() -> FastAPI:
     # Include all routers
     app.include_router(status_router)
     app.include_router(draw_router)
-    app.include_router(deploy_router)
-    app.include_router(undeploy_router)
-    app.include_router(openai_router)
+    if not durable_mode:
+        app.include_router(deploy_router)
+        app.include_router(undeploy_router)
+    app.include_router(create_openai_router(pipeline_registry))
     app.include_router(dashboard_router, prefix=settings.dashboard_path)
 
     _mount_dashboard_ui(app)
@@ -348,9 +404,136 @@ def create_app() -> FastAPI:
     if settings.chainlit_enabled:
         _mount_chainlit_ui(app)
 
+    if isinstance(pipeline_registry, ImmutablePipelineRegistry):
+        _add_immutable_pipelines(app, pipeline_registry)
+
     instrument_fastapi_app(app)
 
     return app
+
+
+def _add_immutable_pipelines(app: FastAPI, pipeline_registry: ImmutablePipelineRegistry) -> None:
+    """Add the fixed run routes and durable deployments after every fixed route and mount exists."""
+    wrappers = {
+        name: wrapper for name in pipeline_registry.get_names() if (wrapper := pipeline_registry.get(name)) is not None
+    }
+    # A fixed route or mount that matches a pipeline's run path would shadow the routes under /{name}/.
+    if conflicts := [name for name in wrappers if _matches_existing_route(app, f"/{name}/run")]:
+        msg = f"Pipeline names {conflicts} conflict with server routes or mounts; rename their definitions"
+        raise PipelineModeError(msg)
+
+    # Durable-only and chat-only wrappers have no ordinary run endpoint.
+    for name, wrapper in wrappers.items():
+        if route := _build_run_route(name, wrapper):
+            route_kwargs, _metadata = route
+            app.add_api_route(**route_kwargs)
+    _add_durable_deployments(app, {name: wrapper for name, wrapper in wrappers.items() if is_durable_wrapper(wrapper)})
+
+
+def _matches_existing_route(app: FastAPI, path: str) -> bool:
+    scope = {"type": "http", "method": "POST", "path": path, "root_path": ""}
+    path_regex, _, _ = compile_path(path)
+    return any(
+        route.matches(scope)[0] is not Match.NONE
+        # Also catch mounts within a parameterized path, e.g. /jobs/executions/<id>.
+        or (isinstance(route, Mount) and path_regex.fullmatch(route.path) is not None)
+        for route in app.router.routes
+    )
+
+
+def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipelineWrapper]) -> None:
+    """Construct one fixed durable deployment and router per durable wrapper; nothing connects yet."""
+    if not durable_wrappers:
+        return
+
+    from hayhooks.durable.fastapi import create_durable_router
+    from hayhooks.durable.haystack import HaystackDurableAdapter
+    from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, RuntimeConfig
+    from hayhooks.durable.store import MemoryExecutionStore, StoreConfig
+
+    store_config = StoreConfig(
+        lease_commit_safety_ms=settings.durable_lease_commit_safety_ms,
+        terminal_ttl_seconds=settings.durable_terminal_ttl_seconds,
+        max_nonterminal_executions=settings.durable_max_nonterminal_executions,
+        max_payload_bytes=settings.durable_max_payload_bytes,
+        max_progress_events=settings.durable_max_progress_events,
+        max_progress_event_bytes=settings.durable_max_progress_event_bytes,
+        max_stream_chunks=settings.durable_max_stream_chunks,
+        max_stream_chunk_bytes=settings.durable_max_stream_chunk_bytes,
+    )
+    runtime_config = RuntimeConfig(
+        worker_concurrency=settings.durable_worker_concurrency,
+        poll_interval_seconds=settings.durable_poll_interval_seconds,
+        maintenance_interval_seconds=settings.durable_maintenance_interval_seconds,
+        shutdown_grace_seconds=settings.durable_shutdown_grace_seconds,
+        lease_duration_ms=settings.durable_lease_duration_ms,
+        max_run_attempts=settings.durable_max_run_attempts,
+        max_application_retries=settings.durable_max_application_retries,
+        retry_base_delay_seconds=settings.durable_retry_base_delay_seconds,
+        retry_max_delay_seconds=settings.durable_retry_max_delay_seconds,
+        release_running_on_close=settings.durable_release_running_on_shutdown,
+    )
+
+    deployments = []
+    for name, wrapper in durable_wrappers.items():
+        try:
+            runner, request_model, result_model = inspect_durable_runner(wrapper)
+            revision = cast(str, wrapper.durable_revision)
+            adapter = HaystackDurableAdapter(wrapper.pipeline)
+            store: ExecutionStore
+            if settings.durable_store == "memory":
+                store = MemoryExecutionStore(name, config=store_config)
+            else:
+                store = _redis_store(app, name, store_config)
+            deployment = DurableDeployment(
+                name,
+                revision,
+                store,
+                request_model,
+                trace_durable_runner(name, revision, adapter.kind.value, runner),
+                kind=adapter.kind,
+                result_model=result_model,
+                resume_model=wrapper.durable_resume_model,
+                adapter=adapter,
+                config=runtime_config,
+            )
+        except Exception as error:
+            msg = f"Failed to build the durable deployment of pipeline '{name}': {error}"
+            raise PipelineModeError(msg) from error
+        router = create_durable_router(deployment, owner_id_dependency=None)
+        if conflicts := [
+            route.path
+            for route in router.routes
+            if isinstance(route, APIRoute) and _matches_existing_route(app, f"/{name}{route.path}")
+        ]:
+            msg = f"Pipeline '{name}' routes {conflicts} conflict with server routes or mounts; rename its definition"
+            raise PipelineModeError(msg)
+        app.include_router(router, prefix=f"/{name}")
+        deployments.append(deployment)
+    app.state.durable_runtime = DurableRuntime(tuple(deployments))
+
+
+def _redis_store(app: FastAPI, name: str, store_config: "StoreConfig") -> "ExecutionStore":
+    """Build a Redis store on the app's worker and viewer clients, created on first use and unconnected."""
+    # Imported first: it raises the install hint when the durable extra is missing.
+    from hayhooks.durable.redis import RedisExecutionStore
+
+    if not app.state.durable_redis_clients:
+        from redis.asyncio import Redis
+
+        # Blocking SSE reads use the viewer client, so viewers cannot starve worker heartbeats of connections.
+        app.state.durable_redis_clients = (
+            Redis.from_url(settings.durable_redis_url),
+            Redis.from_url(settings.durable_redis_url, max_connections=settings.durable_redis_max_viewers),
+        )
+    worker_client, viewer_client = app.state.durable_redis_clients
+    return RedisExecutionStore(
+        worker_client,
+        name,
+        viewer_client=viewer_client,
+        config=store_config,
+        key_prefix=settings.durable_redis_key_prefix,
+    )
 
 
 def run_app(

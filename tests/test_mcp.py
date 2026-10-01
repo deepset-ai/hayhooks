@@ -52,13 +52,13 @@ async def deploy_chat_with_website_mcp_skip():
 
 @pytest.mark.asyncio
 async def test_list_pipelines_as_tools_no_pipelines():
-    tools = await list_pipelines_as_tools()
+    tools = await list_pipelines_as_tools(registry)
     assert len(tools) == 0
 
 
 @pytest.mark.asyncio
 async def test_list_pipelines_as_tools(deploy_chat_with_website_mcp):
-    tools = await list_pipelines_as_tools()
+    tools = await list_pipelines_as_tools(registry)
 
     assert len(tools) == 1
     assert tools[0].name == "chat_with_website"
@@ -84,7 +84,7 @@ async def test_list_pipeline_without_description():
     }
     deploy_pipeline_files(pipeline_name="chat_with_website", files=files, save_files=False)
 
-    tools = await list_pipelines_as_tools()
+    tools = await list_pipelines_as_tools(registry)
 
     assert len(tools) == 1
     assert tools[0].name == "chat_with_website"
@@ -94,7 +94,7 @@ async def test_list_pipeline_without_description():
 @pytest.mark.asyncio
 async def test_fail_to_run_pipeline_as_tool():
     with pytest.raises(ValueError):
-        await run_pipeline_as_tool("non_existent_pipeline", {})
+        await run_pipeline_as_tool(registry, "non_existent_pipeline", {})
 
 
 @pytest.mark.asyncio
@@ -102,7 +102,9 @@ async def test_run_pipeline_as_tool_returns_text_content(deploy_chat_with_websit
     from mcp.types import TextContent
 
     result = await run_pipeline_as_tool(
-        "chat_with_website", {"urls": ["https://www.google.com"], "question": "What is the capital of France?"}
+        registry,
+        "chat_with_website",
+        {"urls": ["https://www.google.com"], "question": "What is the capital of France?"},
     )
 
     assert isinstance(result, list)
@@ -113,7 +115,9 @@ async def test_run_pipeline_as_tool_returns_text_content(deploy_chat_with_websit
 
 @pytest.mark.asyncio
 async def test_run_pipeline_as_tool_emits_trace_span(deploy_chat_with_website_mcp, recording_tracer):
-    await run_pipeline_as_tool("chat_with_website", {"urls": ["https://www.google.com"], "question": "Trace this"})
+    await run_pipeline_as_tool(
+        registry, "chat_with_website", {"urls": ["https://www.google.com"], "question": "Trace this"}
+    )
 
     spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_MCP_RUN_PIPELINE_TOOL]
     assert spans
@@ -123,7 +127,7 @@ async def test_run_pipeline_as_tool_emits_trace_span(deploy_chat_with_website_mc
 
 @pytest.mark.asyncio
 async def test_skip_pipeline_from_mcp_listing(deploy_chat_with_website_mcp_skip):
-    tools = await list_pipelines_as_tools()
+    tools = await list_pipelines_as_tools(registry)
     assert len(tools) == 0
 
 

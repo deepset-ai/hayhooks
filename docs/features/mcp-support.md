@@ -65,7 +65,10 @@ client = mcp.Client("http://localhost:1417/sse")
 
 ## Core MCP Tools
 
-Hayhooks provides core tools for managing pipelines:
+Hayhooks provides core tools for managing pipelines. With `HAYHOOKS_DURABLE_MODE=true`, `hayhooks mcp run` loads its
+pipelines once at startup like the main server's [durable mode](durable-execution.md#durable-mode): `deploy_pipeline`
+and `undeploy_pipeline` are neither listed nor callable, no pipeline may be named after a core tool, and a durable
+wrapper fails startup, since only the main HTTP server runs durable workers.
 
 ### get_all_pipeline_statuses
 

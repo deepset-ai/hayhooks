@@ -9,8 +9,12 @@ from httpx import ASGITransport, AsyncClient
 
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.routers.deploy import router as deploy_router
-from hayhooks.server.routers.openai import _run_completion, _run_response
-from hayhooks.server.routers.openai import router as openai_router
+from hayhooks.server.routers.openai import (
+    _CHAT_COMPLETION_DISPATCH,
+    _RESPONSE_DISPATCH,
+    _run_pipeline_method,
+    create_openai_router,
+)
 from hayhooks.server.utils.a2a_utils import _run_chat_completion
 from hayhooks.server.utils.mcp_utils import list_pipelines_as_tools, run_pipeline_as_tool
 from hayhooks.settings import settings
@@ -36,7 +40,7 @@ def headers_client():
     registry.clear()
     app = FastAPI()
     app.include_router(deploy_router)
-    app.include_router(openai_router)
+    app.include_router(create_openai_router(registry))
     with TestClient(app) as client:
         yield client
     registry.clear()
@@ -146,21 +150,24 @@ def test_multipart_headers_are_injected_outside_the_form(headers_client, method,
 @pytest.mark.mcp
 async def test_injected_headers_stay_out_of_mcp_schema_and_arguments(headers_client, method):
     deploy(headers_client, wrapper_source(method))
-    tools = await list_pipelines_as_tools()
+    tools = await list_pipelines_as_tools(registry)
     assert set(tools[0].inputSchema["properties"]) == {"query"}
-    result = await run_pipeline_as_tool("headers_test", {"query": "hi"})
+    result = await run_pipeline_as_tool(registry, "headers_test", {"query": "hi"})
     assert result[0].text == "no-context"
     with pytest.raises(ValueError, match="cannot be supplied as pipeline arguments"):
-        await run_pipeline_as_tool("headers_test", {"query": "hi", "headers": {"authorization": "tool-spoof"}})
+        await run_pipeline_as_tool(
+            registry, "headers_test", {"query": "hi", "headers": {"authorization": "tool-spoof"}}
+        )
 
 
 @pytest.mark.parametrize("method", [m for m in METHODS if not m.startswith("run_api")])
 async def test_non_http_openai_calls_use_the_default(headers_client, method):
     deploy(headers_client, wrapper_source(method))
-    if "chat" in method:
-        assert await _run_completion("headers_test", [], {}) == "no-context"
-    else:
-        assert await _run_response("headers_test", [], {}) == "no-context"
+    dispatch, kwargs = (
+        (_CHAT_COMPLETION_DISPATCH, {"messages": []}) if "chat" in method else (_RESPONSE_DISPATCH, {"input_items": []})
+    )
+    result = await _run_pipeline_method(registry, dispatch, model="headers_test", kwargs=kwargs, body={}, headers=None)
+    assert result == "no-context"
 
 
 @pytest.mark.parametrize("method", ["run_chat_completion", "run_chat_completion_async"])
@@ -168,7 +175,10 @@ async def test_non_http_openai_calls_use_the_default(headers_client, method):
 @pytest.mark.a2a
 async def test_a2a_calls_use_the_default(headers_client, method):
     deploy(headers_client, wrapper_source(method))
-    assert await _run_chat_completion("headers_test", SimpleNamespace(message=None, current_task=None)) == "no-context"
+    assert (
+        await _run_chat_completion(registry, "headers_test", SimpleNamespace(message=None, current_task=None))
+        == "no-context"
+    )
 
 
 @pytest.mark.parametrize(
@@ -239,9 +249,9 @@ async def test_regular_headers_body_field_keeps_its_schema_and_value(headers_cli
         assert response.status_code == 200, response.text
         assert response.json() == {"result": "body-value"}
     else:
-        tools = await list_pipelines_as_tools()
+        tools = await list_pipelines_as_tools(registry)
         assert tools[0].inputSchema["required"] == ["headers"]
-        result = await run_pipeline_as_tool("headers_test", {"headers": {"authorization": "tool-value"}})
+        result = await run_pipeline_as_tool(registry, "headers_test", {"headers": {"authorization": "tool-value"}})
         assert result[0].text == "tool-value"
 
 

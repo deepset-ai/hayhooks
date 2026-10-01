@@ -146,6 +146,12 @@ hayhooks a2a run --host 0.0.0.0 --port 1418
 
 ## Pipeline Management Commands
 
+The deployment commands below (`deploy-files`, `deploy-yaml`, `deploy`, and `undeploy`) send requests to the target
+server and work against a server in the default, live-deployment mode. They stay available whatever the CLI's own
+`HAYHOOKS_DURABLE_MODE` setting is. A server in [durable mode](durable-execution.md#durable-mode) has no deployment
+endpoints, so these commands fail there with `Server error: Not Found`; change its pipelines directory and restart it
+instead. `GET /status` reports the server's `durable_mode`.
+
 ### pipeline deploy-files
 
 Deploy a pipeline from wrapper files:
