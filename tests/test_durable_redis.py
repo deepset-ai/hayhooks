@@ -15,7 +15,7 @@ from redis.retry import Retry
 
 from hayhooks.durable.engine import Claim
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys, decode_control, encode_control
-from hayhooks.durable.store import ExecutionStoreCorruptionError, ExecutionStoreError
+from hayhooks.durable.store import ExecutionStoreCorruptionError, ExecutionStoreError, StoreConfig, StreamChunk
 from tests.durable_store_contract import ATTEMPTS_ERROR, contract_control
 
 
@@ -183,6 +183,29 @@ async def test_initialize_accepts_redis_6_2_and_valkey(info: dict, supported: bo
     else:
         with pytest.raises(ExecutionStoreError, match=r"Redis 6\.2 or newer, or Valkey 7\.2 or newer"):
             await store.initialize()
+
+
+def test_undecodable_stream_entries_are_skipped() -> None:
+    store = RedisExecutionStore(mock_redis(), "jobs", config=StoreConfig(max_stream_chunk_bytes=1))
+    chunks = store._decode_chunks(
+        "run_1",
+        [
+            (b"1-0", {b"attempt": b"1", b"data": b"valid"}),
+            (b"2-0", {b"bogus": b"1"}),
+            (b"3-0", {b"attempt": b"x", b"data": b"bad"}),
+            (b"4-0", {b"attempt": b"2", b"extra": b"y"}),
+            (b"5-0", {b"attempt": b"2", b"terminal": b"completed"}),
+            (b"6-0", {b"attempt": b"3", b"data": b"oversized"}),
+        ],
+    )
+    assert chunks == (
+        StreamChunk("1-0", 1, b"valid"),
+        StreamChunk("2-0", 0, b"", skipped=True),
+        StreamChunk("3-0", 0, b"", skipped=True),
+        StreamChunk("4-0", 2, b"", skipped=True),
+        StreamChunk("5-0", 2, b"", terminal=True),
+        StreamChunk("6-0", 3, b"oversized"),
+    )
 
 
 async def test_empty_scheduling_indexes_do_not_request_redis_time() -> None:

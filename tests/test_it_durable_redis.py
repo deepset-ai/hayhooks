@@ -126,6 +126,30 @@ async def test_redis_store_keeps_data_readable_after_lowering_limits(redis_store
     await assert_lowered_limits_keep_data_readable(store)
 
 
+async def test_chunk_reads_skip_undecodable_entries(redis_store) -> None:
+    redis, store = redis_store
+    reader = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(store.config, max_stream_chunks=10),
+        key_prefix=store_prefix(store),
+    )
+    key = store.keys.chunks("run_1")
+    first = await redis.xadd(key, {"attempt": 1, "data": b"first"})
+    skipped = await redis.xadd(key, {"bogus": b"entry"})
+    oversized = await redis.xadd(key, {"attempt": 1, "data": b"x" * 100})
+    last = await redis.xadd(key, {"attempt": 1, "data": b"last"})
+
+    chunks = await reader.read_chunks("run_1", CHUNK_CURSOR_START)
+    waited = await reader.wait_chunks("run_1", CHUNK_CURSOR_START, 0.05)
+
+    assert [chunk.cursor for chunk in chunks] == [value.decode() for value in (first, skipped, oversized, last)]
+    assert chunks == waited
+    assert chunks[1].skipped and chunks[1].data == b""
+    assert chunks[2].data == b"x" * 100
+    assert await reader.read_chunks("run_1", skipped.decode()) == chunks[2:]
+
+
 async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) -> None:
     redis, store = redis_store
     submissions = await asyncio.gather(

@@ -117,12 +117,13 @@ class StoredExecution:
 
 @dataclass(frozen=True, slots=True)
 class StreamChunk:
-    """One display chunk, or the marker that every terminal transition appends."""
+    """One display chunk, terminal marker, or undecodable entry that readers skip."""
 
     cursor: str
     attempt: int
     data: bytes
     terminal: bool = False
+    skipped: bool = False
 
 
 class ExecutionStore(Protocol):

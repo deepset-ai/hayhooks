@@ -617,7 +617,7 @@ class RedisExecutionStore:
                 if not entries or _text(entries[0][0]) != after:
                     raise ChunkCursorExpiredError(after)
                 entries = entries[1:]
-        return self._decode_chunks(entries)
+        return self._decode_chunks(run_id, entries)
 
     async def wait_chunks(self, run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...]:
         validate_run_id(run_id)
@@ -634,7 +634,7 @@ class RedisExecutionStore:
                 streams, *cursor_check = await pipe.execute()
         if cursor_check and not cursor_check[0]:
             raise ChunkCursorExpiredError(after)
-        return self._decode_chunks(streams[0][1] if streams else ())
+        return self._decode_chunks(run_id, streams[0][1] if streams else ())
 
     async def operational_counts(self, *, revision: str) -> dict[str, int]:
         with _redis_errors():
@@ -941,20 +941,23 @@ class RedisExecutionStore:
             raise ExecutionIdempotencyConflictError("idempotency key is bound to different work")
         return binding["run_id"]
 
-    def _decode_chunks(self, entries: Iterable[tuple[Any, Mapping[Any, Any]]]) -> tuple[StreamChunk, ...]:
+    def _decode_chunks(self, run_id: str, entries: Iterable[tuple[Any, Mapping[Any, Any]]]) -> tuple[StreamChunk, ...]:
         chunks = []
         for entry_id, raw_fields in entries:
+            cursor = _text(entry_id)
+            attempt = 0
             try:
                 values = {_text(key): value for key, value in raw_fields.items()}
                 attempt = _nonnegative_int(values.pop("attempt"), "stream chunk attempt")
                 if values.keys() == {"terminal"}:
-                    chunks.append(StreamChunk(_text(entry_id), attempt, b"", terminal=True))
+                    chunks.append(StreamChunk(cursor, attempt, b"", terminal=True))
                     continue
                 if values.keys() != {"data"} or not isinstance(values["data"], bytes):
                     raise ValueError
-                chunks.append(StreamChunk(_text(entry_id), attempt, values["data"]))
-            except (KeyError, TypeError, UnicodeError, ValueError) as error:
-                raise ExecutionStoreCorruptionError("stream chunk entry is invalid") from error
+                chunks.append(StreamChunk(cursor, attempt, values["data"]))
+            except (KeyError, TypeError, UnicodeError, ValueError, ExecutionStoreCorruptionError):
+                log.bind(run_id=run_id, cursor=cursor).warning("Skipped an undecodable durable stream entry")
+                chunks.append(StreamChunk(cursor, attempt, b"", skipped=True))
         return tuple(chunks)
 
     async def _backoff(self, attempt: int) -> None:
