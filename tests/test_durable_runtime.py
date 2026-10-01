@@ -8,6 +8,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -1321,6 +1322,52 @@ async def test_cancellation_error_without_a_request_fails_the_run(
             record["message"].startswith("Durable execution raised DurableExecutionCancelledError")
             for record in log_records
         )
+
+
+async def test_lease_loss_wrapped_by_application_code_is_not_a_failure(
+    deployment_factory, monkeypatch, log_records
+) -> None:
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    transition = store.transition
+    commands: list[str] = []
+    started = threading.Event()
+
+    async def record_transition(run_id, command):
+        commands.append(type(command).__name__)
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", record_transition)
+
+    def runner(context: DurableContext, _request: Request) -> Result:
+        started.set()
+        time.sleep(0.02)
+        context._claim._confirmed_until = time.monotonic() - 1
+        try:
+            context.stream_chunk_sync({})
+        except ExecutionLeaseLostError as error:
+            message = "wrapped"
+            raise RuntimeError(message) from error
+        raise AssertionError
+
+    deployment = await deployment_factory(
+        runner,
+        store=store,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=3_000),
+    )
+    submitted = await deployment.submit({"value": 1})
+    assert await asyncio.to_thread(started.wait, 1)
+    for _ in range(200):
+        if not deployment._claims:
+            break
+        await asyncio.sleep(0.005)
+
+    stored = await store.read(submitted.control.run_id)
+    assert stored is not None and stored.control.status is ExecutionStatus.RUNNING
+    assert "Fail" not in commands
+    assert deployment._claims == {}
+    losses = [record for record in log_records if record["message"].startswith("Durable execution lease lost")]
+    assert len(losses) == 1
+    assert losses[0]["extra"]["reason"] == "the application failed after the lease was lost"
 
 
 @pytest.mark.parametrize("outcome", ["suppressed", "cancelled", "exception"])
