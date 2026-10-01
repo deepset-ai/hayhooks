@@ -54,6 +54,16 @@ This guide covers how to install Hayhooks and its dependencies.
     For dashboard frontend local development commands, see the
     [dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
 
+=== "With Durable Execution"
+
+    ```bash
+    pip install "hayhooks[durable]"
+    ```
+
+    Includes the durable execution engine and `redis>=5.0.1,<9`. Production
+    deployments use Redis; the process-local memory store is for development
+    and tests.
+
 === "From Source"
 
     ```bash

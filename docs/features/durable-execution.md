@@ -12,8 +12,9 @@ pip install "hayhooks[durable]"
 docker compose -f examples/durable-compose.yaml up -d
 ```
 
-Durable execution requires Haystack 3.1 or newer. Use the memory store only for
-tests and local development; it does not survive process loss.
+The durable extra installs `redis>=5.0.1,<9`. Durable execution requires
+Haystack 3.1 or newer. Use the memory store only for tests and local
+development; it does not survive process loss.
 
 There are two ways to host durable work:
 

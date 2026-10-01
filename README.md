@@ -257,6 +257,8 @@ docker run -d -p 6379:6379 redis
 HAYHOOKS_DURABLE_MODE=true hayhooks run --pipelines-dir ./pipelines
 ```
 
+The durable extra installs `redis>=5.0.1,<9`.
+
 Submit, approve, and follow the run:
 
 ```bash
