@@ -1,5 +1,5 @@
 """Redis implementation of the durable execution store."""
-# ruff: noqa: C901, EM101, EM102, PLR0912, PLR0913
+# ruff: noqa: C901, EM101, EM102, PLR0913
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from typing import Any, cast
 from loguru import logger as log
 
 try:
-    from redis.exceptions import RedisError, ResponseError, WatchError
+    from redis.exceptions import RedisError, ResponseError
 except ImportError as error:  # pragma: no cover - exercised by packaging checks
     raise RuntimeError("Redis durable storage requires `hayhooks[durable]`") from error
 
@@ -97,6 +97,7 @@ _MAX_COMMAND_VALUES = 1_000
 
 # Refusals of the guarded apply script, which returns 1 once it commits.
 _STALE_SNAPSHOT, _LEASE_LOST, _CAPACITY_UNDERFLOW = 0, -1, -2
+_SUBMITTED, _REPLAYED, _RUN_ID_TAKEN, _ADMISSION_FULL, _CAPACITY_INVALID = 1, 2, 3, 4, 5
 
 # A Redis command as (name, key, *arguments); scripts receive the key through KEYS.
 _Command = tuple[Any, ...]
@@ -203,6 +204,40 @@ while cursor <= #ARGV do
   cursor = cursor + 3 + count
 end
 return 1
+"""
+
+# KEYS: binding, control, input, revision runnable index, capacity.
+# ARGV: limit, revision count field, input, run ID, binding digest, score, then control pairs.
+_SUBMIT_LUA = """
+local binding = redis.call('HGETALL', KEYS[1])
+if #binding > 0 then
+  return {2, binding}
+end
+if redis.call('EXISTS', KEYS[2]) == 1 then
+  return {3}
+end
+local counts = redis.call('HMGET', KEYS[5], 'nonterminal', ARGV[2])
+for index = 1, 2 do
+  local count = counts[index]
+  if count and ((count ~= '0' and not string.match(count, '^[1-9]%d*$')) or tonumber(count) >= 2^53 - 1) then
+    return {5}
+  end
+end
+local limit = tonumber(ARGV[1])
+if limit > 0 and tonumber(counts[1] or '0') >= limit then
+  return {4}
+end
+redis.call('ZCARD', KEYS[4])
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+local stamp = string.format('%d', now)
+redis.call('HSET', KEYS[1], 'run_id', ARGV[4], 'binding', ARGV[5])
+redis.call('HSET', KEYS[2], 'created_at_ms', stamp, 'updated_at_ms', stamp, unpack(ARGV, 7))
+redis.call('SET', KEYS[3], ARGV[3])
+redis.call('ZADD', KEYS[4], ARGV[6] ~= '' and ARGV[6] or stamp, ARGV[4])
+redis.call('HINCRBY', KEYS[5], 'nonterminal', 1)
+redis.call('HINCRBY', KEYS[5], ARGV[2], 1)
+return {1, stamp}
 """
 
 
@@ -367,6 +402,7 @@ class RedisExecutionStore:
         self.keys = RedisKeys(key_prefix, deployment)
         self._transaction_retries = transaction_retries
         self._transaction_backoff_ms = transaction_backoff_ms
+        self._submit_script = redis.register_script(_SUBMIT_LUA)
         self._apply_script = redis.register_script(_OWNED_LUA + _APPLY_LUA)
         self._heartbeat_script = redis.register_script(_OWNED_LUA + _HEARTBEAT_LUA)
         self._append_chunks_script = redis.register_script(_OWNED_LUA + _APPEND_CHUNKS_LUA)
@@ -387,69 +423,48 @@ class RedisExecutionStore:
         if control.deployment != self.deployment:
             raise ValueError("control deployment does not match this store")
         validate_payload_size("input", input_payload, self.config.max_payload_bytes)
-        idempotency_key = self.keys.idempotency(control.idempotency_digest)
-        control_key = self.keys.control(control.run_id)
+        submission_plan(control, input_payload)
+        encoded = encode_control(control)
+        del encoded["created_at_ms"], encoded["updated_at_ms"]
+        keys = [
+            self.keys.idempotency(control.idempotency_digest),
+            self.keys.control(control.run_id),
+            self.keys.payload(control.run_id, PayloadKind.INPUT),
+            self.keys.runnable_revision(control.definition_revision),
+            self.keys.capacity,
+        ]
+        args = [
+            self.config.max_nonterminal_executions,
+            RedisKeys.revision_nonterminal_field(control.definition_revision),
+            input_payload,
+            control.run_id,
+            control.idempotency_binding_digest,
+            "" if control.available_at_ms is None else control.available_at_ms,
+            *chain.from_iterable(encoded.items()),
+        ]
         with _redis_errors():
             for attempt in range(self._transaction_retries):
-                async with self.redis.pipeline(transaction=True) as pipe:
-                    try:
-                        watch_keys = [idempotency_key, control_key]
-                        if self.config.max_nonterminal_executions:
-                            watch_keys.append(self.keys.capacity)
-                        await pipe.watch(*watch_keys)
-                        binding_values = await pipe.hgetall(idempotency_key)
-                        if binding_values:
-                            try:
-                                binding = {_text(key): _text(value) for key, value in binding_values.items()}
-                            except (TypeError, UnicodeError) as error:
-                                raise ExecutionStoreCorruptionError(
-                                    "idempotency binding contains invalid UTF-8"
-                                ) from error
-                            if binding.keys() != {"run_id", "binding"}:
-                                raise ExecutionStoreCorruptionError("idempotency binding has invalid fields")
-                            if not binding["binding"] or len(binding["binding"].encode()) > MAX_CONTROL_SCALAR_BYTES:
-                                raise ExecutionStoreCorruptionError("idempotency binding has an invalid digest")
-                            try:
-                                mapped_key = self.keys.control(binding["run_id"])
-                            except ValueError as error:
-                                raise ExecutionStoreCorruptionError(
-                                    "idempotency binding has an invalid execution ID"
-                                ) from error
-                            await pipe.watch(mapped_key)
-                            current_values = await pipe.hgetall(mapped_key)
-                            if binding["binding"] != control.idempotency_binding_digest:
-                                raise ExecutionIdempotencyConflictError("idempotency key is bound to different work")
-                            if not current_values:
-                                raise ExecutionStoreCorruptionError("idempotency binding points to a missing execution")
-                            return SubmissionResult(
-                                created=False, control=self._decode(current_values, binding["run_id"])
-                            )
-                        if await pipe.exists(control_key):
-                            raise ExecutionIdempotencyConflictError("run ID is bound to a different idempotency key")
-                        if self.config.max_nonterminal_executions:
-                            raw_count = await pipe.hget(self.keys.capacity, "nonterminal")
-                            count = 0 if raw_count is None else _nonnegative_int(raw_count, "nonterminal")
-                            if count >= self.config.max_nonterminal_executions:
-                                raise ExecutionAdmissionError("nonterminal execution limit reached")
-
-                        now_ms = _milliseconds(await pipe.time())
-                        candidate = replace(control, created_at_ms=now_ms, updated_at_ms=now_ms)
-                        plan = submission_plan(candidate, input_payload)
-                        pipe.multi()
-                        pipe.hset(
-                            idempotency_key,
-                            mapping={"run_id": candidate.run_id, "binding": candidate.idempotency_binding_digest},
-                        )
-                        for command in self._plan_commands(candidate, plan, new_submission=True):
-                            pipe.execute_command(*command)
-                        await pipe.execute()
-                        log.bind(run_id=candidate.run_id, deployment=candidate.deployment).debug(
-                            "Submitted durable execution"
-                        )
-                        return SubmissionResult(created=True, control=candidate)
-                    except WatchError:
-                        await self._backoff(attempt)
-        raise ExecutionContentionError("submission transaction retry budget exhausted")
+                status, *reply = await self._submit_script(keys=keys, args=args)
+                if status == _SUBMITTED:
+                    now_ms = int(reply[0])
+                    candidate = replace(control, created_at_ms=now_ms, updated_at_ms=now_ms)
+                    log.bind(run_id=candidate.run_id, deployment=candidate.deployment).debug(
+                        "Submitted durable execution"
+                    )
+                    return SubmissionResult(created=True, control=candidate)
+                if status == _RUN_ID_TAKEN:
+                    raise ExecutionIdempotencyConflictError("run ID is bound to a different idempotency key")
+                if status == _ADMISSION_FULL:
+                    raise ExecutionAdmissionError("nonterminal execution limit reached")
+                if status == _CAPACITY_INVALID:
+                    raise ExecutionStoreCorruptionError("nonterminal execution counter is invalid")
+                if status != _REPLAYED:
+                    raise ExecutionStoreCorruptionError("submission script returned an invalid status")
+                run_id = self._bound_run_id(reply[0], control)
+                if values := await self.redis.hgetall(self.keys.control(run_id)):
+                    return SubmissionResult(created=False, control=self._decode(values, run_id))
+                await self._backoff(attempt)
+        raise ExecutionStoreCorruptionError("idempotency binding points to a missing execution")
 
     async def read(self, run_id: str) -> StoredExecution | None:
         return await self._read(run_id, private=True)
@@ -808,8 +823,6 @@ class RedisExecutionStore:
         self,
         current: ExecutionControl,
         plan: TransitionPlan,
-        *,
-        new_submission: bool = False,
     ) -> list[_Command]:
         """Translate one reducer plan into the Redis commands that persist it."""
         control = plan.next_control
@@ -843,17 +856,7 @@ class RedisExecutionStore:
                 else ("ZADD", self.keys.lease_expiry, lease.deadline_ms, member)
             )
 
-        if new_submission:
-            commands.append(("HINCRBY", self.keys.capacity, "nonterminal", 1))
-            commands.append(
-                (
-                    "HINCRBY",
-                    self.keys.capacity,
-                    RedisKeys.revision_nonterminal_field(control.definition_revision),
-                    1,
-                )
-            )
-        elif not current.terminal and control.terminal:
+        if not current.terminal and control.terminal:
             chunks_key = self.keys.chunks(run_id)
             commands.append(("HINCRBY", self.keys.capacity, "nonterminal", -1))
             commands.append(
@@ -920,6 +923,23 @@ class RedisExecutionStore:
             return self._decode(values, run_id)
         except ExecutionStoreCorruptionError as error:
             raise _UndecodableControlError(str(error)) from error
+
+    def _bound_run_id(self, values: Any, control: ExecutionControl) -> str:
+        try:
+            binding = {_text(key): _text(value) for key, value in zip(values[::2], values[1::2], strict=True)}
+        except (TypeError, UnicodeError, ValueError) as error:
+            raise ExecutionStoreCorruptionError("idempotency binding contains invalid UTF-8") from error
+        if binding.keys() != {"run_id", "binding"}:
+            raise ExecutionStoreCorruptionError("idempotency binding has invalid fields")
+        if not binding["binding"] or len(binding["binding"].encode()) > MAX_CONTROL_SCALAR_BYTES:
+            raise ExecutionStoreCorruptionError("idempotency binding has an invalid digest")
+        try:
+            self.keys.control(binding["run_id"])
+        except ValueError as error:
+            raise ExecutionStoreCorruptionError("idempotency binding has an invalid execution ID") from error
+        if binding["binding"] != control.idempotency_binding_digest:
+            raise ExecutionIdempotencyConflictError("idempotency key is bound to different work")
+        return binding["run_id"]
 
     def _decode_chunks(self, entries: Iterable[tuple[Any, Mapping[Any, Any]]]) -> tuple[StreamChunk, ...]:
         chunks = []

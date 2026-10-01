@@ -85,6 +85,7 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
 
     snapshot = await store.read(control.run_id)
     assert snapshot is not None and snapshot.payloads[PayloadKind.INPUT] == b"input"
+    assert snapshot.control == submitted.control
     assert await store.read_public(control.run_id) == replace(snapshot, payloads={})
     assert await store.operational_counts(revision="v1") == {
         "nonterminal": 1,

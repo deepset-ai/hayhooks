@@ -38,6 +38,7 @@ from hayhooks.durable.store import (
     PUBLIC_PAYLOAD_KINDS,
     ChunkCursorExpiredError,
     ExecutionAdmissionError,
+    ExecutionIdempotencyConflictError,
     ExecutionStoreCorruptionError,
     ExecutionStoreError,
 )
@@ -134,6 +135,119 @@ async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) ->
     assert len(winners) == 1
     assert await redis.zcard(store.keys.runnable_revision("v1")) == 0
     assert await redis.zcard(store.keys.lease_expiry) == 1
+
+
+async def test_concurrent_submissions_are_admitted_without_contention(redis_store) -> None:
+    _, store = redis_store
+    controls = [
+        contract_control("jobs", f"run_{index}", idempotency=f"idem_{index}", binding=f"binding_{index}")
+        for index in range(100)
+    ]
+
+    results = await asyncio.gather(*(store.submit(control, b"input") for control in controls))
+
+    assert all(result.created for result in results)
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 100,
+        "revision_nonterminal": 100,
+        "revision_runnable": 100,
+        "lease_expiry": 0,
+    }
+
+
+@pytest.mark.parametrize("limit", [5, 0])
+async def test_admission_limit_is_exact_under_concurrent_submissions(redis_store, limit: int) -> None:
+    redis, store = redis_store
+    limited = RedisExecutionStore(
+        redis,
+        "limited",
+        config=replace(store.config, max_nonterminal_executions=limit),
+        key_prefix=f"{store_prefix(store)}:limited-{limit}",
+    )
+    controls = [
+        contract_control("limited", f"run_{index}", idempotency=f"idem_{index}", binding=f"binding_{index}")
+        for index in range(30)
+    ]
+
+    results = await asyncio.gather(*(limited.submit(control, b"input") for control in controls), return_exceptions=True)
+
+    expected = 30 if limit == 0 else limit
+    assert sum(not isinstance(result, BaseException) for result in results) == expected
+    assert sum(isinstance(result, ExecutionAdmissionError) for result in results) == 30 - expected
+    assert (await limited.operational_counts(revision="v1"))["nonterminal"] == expected
+
+
+@pytest.mark.parametrize("target", ["binding", "revision-index", "capacity", "control"])
+async def test_submission_with_a_wrong_type_key_writes_nothing(redis_store, target: str) -> None:
+    redis, store = redis_store
+    control = contract_control("jobs")
+    key = {
+        "binding": store.keys.idempotency(control.idempotency_digest),
+        "revision-index": store.keys.runnable_revision("v1"),
+        "capacity": store.keys.capacity,
+        "control": store.keys.control(control.run_id),
+    }[target]
+    await redis.set(key, b"wrong type")
+    before = await dump_keys(redis, store)
+
+    error = ExecutionIdempotencyConflictError if target == "control" else ExecutionStoreError
+    with pytest.raises(error):
+        await store.submit(control, b"input")
+
+    assert await dump_keys(redis, store) == before
+
+
+@pytest.mark.parametrize("field", ["nonterminal", "revision"])
+async def test_submission_rejects_an_invalid_capacity_counter(redis_store, field: str) -> None:
+    redis, store = redis_store
+    field = RedisKeys.revision_nonterminal_field("v1") if field == "revision" else field
+    await redis.hset(store.keys.capacity, field, "01")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionStoreCorruptionError, match="counter"):
+        await store.submit(contract_control("jobs"), b"input")
+
+    assert await dump_keys(redis, store) == before
+
+
+async def test_replay_that_races_terminal_expiry_creates_a_new_execution(redis_store, monkeypatch) -> None:
+    redis, store = redis_store
+    control = contract_control("jobs", "old")
+    await store.submit(control, b"input")
+    await store.transition("old", RequestCancellation(0, "done"))
+    original = redis.hgetall
+    called = False
+
+    async def expire_once(key):
+        nonlocal called
+        if not called:
+            called = True
+            await redis.delete(store.keys.idempotency(control.idempotency_digest), store.keys.control("old"))
+            return {}
+        return await original(key)
+
+    monkeypatch.setattr(redis, "hgetall", expire_once)
+    replay = await store.submit(contract_control("jobs", "new"), b"input")
+    assert replay.created and replay.control.run_id == "new"
+
+
+async def test_replay_of_a_binding_without_its_execution_reports_corruption(redis_store) -> None:
+    redis, store = redis_store
+    broken = RedisExecutionStore(
+        redis,
+        "broken",
+        config=store.config,
+        key_prefix=f"{store_prefix(store)}:broken",
+        transaction_backoff_ms=0,
+    )
+    control = contract_control("broken")
+    await redis.hset(
+        broken.keys.idempotency(control.idempotency_digest),
+        mapping={"run_id": control.run_id, "binding": control.idempotency_binding_digest},
+    )
+
+    with pytest.raises(ExecutionStoreCorruptionError, match="missing execution"):
+        await broken.submit(control, b"input")
 
 
 async def test_claim_that_loses_a_race_takes_the_next_runnable_execution(redis_store) -> None:
