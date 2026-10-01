@@ -400,3 +400,50 @@ def test_durable_wrapper_runs_detached_while_ordinary_requests_stay_ordinary(
         "hayhooks.durable.definition_revision": "v1",
         "hayhooks.success": True,
     }.items() <= attempt.tags.items()
+
+
+def _redis_durable_app(durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, url: str) -> FastAPI:
+    for name, value in (("durable_store", "redis"), ("durable_redis_url", url), ("durable_redis_max_viewers", 7)):
+        monkeypatch.setattr(settings, name, value)
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    return create_app()
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_durable_redis_clients_have_explicit_timeouts_and_never_retry(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, viewer = _redis_durable_app(
+        durable_pipelines_dir, monkeypatch, "redis://localhost:6379/15"
+    ).state.durable_redis_clients
+
+    # The viewer outlasts the 15 s SSE block; nothing connects at construction.
+    expected = {"worker": 5.0, "viewer": 30.0}
+    for name, client in (("worker", worker), ("viewer", viewer)):
+        pool = client.connection_pool
+        kwargs = pool.connection_kwargs
+        assert kwargs["socket_timeout"] == expected[name]
+        assert (kwargs["socket_connect_timeout"], kwargs["socket_keepalive"], kwargs["protocol"]) == (5.0, True, 2)
+        connection = pool.make_connection()
+        assert connection.retry._retries == 0
+        assert not connection.is_connected
+        assert client.auto_close_connection_pool
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_redis_url_options_override_client_defaults(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _redis_durable_app(durable_pipelines_dir, monkeypatch, "redis://localhost:6379/15?socket_timeout=40")
+    timeouts = [
+        client.connection_pool.connection_kwargs["socket_timeout"] for client in app.state.durable_redis_clients
+    ]
+    assert timeouts == [40.0, 40.0]
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_a_url_socket_timeout_below_the_sse_block_fails_startup(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(PipelineModeError, match=r"socket_timeout .* must exceed 15 seconds"):
+        _redis_durable_app(durable_pipelines_dir, monkeypatch, "redis://localhost:6379/15?socket_timeout=10")

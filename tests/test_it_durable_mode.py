@@ -383,3 +383,26 @@ def test_same_revision_recovers_typed_state_in_a_fresh_interpreter_after_relocat
         "attempt": 2,
     }
     assert marker.read_text() == "checkpointed\n"
+
+
+def test_idle_stream_stays_open_past_the_default_redis_socket_timeout(
+    redis_durable_mode: Path, wait_for_execution
+) -> None:
+    from tests.pipeline_sources import DURABLE_WRAPPER
+
+    write_tree(redis_durable_mode, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    streamed: list[str] = []
+    with TestClient(create_app()) as client:
+        location = client.post("/jobs/run-durable", json={"value": 2, "wait": True}).headers["Location"]
+        wait_for_execution(client, location, "waiting")
+        stream = _Background(lambda: streamed.append(client.get(f"{location}/stream").text))
+        stream.start()
+        # redis-py 8 defaults to a 5 s socket timeout, which ended idle streams with an error event.
+        stream.join(6)
+        assert stream.is_alive()
+        assert client.post(f"{location}/resume", json={"approved": True}).status_code == 202
+        stream.join(10)
+        assert not stream.is_alive()
+    [text] = streamed
+    assert "event: error" not in text
+    assert "event: completed" in text

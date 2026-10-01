@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 import sys
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -8,7 +9,7 @@ from contextvars import Context, copy_context
 from functools import lru_cache
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 # Set CHAINLIT_APP_ROOT before any Chainlit imports (must be done before import)
 # ruff: noqa: E402
@@ -63,6 +64,9 @@ from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy,
 
 if TYPE_CHECKING:
     from hayhooks.durable.store import ExecutionStore, StoreConfig
+
+# Worker commands and connection attempts are short; redis-py 8 uses the same default.
+_REDIS_TIMEOUT_SECONDS = 5.0
 
 
 def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
@@ -519,13 +523,7 @@ def _redis_store(app: FastAPI, name: str, store_config: "StoreConfig") -> "Execu
     from hayhooks.durable.redis import RedisExecutionStore
 
     if not app.state.durable_redis_clients:
-        from redis.asyncio import Redis
-
-        # Blocking SSE reads use the viewer client, so viewers cannot starve worker heartbeats of connections.
-        app.state.durable_redis_clients = (
-            Redis.from_url(settings.durable_redis_url),
-            Redis.from_url(settings.durable_redis_url, max_connections=settings.durable_redis_max_viewers),
-        )
+        app.state.durable_redis_clients = _redis_clients(settings.durable_redis_url)
     worker_client, viewer_client = app.state.durable_redis_clients
     return RedisExecutionStore(
         worker_client,
@@ -534,6 +532,44 @@ def _redis_store(app: FastAPI, name: str, store_config: "StoreConfig") -> "Execu
         config=store_config,
         key_prefix=settings.durable_redis_key_prefix,
     )
+
+
+def _redis_clients(url: str) -> tuple[Any, Any]:
+    """
+    Build the worker and viewer clients with explicit timeouts; query options in *url* override them.
+
+    Blocking SSE reads use the viewer client, so viewers cannot starve worker heartbeats of connections.
+    Neither client retries commands or negotiates RESP3, on every supported redis-py version.
+    """
+    from redis.asyncio import Redis
+
+    from hayhooks.durable.fastapi import _STREAM_BLOCK_SECONDS
+
+    common: dict[str, Any] = {
+        "protocol": 2,
+        "socket_connect_timeout": _REDIS_TIMEOUT_SECONDS,
+        "socket_keepalive": True,
+        "socket_keepalive_options": _keepalive_options(),
+    }
+    worker = Redis.from_url(url, socket_timeout=_REDIS_TIMEOUT_SECONDS, **common)
+    viewer = Redis.from_url(
+        url,
+        max_connections=settings.durable_redis_max_viewers,
+        socket_timeout=_STREAM_BLOCK_SECONDS + 15,
+        **common,
+    )
+    viewer_timeout = viewer.connection_pool.connection_kwargs.get("socket_timeout")
+    if viewer_timeout is not None and viewer_timeout <= _STREAM_BLOCK_SECONDS:
+        msg = f"socket_timeout in the durable Redis URL must exceed {_STREAM_BLOCK_SECONDS:g} seconds, the SSE block"
+        raise ValueError(msg)
+    return worker, viewer
+
+
+def _keepalive_options() -> dict[int, int]:
+    # redis-py 8's defaults, so 5-7 also detect dead idle connections; macOS names the idle option TCP_KEEPALIVE.
+    idle = getattr(socket, "TCP_KEEPIDLE", getattr(socket, "TCP_KEEPALIVE", None))
+    options = {idle: 30, getattr(socket, "TCP_KEEPINTVL", None): 5, getattr(socket, "TCP_KEEPCNT", None): 3}
+    return {option: value for option, value in options.items() if option is not None}
 
 
 def run_app(
