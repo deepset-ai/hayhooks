@@ -138,6 +138,24 @@ async def assert_store_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
     assert snapshot is not None
     assert snapshot.payloads[PayloadKind.CHECKPOINT] == b"checkpoint"
     assert [event.sequence for event in snapshot.progress] == [2, 3]
+    replayed = await store.transition(
+        control.run_id,
+        Checkpoint(
+            claimed.next_control.fence,
+            "worker",
+            0,
+            500,
+            b"checkpoint",
+            (b"two", b"three", b"four"),
+            first_progress_sequence=2,
+        ),
+    )
+    assert [(event.sequence, event.data) for event in replayed.progress_events] == [(4, b"four")]
+    snapshot = await store.read(control.run_id)
+    assert snapshot is not None and [(event.sequence, event.data) for event in snapshot.progress] == [
+        (3, b"three"),
+        (4, b"four"),
+    ]
 
     suspended = await store.transition(
         control.run_id,

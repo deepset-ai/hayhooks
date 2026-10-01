@@ -258,3 +258,46 @@ def test_claim_fails_when_recovered_leases_reach_a_lowered_limit() -> None:
     assert failed.next_control.status is ExecutionStatus.FAILED
     assert failed.payload_writes[0].data == ATTEMPTS_ERROR
     assert claim(current).next_control.status is ExecutionStatus.RUNNING
+
+
+@pytest.mark.parametrize(
+    ("first", "events", "expected"),
+    [
+        pytest.param(None, (b"c",), [(3, b"c")], id="unnumbered"),
+        pytest.param(1, (b"a", b"b"), [], id="full-replay"),
+        pytest.param(2, (b"b", b"c", b"d"), [(3, b"c"), (4, b"d")], id="partial-replay"),
+        pytest.param(3, (b"c",), [(3, b"c")], id="next"),
+    ],
+)
+def test_checkpoint_skips_progress_a_replay_already_stored(claimed_control, first, events, expected) -> None:
+    stored = decide(claimed_control, Checkpoint(1, "worker-a", 300, 500, b"cp", (b"a", b"b"))).next_control
+    plan = decide(
+        stored,
+        Checkpoint(1, "worker-a", 300, 500, b"cp", events, first_progress_sequence=first),
+    )
+    assert [(event.sequence, event.data) for event in plan.progress_events] == expected
+    assert plan.next_control.progress_sequence == 2 + len(expected)
+
+
+@pytest.mark.parametrize("first", [0, 4])
+def test_checkpoint_rejects_progress_that_does_not_continue_the_sequence(claimed_control, first) -> None:
+    stored = decide(claimed_control, Checkpoint(1, "worker-a", 300, 500, b"cp", (b"a", b"b"))).next_control
+    with pytest.raises(InvalidExecutionTransitionError, match="progress"):
+        decide(
+            stored,
+            Checkpoint(1, "worker-a", 300, 500, b"cp", (b"d",), first_progress_sequence=first),
+        )
+
+
+@pytest.mark.parametrize("outcome", ["complete", "fail", "suspend", "retry"])
+def test_owned_outcomes_skip_progress_a_failed_checkpoint_already_stored(claimed_control, outcome) -> None:
+    stored = decide(claimed_control, Checkpoint(1, "worker-a", 300, 500, b"cp", (b"a", b"b"))).next_control
+    commands = {
+        "complete": Complete(1, "worker-a", 300, b"result", (b"b", b"c"), first_progress_sequence=2),
+        "fail": Fail(1, "worker-a", 300, b"error", (b"b", b"c"), first_progress_sequence=2),
+        "suspend": Suspend(1, "worker-a", 300, b"cp", b"wait", (b"b", b"c"), first_progress_sequence=2),
+        "retry": ScheduleRetry(1, "worker-a", 300, 0, 1, b"error", (b"b", b"c"), first_progress_sequence=2),
+    }
+    plan = decide(stored, commands[outcome])
+    assert [(event.sequence, event.data) for event in plan.progress_events] == [(3, b"c")]
+    assert plan.next_control.progress_sequence == 3

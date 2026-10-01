@@ -207,6 +207,7 @@ class Checkpoint:
     checkpoint: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +226,7 @@ class ScheduleRetry:
     error: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +238,7 @@ class Suspend:
     wait: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +257,7 @@ class Complete:
     result: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +268,7 @@ class Fail:
     error: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,16 +379,19 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
     if isinstance(command, Checkpoint):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        progress_events = _progress_events(
+            control.progress_sequence, command.progress_events, command.first_progress_sequence
+        )
         next_control = _business(
             control,
             command.now_ms,
-            progress_sequence=control.progress_sequence + len(command.progress_events),
+            progress_sequence=control.progress_sequence + len(progress_events),
             lease_expires_at_ms=command.now_ms + command.lease_duration_ms,
         )
         return TransitionPlan(
             next_control,
             payload_writes=(PayloadWrite(PayloadKind.CHECKPOINT, command.checkpoint),),
-            progress_events=_progress_events(control.progress_sequence, command.progress_events),
+            progress_events=progress_events,
             lease_index_update=LeaseIndexUpdate(next_control.lease_expires_at_ms, control.fence),
         )
     if isinstance(command, RequestCancellation):
@@ -413,7 +421,9 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
     if isinstance(command, ScheduleRetry):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
-        progress_events = _progress_events(control.progress_sequence, command.progress_events)
+        progress_events = _progress_events(
+            control.progress_sequence, command.progress_events, command.first_progress_sequence
+        )
         if control.cancel_requested_at_ms is not None:
             return _terminal(
                 control,
@@ -451,7 +461,9 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
     if isinstance(command, Suspend):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
-        progress_events = _progress_events(control.progress_sequence, command.progress_events)
+        progress_events = _progress_events(
+            control.progress_sequence, command.progress_events, command.first_progress_sequence
+        )
         if control.cancel_requested_at_ms is not None:
             return _terminal(
                 control,
@@ -465,7 +477,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             control,
             command.now_ms,
             status=ExecutionStatus.WAITING,
-            progress_sequence=control.progress_sequence + len(command.progress_events),
+            progress_sequence=control.progress_sequence + len(progress_events),
             lease_owner=None,
             lease_expires_at_ms=None,
         )
@@ -501,7 +513,9 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
     if isinstance(command, (Complete, Fail)):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         completed = isinstance(command, Complete)
-        progress_events = _progress_events(control.progress_sequence, command.progress_events)
+        progress_events = _progress_events(
+            control.progress_sequence, command.progress_events, command.first_progress_sequence
+        )
         if control.cancel_requested_at_ms is not None:
             return _terminal(
                 control,
@@ -610,5 +624,14 @@ def _business(control: ExecutionControl, now_ms: int, **changes: object) -> Exec
     return replace(control, version=control.version + 1, updated_at_ms=now_ms, **changes)
 
 
-def _progress_events(sequence: int, values: tuple[bytes, ...]) -> tuple[ProgressEvent, ...]:
-    return tuple(ProgressEvent(sequence + index, value) for index, value in enumerate(values, start=1))
+def _progress_events(
+    sequence: int,
+    values: tuple[bytes, ...],
+    first: int | None = None,
+) -> tuple[ProgressEvent, ...]:
+    """Number events after ``sequence``; from ``first``, skip the ones a replayed commit already stored."""
+    if first is None:
+        first = sequence + 1
+    elif not 1 <= first <= sequence + 1:
+        raise InvalidExecutionTransitionError("progress events do not continue the stored sequence")
+    return tuple(ProgressEvent(first + index, value) for index, value in enumerate(values) if first + index > sequence)
