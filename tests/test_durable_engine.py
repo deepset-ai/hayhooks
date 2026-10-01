@@ -115,9 +115,10 @@ def test_cancellation_wins_every_owned_outcome(claimed_control) -> None:
         assert not terminal.payload_writes
         assert terminal.payload_deletes == (PayloadKind.RESULT, PayloadKind.ERROR, PayloadKind.WAIT)
         assert [event.data for event in terminal.progress_events] == [b"progress"]
-    released = decide(canceled, ReleaseClaim(1, "worker-a", 300)).next_control
-    reclaimed = decide(released, Claim("worker-b", 301, 500, 3, "rev-2", ATTEMPTS_ERROR))
-    assert reclaimed.next_control.status is ExecutionStatus.CANCELED
+    # A released claim must not re-queue work whose cancellation is pending.
+    released = decide(canceled, ReleaseClaim(1, "worker-a", 300))
+    assert released.next_control.status is ExecutionStatus.CANCELED
+    assert released.payload_deletes == (PayloadKind.RESULT, PayloadKind.ERROR, PayloadKind.WAIT)
 
 
 def test_retry_and_lease_recovery_requeue_without_resetting_retry_count(claimed_control) -> None:

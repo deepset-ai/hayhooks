@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -30,7 +30,7 @@ from hayhooks.durable.engine import (
     Suspend,
 )
 from hayhooks.durable.models import decode_json, encode_json
-from hayhooks.durable.store import CHUNK_CURSOR_START
+from hayhooks.durable.store import CHUNK_CURSOR_START, ExecutionStoreError
 from tests.durable_store_contract import decode_checkpoint
 
 
@@ -40,7 +40,9 @@ def test_root_exports_durable_streaming_callback() -> None:
     assert public_callback is durable_streaming_callback
 
 
-async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancellation(context_factory) -> None:
+async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancellation(
+    context_factory, monkeypatch
+) -> None:
     store, create = context_factory
     context, _ = await create()
     before = await store.read(context.execution_id)
@@ -51,6 +53,11 @@ async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancell
     buffered = await store.read(context.execution_id)
     assert buffered is not None and buffered.control.version == before.control.version
     assert not buffered.progress
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "transition", AsyncMock(side_effect=ExecutionStoreError("unavailable")))
+        with pytest.raises(ExecutionStoreError, match="unavailable"):
+            await context.checkpoint({"component": "fetch"})
 
     await context.checkpoint({"component": "fetch"})
     checkpointed = await store.read(context.execution_id)
@@ -125,13 +132,8 @@ async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context
     persisted = await store.read(context.execution_id)
     assert persisted is not None
     reconstructed = DurableContext(
-        _ClaimedExecution(
-            store,
-            persisted.control,
-            claim.worker_id,
-            claim.lease_duration_ms,
-            decode_checkpoint(persisted.payloads[PayloadKind.CHECKPOINT]),
-        )
+        _ClaimedExecution(store, persisted.control, claim.worker_id, claim.lease_duration_ms),
+        decode_checkpoint(persisted.payloads[PayloadKind.CHECKPOINT]),
     )
     assert reconstructed.resume_input == {"approved": True}
 
@@ -198,6 +200,23 @@ async def test_heartbeat_marks_a_rejected_claim_lost(context_factory) -> None:
     context, claim = await create(lease_duration_ms=60)
     await store.transition(context.execution_id, ReleaseClaim(claim.control.fence, claim.worker_id))
     await asyncio.wait_for(claim.lease_lost.wait(), timeout=0.3)
+
+
+@pytest.mark.parametrize("state", ["lost", "stopping"])
+async def test_thread_start_rejects_lost_or_stopping_claim(context_factory, monkeypatch, state) -> None:
+    _, create = context_factory
+    context, claim = await create()
+    start = Mock()
+    monkeypatch.setattr("hayhooks.durable.context.start_daemon_thread", start)
+    if state == "lost":
+        claim.mark_lost()
+    else:
+        claim.stopping = True
+
+    error = ExecutionLeaseLostError if state == "lost" else asyncio.CancelledError
+    with pytest.raises(error):
+        context._start_thread(lambda: None, name="test-rejected-thread")
+    start.assert_not_called()
 
 
 async def test_missing_execution_marks_claim_lost(context_factory) -> None:
@@ -277,3 +296,32 @@ async def test_retry_request_carries_buffered_progress(context_factory) -> None:
     with pytest.raises(_RetryRequestedError) as raised:
         await context.retry("later", delay=1.5)
     assert (str(raised.value), raised.value.delay, len(raised.value.progress_events)) == ("later", 1.5, 1)
+
+
+async def test_release_rejects_a_write_waiting_behind_it(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    commands: list[str] = []
+    releasing, proceed = asyncio.Event(), asyncio.Event()
+
+    async def slow_release(run_id: str, command):
+        commands.append(type(command).__name__)
+        if isinstance(command, ReleaseClaim):
+            releasing.set()
+            await proceed.wait()
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", slow_release)
+    release = asyncio.create_task(claim.release())
+    await releasing.wait()
+    # The checkpoint passes its ownership check, then waits for the transition lock the release holds.
+    checkpoint = asyncio.create_task(context.checkpoint({"step": 1}))
+    await asyncio.sleep(0.01)
+    proceed.set()
+    await release
+
+    with pytest.raises(ExecutionLeaseLostError):
+        await checkpoint
+    assert commands == ["ReleaseClaim"]
+    assert (await store.read(context.execution_id)).control.status is ExecutionStatus.QUEUED

@@ -352,6 +352,8 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         return TransitionPlan(next_control, lease_index_update=LeaseIndexUpdate(deadline, next_control.fence))
     if isinstance(command, ReleaseClaim):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        if control.cancel_requested_at_ms is not None:
+            return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
         next_control = _business(
             control,
             command.now_ms,

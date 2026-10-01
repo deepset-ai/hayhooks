@@ -4,12 +4,17 @@ This local example demonstrates detached execution, a Pipeline checkpoint,
 one bounded retry, typed approval/resume, cooperative cancellation, durable
 progress, and SSE output without a paid API.
 
-Start Redis and Hayhooks from the repository root:
+> [!NOTE]
+> Hayhooks-managed hosting of durable wrappers follows in a later release. In
+> this release, `hayhooks run` rejects this wrapper at startup, so the steps
+> below apply once durable hosting ships. To run durable work today, embed the
+> engine as in the [standalone FastAPI example](../durable_fastapi/).
+
+Start Redis from the repository root. Hayhooks hosting configuration will be
+documented when that feature ships:
 
 ```bash
 docker compose -f examples/durable-compose.yaml up -d
-HAYHOOKS_DURABLE_STORE=redis \
-  hayhooks run --pipelines-dir examples/durable_execution/pipelines
 ```
 
 Submit work:
@@ -34,5 +39,5 @@ at least once: any real external write should use an idempotency key such as
 `f"{context.execution_id}:publish"`.
 
 `report_progress` keeps only the newest
-`HAYHOOKS_DURABLE_MAX_PROGRESS_EVENTS` entries while buffering and after they
+`StoreConfig.max_progress_events` entries while buffering and after they
 are persisted, so frequent progress reporting remains bounded.

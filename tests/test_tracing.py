@@ -1,4 +1,7 @@
+import asyncio
+import inspect
 from pathlib import Path
+from types import SimpleNamespace
 
 import haystack.tracing
 import pytest
@@ -11,6 +14,7 @@ from hayhooks.server.app import create_app
 from hayhooks.server.logger import normalize_trace_correlation_data
 from hayhooks.server.pipelines.registry import registry
 from hayhooks.server.tracing import (
+    SPAN_DURABLE_ATTEMPT,
     SPAN_OPENAI_RUN,
     SPAN_PIPELINE_DEPLOY,
     SPAN_PIPELINE_DEPLOY_COMMIT,
@@ -25,6 +29,7 @@ from hayhooks.server.tracing import (
     configure_tracing,
     instrument_fastapi_app,
     instrument_starlette_app,
+    trace_durable_runner,
     trace_operation,
 )
 from hayhooks.server.utils.live_trace_buffer import clear_live_traces, get_recent_traces
@@ -312,6 +317,33 @@ def test_deploy_and_undeploy_emit_lifecycle_spans(recording_tracer):
     assert SPAN_PIPELINE_UNDEPLOY in span_names
 
 
+@pytest.mark.parametrize("is_async", [False, True], ids=["sync", "async"])
+def test_durable_runner_attempt_emits_one_tagged_span(recording_tracer, is_async: bool):
+    def run(_context, request):
+        return request * 2
+
+    async def run_async(context, request):
+        return run(context, request)
+
+    traced = trace_durable_runner("demo", "v1", "pipeline", run_async if is_async else run)
+    context = SimpleNamespace(execution_id="run_1", attempt=2)
+    result = traced(context, 21)
+
+    assert inspect.iscoroutinefunction(traced) is is_async
+    assert (asyncio.run(result) if is_async else result) == 42
+    [span] = [span for span in recording_tracer.spans if span.operation_name == SPAN_DURABLE_ATTEMPT]
+    expected_tags = {
+        "hayhooks.transport": "durable",
+        "hayhooks.pipeline.name": "demo",
+        "hayhooks.durable.execution_id": "run_1",
+        "hayhooks.durable.attempt": 2,
+        "hayhooks.durable.kind": "pipeline",
+        "hayhooks.durable.definition_revision": "v1",
+        "hayhooks.success": True,
+    }
+    assert expected_tags.items() <= span.tags.items()
+
+
 def test_run_endpoint_emits_pipeline_run_span(client, deploy_yaml_pipeline, recording_tracer):
     registry.clear()
     pipeline_name = "trace_run_pipeline"
@@ -382,7 +414,9 @@ def test_run_endpoint_streaming_span_tags_reflect_actual_streaming(
     run_spans = [span for span in recording_tracer.spans if span.operation_name == SPAN_PIPELINE_RUN]
     assert len(run_spans) >= 2
 
-    non_streaming_span = next(span for span in run_spans if span.tags.get("hayhooks.pipeline.name") == non_streaming_pipeline)
+    non_streaming_span = next(
+        span for span in run_spans if span.tags.get("hayhooks.pipeline.name") == non_streaming_pipeline
+    )
     streaming_span = next(span for span in run_spans if span.tags.get("hayhooks.pipeline.name") == streaming_pipeline)
 
     assert "hayhooks.response.streaming" not in non_streaming_span.tags
@@ -428,7 +462,9 @@ def test_openai_streaming_span_tags_reflect_actual_streaming(client, deploy_file
     non_streaming_span = next(
         span for span in openai_spans if span.tags.get("hayhooks.pipeline.name") == non_streaming_pipeline
     )
-    streaming_span = next(span for span in openai_spans if span.tags.get("hayhooks.pipeline.name") == streaming_pipeline)
+    streaming_span = next(
+        span for span in openai_spans if span.tags.get("hayhooks.pipeline.name") == streaming_pipeline
+    )
 
     assert "hayhooks.response.streaming" not in non_streaming_span.tags
     assert "hayhooks.response.stream_type" not in non_streaming_span.tags

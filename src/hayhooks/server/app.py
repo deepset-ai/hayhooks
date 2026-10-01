@@ -20,8 +20,7 @@ from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from hayhooks.durable.runtime import DurableRuntime, RuntimeConfig
-from hayhooks.durable.store import StoreConfig
+from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
 from hayhooks.server.routers import (
     dashboard_router,
@@ -130,6 +129,8 @@ def _deploy_pipelines_sequential(app: FastAPI, yaml_files: list[Path], pipeline_
         try:
             deploy_yaml_pipeline(app, pipeline_file_path)
             deployed += 1
+        except PipelineModeError:
+            raise
         except Exception as e:
             log.warning("Skipping pipeline file '{}': {}", pipeline_file_path, e)
 
@@ -137,6 +138,8 @@ def _deploy_pipelines_sequential(app: FastAPI, yaml_files: list[Path], pipeline_
         try:
             deploy_files_pipeline(app, pipeline_dir)
             deployed += 1
+        except PipelineModeError:
+            raise
         except Exception as e:
             log.warning("Skipping pipeline directory '{}': {}", pipeline_dir, e)
     return deployed
@@ -157,6 +160,8 @@ def _prepare_one(path: Path) -> PreparedPipeline | None:
 def _safe_prepare(path: Path) -> PreparedPipeline | None:
     try:
         return _prepare_one(path)
+    except PipelineModeError:
+        raise
     except Exception as e:
         log.warning("Skipping pipeline '{}' (prepare failed): {}", path, e)
         return None
@@ -187,6 +192,8 @@ def _deploy_pipelines_parallel(app: FastAPI, yaml_files: list[Path], pipeline_di
         try:
             commit_prepared_pipeline(p, app=app, _defer_openapi_rebuild=True)
             deployed += 1
+        except PipelineModeError:
+            raise
         except Exception as e:
             log.warning("Skipping pipeline '{}' (commit failed): {}", p.name, e)
 
@@ -243,7 +250,6 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.durable_loop = asyncio.get_running_loop()
     if settings.pipelines_dir:
         deploy_pipelines(app, settings.pipelines_dir)
 
@@ -252,13 +258,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     broadcaster = get_trace_stream_broadcaster()
     broadcaster.set_loop(asyncio.get_running_loop())
     try:
-        await app.state.durable_runtime.start()
         yield
     finally:
-        await app.state.durable_runtime.close()
-        if hasattr(app.state, "durable_redis"):
-            await app.state.durable_redis.aclose()
-        del app.state.durable_loop
         broadcaster.clear_loop()
 
 
@@ -315,28 +316,6 @@ def create_app() -> FastAPI:
         app_params["root_path"] = root_path
 
     app = FastAPI(**app_params)
-    app.state.durable_runtime = DurableRuntime()
-    app.state.durable_store_config = StoreConfig(
-        lease_commit_safety_ms=settings.durable_lease_commit_safety_ms,
-        terminal_ttl_seconds=settings.durable_terminal_ttl_seconds,
-        max_nonterminal_executions=settings.durable_max_nonterminal_executions,
-        max_payload_bytes=settings.durable_max_payload_bytes,
-        max_progress_events=settings.durable_max_progress_events,
-        max_progress_event_bytes=settings.durable_max_progress_event_bytes,
-        max_stream_chunks=settings.durable_max_stream_chunks,
-        max_stream_chunk_bytes=settings.durable_max_stream_chunk_bytes,
-    )
-    app.state.durable_runtime_config = RuntimeConfig(
-        worker_concurrency=settings.durable_worker_concurrency,
-        poll_interval_seconds=settings.durable_poll_interval_seconds,
-        maintenance_interval_seconds=settings.durable_maintenance_interval_seconds,
-        shutdown_grace_seconds=settings.durable_shutdown_grace_seconds,
-        lease_duration_ms=settings.durable_lease_duration_ms,
-        max_run_attempts=settings.durable_max_run_attempts,
-        max_application_retries=settings.durable_max_application_retries,
-        retry_base_delay_seconds=settings.durable_retry_base_delay_seconds,
-        retry_max_delay_seconds=settings.durable_retry_max_delay_seconds,
-    )
 
     configure_tracing()
     app.add_middleware(RequestIdMiddleware)

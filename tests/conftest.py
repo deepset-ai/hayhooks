@@ -154,15 +154,15 @@ async def context_factory():
                 adapter_checkpoint=None,
             )
         )
-        claim = _ClaimedExecution(store, plan.next_control, worker_id, lease_duration_ms, checkpoint)
-        await claim.__aenter__()
+        claim = _ClaimedExecution(store, plan.next_control, worker_id, lease_duration_ms)
+        await claim.start()
         claims.append(claim)
-        return DurableContext(claim), claim
+        return DurableContext(claim, checkpoint), claim
 
     yield store, create
 
     for claim in reversed(claims):
-        await claim.__aexit__(None, None, None)
+        await claim.stop()
         assert claim._tasks and all(task.done() for task in claim._tasks)
 
 

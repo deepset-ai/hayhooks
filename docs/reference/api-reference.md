@@ -131,18 +131,19 @@ Execute a deployed pipeline.
 
 ### Durable Execution
 
-Durable wrappers add these typed routes under their pipeline prefix:
+`create_durable_router(deployment, ...)` adds these typed routes under the
+prefix the host mounts it at:
 
 | Method | Route | Result |
 |---|---|---|
-| `POST` | `/{pipeline_name}/run-durable` | Submit and return `202`, `Location`, execution ID, and links |
-| `GET` | `/{pipeline_name}/executions/{execution_id}` | Inspect the authoritative execution projection |
-| `POST` | `/{pipeline_name}/executions/{execution_id}/cancel` | Request cooperative cancellation |
-| `POST` | `/{pipeline_name}/executions/{execution_id}/resume` | Validate resume input and requeue waiting work |
-| `GET` | `/{pipeline_name}/executions/{execution_id}/stream` | Reattachable SSE chunks and terminal event |
+| `POST` | `/{prefix}/run-durable` | Submit and return `202`, `Location`, execution ID, and links |
+| `GET` | `/{prefix}/executions/{execution_id}` | Inspect the authoritative execution projection |
+| `POST` | `/{prefix}/executions/{execution_id}/cancel` | Request cooperative cancellation |
+| `POST` | `/{prefix}/executions/{execution_id}/resume` | Validate resume input and requeue waiting work |
+| `GET` | `/{prefix}/executions/{execution_id}/stream` | Reattachable SSE chunks and terminal event |
 
-The submit and resume request schemas come from the wrapper's Pydantic
-annotations and appear in OpenAPI. The execution projection keeps `result` as
+The submit and resume request schemas come from the deployment's Pydantic
+models and appear in OpenAPI. The execution projection keeps `result` as
 JSON so results written by an older immutable revision remain readable; the
 active revision still validates new results before committing them. A
 projection includes status, attempt, sequence, progress, public wait data,
@@ -155,7 +156,7 @@ Status codes:
 - `200`: inspection, terminal replay, or terminal cancellation result;
 - `202`: accepted submission, cancellation request, or resume;
 - `404`: missing execution or owner mismatch;
-- `409`: idempotency, revision, resume-state, or live deployment conflict;
+- `409`: idempotency, revision, or resume-state conflict;
 - `422`: request, resume, header, cursor, or payload validation failure;
 - `503`: admission closed or durable store unavailable.
 

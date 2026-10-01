@@ -9,9 +9,11 @@ isolation, idempotent submission, SSE, and health reporting.
 ## Integration shape
 
 The application creates a worker Redis client, a separate viewer client for
-blocking SSE reads, a store, a Haystack adapter, a deployment, and a runtime.
-FastAPI's lifespan starts workers only after Redis initialization succeeds and
-closes workers, open streams, and both clients during shutdown. Size the viewer
+blocking SSE reads, a store, a Haystack adapter, a deployment, and a runtime
+that holds its fixed set of deployments. FastAPI's lifespan starts workers only
+after Redis initialization succeeds. On shutdown it closes the runtime, which
+ends open streams, then waits for work retained past the shutdown grace to
+drain before it closes both clients. Size the viewer
 client's `max_connections` for the expected number of concurrent stream
 viewers: each open viewer holds one of its connections.
 
@@ -44,19 +46,22 @@ deployment = DurableDeployment(
     kind=adapter.kind,
     adapter=adapter,
 )
-runtime = DurableRuntime()
-runtime.add(deployment)
+runtime = DurableRuntime((deployment,))
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    await runtime.start()
     try:
+        await runtime.start()
         yield
     finally:
-        await runtime.close()
-        await viewers.aclose()
-        await redis.aclose()
+        try:
+            await runtime.close()
+        finally:
+            # Work retained past the shutdown grace keeps using Redis until it exits.
+            await runtime.wait_drained()
+            await viewers.aclose()
+            await redis.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -126,6 +131,11 @@ in your application.
   incompatible runner or Pipeline behavior.
 - Make external writes idempotent with a unique key such as
   `f"{context.execution_id}:publish"`.
+- On a platform that kills processes shortly after SIGTERM, such as
+  Kubernetes, pass `config=RuntimeConfig(release_running_on_close=True)` to the
+  deployment so that work still running at shutdown is handed to another
+  replica; see
+  [Hosts with short kill deadlines](../features/durable-execution.md#hosts-with-short-kill-deadlines).
 - Expose `runtime.health()` through existing health checks and follow
   [Durable Operations](../deployment/durable-operations.md) for Redis persistence,
   capacity, leases, and monitoring.

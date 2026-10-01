@@ -10,7 +10,6 @@ from typing import Any, cast
 
 from haystack.lazy_imports import LazyImport
 
-from hayhooks.durable._threading import start_daemon_thread
 from hayhooks.durable.context import DurableContext, current_durable_context
 from hayhooks.durable.models import ExecutionKind, JsonValue
 
@@ -259,13 +258,11 @@ class HaystackDurableAdapter:
         *,
         checkpoint_at: str | None = None,
     ) -> dict[str, Any]:
-        """Run the synchronous Pipeline without letting its thread block shutdown."""
-        context._require_owned()
-        result, _ = start_daemon_thread(
+        """Run the synchronous Pipeline in a thread the runtime drains like a synchronous runner's."""
+        return await context._start_thread(
             lambda: self.run_pipeline(context, data, checkpoint_at=checkpoint_at),
             name=f"durable-pipeline:{context.execution_id}",
         )
-        return await result
 
     def run_agent(self, context: DurableContext, *, messages: list[Any], **kwargs: Any) -> dict[str, Any]:
         """Run or recover a synchronous Agent execution."""

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import os
 import traceback
-from collections.abc import AsyncGenerator, Generator, Iterator, Mapping
+from collections.abc import AsyncGenerator, Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token, copy_context
+from functools import wraps
 from time import monotonic, time
 from typing import Any
 from uuid import uuid4
@@ -27,6 +28,7 @@ from haystack.lazy_imports import LazyImport
 from haystack.tracing import Span, Tracer, enable_tracing, is_tracing_enabled, tracer
 from haystack.tracing.tracer import NullTracer
 
+from hayhooks.durable._threading import is_async_callable
 from hayhooks.server.logger import log, normalize_trace_correlation_data
 from hayhooks.server.utils.live_trace_buffer import record_live_span_finish, record_live_span_start
 from hayhooks.settings import settings
@@ -792,3 +794,37 @@ def trace_operation(
         raise
     else:
         operation.finish()
+
+
+def trace_durable_runner(
+    pipeline_name: str, revision: str, kind: str, runner: Callable[..., Any]
+) -> Callable[..., Any]:
+    """Wrap a durable runner so each attempt emits one span, keeping the runner sync or async."""
+
+    def trace_tags(context: Any) -> dict[str, Any]:
+        return build_trace_tags(
+            {
+                "hayhooks.transport": "durable",
+                "hayhooks.pipeline.name": pipeline_name,
+                "hayhooks.durable.execution_id": context.execution_id,
+                "hayhooks.durable.attempt": context.attempt,
+                "hayhooks.durable.kind": kind,
+                "hayhooks.durable.definition_revision": revision,
+            }
+        )
+
+    if is_async_callable(runner):
+
+        @wraps(runner)
+        async def traced_async(context: Any, request: Any) -> object:
+            with trace_operation(SPAN_DURABLE_ATTEMPT, tags=trace_tags(context)):
+                return await runner(context, request)
+
+        return traced_async
+
+    @wraps(runner)
+    def traced_sync(context: Any, request: Any) -> object:
+        with trace_operation(SPAN_DURABLE_ATTEMPT, tags=trace_tags(context)):
+            return runner(context, request)
+
+    return traced_sync
