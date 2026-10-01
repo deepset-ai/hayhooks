@@ -581,3 +581,95 @@ async def test_stream_chunk_sync_on_the_event_loop_buffers_directly(context_fact
     context, claim = await create()
     context.stream_chunk_sync({"chunk": 1})
     assert list(claim._chunks) == [b'{"chunk":1}']
+
+
+async def test_idle_claim_does_not_wake_the_chunk_flusher(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    monkeypatch.setattr("hayhooks.durable.context._CHUNK_FLUSH_SECONDS", 0.001)
+    context, claim = await create()
+    flush, flushed = claim.flush_chunks, asyncio.Event()
+    buffered: list[int] = []
+
+    async def counted() -> None:
+        buffered.append(len(claim._chunks))
+        await flush()
+        flushed.set()
+
+    monkeypatch.setattr(claim, "flush_chunks", counted)
+    await asyncio.sleep(0.05)
+    assert buffered == []
+
+    await context.stream_chunk({"chunk": 1})
+    await asyncio.wait_for(flushed.wait(), timeout=1)
+    assert buffered == [1]
+    assert [chunk.data for chunk in await store.read_chunks(context.execution_id, CHUNK_CURSOR_START)] == [
+        b'{"chunk":1}'
+    ]
+
+
+async def test_chunk_wake_is_bounded_while_the_event_loop_is_stalled(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    schedule = claim.event_loop.call_soon_threadsafe
+    wake_callbacks = 0
+
+    def counted_schedule(callback, *args, context=None):
+        nonlocal wake_callbacks
+        wake_callbacks += callback == claim._chunks_buffered.set
+        return schedule(callback, *args, context=context)
+
+    monkeypatch.setattr(claim.event_loop, "call_soon_threadsafe", counted_schedule)
+    producers = 8
+    chunks_per_producer = 1_250
+    barrier = threading.Barrier(producers + 1)
+    errors: list[BaseException] = []
+
+    def produce(producer: int) -> None:
+        try:
+            barrier.wait()
+            for index in range(chunks_per_producer):
+                context.stream_chunk_sync({"producer": producer, "index": index})
+        except BaseException as error:
+            errors.append(error)
+
+    threads = [threading.Thread(target=produce, args=(producer,), daemon=True) for producer in range(producers)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert wake_callbacks == 1
+    assert len(claim._chunks) == store.config.max_stream_chunks
+
+    flush = claim.flush_chunks
+    first_flushed = asyncio.Event()
+    injected = False
+
+    async def inject_during_clear_before_drain() -> None:
+        nonlocal injected
+        if not injected:
+            injected = True
+            assert not claim._chunk_wake_scheduled
+            returned = threading.Event()
+            thread = threading.Thread(
+                target=lambda: (context.stream_chunk_sync({"chunk": "race"}), returned.set()),
+                daemon=True,
+            )
+            thread.start()
+            assert returned.wait(timeout=5)
+        await flush()
+        first_flushed.set()
+
+    monkeypatch.setattr(claim, "flush_chunks", inject_during_clear_before_drain)
+    await asyncio.wait_for(first_flushed.wait(), timeout=1)
+    assert wake_callbacks == 2
+
+    context.stream_chunk_sync({"chunk": "terminal"})
+    await claim.transition(Complete(claim.control.fence, claim.worker_id, 0, b"null"))
+    chunks, cursor = (), CHUNK_CURSOR_START
+    while page := await store.read_chunks(context.execution_id, cursor):
+        chunks += page
+        cursor = page[-1].cursor
+    assert [chunk.data for chunk in chunks[-3:]] == [b'{"chunk":"race"}', b'{"chunk":"terminal"}', b""]

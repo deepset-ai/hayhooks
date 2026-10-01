@@ -34,9 +34,10 @@ from hayhooks.durable.engine import (
 from hayhooks.durable.models import CheckpointEnvelope, ExecutionProgress, JsonValue, encode_json
 from hayhooks.durable.store import ExecutionStore, ExecutionStoreCorruptionError, ExecutionStoreError
 
-_T = TypeVar("_T")
-# With push delivery to stream viewers, this is also the display latency of a chunk.
+# Minimum spacing between background chunk flushes. The first chunk after a quiet interval flushes at once;
+# later ones wait up to this long, which bounds their display latency with push delivery to viewers.
 _CHUNK_FLUSH_SECONDS = 0.1
+_T = TypeVar("_T")
 
 
 def backoff_delay(streak: int, minimum: float, maximum: float) -> float:
@@ -106,6 +107,9 @@ class _ClaimedExecution:
         self._backoff = backoff
         self._transition_lock = asyncio.Lock()
         self._chunks: deque[bytes] = deque(maxlen=store.config.max_stream_chunks)
+        self._chunks_buffered = asyncio.Event()
+        self._chunk_wake_lock = threading.Lock()
+        self._chunk_wake_scheduled = False
         self._flush_lock = asyncio.Lock()
         self._chunk_drop_reported = False
         self._tasks: tuple[asyncio.Task[None], ...] = ()
@@ -273,9 +277,21 @@ class _ClaimedExecution:
     def buffer_chunk(self, data: bytes) -> None:
         """Queue one display chunk from any thread; the oldest are dropped beyond the stream limit."""
         self.require_owned()
-        if threading.get_ident() != self._loop_thread and self.event_loop.is_closed():
+        on_loop = threading.get_ident() == self._loop_thread
+        if not on_loop and self.event_loop.is_closed():
             raise RuntimeError("the durable runtime event loop is closed")
         self._chunks.append(data)
+        with self._chunk_wake_lock:
+            if not self._chunk_wake_scheduled:
+                self._chunk_wake_scheduled = True
+                try:
+                    if on_loop:
+                        self._chunks_buffered.set()
+                    else:
+                        self.event_loop.call_soon_threadsafe(self._chunks_buffered.set)
+                except RuntimeError:
+                    self._chunk_wake_scheduled = False
+                    raise
 
     async def flush_chunks(self) -> None:
         async with self._flush_lock:
@@ -304,8 +320,12 @@ class _ClaimedExecution:
 
     async def _flush_loop(self) -> None:
         while not self._finished and not self.lease_lost.is_set():
-            await asyncio.sleep(_CHUNK_FLUSH_SECONDS)
+            await self._chunks_buffered.wait()
+            with self._chunk_wake_lock:
+                self._chunks_buffered.clear()
+                self._chunk_wake_scheduled = False
             await self.flush_chunks()
+            await asyncio.sleep(_CHUNK_FLUSH_SECONDS)
 
     async def _heartbeat_loop(self) -> None:
         while not self._finished and not self.lease_lost.is_set():
