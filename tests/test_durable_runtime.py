@@ -495,6 +495,22 @@ async def test_retry_raised_inside_a_task_group_schedules_a_retry(deployment_fac
     )
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup needs Python 3.11")
+async def test_cancellation_raised_inside_a_task_group_is_not_an_exception_group(deployment_factory) -> None:
+    async def child() -> None:
+        raise DurableExecutionCancelledError("stop")
+
+    async def runner(_context: DurableContext, _request: Request) -> None:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(child())
+
+    deployment = await deployment_factory(runner)
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    persisted = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    assert persisted.type == "DurableExecutionCancelledError"
+
+
 @pytest.mark.parametrize("error", [ExecutionLeaseLostError("other run"), ExecutionStoreError("other store")])
 async def test_store_errors_raised_by_application_code_fail_the_run(deployment_factory, error) -> None:
     async def runner(_context: DurableContext, _request: Request) -> None:

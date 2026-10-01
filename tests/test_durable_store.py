@@ -28,8 +28,8 @@ from hayhooks.durable.store import (
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
-    assert_discard_progress_contract,
     assert_cancel_after_lease_expiry_contract,
+    assert_discard_progress_contract,
     assert_lost_lease_budget_contract,
     assert_lowered_limits_keep_data_readable,
     assert_maintenance_backlog_contract,

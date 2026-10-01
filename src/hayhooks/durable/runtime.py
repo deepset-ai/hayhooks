@@ -133,12 +133,13 @@ class _DeploymentState(Enum):
 _BASE_EXCEPTION_GROUP: Any = getattr(builtins, "BaseExceptionGroup", ())
 
 
-def _signal_in(error: BaseException) -> BaseException | None:
-    """The first retry or suspend signal in *error*, looking inside exception groups."""
-    if isinstance(error, (_RetryRequestedError, _ExecutionSuspendedError)):
-        return error
-    if isinstance(error, _BASE_EXCEPTION_GROUP):
-        return next(filter(None, map(_signal_in, error.exceptions)), None)
+def _signal_in(group: Any) -> BaseException | None:
+    """The first retry, suspend or cancellation signal in an exception group, including nested groups."""
+    for error in group.exceptions:
+        if isinstance(error, (_RetryRequestedError, _ExecutionSuspendedError, DurableExecutionCancelledError)):
+            return error
+        if isinstance(error, _BASE_EXCEPTION_GROUP) and (signal := _signal_in(error)) is not None:
+            return signal
     return None
 
 
@@ -783,7 +784,7 @@ class DurableDeployment:
             for thread in tuple(claim.threads):
                 _track(self._draining_threads, thread)
 
-    async def _run_claim(
+    async def _run_claim(  # noqa: C901
         self,
         claim: _ClaimedExecution,
         context: DurableContext,
@@ -794,7 +795,6 @@ class DurableDeployment:
             error = DurableExecutionCancelledError("durable execution cancellation was requested")
             await self._acknowledge_cancellation(claim, worker_id, error)
             return
-        # Only application code runs in this try: store and lease errors it raises are application failures.
         try:
             result = await self._invoke_application(claim, context, request)
             if self.result_model is not None:
@@ -803,13 +803,11 @@ class DurableDeployment:
                 result = result.model_dump(mode="json")
             encoded = encode_json(result, max_bytes=self.store.config.max_payload_bytes)
         except _ExecutionSuspendedError:
-            return
+            pass
         except DurableExecutionCancelledError as error:
             await self._acknowledge_cancellation(claim, worker_id, error)
-            return
         except _RetryRequestedError as error:
             await self._schedule_retry(claim, error, worker_id)
-            return
         except Exception as error:
             if claim.application_cancelled:
                 raise asyncio.CancelledError from error
@@ -832,18 +830,19 @@ class DurableDeployment:
                     first_progress_sequence=first,
                 )
             )
-            return
-        first, events = claim.progress_snapshot()
-        await claim.transition(
-            Complete(
-                fence=claim.control.fence,
-                worker_id=worker_id,
-                now_ms=0,
-                result=encoded,
-                progress_events=events,
-                first_progress_sequence=first,
+        else:
+            # Runtime commit errors raised here are not application failures.
+            first, events = claim.progress_snapshot()
+            await claim.transition(
+                Complete(
+                    fence=claim.control.fence,
+                    worker_id=worker_id,
+                    now_ms=0,
+                    result=encoded,
+                    progress_events=events,
+                    first_progress_sequence=first,
+                )
             )
-        )
 
     async def _schedule_retry(self, claim: _ClaimedExecution, error: _RetryRequestedError, worker_id: str) -> None:
         """Requeue with backoff and wake a local worker once the retry is due."""
@@ -935,11 +934,11 @@ class DurableDeployment:
             if claim.application_cancelled:
                 raise
             raise RuntimeError("the durable application was cancelled") from error
-        except BaseException as error:
-            # asyncio.TaskGroup wraps retry and suspend signals in an exception group.
-            if (signal := _signal_in(error)) is None or signal is error:
+        except _BASE_EXCEPTION_GROUP as group:
+            # asyncio.TaskGroup wraps the runtime's signals in an exception group.
+            if (signal := _signal_in(group)) is None:
                 raise
-            raise signal from error
+            raise signal from group
 
     def _cancel_application(self, application: asyncio.Future[object]) -> None:
         """Stop waiting for the application; cancellation-resistant async work stays tracked until it exits."""
