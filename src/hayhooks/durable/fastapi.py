@@ -127,7 +127,8 @@ def _project(
         public = project_execution(
             stored,
             links=links,
-            max_payload_bytes=deployment.store.config.max_payload_bytes,
+            # Reads never re-apply write limits, which may have been lowered since the write.
+            max_payload_bytes=sys.maxsize,
         )
         if (
             deployment.result_model is not None

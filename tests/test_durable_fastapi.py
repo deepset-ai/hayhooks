@@ -499,6 +499,18 @@ def test_sse_delivers_a_large_chunk_after_the_write_limit_is_lowered(
     assert caplog.messages.count("Skipped an undecodable durable stream chunk") == 1
 
 
+def test_projection_ignores_a_lowered_payload_limit(durable_app_factory, wait_for_execution) -> None:
+    app, deployment = durable_app_factory()
+    with TestClient(app) as client:
+        submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
+        wait_for_execution(client, submitted["links"]["self"], "completed")
+        deployment.store.config = replace(deployment.store.config, max_payload_bytes=8)
+        response = client.get(submitted["links"]["self"])
+
+    assert response.status_code == 200
+    assert response.json()["result"] == {"value": 1, "owner_id": None}
+
+
 @pytest.mark.parametrize(
     ("action", "expected_events"),
     [
