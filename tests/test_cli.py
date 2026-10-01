@@ -292,3 +292,16 @@ def test_pipeline_run_with_dir_uploads(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert set(received_names) == expected_names
     assert "executed successfully" in result.stdout.lower()
+
+
+def test_run_command_refuses_workers_in_durable_mode(monkeypatch, caplog):
+    import uvicorn
+
+    monkeypatch.setattr(settings, "durable_mode", True)
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: pytest.fail("uvicorn.run was called"))
+
+    result = runner.invoke(hayhooks_cli, ["run", "--workers", "2"])
+
+    assert result.exit_code == 1
+    assert "--workers 2 is not supported" in caplog.text
+    assert "replicas" in caplog.text

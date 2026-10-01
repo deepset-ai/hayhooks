@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from hayhooks.durable._threading import start_daemon_thread
 from hayhooks.durable.context import (
     DurableContext,
     DurableExecutionCancelledError,
@@ -18,10 +21,12 @@ from hayhooks.durable.context import (
     durable_streaming_callback,
 )
 from hayhooks.durable.engine import (
+    Checkpoint,
     Complete,
     ExecutionLeaseLostError,
     ExecutionStatus,
     Fail,
+    Heartbeat,
     PayloadKind,
     ReleaseClaim,
     RequestCancellation,
@@ -30,7 +35,7 @@ from hayhooks.durable.engine import (
     Suspend,
 )
 from hayhooks.durable.models import decode_json, encode_json
-from hayhooks.durable.store import CHUNK_CURSOR_START, ExecutionStoreError
+from hayhooks.durable.store import CHUNK_CURSOR_START, ExecutionStoreCorruptionError, ExecutionStoreError
 from tests.durable_store_contract import decode_checkpoint
 
 
@@ -38,6 +43,36 @@ def test_root_exports_durable_streaming_callback() -> None:
     from hayhooks import durable_streaming_callback as public_callback
 
     assert public_callback is durable_streaming_callback
+
+
+@pytest.mark.parametrize(
+    "exception_type",
+    [SystemExit, KeyboardInterrupt, GeneratorExit, StopIteration, StopAsyncIteration],
+)
+async def test_daemon_thread_converts_exit_exceptions(exception_type: type[BaseException]) -> None:
+    error = exception_type()
+
+    def raise_error() -> None:
+        raise error
+
+    result, exited = start_daemon_thread(raise_error, name="test-exit")
+    with pytest.raises(RuntimeError, match=f"^durable work raised {exception_type.__name__}$") as raised:
+        await asyncio.wait_for(result, 1)
+    assert raised.value.__cause__ is error
+    await asyncio.wait_for(exited, 1)
+
+
+async def test_daemon_thread_forwards_control_signals() -> None:
+    error = _RetryRequestedError("x", None)
+
+    def raise_error() -> None:
+        raise error
+
+    result, exited = start_daemon_thread(raise_error, name="test-signal")
+    with pytest.raises(_RetryRequestedError) as raised:
+        await result
+    assert raised.value is error
+    await asyncio.wait_for(exited, 1)
 
 
 async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancellation(
@@ -54,12 +89,21 @@ async def test_checkpoint_commits_progress_once_and_preserves_concurrent_cancell
     assert buffered is not None and buffered.control.version == before.control.version
     assert not buffered.progress
 
-    with monkeypatch.context() as patch:
-        patch.setattr(store, "transition", AsyncMock(side_effect=ExecutionStoreError("unavailable")))
-        with pytest.raises(ExecutionStoreError, match="unavailable"):
-            await context.checkpoint({"component": "fetch"})
+    transition = store.transition
+    unavailable = True
 
-    await context.checkpoint({"component": "fetch"})
+    async def fail_once(run_id, command):
+        nonlocal unavailable
+        if isinstance(command, Checkpoint) and unavailable:
+            unavailable = False
+            message = "unavailable"
+            raise ExecutionStoreError(message)
+        return await transition(run_id, command)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "transition", fail_once)
+        await context.checkpoint({"component": "fetch"})
+
     checkpointed = await store.read(context.execution_id)
     assert checkpointed is not None and checkpointed.control.version == before.control.version + 1
     assert decode_checkpoint(checkpointed.payloads[PayloadKind.CHECKPOINT]).application_state == {"step": 1}
@@ -84,7 +128,7 @@ async def test_progress_buffer_keeps_only_configured_history(context_factory) ->
     for value in range(limit + 1):
         await context.report_progress(str(value))
 
-    assert len(context._pending_progress) == limit
+    assert len(context._claim.pending_progress) == limit
     await context.checkpoint()
     stored = await store.read(context.execution_id)
     assert stored is not None
@@ -132,7 +176,13 @@ async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context
     persisted = await store.read(context.execution_id)
     assert persisted is not None
     reconstructed = DurableContext(
-        _ClaimedExecution(store, persisted.control, claim.worker_id, claim.lease_duration_ms),
+        _ClaimedExecution(
+            store,
+            persisted.control,
+            claim.worker_id,
+            claim.lease_duration_ms,
+            confirmed_at=time.monotonic(),
+        ),
         decode_checkpoint(persisted.payloads[PayloadKind.CHECKPOINT]),
     )
     assert reconstructed.resume_input == {"approved": True}
@@ -193,6 +243,170 @@ async def test_lost_claim_rejects_owned_context_operations(
     claim.mark_lost()
     with pytest.raises(ExecutionLeaseLostError):
         await getattr(context, method)(*args)
+
+
+async def test_claim_stops_owning_once_its_window_passes(context_factory, monkeypatch, log_records) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = AsyncMock(wraps=store.transition)
+    monkeypatch.setattr(store, "transition", transition)
+    claim._confirmed_until = time.monotonic() - 0.001
+
+    assert claim.owned is False
+    for operation in (
+        context.stream_chunk({"chunk": 1}),
+        context.report_progress("late"),
+        context.checkpoint(),
+    ):
+        with pytest.raises(ExecutionLeaseLostError):
+            await operation
+    with pytest.raises(ExecutionLeaseLostError):
+        await claim.transition(Heartbeat(claim.control.fence, claim.worker_id, 0, claim.lease_duration_ms))
+
+    assert claim.lease_lost.is_set()
+    transition.assert_not_awaited()
+    losses = [record for record in log_records if record["message"].startswith("Durable execution lease lost")]
+    assert len(losses) == 1 and "window" in losses[0]["extra"]["reason"]
+
+
+@pytest.mark.parametrize("command_type", [Heartbeat, Checkpoint], ids=["heartbeat", "checkpoint"])
+async def test_hung_store_call_loses_the_lease_within_its_window(context_factory, monkeypatch, command_type) -> None:
+    store, create = context_factory
+    context, claim = await create(lease_duration_ms=120)
+    transition = store.transition
+
+    async def hang(run_id, command):
+        if isinstance(command, command_type):
+            await asyncio.Event().wait()
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", hang)
+    if command_type is Heartbeat:
+        await asyncio.wait_for(claim.lease_lost.wait(), 0.3)
+    else:
+        with pytest.raises(ExecutionLeaseLostError):
+            await asyncio.wait_for(context.checkpoint(), 1)
+
+    assert claim.lease_lost.is_set()
+    assert not claim._transition_lock.locked()
+    with pytest.raises(ExecutionLeaseLostError):
+        await context.stream_chunk({"late": True})
+
+
+async def test_heartbeat_drops_progress_the_store_already_holds(context_factory) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    await context.report_progress("one")
+    await context.report_progress("two")
+    _, events = claim.progress_snapshot()
+
+    await store.transition(
+        context.execution_id,
+        Checkpoint(
+            claim.control.fence,
+            claim.worker_id,
+            0,
+            claim.lease_duration_ms,
+            b"{}",
+            events,
+        ),
+    )
+    claim._confirmed_until -= 0.5
+    await context.check_cancelled()
+
+    assert claim.pending_progress == []
+    await context.checkpoint()
+    stored = await store.read(context.execution_id)
+    assert stored is not None
+    assert [event.sequence for event in stored.progress] == [1, 2]
+
+
+async def test_checkpoint_replay_after_a_lost_reply_stores_progress_once(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    reply_lost = False
+
+    async def lose_first_reply(run_id, command):
+        nonlocal reply_lost
+        plan = await transition(run_id, command)
+        if isinstance(command, Checkpoint) and not reply_lost:
+            reply_lost = True
+            message = "reply lost"
+            raise ExecutionStoreError(message)
+        return plan
+
+    monkeypatch.setattr(store, "transition", lose_first_reply)
+    await context.report_progress("one")
+    await context.report_progress("two")
+    await context.checkpoint()
+
+    stored = await store.read(context.execution_id)
+    assert stored is not None
+    assert [event.sequence for event in stored.progress] == [1, 2]
+    assert claim.pending_progress == []
+    assert claim.control.progress_sequence == 2
+
+
+async def test_commit_after_an_unconfirmed_checkpoint_does_not_duplicate_progress(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    reply_lost = False
+
+    async def corrupt_first_reply(run_id, command):
+        nonlocal reply_lost
+        plan = await transition(run_id, command)
+        if isinstance(command, Checkpoint) and not reply_lost:
+            reply_lost = True
+            message = "bad reply"
+            raise ExecutionStoreCorruptionError(message)
+        return plan
+
+    monkeypatch.setattr(store, "transition", corrupt_first_reply)
+    await context.report_progress("one")
+    await context.report_progress("two")
+    with pytest.raises(ExecutionStoreCorruptionError, match="bad reply"):
+        await context.checkpoint()
+
+    first, events = claim.progress_snapshot()
+    await claim.transition(
+        Complete(
+            claim.control.fence,
+            claim.worker_id,
+            0,
+            b"null",
+            progress_events=events,
+            first_progress_sequence=first,
+        )
+    )
+    stored = await store.read(context.execution_id)
+    assert stored is not None and stored.control.status is ExecutionStatus.COMPLETED
+    assert [event.sequence for event in stored.progress] == [1, 2]
+
+
+async def test_unconfirmed_finishing_commit_ends_the_claim(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    reply_lost = False
+
+    async def lose_first_reply(run_id, command):
+        nonlocal reply_lost
+        plan = await transition(run_id, command)
+        if isinstance(command, Complete) and not reply_lost:
+            reply_lost = True
+            message = "reply lost"
+            raise ExecutionStoreError(message)
+        return plan
+
+    monkeypatch.setattr(store, "transition", lose_first_reply)
+    with pytest.raises(ExecutionLeaseLostError, match="unconfirmed Complete"):
+        await claim.transition(Complete(claim.control.fence, claim.worker_id, 0, b"null"))
+
+    stored = await store.read(context.execution_id)
+    assert stored is not None and stored.control.status is ExecutionStatus.COMPLETED
+    assert claim.lease_lost.is_set()
 
 
 async def test_heartbeat_marks_a_rejected_claim_lost(context_factory) -> None:
@@ -287,7 +501,7 @@ async def test_chunk_buffer_stays_bounded_while_the_store_is_slow(context_factor
     await flush
 
 
-async def test_retry_request_carries_buffered_progress(context_factory) -> None:
+async def test_retry_request_keeps_buffered_progress_for_its_commit(context_factory) -> None:
     _, create = context_factory
     context, _ = await create()
     with pytest.raises(ValueError, match="finite non-negative"):
@@ -295,7 +509,8 @@ async def test_retry_request_carries_buffered_progress(context_factory) -> None:
     await context.report_progress("retrying")
     with pytest.raises(_RetryRequestedError) as raised:
         await context.retry("later", delay=1.5)
-    assert (str(raised.value), raised.value.delay, len(raised.value.progress_events)) == ("later", 1.5, 1)
+    assert (str(raised.value), raised.value.delay) == ("later", 1.5)
+    assert context._claim.progress_snapshot() == (1, (context._claim.pending_progress[0],))
 
 
 async def test_release_rejects_a_write_waiting_behind_it(context_factory, monkeypatch) -> None:
@@ -325,3 +540,186 @@ async def test_release_rejects_a_write_waiting_behind_it(context_factory, monkey
         await checkpoint
     assert commands == ["ReleaseClaim"]
     assert (await store.read(context.execution_id)).control.status is ExecutionStatus.QUEUED
+
+
+async def test_stream_chunk_sync_hands_off_without_waiting_for_the_event_loop(context_factory) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    returned = threading.Event()
+    thread = threading.Thread(
+        target=lambda: (context.stream_chunk_sync({"chunk": 1}), returned.set()),
+        daemon=True,
+    )
+    thread.start()
+    assert returned.wait(timeout=5)
+    await claim.transition(Complete(claim.control.fence, claim.worker_id, 0, b"null"))
+
+    chunks = await store.read_chunks(context.execution_id, CHUNK_CURSOR_START)
+    assert [chunk.data for chunk in chunks] == [b'{"chunk":1}', b""]
+
+
+async def test_chunk_queued_before_lease_loss_is_never_sent(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    append = AsyncMock()
+    monkeypatch.setattr(store, "append_chunks", append)
+    returned = threading.Event()
+    thread = threading.Thread(
+        target=lambda: (context.stream_chunk_sync({"chunk": 1}), returned.set()),
+        daemon=True,
+    )
+    thread.start()
+    assert returned.wait(timeout=5)
+    claim.mark_lost()
+    await claim.flush_chunks()
+    append.assert_not_called()
+    with pytest.raises(ExecutionLeaseLostError):
+        await asyncio.to_thread(context.stream_chunk_sync, {"chunk": 2})
+
+
+async def test_stream_chunk_sync_on_the_event_loop_buffers_directly(context_factory) -> None:
+    _, create = context_factory
+    context, claim = await create()
+    context.stream_chunk_sync({"chunk": 1})
+    assert list(claim._chunks) == [b'{"chunk":1}']
+
+
+async def test_idle_claim_does_not_wake_the_chunk_flusher(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    monkeypatch.setattr("hayhooks.durable.context._CHUNK_FLUSH_SECONDS", 0.001)
+    context, claim = await create()
+    flush, flushed = claim.flush_chunks, asyncio.Event()
+    buffered: list[int] = []
+
+    async def counted() -> None:
+        buffered.append(len(claim._chunks))
+        await flush()
+        flushed.set()
+
+    monkeypatch.setattr(claim, "flush_chunks", counted)
+    await asyncio.sleep(0.05)
+    assert buffered == []
+
+    await context.stream_chunk({"chunk": 1})
+    await asyncio.wait_for(flushed.wait(), timeout=1)
+    assert buffered == [1]
+    assert [chunk.data for chunk in await store.read_chunks(context.execution_id, CHUNK_CURSOR_START)] == [
+        b'{"chunk":1}'
+    ]
+
+
+async def test_chunk_wake_is_bounded_while_the_event_loop_is_stalled(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    schedule = claim.event_loop.call_soon_threadsafe
+    wake_callbacks = 0
+
+    def counted_schedule(callback, *args, context=None):
+        nonlocal wake_callbacks
+        wake_callbacks += callback == claim._chunks_buffered.set
+        return schedule(callback, *args, context=context)
+
+    monkeypatch.setattr(claim.event_loop, "call_soon_threadsafe", counted_schedule)
+    producers = 8
+    chunks_per_producer = 1_250
+    barrier = threading.Barrier(producers + 1)
+    errors: list[BaseException] = []
+
+    def produce(producer: int) -> None:
+        try:
+            barrier.wait()
+            for index in range(chunks_per_producer):
+                context.stream_chunk_sync({"producer": producer, "index": index})
+        except BaseException as error:
+            errors.append(error)
+
+    threads = [threading.Thread(target=produce, args=(producer,), daemon=True) for producer in range(producers)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert wake_callbacks == 1
+    assert len(claim._chunks) == store.config.max_stream_chunks
+
+    flush = claim.flush_chunks
+    first_flushed = asyncio.Event()
+    injected = False
+
+    async def inject_during_clear_before_drain() -> None:
+        nonlocal injected
+        if not injected:
+            injected = True
+            assert not claim._chunk_wake_scheduled
+            returned = threading.Event()
+            thread = threading.Thread(
+                target=lambda: (context.stream_chunk_sync({"chunk": "race"}), returned.set()),
+                daemon=True,
+            )
+            thread.start()
+            assert returned.wait(timeout=5)
+        await flush()
+        first_flushed.set()
+
+    monkeypatch.setattr(claim, "flush_chunks", inject_during_clear_before_drain)
+    await asyncio.wait_for(first_flushed.wait(), timeout=1)
+    assert wake_callbacks == 2
+
+    context.stream_chunk_sync({"chunk": "terminal"})
+    await claim.transition(Complete(claim.control.fence, claim.worker_id, 0, b"null"))
+    chunks, cursor = (), CHUNK_CURSOR_START
+    while page := await store.read_chunks(context.execution_id, cursor):
+        chunks += page
+        cursor = page[-1].cursor
+    assert [chunk.data for chunk in chunks[-3:]] == [b'{"chunk":"race"}', b'{"chunk":"terminal"}', b""]
+
+
+async def test_first_heartbeat_is_due_one_interval_after_the_claim(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    _, claim = await create()
+    await claim.stop()
+    beat = asyncio.Event()
+    transition = store.transition
+
+    async def recorded(run_id, command):
+        if isinstance(command, Heartbeat):
+            beat.set()
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", recorded)
+    slow = _ClaimedExecution(
+        store,
+        claim.control,
+        claim.worker_id,
+        claim.lease_duration_ms,
+        confirmed_at=time.monotonic() - 10,
+    )
+    await slow.start()
+    try:
+        await asyncio.wait_for(beat.wait(), timeout=1)
+    finally:
+        await slow.stop()
+
+
+async def test_check_cancelled_reuses_a_recently_confirmed_control(context_factory, monkeypatch) -> None:
+    store, create = context_factory
+    context, claim = await create()
+    transition = store.transition
+    heartbeats = 0
+
+    async def counted(run_id, command):
+        nonlocal heartbeats
+        heartbeats += isinstance(command, Heartbeat)
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", counted)
+    await store.transition(context.execution_id, RequestCancellation(0, "stop"))
+    await context.check_cancelled()
+    assert heartbeats == 0
+
+    claim._confirmed_until -= 0.5
+    with pytest.raises(DurableExecutionCancelledError):
+        await context.check_cancelled()
+    assert heartbeats == 1

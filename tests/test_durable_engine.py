@@ -183,6 +183,23 @@ def test_terminal_state_is_irreversible_and_payloads_are_exclusive(claimed_contr
     assert failed.payload_deletes == (PayloadKind.RESULT, PayloadKind.WAIT)
 
 
+def test_invalid_data_failure_can_discard_progress(claimed_control) -> None:
+    current = replace(claimed_control, progress_sequence=2)
+    failed = decide(current, Fail(1, "worker-a", 300, b"invalid", discard_progress=True))
+    assert failed.next_control.status is ExecutionStatus.FAILED
+    assert failed.next_control.progress_sequence == 0
+    assert failed.discard_progress and not failed.progress_events
+
+    canceled = decide(current, RequestCancellation(250)).next_control
+    canceled = decide(canceled, Fail(1, "worker-a", 300, b"invalid", discard_progress=True))
+    assert canceled.next_control.status is ExecutionStatus.CANCELED
+    assert canceled.next_control.progress_sequence == 0
+    assert canceled.discard_progress
+
+    with pytest.raises(InvalidExecutionTransitionError, match="cannot append"):
+        decide(current, Fail(1, "worker-a", 300, b"invalid", (b"new",), discard_progress=True))
+
+
 def test_revision_mismatch_never_grants_a_fence() -> None:
     current = control()
     with pytest.raises(InvalidExecutionTransitionError, match="revision"):
@@ -202,7 +219,8 @@ def test_stale_lease_index_is_removed_without_changing_control() -> None:
     [
         pytest.param({"cancel_requested_at_ms": 250}, ExecutionStatus.CANCELED, id="canceled"),
         pytest.param({"definition_revision": "rev-2"}, ExecutionStatus.QUEUED, id="revision"),
-        pytest.param({"run_attempt": 3}, ExecutionStatus.FAILED, id="attempts"),
+        pytest.param({"lease_recoveries": 2}, ExecutionStatus.FAILED, id="attempts"),
+        pytest.param({"run_attempt": 3}, ExecutionStatus.QUEUED, id="attempt-number"),
     ],
 )
 def test_expired_lease_recovery_honors_cancellation_and_attempt_budget(changes, expected, claimed_control) -> None:
@@ -218,3 +236,95 @@ def test_expired_lease_recovery_honors_cancellation_and_attempt_budget(changes, 
         ),
     )
     assert recovered.next_control.status is expected
+
+
+def test_run_budget_counts_only_lost_leases() -> None:
+    current = control()
+    for lost in range(1, 4):
+        claimed = claim(current).next_control
+        current = decide(
+            claimed,
+            RecoverExpiredLease(1_000, claimed.fence, claimed.lease_expires_at_ms or 0, 3, ATTEMPTS_ERROR),
+        ).next_control
+        assert (current.run_attempt, current.lease_recoveries) == (lost, lost)
+        assert current.status is (ExecutionStatus.FAILED if lost == 3 else ExecutionStatus.QUEUED)
+
+
+def test_releases_resumes_and_retries_never_spend_the_run_budget() -> None:
+    current = control()
+    released = decide(claim(current).next_control, ReleaseClaim(1, "worker-a", 300)).next_control
+    assert (released.status, released.run_attempt) == (ExecutionStatus.QUEUED, 1)
+    current = released
+    for _ in range(5):
+        claimed = claim(current).next_control
+        waiting = decide(claimed, Suspend(claimed.fence, "worker-a", 300, b"checkpoint", b"wait")).next_control
+        current = decide(waiting, Resume(400, "rev-1")).next_control
+    for _ in range(10):
+        claimed = claim(current).next_control
+        current = replace(
+            decide(claimed, ScheduleRetry(claimed.fence, "worker-a", 300, 0, 10, b"retry")).next_control,
+            available_at_ms=None,
+        )
+    claimed = claim(current).next_control
+    assert (claimed.status, claimed.run_attempt, claimed.lease_recoveries) == (ExecutionStatus.RUNNING, 17, 0)
+
+
+def test_claim_fails_when_recovered_leases_reach_a_lowered_limit() -> None:
+    current = replace(control(), lease_recoveries=2)
+    failed = decide(current, Claim("worker-a", 200, 500, 2, "rev-1", ATTEMPTS_ERROR))
+    assert failed.next_control.status is ExecutionStatus.FAILED
+    assert failed.payload_writes[0].data == ATTEMPTS_ERROR
+    assert claim(current).next_control.status is ExecutionStatus.RUNNING
+
+
+@pytest.mark.parametrize(
+    ("first", "events", "expected"),
+    [
+        pytest.param(None, (b"c",), [(3, b"c")], id="unnumbered"),
+        pytest.param(1, (b"a", b"b"), [], id="full-replay"),
+        pytest.param(2, (b"b", b"c", b"d"), [(3, b"c"), (4, b"d")], id="partial-replay"),
+        pytest.param(3, (b"c",), [(3, b"c")], id="next"),
+    ],
+)
+def test_checkpoint_skips_progress_a_replay_already_stored(claimed_control, first, events, expected) -> None:
+    stored = decide(claimed_control, Checkpoint(1, "worker-a", 300, 500, b"cp", (b"a", b"b"))).next_control
+    plan = decide(
+        stored,
+        Checkpoint(1, "worker-a", 300, 500, b"cp", events, first_progress_sequence=first),
+    )
+    assert [(event.sequence, event.data) for event in plan.progress_events] == expected
+    assert plan.next_control.progress_sequence == 2 + len(expected)
+
+
+@pytest.mark.parametrize("first", [0, 4])
+def test_checkpoint_rejects_progress_that_does_not_continue_the_sequence(claimed_control, first) -> None:
+    stored = decide(claimed_control, Checkpoint(1, "worker-a", 300, 500, b"cp", (b"a", b"b"))).next_control
+    with pytest.raises(InvalidExecutionTransitionError, match="progress"):
+        decide(
+            stored,
+            Checkpoint(1, "worker-a", 300, 500, b"cp", (b"d",), first_progress_sequence=first),
+        )
+
+
+@pytest.mark.parametrize("outcome", ["complete", "fail", "suspend", "retry"])
+def test_owned_outcomes_skip_progress_a_failed_checkpoint_already_stored(claimed_control, outcome) -> None:
+    stored = decide(claimed_control, Checkpoint(1, "worker-a", 300, 500, b"cp", (b"a", b"b"))).next_control
+    commands = {
+        "complete": Complete(1, "worker-a", 300, b"result", (b"b", b"c"), first_progress_sequence=2),
+        "fail": Fail(1, "worker-a", 300, b"error", (b"b", b"c"), first_progress_sequence=2),
+        "suspend": Suspend(1, "worker-a", 300, b"cp", b"wait", (b"b", b"c"), first_progress_sequence=2),
+        "retry": ScheduleRetry(1, "worker-a", 300, 0, 1, b"error", (b"b", b"c"), first_progress_sequence=2),
+    }
+    plan = decide(stored, commands[outcome])
+    assert [(event.sequence, event.data) for event in plan.progress_events] == [(3, b"c")]
+    assert plan.next_control.progress_sequence == 3
+
+
+@pytest.mark.parametrize(("exhausted", "stored"), [(b"exhausted", b"exhausted"), (None, b"retry")])
+def test_exhausted_retry_fails_with_the_exhausted_error(claimed_control, exhausted, stored) -> None:
+    command = ScheduleRetry(1, "worker-a", 300, 0, 1, b"retry", exhausted_error=exhausted)
+    queued = decide(claimed_control, command)
+    assert (queued.next_control.status, queued.payload_writes[0].data) == (ExecutionStatus.QUEUED, b"retry")
+    reclaimed = claim(replace(queued.next_control, available_at_ms=None), now_ms=400).next_control
+    failed = decide(reclaimed, replace(command, fence=reclaimed.fence, now_ms=500))
+    assert (failed.next_control.status, failed.payload_writes[0].data) == (ExecutionStatus.FAILED, stored)

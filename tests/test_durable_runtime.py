@@ -8,6 +8,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -16,13 +17,17 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from hayhooks.durable.context import DurableContext
+from hayhooks.durable.context import DurableContext, DurableExecutionCancelledError
 from hayhooks.durable.engine import (
+    Checkpoint,
     Claim,
     ExecutionLeaseLostError,
     ExecutionNotFoundError,
+    ExecutionPayloadSizeError,
     ExecutionStatus,
+    Fail,
     Heartbeat,
+    InvalidExecutionTransitionError,
     PayloadKind,
     ReleaseClaim,
     initial_control,
@@ -32,6 +37,7 @@ from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, RuntimeC
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     ExecutionIdempotencyConflictError,
+    ExecutionStoreCorruptionError,
     ExecutionStoreError,
     MemoryExecutionStore,
     StoreConfig,
@@ -114,6 +120,58 @@ class ControlledStore(MemoryExecutionStore):
             max_run_attempts=max_run_attempts,
             attempts_error=attempts_error,
         )
+
+
+class PreparationStore(MemoryExecutionStore):
+    """Hang one pre-start operation while leaving later queued work available."""
+
+    def __init__(self, stage: str) -> None:
+        super().__init__("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+        self.stage = stage
+        self.claim_gate = asyncio.Event()
+        self.first_run: str | None = None
+
+    async def claim(self, command):
+        await self.claim_gate.wait()
+        plan = await super().claim(command)
+        if self.stage == "claim" and plan is not None and plan.next_control.run_id == self.first_run:
+            await asyncio.sleep(0.15)
+        return plan
+
+    async def read(self, run_id: str) -> StoredExecution | None:
+        if run_id == self.first_run:
+            if self.stage == "read":
+                await asyncio.Event().wait()
+            if self.stage == "release":
+                message = "read failed"
+                raise ExecutionStoreError(message)
+        stored = await super().read(run_id)
+        if run_id == self.first_run and self.stage == "fail" and stored is not None:
+            payloads = {**stored.payloads, PayloadKind.INPUT: b"invalid-json"}
+            return StoredExecution(stored.control, payloads, stored.progress)
+        return stored
+
+    async def transition(self, run_id, command):
+        if run_id == self.first_run and (
+            (self.stage == "fail" and isinstance(command, Fail))
+            or (self.stage == "release" and isinstance(command, ReleaseClaim))
+        ):
+            await asyncio.Event().wait()
+        return await super().transition(run_id, command)
+
+
+class FlakyCommitStore(MemoryExecutionStore):
+    def __init__(self, command_name: str) -> None:
+        super().__init__("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+        self.command_name = command_name
+        self.failed = False
+
+    async def transition(self, run_id, command):
+        if type(command).__name__ == self.command_name and not self.failed:
+            self.failed = True
+            message = "blip"
+            raise ExecutionStoreError(message)
+        return await super().transition(run_id, command)
 
 
 async def echo_runner(_context: DurableContext, request: BaseModel) -> Result:
@@ -220,6 +278,57 @@ def test_lease_config_leaves_a_safe_heartbeat_window() -> None:
         DurableDeployment("jobs", "v1", store, Request, echo_runner, config=RuntimeConfig(lease_duration_ms=20))
 
 
+@pytest.mark.parametrize(
+    ("run_id", "kwargs", "error"),
+    [
+        pytest.param("current", {"owner_id": "owner"}, None, id="owner"),
+        pytest.param("missing", {"owner_id": "owner"}, ExecutionNotFoundError, id="missing"),
+        pytest.param("current", {"owner_id": "other"}, ExecutionNotFoundError, id="owner-mismatch"),
+        pytest.param("current", {"owner_id": "other", "enforce_owner": False}, None, id="unscoped"),
+        pytest.param("foreign", {"owner_id": "owner"}, ExecutionNotFoundError, id="deployment-mismatch"),
+        pytest.param("legacy", {"owner_id": "owner"}, None, id="revision-mismatch-allowed"),
+        pytest.param(
+            "legacy",
+            {"owner_id": "owner", "allow_revision_mismatch": False},
+            InvalidExecutionTransitionError,
+            id="revision-mismatch-rejected",
+        ),
+    ],
+)
+async def test_get_control_authorizes_like_get_without_reading_payloads(
+    deployment_factory, run_id: str, kwargs: dict[str, object], error: type[Exception] | None
+) -> None:
+    deployment = await deployment_factory(start=False)
+    store = deployment.store
+    for identifier, revision in (("current", "v1"), ("legacy", "v0"), ("foreign", "v1")):
+        control = initial_control(
+            run_id=identifier,
+            idempotency_digest=identifier,
+            idempotency_binding_digest=identifier,
+            deployment=deployment.name,
+            definition_revision=revision,
+            owner_id="owner",
+            kind=deployment.kind.value,
+            now_ms=0,
+        )
+        await store.submit(control, b"{}")
+    store._controls["foreign"] = replace(store._controls["foreign"], deployment="other")
+    get_kwargs = {"allow_revision_mismatch": True, **kwargs}
+    read_public = AsyncMock(wraps=store.read_public)
+    store.read_public = read_public
+
+    if error is None:
+        control = await deployment.get_control(run_id, **kwargs)
+        assert not read_public.await_count
+        assert control == (await deployment.get(run_id, **get_kwargs)).control
+    else:
+        with pytest.raises(error):
+            await deployment.get_control(run_id, **kwargs)
+        assert not read_public.await_count
+        with pytest.raises(error):
+            await deployment.get(run_id, **get_kwargs)
+
+
 async def test_submission_is_detached_idempotent_and_owner_scoped(deployment_factory) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
@@ -246,6 +355,55 @@ async def test_submission_is_detached_idempotent_and_owner_scoped(deployment_fac
     assert decode_json(stored.payloads[PayloadKind.RESULT], max_bytes=1_000) == {"value": 2}
 
 
+async def test_idempotent_replay_ignores_revision_and_unset_fields() -> None:
+    class RequestV2(Request):
+        note: str = ""
+
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    config = RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300)
+    v1 = DurableDeployment("jobs", "v1", store, Request, echo_runner, result_model=Result, config=config)
+    v2 = DurableDeployment("jobs", "v2", store, RequestV2, echo_runner, result_model=Result, config=config)
+    await asyncio.gather(v1.start(), v2.start())
+    try:
+        created = await v1.submit({"value": 1}, idempotency_key="same")
+        replayed = await v2.submit({"value": 1}, idempotency_key="same")
+        assert created.created is True
+        assert replayed.created is False
+        assert replayed.control.run_id == created.control.run_id
+        with pytest.raises(ExecutionIdempotencyConflictError):
+            await v2.submit({"value": 1, "note": ""}, idempotency_key="same")
+    finally:
+        await asyncio.gather(v1.close(), v2.close())
+        await asyncio.gather(v1.wait_drained(), v2.wait_drained())
+
+
+@pytest.mark.parametrize("exit_kind", ["exit", "stopiteration"])
+async def test_sync_runner_exit_fails_the_run_and_keeps_the_loop(deployment_factory, exit_kind: str) -> None:
+    def runner(_context: DurableContext, request: Request) -> Result:
+        if request.value == 1:
+            if exit_kind == "exit":
+                sys.exit(2)
+            next(iter(()))
+        return Result(value=request.value)
+
+    deployment = await deployment_factory(runner)
+    failed_submission = await deployment.submit({"value": 1})
+    failed = await wait_for_execution(
+        deployment, failed_submission.control.run_id, lambda value: value.control.terminal
+    )
+    assert failed.control.status is ExecutionStatus.FAILED
+    assert PersistedError.model_validate(decode_json(failed.payloads[PayloadKind.ERROR], max_bytes=1_000)).type == (
+        "RuntimeError"
+    )
+
+    good_submission = await deployment.submit({"value": 2})
+    completed = await wait_for_execution(
+        deployment, good_submission.control.run_id, lambda value: value.control.terminal
+    )
+    assert completed.control.status is ExecutionStatus.COMPLETED
+    assert (await deployment.health())["healthy"] is True
+
+
 async def test_cancellation_wins_the_result_race(deployment_factory) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
@@ -266,7 +424,7 @@ async def test_cancellation_wins_the_result_race(deployment_factory) -> None:
     assert PayloadKind.RESULT not in stored.payloads
 
 
-async def test_retry_delay_and_application_budget(deployment_factory) -> None:
+async def test_retry_delay_and_application_budget(deployment_factory, log_records) -> None:
     attempts = 0
     first_attempt = asyncio.Event()
 
@@ -297,14 +455,75 @@ async def test_retry_delay_and_application_budget(deployment_factory) -> None:
         lambda value: value.control.application_retry_count == 1,
     )
     assert queued.control.available_at_ms == queued.control.updated_at_ms + 40
+    queued_error = PersistedError.model_validate(decode_json(queued.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    assert (queued_error.type, queued_error.retryable) == ("RetryRequestedError", True)
 
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
     error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
-    assert (stored.control.status, stored.control.run_attempt, attempts, error.retryable) == (
+    assert (stored.control.status, stored.control.run_attempt, attempts) == (
         ExecutionStatus.FAILED,
         2,
         2,
-        True,
+    )
+    assert (error.type, error.code, error.retryable) == (
+        "ApplicationRetriesExhaustedError",
+        "application_retries_exhausted",
+        False,
+    )
+    retry_logs = [record for record in log_records if record["extra"].get("retry_message") == "again"]
+    assert any(record["message"] == "Durable execution scheduled an application retry" for record in retry_logs)
+    assert any(
+        record["message"] == "Durable execution failed: application retries are exhausted" for record in retry_logs
+    )
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup needs Python 3.11")
+async def test_retry_raised_inside_a_task_group_schedules_a_retry(deployment_factory) -> None:
+    async def runner(context: DurableContext, request: Request) -> Result:
+        if context.attempt == 1:
+            async with asyncio.TaskGroup() as group:
+                group.create_task(context.retry("again", delay=0))
+        return Result(value=request.value)
+
+    deployment = await deployment_factory(runner)
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    assert (stored.control.status, stored.control.application_retry_count, stored.control.lease_recoveries) == (
+        ExecutionStatus.COMPLETED,
+        1,
+        0,
+    )
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup needs Python 3.11")
+async def test_cancellation_raised_inside_a_task_group_is_not_an_exception_group(deployment_factory) -> None:
+    async def child() -> None:
+        raise DurableExecutionCancelledError("stop")
+
+    async def runner(_context: DurableContext, _request: Request) -> None:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(child())
+
+    deployment = await deployment_factory(runner)
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    persisted = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    assert persisted.type == "DurableExecutionCancelledError"
+
+
+@pytest.mark.parametrize("error", [ExecutionLeaseLostError("other run"), ExecutionStoreError("other store")])
+async def test_store_errors_raised_by_application_code_fail_the_run(deployment_factory, error) -> None:
+    async def runner(_context: DurableContext, _request: Request) -> None:
+        raise error
+
+    deployment = await deployment_factory(runner)
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    persisted = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    assert (stored.control.status, stored.control.run_attempt, persisted.type) == (
+        ExecutionStatus.FAILED,
+        1,
+        type(error).__name__,
     )
 
 
@@ -333,7 +552,7 @@ async def test_explicit_zero_retry_delay_is_immediate(deployment_factory) -> Non
     assert (stored.control.status, stored.control.run_attempt, attempts) == (ExecutionStatus.COMPLETED, 2, 2)
 
 
-async def test_failed_post_claim_read_releases_without_consuming_attempt(deployment_factory) -> None:
+async def test_failed_post_claim_read_releases_without_spending_the_run_budget(deployment_factory) -> None:
     store = ControlledStore("jobs")
     deployment = await deployment_factory(store=store)
     store.read_error = ExecutionStoreError("unavailable")
@@ -341,7 +560,357 @@ async def test_failed_post_claim_read_releases_without_consuming_attempt(deploym
     await asyncio.wait_for(store.failure_seen.wait(), timeout=1)
 
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
-    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.COMPLETED, 1)
+    control = stored.control
+    assert (control.status, control.run_attempt, control.lease_recoveries) == (ExecutionStatus.COMPLETED, 2, 0)
+
+
+@pytest.mark.parametrize("source", ["corrupt-read", "invalid-input"])
+async def test_unreadable_claimed_execution_fails_as_invalid(deployment_factory, log_records, source: str) -> None:
+    calls = 0
+
+    async def runner(_context: DurableContext, _request: Request) -> Result:
+        nonlocal calls
+        calls += 1
+        return Result(value=1)
+
+    store = ControlledStore("jobs")
+    control = initial_control(
+        run_id="run_1",
+        idempotency_digest="idem",
+        idempotency_binding_digest="binding",
+        deployment="jobs",
+        definition_revision="v1",
+        owner_id=None,
+        kind="pipeline",
+        now_ms=0,
+    )
+    await store.submit(control, b'{"value":1}' if source == "corrupt-read" else b'{"value":"x"}')
+    if source == "corrupt-read":
+        store.read_error = ExecutionStoreCorruptionError("bad")
+    deployment = await deployment_factory(runner, store=store, start=False)
+    await deployment.start()
+
+    stored = await wait_for_execution(deployment, control.run_id, lambda value: value.control.terminal)
+    error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    health = await deployment.health()
+    failures = [
+        record
+        for record in log_records
+        if record["message"] == "Durable execution has invalid stored data; failing it"
+    ]
+    assert (stored.control.status, stored.control.run_attempt, calls) == (ExecutionStatus.FAILED, 1, 0)
+    assert (error.type, error.code) == ("ExecutionStoreCorruptionError", "stored_execution_invalid")
+    assert health["store_error_streak"] == 0
+    assert any(record["extra"].get("run_id") == control.run_id for record in failures)
+
+
+@pytest.mark.parametrize("progress", ["healthy", "invalid-json", "invalid-model"])
+async def test_invalid_preparation_discards_only_corrupt_progress(deployment_factory, progress: str) -> None:
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    control = initial_control(
+        run_id="run_1",
+        idempotency_digest="idem",
+        idempotency_binding_digest="binding",
+        deployment="jobs",
+        definition_revision="v1",
+        owner_id=None,
+        kind="pipeline",
+        now_ms=0,
+    )
+    await store.submit(control, b'{"value":"invalid"}')
+    claimed = await store.claim(Claim("seeder", 0, 300, 3, "v1", b"{}"))
+    assert claimed is not None
+    event = {
+        "healthy": b'{"message":"kept","timestamp":"2026-01-01T00:00:00Z","metadata":{}}',
+        "invalid-json": b"not-json",
+        "invalid-model": b'{"message":1,"timestamp":"not-a-date","metadata":{}}',
+    }[progress]
+    await store.transition(
+        control.run_id,
+        Checkpoint(claimed.next_control.fence, "seeder", 0, 300, b"checkpoint", (event,)),
+    )
+    await store.transition(control.run_id, ReleaseClaim(claimed.next_control.fence, "seeder"))
+    deployment = await deployment_factory(store=store, start=False)
+    await deployment.start()
+
+    stored = await wait_for_execution(deployment, control.run_id, lambda value: value.control.terminal)
+    error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+    assert (stored.control.status, error.code) == (ExecutionStatus.FAILED, "stored_execution_invalid")
+    assert stored.control.progress_sequence == (1 if progress == "healthy" else 0)
+    assert [event.data for event in stored.progress] == ([event] if progress == "healthy" else [])
+
+
+async def test_lowered_payload_limit_still_runs_stored_work() -> None:
+    class TextRequest(BaseModel):
+        text: str
+
+    input_store = MemoryExecutionStore(
+        "payload-input",
+        config=StoreConfig(lease_commit_safety_ms=10, max_payload_bytes=1_000),
+    )
+
+    async def input_runner(_context: DurableContext, request: TextRequest) -> dict[str, int]:
+        return {"length": len(request.text)}
+
+    input_deployment = DurableDeployment(
+        "payload-input",
+        "v1",
+        input_store,
+        TextRequest,
+        input_runner,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+    control = initial_control(
+        run_id="large-input",
+        idempotency_digest="large-input",
+        idempotency_binding_digest="large-input",
+        deployment="payload-input",
+        definition_revision="v1",
+        owner_id=None,
+        kind="pipeline",
+        now_ms=0,
+    )
+    await input_store.submit(control, b'{"text":"' + b"x" * 300 + b'"}')
+    input_store.config = replace(input_store.config, max_payload_bytes=100)
+    await input_deployment.start()
+    try:
+        completed = await wait_for_execution(
+            input_deployment,
+            control.run_id,
+            lambda value: value.control.status is ExecutionStatus.COMPLETED,
+        )
+        assert decode_json(completed.payloads[PayloadKind.RESULT], max_bytes=100) == {"length": 300}
+    finally:
+        await input_deployment.close()
+        await input_deployment.wait_drained()
+
+    resume_store = MemoryExecutionStore(
+        "payload-resume",
+        config=StoreConfig(lease_commit_safety_ms=10, max_payload_bytes=1_000),
+    )
+
+    async def resume_runner(context: DurableContext, _request: TextRequest) -> dict[str, bool]:
+        if context.resume_input is None:
+            await context.suspend({"kind": "approval"}, update={"blob": "x" * 300})
+        return {"done": True}
+
+    resume_deployment = DurableDeployment(
+        "payload-resume",
+        "v1",
+        resume_store,
+        TextRequest,
+        resume_runner,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=300),
+    )
+    await resume_deployment.start()
+    try:
+        submitted = await resume_deployment.submit({"text": "hold"})
+        await wait_for_execution(
+            resume_deployment,
+            submitted.control.run_id,
+            lambda value: value.control.status is ExecutionStatus.WAITING,
+        )
+        resume_store.config = replace(resume_store.config, max_payload_bytes=100)
+        with pytest.raises(ExecutionPayloadSizeError):
+            await resume_deployment.resume(submitted.control.run_id)
+    finally:
+        await resume_deployment.close()
+        await resume_deployment.wait_drained()
+
+
+@pytest.mark.parametrize("stage", ["claim", "read", "fail", "release"])
+async def test_hung_preparation_frees_the_worker_slot_without_shutdown(deployment_factory, stage: str) -> None:
+    store = PreparationStore(stage)
+    calls: list[int] = []
+
+    async def runner(_context: DurableContext, request: Request) -> Result:
+        calls.append(request.value)
+        return Result(value=request.value)
+
+    deployment = await deployment_factory(
+        runner,
+        store=store,
+        config=RuntimeConfig(
+            poll_interval_seconds=0.005,
+            maintenance_interval_seconds=5,
+            lease_duration_ms=120,
+            operational_backoff_min_seconds=0.005,
+            operational_backoff_max_seconds=0.01,
+        ),
+    )
+    first = await deployment.submit({"value": 1})
+    second = await deployment.submit({"value": 2})
+    store.first_run = first.control.run_id
+    store.claim_gate.set()
+
+    completed = await wait_for_execution(
+        deployment,
+        second.control.run_id,
+        lambda value: value.control.status is ExecutionStatus.COMPLETED,
+    )
+    assert completed.control.status is ExecutionStatus.COMPLETED
+    assert calls == [2]
+    for _ in range(200):
+        if not deployment._claims:
+            break
+        await asyncio.sleep(0.005)
+    assert deployment._active_claims == 0
+    assert deployment._claims == {}
+
+
+@pytest.mark.parametrize("threaded", [False, True], ids=["async", "thread"])
+async def test_hung_heartbeat_stops_the_application_and_drains(  # noqa: C901
+    deployment_factory, threaded: bool
+) -> None:
+    class HungHeartbeatStore(MemoryExecutionStore):
+        def __init__(self) -> None:
+            super().__init__("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+            self.heartbeats = 0
+
+        async def transition(self, run_id, command):
+            if isinstance(command, Heartbeat):
+                self.heartbeats += 1
+                if self.heartbeats > 1:
+                    await asyncio.Event().wait()
+            return await super().transition(run_id, command)
+
+    store = HungHeartbeatStore()
+    started = threading.Event()
+    stopped = threading.Event()
+
+    async def async_runner(_context: DurableContext, _request: Request) -> Result:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    def sync_runner(context: DurableContext, _request: Request) -> Result:
+        started.set()
+        try:
+            while True:
+                context.report_progress_sync("tick")
+                threading.Event().wait(0.01)
+        except ExecutionLeaseLostError:
+            stopped.set()
+            raise
+
+    deployment = await deployment_factory(
+        sync_runner if threaded else async_runner,
+        store=store,
+        config=RuntimeConfig(
+            poll_interval_seconds=5,
+            lease_duration_ms=300,
+            shutdown_grace_seconds=0.1,
+        ),
+    )
+    await deployment.submit({"value": 1})
+    assert await asyncio.to_thread(started.wait, 1)
+    assert await asyncio.to_thread(stopped.wait, 1)
+    for _ in range(200):
+        if not deployment._claims:
+            break
+        await asyncio.sleep(0.005)
+    assert deployment._claims == {}
+
+    await asyncio.wait_for(deployment.close(), 1)
+    await asyncio.wait_for(deployment.wait_drained(), 1)
+
+
+@pytest.mark.parametrize(
+    ("command_name", "expected_status", "expected_calls"),
+    [
+        ("Complete", ExecutionStatus.COMPLETED, 1),
+        ("Fail", ExecutionStatus.FAILED, 1),
+        ("Suspend", ExecutionStatus.WAITING, 1),
+        ("ScheduleRetry", ExecutionStatus.COMPLETED, 2),
+    ],
+)
+async def test_transient_commit_error_is_retried_within_the_lease(
+    deployment_factory,
+    log_records,
+    command_name: str,
+    expected_status: ExecutionStatus,
+    expected_calls: int,
+) -> None:
+    calls = 0
+
+    async def runner(context: DurableContext, request: Request) -> Result:
+        nonlocal calls
+        calls += 1
+        if command_name == "Fail":
+            raise RuntimeError
+        if command_name == "Suspend":
+            await context.suspend({"kind": "approval"})
+        if command_name == "ScheduleRetry" and calls == 1:
+            await context.retry("again", delay=0)
+        return Result(value=request.value)
+
+    store = FlakyCommitStore(command_name)
+    deployment = await deployment_factory(
+        runner,
+        store=store,
+        config=RuntimeConfig(
+            poll_interval_seconds=0.005,
+            lease_duration_ms=300,
+            operational_backoff_min_seconds=0.005,
+            operational_backoff_max_seconds=0.01,
+        ),
+    )
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(
+        deployment,
+        submitted.control.run_id,
+        lambda value: value.control.status is expected_status,
+    )
+
+    assert stored.control.status is expected_status
+    assert calls == expected_calls
+    retries = [
+        record
+        for record in log_records
+        if record["message"] == "Durable store commit failed; retrying within the lease window"
+    ]
+    assert retries and retries[0]["extra"]["error"] == "blip"
+
+
+async def test_heartbeat_outage_shorter_than_the_lease_keeps_the_claim(deployment_factory) -> None:
+    class HeartbeatOutageStore(MemoryExecutionStore):
+        def __init__(self) -> None:
+            super().__init__("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+            self.heartbeats = 0
+
+        async def transition(self, run_id, command):
+            if isinstance(command, Heartbeat):
+                self.heartbeats += 1
+                if 1 <= self.heartbeats <= 5:
+                    message = "heartbeat outage"
+                    raise ExecutionStoreError(message)
+            return await super().transition(run_id, command)
+
+    calls = 0
+
+    async def runner(_context: DurableContext, request: Request) -> Result:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.45)
+        return Result(value=request.value)
+
+    deployment = await deployment_factory(
+        runner,
+        store=HeartbeatOutageStore(),
+        config=RuntimeConfig(
+            poll_interval_seconds=0.005,
+            lease_duration_ms=300,
+            operational_backoff_min_seconds=0.005,
+            operational_backoff_max_seconds=0.01,
+        ),
+    )
+    submitted = await deployment.submit({"value": 1})
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+
+    assert stored.control.status is ExecutionStatus.COMPLETED
+    assert (stored.control.run_attempt, calls) == (1, 1)
 
 
 async def test_exhausted_claim_fails_without_running_application(deployment_factory) -> None:
@@ -367,7 +936,7 @@ async def test_exhausted_claim_fails_without_running_application(deployment_fact
             kind="pipeline",
             now_ms=0,
         ),
-        run_attempt=1,
+        lease_recoveries=1,
     )
     await store.submit(control, b'{"value":1}')
     deployment = await deployment_factory(
@@ -502,6 +1071,41 @@ async def test_store_error_health_streak_clears_after_success(deployment_factory
     await asyncio.wait_for(store.failure_seen.wait(), timeout=1)
     assert (await deployment.health())["store_error_streak"] == 1
     await wait_for_health(deployment, lambda health: health["store_error_streak"] == 0)
+
+
+async def test_store_failure_logs_carry_the_error_text(deployment_factory, log_records) -> None:
+    store = ControlledStore("jobs")
+    message = "redis down"
+    store.claim_error = ExecutionStoreError(message)
+    await deployment_factory(store=store)
+    await asyncio.wait_for(store.failure_seen.wait(), 1)
+
+    failures = [record for record in log_records if record["message"] == "Durable store operation failed; retrying"]
+    assert failures
+    assert failures[0]["extra"]["error"] == message
+    assert failures[0]["extra"]["operation"] == "claim"
+
+
+async def test_health_reports_per_revision_counts(deployment_factory, monkeypatch) -> None:
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    operational_counts = store.operational_counts
+    revisions: list[str] = []
+
+    async def record_revision(*, revision: str):
+        revisions.append(revision)
+        return await operational_counts(revision=revision)
+
+    monkeypatch.setattr(store, "operational_counts", record_revision)
+    deployment = await deployment_factory(store=store, revision="revision-a")
+    health = await deployment.health()
+
+    assert health["counts"].keys() == {
+        "nonterminal",
+        "revision_nonterminal",
+        "revision_runnable",
+        "lease_expiry",
+    }
+    assert revisions == ["revision-a"]
 
 
 @pytest.mark.parametrize("exit_mode", ["cancel", "crash"])
@@ -647,12 +1251,40 @@ async def test_runtime_close_reaches_every_deployment_and_raises_the_first_error
     runtime = DurableRuntime(deployments)
     await runtime.start()
 
-    # Deployments close in reverse order, so the last one fails first.
+    # Failures are reported in reverse membership order, so the last one is raised.
     with pytest.raises(RuntimeError, match=deployments[-1].name):
         await runtime.close()
 
     assert not any(deployment.accepting for deployment in deployments)
     await asyncio.wait_for(runtime.wait_drained(), timeout=1)
+
+
+async def test_runtime_close_closes_deployments_concurrently(deployment_factory, monkeypatch) -> None:
+    deployments = [await deployment_factory() for _ in range(3)]
+    runtime = DurableRuntime(deployments)
+    await runtime.start()
+    started: list[str] = []
+    gate = asyncio.Event()
+
+    for deployment in deployments:
+        close = deployment.close
+
+        async def gated_close(close=close, name=deployment.name) -> None:
+            started.append(name)
+            await gate.wait()
+            await close()
+
+        monkeypatch.setattr(deployment, "close", gated_close)
+
+    closing = asyncio.create_task(runtime.close())
+    for _ in range(10):
+        if len(started) == len(deployments):
+            break
+        await asyncio.sleep(0)
+    assert started == [deployment.name for deployment in reversed(deployments)]
+    gate.set()
+    await asyncio.wait_for(closing, 1)
+    await asyncio.wait_for(runtime.wait_drained(), 1)
 
 
 async def test_wait_drained_requires_closed_admission(deployment_factory) -> None:
@@ -762,16 +1394,15 @@ async def test_close_releases_async_work_it_cancels(deployment_factory, cancel_r
     if cancel_requested:
         assert stored.control.status is ExecutionStatus.CANCELED
         return
-    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
+    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 1)
     reclaimed = await store.claim(SUCCESSOR)
-    assert reclaimed is not None and reclaimed.next_control.run_attempt == 1
+    assert reclaimed is not None and reclaimed.next_control.run_attempt == 2
 
 
-@pytest.mark.parametrize("stage", ["read", "heartbeat"])
-async def test_close_releases_claim_before_application_starts(deployment_factory, monkeypatch, stage) -> None:
+async def test_close_releases_claim_before_application_starts(deployment_factory, monkeypatch) -> None:
     store = ControlledStore("jobs")
     entered = asyncio.Event()
-    read, transition = store.read, store.transition
+    read = store.read
 
     async def blocked_read(run_id):
         if not entered.is_set():
@@ -779,14 +1410,7 @@ async def test_close_releases_claim_before_application_starts(deployment_factory
             await asyncio.Event().wait()
         return await read(run_id)
 
-    async def blocked_heartbeat(run_id, command):
-        if isinstance(command, Heartbeat):
-            entered.set()
-            await asyncio.Event().wait()
-        return await transition(run_id, command)
-
-    attribute, blocked = {"read": ("read", blocked_read), "heartbeat": ("transition", blocked_heartbeat)}[stage]
-    monkeypatch.setattr(store, attribute, blocked)
+    monkeypatch.setattr(store, "read", blocked_read)
     runner = AsyncMock(return_value=Result(value=1))
     deployment = await deployment_factory(runner, store=store, config=RuntimeConfig(shutdown_grace_seconds=0))
     run_id = (await deployment.submit({"value": 1})).control.run_id
@@ -796,9 +1420,9 @@ async def test_close_releases_claim_before_application_starts(deployment_factory
     await asyncio.wait_for(deployment.wait_drained(), timeout=1)
 
     stored = await read(run_id)
-    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
+    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 1)
     reclaimed = await store.claim(SUCCESSOR)
-    assert reclaimed is not None and reclaimed.next_control.run_attempt == 1
+    assert reclaimed is not None and reclaimed.next_control.run_attempt == 2
     runner.assert_not_called()
 
 
@@ -864,17 +1488,19 @@ async def test_worker_cancellation_cannot_interrupt_claim_release(
     started, releasing, proceed = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
     deployment = await deployment_factory(start=False, config=RuntimeConfig(shutdown_grace_seconds=0))
-    transition = deployment.store.transition
+    read, transition = deployment.store.read, deployment.store.transition
+
+    async def blocked_read(_run_id):
+        started.set()
+        await asyncio.Event().wait()
 
     async def slow_release(execution_id, command):
-        if isinstance(command, Heartbeat):
-            started.set()
-            await asyncio.Event().wait()
         if isinstance(command, ReleaseClaim):
             releasing.set()
             await proceed.wait()
         return await transition(execution_id, command)
 
+    monkeypatch.setattr(deployment.store, "read", blocked_read)
     monkeypatch.setattr(deployment.store, "transition", slow_release)
     await deployment.start()
     run_id = (await deployment.submit({"value": 1})).control.run_id
@@ -898,7 +1524,7 @@ async def test_worker_cancellation_cannot_interrupt_claim_release(
         await asyncio.wait_for(deployment.wait_drained(), timeout=1)
         if drain is not None:
             await drain
-    assert (await deployment.store.read(run_id)).control.status is ExecutionStatus.QUEUED
+    assert (await read(run_id)).control.status is ExecutionStatus.QUEUED
 
 
 @pytest.mark.parametrize("threaded", [False, True], ids=["async", "thread"])
@@ -918,6 +1544,100 @@ async def test_cancellation_raised_by_the_application_fails_the_execution(deploy
 
     stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
     assert (stored.control.status, stored.control.run_attempt, calls) == (ExecutionStatus.FAILED, 1, 1)
+
+
+@pytest.mark.parametrize("threaded", [False, True], ids=["async", "thread"])
+@pytest.mark.parametrize("requested", [False, True], ids=["unrequested", "requested"])
+async def test_cancellation_error_without_a_request_fails_the_run(
+    deployment_factory, log_records, threaded: bool, requested: bool
+) -> None:
+    started = threading.Event()
+    async_release = asyncio.Event()
+    thread_release = threading.Event()
+
+    async def async_runner(context: DurableContext, _request: Request) -> Result:
+        started.set()
+        await async_release.wait()
+        if requested:
+            await context.check_cancelled()
+        message = "application raised cancellation"
+        raise DurableExecutionCancelledError(message)
+
+    def sync_runner(context: DurableContext, _request: Request) -> Result:
+        started.set()
+        thread_release.wait()
+        if requested:
+            context.check_cancelled_sync()
+        message = "application raised cancellation"
+        raise DurableExecutionCancelledError(message)
+
+    deployment = await deployment_factory(sync_runner if threaded else async_runner)
+    submitted = await deployment.submit({"value": 1})
+    assert await asyncio.to_thread(started.wait, 1)
+    if requested:
+        await deployment.cancel(submitted.control.run_id)
+    async_release.set()
+    thread_release.set()
+
+    stored = await wait_for_execution(deployment, submitted.control.run_id, lambda value: value.control.terminal)
+    expected = ExecutionStatus.CANCELED if requested else ExecutionStatus.FAILED
+    assert stored.control.status is expected
+    assert PayloadKind.RESULT not in stored.payloads
+    if requested:
+        assert PayloadKind.ERROR not in stored.payloads
+    else:
+        error = PersistedError.model_validate(decode_json(stored.payloads[PayloadKind.ERROR], max_bytes=1_000))
+        assert error.type == "DurableExecutionCancelledError"
+        assert any(
+            record["message"].startswith("Durable execution raised DurableExecutionCancelledError")
+            for record in log_records
+        )
+
+
+async def test_lease_loss_wrapped_by_application_code_is_not_a_failure(
+    deployment_factory, monkeypatch, log_records
+) -> None:
+    store = MemoryExecutionStore("jobs", config=StoreConfig(lease_commit_safety_ms=10))
+    transition = store.transition
+    commands: list[str] = []
+    started = threading.Event()
+
+    async def record_transition(run_id, command):
+        commands.append(type(command).__name__)
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", record_transition)
+
+    def runner(context: DurableContext, _request: Request) -> Result:
+        started.set()
+        time.sleep(0.02)
+        context._claim._confirmed_until = time.monotonic() - 1
+        try:
+            context.stream_chunk_sync({})
+        except ExecutionLeaseLostError as error:
+            message = "wrapped"
+            raise RuntimeError(message) from error
+        raise AssertionError
+
+    deployment = await deployment_factory(
+        runner,
+        store=store,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=3_000),
+    )
+    submitted = await deployment.submit({"value": 1})
+    assert await asyncio.to_thread(started.wait, 1)
+    for _ in range(200):
+        if not deployment._claims:
+            break
+        await asyncio.sleep(0.005)
+
+    stored = await store.read(submitted.control.run_id)
+    assert stored is not None and stored.control.status is ExecutionStatus.RUNNING
+    assert "Fail" not in commands
+    assert deployment._claims == {}
+    losses = [record for record in log_records if record["message"].startswith("Durable execution lease lost")]
+    assert len(losses) == 1
+    assert losses[0]["extra"]["reason"] == "the application failed after the lease was lost"
 
 
 @pytest.mark.parametrize("outcome", ["suppressed", "cancelled", "exception"])
@@ -965,7 +1685,7 @@ async def test_cancelled_async_work_keeps_ownership_until_it_exits(deployment_fa
         "cleanup": True
     }
     expected = ExecutionStatus.COMPLETED if outcome == "suppressed" else ExecutionStatus.QUEUED
-    assert (stored.control.status, stored.control.run_attempt) == (expected, int(outcome == "suppressed"))
+    assert (stored.control.status, stored.control.run_attempt) == (expected, 1)
 
 
 THREAD_SOURCES = [
@@ -1059,7 +1779,7 @@ async def test_close_cancels_async_remainder_after_retained_thread_exits(
     finally:
         extra_thread_release.set()
     stored = await deployment.store.read(run_id)
-    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 0)
+    assert (stored.control.status, stored.control.run_attempt) == (ExecutionStatus.QUEUED, 1)
     assert outcomes == [None]
     assert not next_thread.is_set()
 
@@ -1150,7 +1870,7 @@ async def test_thread_work_is_handed_over_when_its_claim_is_released(
         await asyncio.wait({worker})
 
     reclaimed = await store.claim(SUCCESSOR)
-    assert reclaimed is not None and reclaimed.next_control.run_attempt == running.run_attempt
+    assert reclaimed is not None and reclaimed.next_control.run_attempt == running.run_attempt + 1
     transitions = AsyncMock(wraps=store.transition)
     store.transition = transitions
     release.set()
@@ -1480,3 +2200,105 @@ async def test_locally_requeued_work_wakes_idle_workers(deployment_factory, sour
     await wait_for_execution(
         deployment, run_id, lambda stored: stored.control.status is ExecutionStatus.COMPLETED, timeout=0.5
     )
+
+
+async def test_claim_runs_without_an_initial_heartbeat(deployment_factory, monkeypatch) -> None:
+    store = ControlledStore("jobs")
+    transition, commands = store.transition, []
+
+    async def recorded(run_id, command):
+        commands.append(type(command).__name__)
+        return await transition(run_id, command)
+
+    monkeypatch.setattr(store, "transition", recorded)
+    deployment = await deployment_factory(store=store, config=RuntimeConfig(poll_interval_seconds=60))
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    stored = await wait_for_execution(deployment, run_id, lambda value: value.control.terminal)
+
+    assert stored.control.status is ExecutionStatus.COMPLETED
+    assert "Heartbeat" not in commands
+
+
+async def test_lease_window_starts_before_the_claim_request(deployment_factory, monkeypatch) -> None:
+    store = ControlledStore("jobs")
+    started, entered = asyncio.Event(), []
+    claim = store.claim
+
+    async def timed_claim(command):
+        entered.append(time.monotonic())
+        return await claim(command)
+
+    async def runner(_context: DurableContext, _request: Request) -> Result:
+        started.set()
+        await asyncio.Event().wait()
+        return Result(value=0)
+
+    monkeypatch.setattr(store, "claim", timed_claim)
+    deployment = await deployment_factory(runner, store=store, config=RuntimeConfig(shutdown_grace_seconds=0))
+    await deployment.submit({"value": 1})
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    [running] = deployment._claims.values()
+    assert running.confirmed_at <= entered[-1]
+
+
+async def test_run_reclaimed_before_the_post_claim_read_does_not_start(deployment_factory, monkeypatch) -> None:
+    store = ControlledStore("jobs")
+    read, reclaimed = store.read, asyncio.Event()
+
+    async def read_after_takeover(run_id):
+        stored = await read(run_id)
+        if stored is not None and not reclaimed.is_set():
+            await store.transition(run_id, ReleaseClaim(stored.control.fence, stored.control.lease_owner))
+            assert await store.claim(SUCCESSOR) is not None
+            reclaimed.set()
+            stored = await read(run_id)
+        return stored
+
+    monkeypatch.setattr(store, "read", read_after_takeover)
+    runner = AsyncMock(return_value=Result(value=1))
+    deployment = await deployment_factory(runner, store=store)
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    await asyncio.wait_for(reclaimed.wait(), timeout=1)
+    await wait_for_health(deployment, lambda health: health["active_executions"] == 0)
+
+    runner.assert_not_called()
+    assert (await read(run_id)).control.lease_owner == SUCCESSOR.worker_id
+
+
+async def wait_for_idle_workers(deployment: DurableDeployment, count: int) -> None:
+    async def parked() -> None:
+        while len(deployment._idle_workers) < count:
+            await asyncio.sleep(0.001)
+
+    await asyncio.wait_for(parked(), timeout=1)
+
+
+async def test_submission_wakes_one_idle_worker(deployment_factory) -> None:
+    store = ControlledStore("jobs")
+    deployment = await deployment_factory(
+        store=store,
+        config=RuntimeConfig(
+            worker_concurrency=4,
+            poll_interval_seconds=60,
+            maintenance_interval_seconds=60,
+            lease_duration_ms=300,
+        ),
+    )
+    await wait_for_idle_workers(deployment, 4)
+    store.claim_calls = 0
+
+    run_id = (await deployment.submit({"value": 1})).control.run_id
+    await wait_for_execution(deployment, run_id, lambda stored: stored.control.terminal)
+    await wait_for_idle_workers(deployment, 4)
+
+    assert store.claim_calls == 2
+
+
+async def test_close_wakes_every_idle_worker(deployment_factory) -> None:
+    deployment = await deployment_factory(
+        config=RuntimeConfig(worker_concurrency=3, poll_interval_seconds=60, shutdown_grace_seconds=60)
+    )
+    await wait_for_idle_workers(deployment, 3)
+    await asyncio.wait_for(deployment.close(), timeout=1)
+    assert all(worker.done() for worker in deployment._workers.values())

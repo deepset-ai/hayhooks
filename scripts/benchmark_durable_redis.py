@@ -23,10 +23,12 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 from redis.asyncio.connection import Connection, ConnectionPool
 
+from hayhooks.durable.engine import initial_control
 from hayhooks.durable.fastapi import create_durable_router
 from hayhooks.durable.models import ExecutionKind
 from hayhooks.durable.redis import RedisExecutionStore
 from hayhooks.durable.runtime import DurableDeployment
+from hayhooks.durable.store import StoreConfig
 
 
 def command_names(data):
@@ -49,7 +51,7 @@ class RunInput(BaseModel):
     text: str
 
 
-async def benchmark(port, duration):  # noqa: C901, PLR0915
+async def benchmark(port, duration, submissions):  # noqa: C901, PLR0915
     metrics = Counter()
     commands = Counter()
     measuring = False
@@ -132,6 +134,48 @@ async def benchmark(port, duration):  # noqa: C901, PLR0915
     )
     try:
         await store.initialize()
+        submission_burst = None
+        if submissions:
+            burst = RedisExecutionStore(
+                clients[0],
+                "bench-burst",
+                key_prefix=prefix,
+                config=StoreConfig(max_nonterminal_executions=0),
+            )
+            pool = clients[0].connection_pool
+            burst_connections = [await pool.get_connection() for _ in range(submissions)]
+            for connection in burst_connections:
+                await pool.release(connection)
+            measuring = True
+            batches = metrics["client_batches"]
+            results = await asyncio.gather(
+                *(
+                    burst.submit(
+                        initial_control(
+                            run_id=f"burst-{index}",
+                            idempotency_digest=f"burst-{index}",
+                            idempotency_binding_digest="b",
+                            deployment="bench-burst",
+                            definition_revision="v1",
+                            owner_id=None,
+                            kind="pipeline",
+                            now_ms=0,
+                        ),
+                        b"{}",
+                    )
+                    for index in range(submissions)
+                ),
+                return_exceptions=True,
+            )
+            errors = Counter(type(result).__name__ for result in results if isinstance(result, BaseException))
+            submission_burst = {
+                "submissions": submissions,
+                "created": sum(not isinstance(result, BaseException) and result.created for result in results),
+                "errors": dict(errors),
+                "exchanges_per_submission": (metrics["client_batches"] - batches) / submissions,
+            }
+            metrics.clear()
+            commands.clear()
         before = await admin.info("commandstats")
         measuring = True
         started = time.monotonic()
@@ -164,6 +208,7 @@ async def benchmark(port, duration):  # noqa: C901, PLR0915
             "redis_version": version["redis_version"],
             "valkey_version": version.get("valkey_version"),
             "duration_seconds": duration,
+            "submission_burst": submission_burst,
             "elapsed_seconds": round(elapsed, 3),
             "events": dict(events),
             "client_commands": commands.total(),
@@ -191,6 +236,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=16_479)
     parser.add_argument("--duration", type=float, default=40)
+    parser.add_argument("--submissions", type=int, default=100)
     args = parser.parse_args()
+    if args.submissions < 0:
+        parser.error("--submissions cannot be negative")
     logger.disable("hayhooks")
-    print(json.dumps(asyncio.run(benchmark(args.port, args.duration)), indent=2))
+    print(json.dumps(asyncio.run(benchmark(args.port, args.duration, args.submissions)), indent=2))

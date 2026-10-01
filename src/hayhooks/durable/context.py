@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterator, Mapping, MutableSet
@@ -30,56 +32,82 @@ from hayhooks.durable.engine import (
     TransitionPlan,
 )
 from hayhooks.durable.models import CheckpointEnvelope, ExecutionProgress, JsonValue, encode_json
-from hayhooks.durable.store import ExecutionStore, ExecutionStoreError
+from hayhooks.durable.store import ExecutionStore, ExecutionStoreCorruptionError, ExecutionStoreError
 
-_T = TypeVar("_T")
-# With push delivery to stream viewers, this is also the display latency of a chunk.
+# Minimum spacing between background chunk flushes. The first chunk after a quiet interval flushes at once;
+# later ones wait up to this long, which bounds their display latency with push delivery to viewers.
 _CHUNK_FLUSH_SECONDS = 0.1
+# Checks within this long of the last store confirmation trust that control instead of sending a heartbeat.
+_CANCEL_CHECK_REUSE_SECONDS = 0.5
+_T = TypeVar("_T")
+
+
+def backoff_delay(streak: int, minimum: float, maximum: float) -> float:
+    """Jittered exponential backoff for the ``streak``-th consecutive store failure."""
+    ceiling = min(maximum, minimum * (2 ** min(streak - 1, 20)))
+    return random.uniform(minimum, ceiling)  # noqa: S311
 
 
 class DurableExecutionCancelledError(RuntimeError):
     """Cooperative cancellation was requested for the active execution."""
 
 
-class _RetryRequestedError(Exception):
-    def __init__(self, message: str, delay: float | None, progress_events: tuple[bytes, ...]) -> None:
+class _RetryRequestedError(BaseException):
+    """Retry signal that ordinary application exception handlers cannot swallow."""
+
+    def __init__(self, message: str, delay: float | None) -> None:
         super().__init__(message)
         self.delay = delay
-        self.progress_events = progress_events
 
 
-class _ExecutionSuspendedError(Exception):
-    pass
+class _ExecutionSuspendedError(BaseException):
+    """Suspension signal that ordinary application exception handlers cannot swallow."""
 
 
 def _track(bucket: MutableSet[Any], future: asyncio.Future[Any]) -> None:
-    """Keep ``future`` in ``bucket`` until it is done."""
+    """Keep ``future`` in ``bucket`` until it is done; its exception counts as retrieved."""
+
+    def done(finished: asyncio.Future[Any]) -> None:
+        bucket.discard(finished)
+        if not finished.cancelled():
+            finished.exception()
+
     bucket.add(future)
-    future.add_done_callback(bucket.discard)
+    future.add_done_callback(done)
+
+
+def lease_timing(lease_duration_ms: int, commit_safety_ms: int) -> tuple[float, float]:
+    """Heartbeat interval and safe lease duration in seconds; the lease must outlast one heartbeat."""
+    heartbeat_interval = max(0.01, lease_duration_ms / 3_000)
+    safe_duration = (lease_duration_ms - commit_safety_ms) / 1_000
+    if safe_duration <= heartbeat_interval:
+        raise ValueError("lease duration must leave more than one safe heartbeat interval")
+    return heartbeat_interval, safe_duration
 
 
 class _ClaimedExecution:
     """Fenced store handle, heartbeat, chunk flusher, and engine threads owned by one runtime worker."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         store: ExecutionStore,
         control: ExecutionControl,
         worker_id: str,
         lease_duration_ms: int,
+        *,
+        confirmed_at: float,
+        backoff: tuple[float, float] = (0.05, 5.0),
     ) -> None:
-        heartbeat_interval = max(0.01, lease_duration_ms / 3_000)
-        safe_duration = (lease_duration_ms - store.config.lease_commit_safety_ms) / 1_000
         if control.status is not ExecutionStatus.RUNNING or control.lease_owner != worker_id:
             raise ValueError("a claimed execution requires its running control and lease owner")
-        if safe_duration <= heartbeat_interval:
-            raise ValueError("lease duration must leave more than one safe heartbeat interval")
+        heartbeat_interval, safe_duration = lease_timing(lease_duration_ms, store.config.lease_commit_safety_ms)
         self.store = store
         self.control = control
         self.worker_id = worker_id
         self.lease_duration_ms = lease_duration_ms
         self.lease_lost = asyncio.Event()
         self.event_loop = asyncio.get_running_loop()
+        self._loop_thread = threading.get_ident()
         self.application: asyncio.Future[object] | None = None
         # Shutdown or worker cancellation: reject new threads and hand back interrupted work.
         self.stopping = False
@@ -89,21 +117,48 @@ class _ClaimedExecution:
         self.threads: set[asyncio.Future[None]] = set()
         self._heartbeat_interval = heartbeat_interval
         self._safe_duration = safe_duration
-        self._confirmed_until = time.monotonic() + safe_duration
+        self._confirmed_until = confirmed_at + safe_duration
+        self._backoff = backoff
         self._transition_lock = asyncio.Lock()
         self._chunks: deque[bytes] = deque(maxlen=store.config.max_stream_chunks)
+        self._chunks_buffered = asyncio.Event()
+        self._chunk_wake_lock = threading.Lock()
+        self._chunk_wake_scheduled = False
         self._flush_lock = asyncio.Lock()
         self._chunk_drop_reported = False
         self._tasks: tuple[asyncio.Task[None], ...] = ()
         self._finished = False
+        # Progress reported but not committed; its first sequence follows the confirmed control.
+        self.pending_progress: list[bytes] = []
 
-    async def start(self) -> None:
-        """Confirm the lease, then keep it alive and flush chunks in the background."""
-        await self.transition(
+    def progress_snapshot(self) -> tuple[int, tuple[bytes, ...]]:
+        """Return pending events with the sequence of the first one."""
+        return self.control.progress_sequence + 1, tuple(self.pending_progress)
+
+    async def commit(self, command_cls: Callable[..., ExecutionCommand], **fields: Any) -> TransitionPlan:
+        """Commit a fenced command carrying the pending progress events."""
+        first, events = self.progress_snapshot()
+        return await self.transition(
+            command_cls(
+                fence=self.control.fence,
+                worker_id=self.worker_id,
+                now_ms=0,
+                progress_events=events,
+                first_progress_sequence=first,
+                **fields,
+            )
+        )
+
+    async def heartbeat(self) -> TransitionPlan:
+        return await self.transition(
             Heartbeat(
                 fence=self.control.fence, worker_id=self.worker_id, now_ms=0, lease_duration_ms=self.lease_duration_ms
             )
         )
+
+    async def start(self) -> None:
+        """Keep the claimed lease alive and flush chunks in the background."""
+        self.require_owned()
         self._tasks = (
             asyncio.create_task(self._heartbeat_loop(), name=f"durable-heartbeat:{self.control.run_id}"),
             asyncio.create_task(self._flush_loop(), name=f"durable-chunks:{self.control.run_id}"),
@@ -118,42 +173,106 @@ class _ClaimedExecution:
                 await task
 
     async def transition(self, command: ExecutionCommand) -> TransitionPlan:
+        """Commit one fenced command within the confirmed lease window."""
+        if time.monotonic() >= self._confirmed_until:
+            self.mark_lost("the lease window passed without a store confirmation")
+        self.require_owned()
+        name = type(command).__name__
+        try:
+            # ponytail: the bound is fixed when the call starts; re-arm it if a concurrent renewal ever matters.
+            return await asyncio.wait_for(self._commit(command), self._confirmed_until - time.monotonic())
+        except asyncio.TimeoutError:
+            self.mark_lost(f"the store did not confirm {name} within the lease window")
+            raise ExecutionLeaseLostError(
+                f"execution lease for '{self.control.run_id}' expired before {name} was confirmed"
+            ) from None
+
+    async def _commit(self, command: ExecutionCommand) -> TransitionPlan:
         if not isinstance(command, (Heartbeat, Checkpoint)):
             # Buffered chunks must reach the stream before viewers can observe the status change.
             await self.flush_chunks()
+        name = type(command).__name__
         async with self._transition_lock:
             self.require_owned()
-            confirmed_at = time.monotonic()
-            try:
-                plan = await self.store.transition(self.control.run_id, command)
-            except ExecutionLeaseLostError:
-                self.mark_lost()
-                raise
-            except ExecutionNotFoundError as error:
-                self.mark_lost()
-                raise ExecutionLeaseLostError(f"execution '{self.control.run_id}' no longer exists") from error
+            failures = 0
+            while True:
+                confirmed_at = time.monotonic()
+                try:
+                    plan = await self.store.transition(self.control.run_id, command)
+                    break
+                except ExecutionStoreCorruptionError:
+                    raise
+                except ExecutionStoreError as error:
+                    failures += 1
+                    remaining = max(0.0, self._confirmed_until - time.monotonic())
+                    delay = min(backoff_delay(failures, *self._backoff), remaining / 2)
+                    log.bind(
+                        deployment=self.store.deployment,
+                        run_id=self.control.run_id,
+                        command=name,
+                        error=str(error),
+                        retry_in=round(delay, 3),
+                    ).warning("Durable store commit failed; retrying within the lease window")
+                    await asyncio.sleep(delay)
+                except ExecutionLeaseLostError as error:
+                    if failures and not isinstance(command, (Heartbeat, Checkpoint)):
+                        reason = f"ownership ended after an unconfirmed {name}; it may already have committed"
+                        self.mark_lost(reason)
+                        raise ExecutionLeaseLostError(reason) from error
+                    self.mark_lost("the store no longer grants this worker's lease")
+                    raise
+                except ExecutionNotFoundError as error:
+                    self.mark_lost("the execution no longer exists")
+                    raise ExecutionLeaseLostError(f"execution '{self.control.run_id}' no longer exists") from error
+            del self.pending_progress[: max(0, plan.next_control.progress_sequence - self.control.progress_sequence)]
             self.control = plan.next_control
             self._confirmed_until = confirmed_at + self._safe_duration
-            self._finished = self.control.status is not ExecutionStatus.RUNNING
+            self._finished = self._finished or self.control.status is not ExecutionStatus.RUNNING
             return plan
 
+    @property
+    def owned(self) -> bool:
+        """Whether this claim may still act. Plain reads make this safe for engine threads."""
+        return not (
+            self.lease_lost.is_set()
+            or self._finished
+            or self.control.status is not ExecutionStatus.RUNNING
+            or time.monotonic() >= self._confirmed_until
+        )
+
+    @property
+    def confirmed_at(self) -> float:
+        """Conservative monotonic timestamp of the most recent store confirmation."""
+        return self._confirmed_until - self._safe_duration
+
     def require_owned(self) -> None:
-        if self.lease_lost.is_set() or self._finished or self.control.status is not ExecutionStatus.RUNNING:
+        if not self.owned:
             raise ExecutionLeaseLostError(f"execution lease for '{self.control.run_id}' was lost")
 
-    def mark_lost(self) -> None:
+    def mark_lost(self, reason: str | None = None) -> None:
+        """Stop owning the claim; the event-loop caller may log the reason once."""
+        if reason is not None and not self.lease_lost.is_set() and not self._finished:
+            log.bind(
+                deployment=self.store.deployment,
+                run_id=self.control.run_id,
+                fence=self.control.fence,
+                reason=reason,
+            ).warning("Durable execution lease lost; another worker may take the run over")
         self.lease_lost.set()
 
     async def release(self) -> None:
-        """Requeue the run without spending its attempt, flushing buffered chunks first, then stop owning it."""
+        """Requeue the run without counting a lost lease, flushing buffered chunks first, then stop owning it."""
         try:
             await self.transition(ReleaseClaim(fence=self.control.fence, worker_id=self.worker_id))
         except (ExecutionLeaseLostError, InvalidExecutionTransitionError):
             pass  # Already lost, finished, or suspended: nothing to hand back.
         except ExecutionStoreError as error:
-            log.bind(run_id=self.control.run_id, exception_type=type(error).__name__).warning(
-                "Could not release durable claim; it is recovered when its lease expires"
-            )
+            log.bind(
+                deployment=self.store.deployment,
+                run_id=self.control.run_id,
+                exception_type=type(error).__name__,
+                error=str(error),
+            ).warning("Could not release durable claim; it is recovered when its lease expires")
         finally:
             self.mark_lost()
             await self.stop()
@@ -192,16 +311,29 @@ class _ClaimedExecution:
         return result
 
     def buffer_chunk(self, data: bytes) -> None:
-        """Queue one display chunk; the oldest are dropped beyond the stream limit."""
+        """Queue one display chunk from any thread; the oldest are dropped beyond the stream limit."""
         self.require_owned()
+        on_loop = threading.get_ident() == self._loop_thread
+        if not on_loop and self.event_loop.is_closed():
+            raise RuntimeError("the durable runtime event loop is closed")
         self._chunks.append(data)
+        with self._chunk_wake_lock:
+            if not self._chunk_wake_scheduled:
+                self._chunk_wake_scheduled = True
+                try:
+                    if on_loop:
+                        self._chunks_buffered.set()
+                    else:
+                        self.event_loop.call_soon_threadsafe(self._chunks_buffered.set)
+                except RuntimeError:
+                    self._chunk_wake_scheduled = False
+                    raise
 
     async def flush_chunks(self) -> None:
         async with self._flush_lock:
-            if not self._chunks or self.lease_lost.is_set():
+            if not self._chunks or not self.owned:
                 return
-            chunks = tuple(self._chunks)
-            self._chunks.clear()
+            chunks = tuple(self._chunks.popleft() for _ in range(len(self._chunks)))
             try:
                 await self.store.append_chunks(
                     self.control.run_id,
@@ -211,7 +343,7 @@ class _ClaimedExecution:
                     chunks,
                 )
             except ExecutionLeaseLostError:
-                self.mark_lost()
+                self.mark_lost("the store rejected a display chunk after the lease was lost")
             except Exception as error:
                 self.report_dropped_chunks(error)
 
@@ -224,27 +356,29 @@ class _ClaimedExecution:
 
     async def _flush_loop(self) -> None:
         while not self._finished and not self.lease_lost.is_set():
-            await asyncio.sleep(_CHUNK_FLUSH_SECONDS)
+            await self._chunks_buffered.wait()
+            with self._chunk_wake_lock:
+                self._chunks_buffered.clear()
+                self._chunk_wake_scheduled = False
             await self.flush_chunks()
+            await asyncio.sleep(_CHUNK_FLUSH_SECONDS)
 
     async def _heartbeat_loop(self) -> None:
+        delay = self.confirmed_at + self._heartbeat_interval - time.monotonic()
         while not self._finished and not self.lease_lost.is_set():
-            await asyncio.sleep(self._heartbeat_interval)
+            await asyncio.sleep(max(0.0, min(delay, self._confirmed_until - time.monotonic())))
+            delay = self._heartbeat_interval
             try:
-                await self.transition(
-                    Heartbeat(
-                        fence=self.control.fence,
-                        worker_id=self.worker_id,
-                        now_ms=0,
-                        lease_duration_ms=self.lease_duration_ms,
-                    )
-                )
+                await self.heartbeat()
             except ExecutionLeaseLostError:
                 return
-            except Exception:
-                if time.monotonic() >= self._confirmed_until:
-                    self.mark_lost()
-                    return
+            except Exception as error:
+                log.bind(
+                    deployment=self.store.deployment,
+                    run_id=self.control.run_id,
+                    exception_type=type(error).__name__,
+                    error=str(error),
+                ).warning("Durable heartbeat failed")
 
 
 class DurableContext:
@@ -258,7 +392,6 @@ class DurableContext:
         self._state = checkpoint.application_state.copy()
         self._resume_input = checkpoint.resume_input
         self._resume_input_consumed = False
-        self._pending_progress: list[bytes] = []
         self._operation_lock = asyncio.Lock()
         self._adapter = adapter
 
@@ -289,11 +422,6 @@ class DurableContext:
     def _adapter_checkpoint(self) -> JsonValue:
         return self._checkpoint.adapter_checkpoint
 
-    @property
-    def _progress_events(self) -> tuple[bytes, ...]:
-        """Snapshot buffered events without removing uncommitted progress."""
-        return tuple(self._pending_progress)
-
     def _require_owned(self) -> None:
         self._claim.require_owned()
 
@@ -304,20 +432,14 @@ class DurableContext:
         async with self._operation_lock:
             self._claim.require_owned()
             snapshot = self._snapshot(adapter_checkpoint)
-            plan = await self._claim.transition(
-                Checkpoint(
-                    fence=self._claim.control.fence,
-                    worker_id=self._claim.worker_id,
-                    now_ms=0,
-                    lease_duration_ms=self._claim.lease_duration_ms,
-                    checkpoint=encode_json(
-                        snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
-                    ),
-                    progress_events=self._progress_events,
-                )
+            await self._claim.commit(
+                Checkpoint,
+                lease_duration_ms=self._claim.lease_duration_ms,
+                checkpoint=encode_json(
+                    snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
+                ),
             )
             self._checkpoint = snapshot
-            del self._pending_progress[: len(plan.progress_events)]
 
     async def report_progress(
         self,
@@ -330,34 +452,26 @@ class DurableContext:
             self._claim.require_owned()
             event = ExecutionProgress.model_validate(
                 {
-                    "sequence": self._claim.control.progress_sequence + len(self._pending_progress) + 1,
+                    "sequence": self._claim.control.progress_sequence + len(self._claim.pending_progress) + 1,
                     "kind": kind,
                     "message": message,
                     "timestamp": datetime.now(timezone.utc),
                     "metadata": dict(metadata or {}),
                 }
             )
-            self._pending_progress.append(
+            self._claim.pending_progress.append(
                 encode_json(
                     event.model_dump(mode="json", exclude={"sequence"}),
                     max_bytes=self._claim.store.config.max_progress_event_bytes,
                 )
             )
-            del self._pending_progress[: -self._claim.store.config.max_progress_events]
+            del self._claim.pending_progress[: -self._claim.store.config.max_progress_events]
 
     async def check_cancelled(self) -> None:
         self._claim.require_owned()
-        control = (
-            await self._claim.transition(
-                Heartbeat(
-                    fence=self._claim.control.fence,
-                    worker_id=self._claim.worker_id,
-                    now_ms=0,
-                    lease_duration_ms=self._claim.lease_duration_ms,
-                )
-            )
-        ).next_control
-        if control.cancel_requested_at_ms is not None:
+        if time.monotonic() - self._claim.confirmed_at >= _CANCEL_CHECK_REUSE_SECONDS:
+            await self._claim.heartbeat()
+        if self._claim.control.cancel_requested_at_ms is not None:
             raise DurableExecutionCancelledError("durable execution cancellation was requested")
 
     async def retry(self, message: str, *, delay: float | None = None) -> None:
@@ -365,7 +479,7 @@ class DurableContext:
             self._claim.require_owned()
             if delay is not None and (delay < 0 or not math.isfinite(delay)):
                 raise ValueError("retry delay must be a finite non-negative number")
-            raise _RetryRequestedError(str(message), delay, self._progress_events)
+            raise _RetryRequestedError(str(message), delay)
 
     async def suspend(
         self,
@@ -377,25 +491,23 @@ class DurableContext:
         async with self._operation_lock:
             self._claim.require_owned()
             snapshot = self._snapshot(adapter_checkpoint, {**self._state, **dict(update or {})})
-            plan = await self._claim.transition(
-                Suspend(
-                    fence=self._claim.control.fence,
-                    worker_id=self._claim.worker_id,
-                    now_ms=0,
-                    checkpoint=encode_json(
-                        snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
-                    ),
-                    wait=encode_json(dict(wait), max_bytes=self._claim.store.config.max_payload_bytes),
-                    progress_events=self._progress_events,
-                )
+            await self._claim.commit(
+                Suspend,
+                checkpoint=encode_json(
+                    snapshot.model_dump(mode="json"), max_bytes=self._claim.store.config.max_payload_bytes
+                ),
+                wait=encode_json(dict(wait), max_bytes=self._claim.store.config.max_payload_bytes),
             )
             self._checkpoint = snapshot
             self._state = snapshot.application_state.copy()
-            del self._pending_progress[: len(plan.progress_events)]
             raise _ExecutionSuspendedError
 
     async def stream_chunk(self, payload: object) -> None:
         """Buffer one best-effort display chunk without waiting on the store."""
+        self.stream_chunk_sync(payload)
+
+    def stream_chunk_sync(self, payload: object) -> None:
+        """Buffer one best-effort display chunk without waiting on the event loop or store."""
         self._claim.require_owned()
         try:
             converter = getattr(payload, "to_dict", None)
@@ -454,9 +566,6 @@ class DurableContext:
         adapter_checkpoint: JsonValue = None,
     ) -> None:
         self._sync(self.suspend(wait, update=update, adapter_checkpoint=adapter_checkpoint))
-
-    def stream_chunk_sync(self, payload: object) -> None:
-        self._sync(self.stream_chunk(payload))
 
     def _snapshot(
         self,

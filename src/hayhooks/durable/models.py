@@ -15,14 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypeAliasType
 
-from hayhooks.durable.engine import (
-    MAX_CONTROL_SCALAR_BYTES,
-    ExecutionPayloadSizeError,
-    ExecutionStatus,
-    PayloadKind,
-    normalize_cancellation_reason,
-)
-from hayhooks.durable.store import StoredExecution, validate_stored_execution
+from hayhooks.durable.engine import MAX_CANCELLATION_REASON_LENGTH, ExecutionStatus, PayloadKind, bounded_text
+from hayhooks.durable.store import StoredExecution, validate_payload_size, validate_stored_execution
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue = TypeAliasType("JsonValue", JsonScalar | list["JsonValue"] | dict[str, "JsonValue"])
@@ -59,14 +53,12 @@ class PersistedError(BaseModel):
     @field_validator("type", "code", mode="before")
     @classmethod
     def _bound_scalar(cls, value: object) -> str | None:
-        if value is None:
-            return None
-        return str(value).encode()[:MAX_CONTROL_SCALAR_BYTES].decode(errors="ignore")
+        return None if value is None else bounded_text(str(value))
 
     @field_validator("message", mode="before")
     @classmethod
     def _bound_message(cls, value: object) -> str:
-        return normalize_cancellation_reason(str(value)) or ""
+        return bounded_text(str(value), MAX_CANCELLATION_REASON_LENGTH)
 
 
 class ExecutionProgress(BaseModel):
@@ -138,16 +130,14 @@ def decode_json(payload: bytes, *, max_bytes: int) -> JsonValue:
 
 def operation_fingerprint(
     deployment: str,
-    revision: str,
     owner_id: str | None,
     validated_input: object,
     *,
     max_bytes: int = DEFAULT_MAX_JSON_BYTES,
 ) -> str:
-    """Hash the operation scope and canonical validated input."""
+    """Hash the operation scope and canonical validated input, excluding the definition revision."""
     value = {
         "deployment": deployment,
-        "revision": revision,
         "owner_id": owner_id,
         "input": _canonical_json(validated_input, max_bytes=max_bytes),
     }
@@ -260,5 +250,4 @@ def _validate_json_value(value: object) -> None:
 def _check_size(payload: bytes, max_bytes: int) -> None:
     if max_bytes < 1:
         raise ValueError("max_bytes must be positive")
-    if len(payload) > max_bytes:
-        raise ExecutionPayloadSizeError("JSON payload exceeds its configured byte limit")
+    validate_payload_size("JSON payload", payload, max_bytes)

@@ -12,7 +12,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import NoReturn, get_type_hints
+from typing import Any, NoReturn, get_type_hints
 
 from pydantic import BaseModel
 
@@ -58,6 +58,15 @@ def load_pipeline_module(pipeline_name: str, dir_path: Path | str, *, package_na
     return loader.load()
 
 
+def pipeline_modules(pipeline_name: str) -> dict[str, ModuleType]:
+    """Return the sys.modules entries of a pipeline package: the package itself and its submodules."""
+    return {
+        name: module
+        for name, module in sys.modules.items()
+        if name == pipeline_name or name.startswith(f"{pipeline_name}.")
+    }
+
+
 def unload_pipeline_modules(pipeline_name: str) -> None:
     """
     Remove pipeline modules from sys.modules.
@@ -67,8 +76,7 @@ def unload_pipeline_modules(pipeline_name: str) -> None:
     Args:
         pipeline_name: Name of the pipeline to unload
     """
-    module_names = [name for name in sys.modules if name == pipeline_name or name.startswith(f"{pipeline_name}.")]
-    for module_name in module_names:
+    for module_name in pipeline_modules(pipeline_name):
         log.debug("Removing module '{}' from sys.modules", module_name)
         del sys.modules[module_name]
 
@@ -286,6 +294,11 @@ def is_durable_wrapper(pipeline_wrapper: BasePipelineWrapper | type[BasePipeline
     )
 
 
+def durable_owner_dependency(pipeline_wrapper: BasePipelineWrapper) -> Callable[..., Any] | None:
+    """Return the wrapper's ``durable_owner_id`` override, the owner dependency of its durable routes, or ``None``."""
+    return pipeline_wrapper.durable_owner_id if _is_method_overridden(pipeline_wrapper, "durable_owner_id") else None
+
+
 def reject_durable_wrapper(pipeline_wrapper: BasePipelineWrapper | type[BasePipelineWrapper]) -> None:
     """
     Reject a wrapper class or instance that implements a durable run method.
@@ -357,6 +370,9 @@ def _validate_run_methods(pipeline_wrapper: BasePipelineWrapper) -> None:
         raise PipelineWrapperError(msg)
 
     if not (pipeline_wrapper._is_run_durable_implemented or pipeline_wrapper._is_run_durable_async_implemented):
+        if _is_method_overridden(pipeline_wrapper, "durable_owner_id"):
+            message = "durable_owner_id requires run_durable or run_durable_async"
+            raise PipelineWrapperError(message)
         return
     if pipeline_wrapper._is_run_durable_implemented == pipeline_wrapper._is_run_durable_async_implemented:
         message = "exactly one of run_durable or run_durable_async must be implemented"

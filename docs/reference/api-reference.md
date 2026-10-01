@@ -100,16 +100,44 @@ Get status of all deployed pipelines, the server mode, and durable deployment he
 {
   "status": "Up!",
   "pipelines": [
-    "pipeline1",
-    "pipeline2"
+    "jobs"
   ],
-  "durable_mode": false,
-  "durable": {"healthy": true, "deployments": {}}
+  "durable_mode": true,
+  "durable": {
+    "healthy": true,
+    "deployments": {
+      "jobs": {
+        "healthy": true,
+        "configured_slots": 1,
+        "running_slots": 1,
+        "draining_slots": 0,
+        "draining_runs": 0,
+        "active_executions": 0,
+        "maintenance_running": true,
+        "accepting": true,
+        "store_error_streak": 0,
+        "counts": {
+          "nonterminal": 0,
+          "revision_nonterminal": 0,
+          "revision_runnable": 0,
+          "lease_expiry": 0
+        }
+      }
+    }
+  }
 }
 ```
 
-`durable_mode` is `true` when the pipeline set is fixed at startup. `durable` reports each durable deployment in
-[durable mode](../features/durable-execution.md#durable-mode); `status` is `Degraded` when one is unhealthy.
+`durable_mode` is `true` when the pipeline set is fixed at startup. `durable`
+reports each durable deployment in
+[durable mode](../features/durable-execution.md#durable-mode); `status` is
+`Degraded` when one is unhealthy. The endpoint always returns HTTP 200, so it is
+safe for liveness. Use `status` or `durable.healthy` from the JSON for readiness
+and alerts.
+
+Durable health is at most one second old, and concurrent probes share one read.
+If that read exceeds one second, the deployment reports `"healthy": false` and
+`"operational_error": "TimeoutError"`, and the top-level status is `Degraded`.
 
 ### Pipeline Execution
 
@@ -156,21 +184,41 @@ models and appear in OpenAPI. The execution projection keeps `result` as
 JSON so results written by an older immutable revision remain readable; the
 active revision still validates new results before committing them. A
 projection includes status, attempt, sequence, progress, public wait data,
-result or sanitized error, timestamps, and links. It never exposes input,
-checkpoints, application state, lease/fence data, ownership, or idempotency
-material.
+result or sanitized error, timestamps, and links. A new submission has
+`attempt: 0`; claims start at 1, and every resume, retry, handoff, and crash
+recovery claim increments it. It never exposes input, checkpoints, application
+state, lease/fence data, ownership, or idempotency material.
 
 Status codes:
 
 - `200`: inspection, terminal replay, or terminal cancellation result;
 - `202`: accepted submission, cancellation request, or resume;
+- `401` or `403`: rejected by the wrapper's `durable_owner_id` dependency in
+  durable mode;
 - `404`: missing execution or owner mismatch;
-- `409`: idempotency, revision, or resume-state conflict;
+- `409`: an idempotency key was reused within the same deployment and owner
+  with different explicitly sent request fields, or a revision or resume-state
+  conflict occurred;
 - `422`: request, resume, header, cursor, or payload validation failure;
-- `503`: admission closed or durable store unavailable.
+- `500`: stored execution state is invalid, with detail
+  `Durable execution state is invalid`; this response is not retryable;
+- `503`: `Durable execution store is unavailable`, `Durable execution service
+  is unavailable`, or an admission failure. Admission failures include
+  `Retry-After: 1` when the nonterminal limit is reached or the deployment is
+  shutting down.
 
-SSE accepts `Last-Event-ID`. Events are `chunk`, optional `gap`, and one
-terminal `completed`, `failed`, or `canceled` event. See
+SSE accepts `Last-Event-ID`. Every `chunk` carries `attempt`. A higher attempt
+means the run restarted from its last checkpoint, so clients discard text from
+lower attempts. Events are `chunk`, optional `gap`, one terminal `completed`,
+`failed`, or `canceled` event, and `error`. An interrupted stream sends
+`event: error` with data `{"detail":"Execution stream interrupted"}` and no
+`id`, then ends; reconnect with the last `Last-Event-ID`. The first frame and
+every idle 15 seconds are a `: heartbeat` comment. Undecodable entries are
+logged and skipped without an event.
+
+A finished execution replays retained history and sends its terminal event
+immediately. When history has expired, a fresh stream gets only the terminal
+event; a resumed cursor gets `gap` followed by the terminal event. See
 [Durable Execution](../features/durable-execution.md) for semantics and
 ownership modes.
 

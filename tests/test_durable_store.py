@@ -13,12 +13,26 @@ from hayhooks.durable.engine import (
     ExecutionLeaseLostError,
     ExecutionPayloadSizeError,
     ExecutionStatus,
+    Heartbeat,
     PayloadKind,
+    ScheduleRetry,
 )
-from hayhooks.durable.store import ExecutionStoreCorruptionError, MemoryExecutionStore, StoreConfig, chunk_read_count
+from hayhooks.durable.store import (
+    CHUNK_CURSOR_START,
+    ChunkCursorExpiredError,
+    ExecutionStoreCorruptionError,
+    MemoryExecutionStore,
+    StoreConfig,
+    chunk_read_count,
+)
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
+    assert_cancel_after_lease_expiry_contract,
+    assert_discard_progress_contract,
+    assert_lost_lease_budget_contract,
+    assert_lowered_limits_keep_data_readable,
+    assert_maintenance_backlog_contract,
     assert_raced_recovery_contract,
     assert_revision_routing_contract,
     assert_store_contract,
@@ -58,6 +72,26 @@ async def test_memory_store_marks_every_terminal_path(max_stream_chunks: int) ->
 
 async def test_memory_store_skips_raced_lease_recovery() -> None:
     await assert_raced_recovery_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
+
+
+async def test_memory_store_cancels_a_run_whose_lease_expired() -> None:
+    await assert_cancel_after_lease_expiry_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
+
+
+async def test_memory_store_fails_on_the_last_lost_lease() -> None:
+    await assert_lost_lease_budget_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
+
+
+async def test_memory_store_keeps_data_readable_after_lowering_limits() -> None:
+    await assert_lowered_limits_keep_data_readable(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
+
+
+async def test_memory_store_discards_progress_only_when_requested() -> None:
+    await assert_discard_progress_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
+
+
+async def test_memory_store_recovers_a_backlog_larger_than_one_batch() -> None:
+    await assert_maintenance_backlog_contract(MemoryExecutionStore("jobs", config=CONTRACT_CONFIG))
 
 
 def test_chunk_reads_are_bounded_by_bytes_entries_and_retention() -> None:
@@ -109,6 +143,47 @@ async def test_memory_store_repairs_only_the_stale_lease_member(clock: Clock) ->
         attempts_error=ATTEMPTS_ERROR,
     )
     assert store._lease_expiry == {live_member: live_deadline}
+
+
+async def test_memory_store_keeps_timestamps_monotonic_when_the_clock_steps_back(clock: Clock) -> None:
+    store = MemoryExecutionStore("jobs", clock=clock, config=StoreConfig(lease_commit_safety_ms=10))
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+
+    clock.now = 500
+    heartbeat = await store.transition("run_1", Heartbeat(1, "worker", 0, 400))
+    assert heartbeat.next_control.updated_at_ms == 1_000
+    assert heartbeat.next_control.lease_expires_at_ms == 1_400
+    retry = await store.transition("run_1", ScheduleRetry(1, "worker", 0, 0, 3, b"retry"))
+    assert retry.next_control.updated_at_ms == 1_000
+    assert retry.next_control.available_at_ms == 1_000
+    assert await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR)) is None
+
+    clock.now = 1_000
+    assert await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR)) is not None
+
+
+async def test_memory_store_expires_chunk_streams_before_the_execution(clock: Clock) -> None:
+    store = MemoryExecutionStore(
+        "jobs",
+        clock=clock,
+        config=StoreConfig(lease_commit_safety_ms=10, terminal_ttl_seconds=10, stream_ttl_seconds=1),
+    )
+    await store.submit(contract_control("jobs"), b"input")
+    assert await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await store.append_chunks("run_1", 1, 1, "worker", [b"chunk"])
+    chunks = await store.read_chunks("run_1", CHUNK_CURSOR_START)
+    await store.transition("run_1", Complete(1, "worker", 0, b"done"))
+
+    clock.now += 1_000
+    assert await store.read_chunks("run_1", CHUNK_CURSOR_START) == ()
+    with pytest.raises(ChunkCursorExpiredError):
+        await store.read_chunks("run_1", chunks[0].cursor)
+    assert await store.read("run_1") is not None
+
+    clock.now += 9_000
+    assert await store.read("run_1") is None
 
 
 @pytest.mark.parametrize(

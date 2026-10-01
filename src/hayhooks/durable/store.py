@@ -34,13 +34,16 @@ from hayhooks.durable.engine import (
     ScheduleRetry,
     Suspend,
     TransitionPlan,
+    became_terminal,
     decide,
+    plan_changes,
     require_owned,
     submission_plan,
 )
 
 CHUNK_CURSOR_START = "0-0"
 MAINTENANCE_BATCH_SIZE = 100
+MAINTENANCE_MAX_BATCHES = 10
 MAX_CHUNK_READ_BYTES = 4_000_000
 MAX_CHUNK_READ_COUNT = 1_000
 _CHUNK_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
@@ -57,12 +60,16 @@ class ExecutionStoreCorruptionError(ExecutionStoreError):
     """Persisted state cannot be decoded without violating durable invariants."""
 
 
+class ExecutionProgressCorruptionError(ExecutionStoreCorruptionError):
+    """Retained progress cannot be decoded consistently with its control."""
+
+
 class ExecutionContentionError(ExecutionStoreError):
     """A bounded optimistic transaction could not obtain a stable snapshot."""
 
 
 class ExecutionAdmissionError(RuntimeError):
-    """The configured nonterminal execution limit has been reached."""
+    """Admission was refused: the nonterminal limit is reached or the deployment stopped accepting submissions."""
 
 
 class ExecutionIdempotencyConflictError(RuntimeError):
@@ -79,6 +86,7 @@ class StoreConfig:
 
     lease_commit_safety_ms: int = 1_500
     terminal_ttl_seconds: int = 604_800
+    stream_ttl_seconds: int = 3_600
     max_nonterminal_executions: int = 1_000
     max_payload_bytes: int = 1_000_000
     max_progress_events: int = 100
@@ -91,6 +99,7 @@ class StoreConfig:
             raise ValueError("durable store limits cannot be negative")
         for name in (
             "terminal_ttl_seconds",
+            "stream_ttl_seconds",
             "max_payload_bytes",
             "max_progress_events",
             "max_progress_event_bytes",
@@ -117,12 +126,13 @@ class StoredExecution:
 
 @dataclass(frozen=True, slots=True)
 class StreamChunk:
-    """One display chunk, or the marker that every terminal transition appends."""
+    """One display chunk, terminal marker, or undecodable entry that readers skip."""
 
     cursor: str
     attempt: int
     data: bytes
     terminal: bool = False
+    skipped: bool = False
 
 
 class ExecutionStore(Protocol):
@@ -139,6 +149,10 @@ class ExecutionStore(Protocol):
 
     async def read_public(self, run_id: str) -> StoredExecution | None:
         """Read control, progress, and public payloads without input or checkpoint bytes."""
+        ...
+
+    async def read_control(self, run_id: str) -> ExecutionControl | None:
+        """Read only the decoded control, or ``None`` when the execution does not exist."""
         ...
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan: ...
@@ -164,7 +178,9 @@ class ExecutionStore(Protocol):
         """Like ``read_chunks``, but block up to ``timeout`` seconds for a first entry; empty on timeout."""
         ...
 
-    async def operational_counts(self) -> dict[str, int]: ...
+    async def operational_counts(self, *, revision: str) -> dict[str, int]:
+        """Return deployment and revision nonterminal, runnable, and lease counts."""
+        ...
 
 
 class MemoryExecutionStore:
@@ -191,7 +207,7 @@ class MemoryExecutionStore:
         self._runnable: dict[str, int] = {}
         self._lease_expiry: dict[tuple[str, int], int] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
-        self._terminal_cleanup: dict[str, tuple[int, str, tuple[str, str]]] = {}
+        self._terminal_cleanup: dict[str, tuple[int, int, str, tuple[str, str]]] = {}
         self._nonterminal = 0
 
     async def initialize(self) -> None:
@@ -229,23 +245,21 @@ class MemoryExecutionStore:
     async def read_public(self, run_id: str) -> StoredExecution | None:
         return self._read(run_id, private=False)
 
+    async def read_control(self, run_id: str) -> ExecutionControl | None:
+        self._cleanup_terminal(self._clock())
+        return self._controls.get(run_id)
+
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         current = self._controls.get(run_id)
         if current is None:
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
-        command = bind_store_command(command, self._clock(), self.config)
+        command = bind_store_command(command, max(self._clock(), current.updated_at_ms), self.config)
         plan = decide(current, command)
         validate_transition_plan(plan, self.config)
         self._apply(current, plan)
-        if not current.terminal and plan.next_control.terminal:
+        if became_terminal(current, plan):
             await self._write_chunks(run_id, plan.next_control.run_attempt, (b"",), terminal=True)
-        if not isinstance(command, Heartbeat) and (
-            plan.next_control != current
-            or plan.payload_writes
-            or plan.payload_deletes
-            or plan.progress_events
-            or plan.lease_index_update
-        ):
+        if not isinstance(command, Heartbeat) and plan_changes(current, plan):
             log.bind(
                 run_id=run_id,
                 command=type(command).__name__,
@@ -257,8 +271,7 @@ class MemoryExecutionStore:
         return plan
 
     async def claim(self, command: Claim) -> TransitionPlan | None:
-        if command.lease_duration_ms <= self.config.lease_commit_safety_ms:
-            raise ValueError("lease duration must exceed the commit safety margin")
+        validate_lease_duration(command.lease_duration_ms, self.config)
         now_ms = self._clock()
         due = (
             (score, run_id)
@@ -275,9 +288,7 @@ class MemoryExecutionStore:
             self._runnable.pop(run_id, None)
             control = self._controls.get(run_id)
             if control is not None and control.status is ExecutionStatus.QUEUED:
-                self._runnable[run_id] = (
-                    control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
-                )
+                self._runnable[run_id] = runnable_score(control)
             return None
 
     async def maintain(
@@ -289,10 +300,11 @@ class MemoryExecutionStore:
         now_ms = self._clock()
         requeued = 0
         for (run_id, fence), deadline in sorted(self._lease_expiry.items(), key=lambda item: item[1])[
-            :MAINTENANCE_BATCH_SIZE
+            : MAINTENANCE_BATCH_SIZE * MAINTENANCE_MAX_BATCHES
         ]:
             if deadline > now_ms:
                 break
+            before = self._controls.get(run_id)
             try:
                 plan = await self.transition(
                     run_id,
@@ -309,7 +321,11 @@ class MemoryExecutionStore:
             except InvalidExecutionTransitionError:
                 continue
             else:
-                requeued += plan.next_control.status is ExecutionStatus.QUEUED
+                requeued += (
+                    before is not None
+                    and before.status is ExecutionStatus.RUNNING
+                    and plan.next_control.status is ExecutionStatus.QUEUED
+                )
         self._cleanup_terminal(now_ms)
         return requeued
 
@@ -329,9 +345,11 @@ class MemoryExecutionStore:
         await self._write_chunks(run_id, attempt, chunks)
 
     async def read_chunks(self, run_id: str, after: str) -> tuple[StreamChunk, ...]:
+        self._cleanup_terminal(self._clock())
         return self._chunks_after(run_id, after)
 
     async def wait_chunks(self, run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...]:
+        self._cleanup_terminal(self._clock())
         async with self._chunks_written:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
@@ -340,15 +358,22 @@ class MemoryExecutionStore:
                 )
         return self._chunks_after(run_id, after)
 
-    async def operational_counts(self) -> dict[str, int]:
+    async def operational_counts(self, *, revision: str) -> dict[str, int]:
         self._cleanup_terminal(self._clock())
         return {
             "nonterminal": self._nonterminal,
-            "runnable": len(self._runnable),
+            "revision_nonterminal": sum(
+                not control.terminal and control.definition_revision == revision for control in self._controls.values()
+            ),
+            "revision_runnable": sum(
+                self._controls[run_id].definition_revision == revision for run_id in self._runnable
+            ),
             "lease_expiry": len(self._lease_expiry),
         }
 
-    def _apply(self, current: ExecutionControl, plan: TransitionPlan, *, new_submission: bool = False) -> None:
+    def _apply(  # noqa: C901
+        self, current: ExecutionControl, plan: TransitionPlan, *, new_submission: bool = False
+    ) -> None:
         control = plan.next_control
         self._controls[control.run_id] = control
         payloads = self._payloads.setdefault(control.run_id, {})
@@ -357,7 +382,9 @@ class MemoryExecutionStore:
         for kind in plan.payload_deletes:
             payloads.pop(kind, None)
 
-        if plan.progress_events:
+        if plan.discard_progress:
+            self._progress.pop(control.run_id, None)
+        elif plan.progress_events:
             progress = self._progress.setdefault(control.run_id, [])
             progress.extend(plan.progress_events)
             del progress[: -self.config.max_progress_events]
@@ -375,13 +402,14 @@ class MemoryExecutionStore:
 
         if new_submission:
             self._nonterminal += 1
-        elif not current.terminal and control.terminal:
+        elif became_terminal(current, plan):
             self._nonterminal -= 1
             if self._nonterminal < 0:
                 raise ExecutionStoreError("nonterminal execution counter underflow")
             binding = (control.run_id, control.idempotency_binding_digest)
             self._terminal_cleanup[control.run_id] = (
                 control.updated_at_ms + self.config.terminal_ttl_seconds * 1_000,
+                control.updated_at_ms + min(self.config.stream_ttl_seconds, self.config.terminal_ttl_seconds) * 1_000,
                 control.idempotency_digest,
                 binding,
             )
@@ -420,7 +448,9 @@ class MemoryExecutionStore:
             self._chunks_written.notify_all()
 
     def _cleanup_terminal(self, now_ms: int) -> None:
-        for run_id, (expires_at, digest, binding) in tuple(self._terminal_cleanup.items()):
+        for run_id, (expires_at, chunks_expire_at, digest, binding) in tuple(self._terminal_cleanup.items()):
+            if chunks_expire_at <= now_ms:
+                self._chunks.pop(run_id, None)
             if expires_at > now_ms:
                 continue
             self._terminal_cleanup.pop(run_id)
@@ -466,9 +496,14 @@ def bind_store_command(command: ExecutionCommand, now_ms: int, config: StoreConf
     if isinstance(command, LEASE_COMMANDS):
         changes["lease_commit_safety_ms"] = config.lease_commit_safety_ms
     bound = replace(command, **changes)
-    if isinstance(bound, (Claim, Heartbeat, Checkpoint)) and (bound.lease_duration_ms <= config.lease_commit_safety_ms):
-        raise ValueError("lease duration must exceed the commit safety margin")
+    if isinstance(bound, (Claim, Heartbeat, Checkpoint)):
+        validate_lease_duration(bound.lease_duration_ms, config)
     return bound
+
+
+def validate_lease_duration(lease_duration_ms: int, config: StoreConfig) -> None:
+    if lease_duration_ms <= config.lease_commit_safety_ms:
+        raise ValueError("lease duration must exceed the commit safety margin")
 
 
 def validate_transition_plan(plan: TransitionPlan, config: StoreConfig) -> None:

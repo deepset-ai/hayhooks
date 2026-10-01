@@ -319,7 +319,11 @@ When Hayhooks is served behind a reverse proxy with a path prefix (`root_path`),
 
 ### Multiple Workers and Sticky Sessions
 
-Chainlit uses WebSockets via socket.io, which keeps session state in-memory. Running with `--workers > 1` requires **sticky sessions** (session affinity) on your load balancer so that all requests from the same client hit the same worker.
+Chainlit uses WebSockets via socket.io, which keeps session state in-memory.
+Running with `--workers > 1` in default mode requires **sticky sessions**
+(session affinity) on your load balancer so that all requests from the same
+client hit the same worker. Durable mode rejects multiple worker processes; use
+replicas that share Redis.
 
 Even with sticky sessions, some load balancers struggle to consistently route WebSocket upgrades. If you experience intermittent disconnects, set `transports = ["websocket"]` in your `.chainlit/config.toml` to skip the HTTP long-polling fallback:
 

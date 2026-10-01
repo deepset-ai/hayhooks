@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 import sys
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -8,7 +9,7 @@ from contextvars import Context, copy_context
 from functools import lru_cache
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 # Set CHAINLIT_APP_ROOT before any Chainlit imports (must be done before import)
 # ruff: noqa: E402
@@ -58,11 +59,16 @@ from hayhooks.server.utils.deploy_utils import (
 )
 from hayhooks.server.utils.live_trace_stream import get_trace_stream_broadcaster
 from hayhooks.server.utils.models import PreparedPipeline
-from hayhooks.server.utils.module_loader import inspect_durable_runner, is_durable_wrapper
+from hayhooks.server.utils.module_loader import durable_owner_dependency, inspect_durable_runner
 from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy, check_cors_settings, settings
 
 if TYPE_CHECKING:
-    from hayhooks.durable.store import ExecutionStore, StoreConfig
+    from hayhooks.durable.store import ExecutionStore
+
+# Worker commands and connection attempts are short; redis-py 8 uses the same default.
+_REDIS_TIMEOUT_SECONDS = 5.0
+# An extra viewer waits this long for a pooled connection before its stream ends with an error event.
+_VIEWER_POOL_WAIT_SECONDS = 1.0
 
 
 def deploy_yaml_pipeline(app: FastAPI, pipeline_file_path: Path) -> dict:
@@ -287,7 +293,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         finally:
             if runtime is not None:
                 try:
-                    # Closing also ends open durable SSE streams before their viewer client goes away.
+                    # Uvicorn drains or cancels open requests, SSE streams included, before lifespan shutdown;
+                    # closing ends any stream still waiting, so none outlives its viewer client.
                     await runtime.close()
                 finally:
                     # ponytail: retained threads can delay graceful shutdown past the grace period;
@@ -372,6 +379,7 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
     app.state.pipeline_registry = pipeline_registry
     app.state.durable_runtime = None
     app.state.durable_redis_clients = ()
+    app.state.durable_health = None
 
     app.add_middleware(RequestIdMiddleware)
 
@@ -404,7 +412,7 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
     if settings.chainlit_enabled:
         _mount_chainlit_ui(app)
 
-    if isinstance(pipeline_registry, ImmutablePipelineRegistry):
+    if durable_mode:
         _add_immutable_pipelines(app, pipeline_registry)
 
     instrument_fastapi_app(app)
@@ -424,10 +432,11 @@ def _add_immutable_pipelines(app: FastAPI, pipeline_registry: ImmutablePipelineR
 
     # Durable-only and chat-only wrappers have no ordinary run endpoint.
     for name, wrapper in wrappers.items():
-        if route := _build_run_route(name, wrapper):
+        metadata = pipeline_registry.get_metadata(name) or {}
+        if route := _build_run_route(name, wrapper, request_model=metadata.get("request_model")):
             route_kwargs, _metadata = route
             app.add_api_route(**route_kwargs)
-    _add_durable_deployments(app, {name: wrapper for name, wrapper in wrappers.items() if is_durable_wrapper(wrapper)})
+    _add_durable_deployments(app, {name: wrappers[name] for name in pipeline_registry.durable_names()})
 
 
 def _matches_existing_route(app: FastAPI, path: str) -> bool:
@@ -474,6 +483,16 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         release_running_on_close=settings.durable_release_running_on_shutdown,
     )
 
+    if settings.durable_store != "memory":
+        try:
+            # Imported first: it raises the install hint when the durable extra is missing.
+            from hayhooks.durable.redis import RedisExecutionStore
+
+            app.state.durable_redis_clients = _redis_clients(settings.durable_redis_url)
+        except Exception as error:
+            msg = f"Failed to build the durable Redis clients: {error}"
+            raise PipelineModeError(msg) from error
+
     deployments = []
     for name, wrapper in durable_wrappers.items():
         try:
@@ -484,7 +503,14 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
             if settings.durable_store == "memory":
                 store = MemoryExecutionStore(name, config=store_config)
             else:
-                store = _redis_store(app, name, store_config)
+                worker_client, viewer_client = app.state.durable_redis_clients
+                store = RedisExecutionStore(
+                    worker_client,
+                    name,
+                    viewer_client=viewer_client,
+                    config=store_config,
+                    key_prefix=settings.durable_redis_key_prefix,
+                )
             deployment = DurableDeployment(
                 name,
                 revision,
@@ -500,7 +526,7 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         except Exception as error:
             msg = f"Failed to build the durable deployment of pipeline '{name}': {error}"
             raise PipelineModeError(msg) from error
-        router = create_durable_router(deployment, owner_id_dependency=None)
+        router = create_durable_router(deployment, owner_id_dependency=durable_owner_dependency(wrapper))
         if conflicts := [
             route.path
             for route in router.routes
@@ -513,27 +539,44 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
     app.state.durable_runtime = DurableRuntime(tuple(deployments))
 
 
-def _redis_store(app: FastAPI, name: str, store_config: "StoreConfig") -> "ExecutionStore":
-    """Build a Redis store on the app's worker and viewer clients, created on first use and unconnected."""
-    # Imported first: it raises the install hint when the durable extra is missing.
-    from hayhooks.durable.redis import RedisExecutionStore
+def _redis_clients(url: str) -> tuple[Any, Any]:
+    """
+    Build the worker and viewer clients with explicit timeouts; query options in *url* override them.
 
-    if not app.state.durable_redis_clients:
-        from redis.asyncio import Redis
+    Blocking SSE reads use the viewer client, so viewers cannot starve worker heartbeats of connections.
+    Neither client retries commands or negotiates RESP3, on every supported redis-py version.
+    """
+    from redis.asyncio import BlockingConnectionPool, Redis
 
-        # Blocking SSE reads use the viewer client, so viewers cannot starve worker heartbeats of connections.
-        app.state.durable_redis_clients = (
-            Redis.from_url(settings.durable_redis_url),
-            Redis.from_url(settings.durable_redis_url, max_connections=settings.durable_redis_max_viewers),
+    from hayhooks.durable.fastapi import _STREAM_BLOCK_SECONDS
+
+    common: dict[str, Any] = {"protocol": 2, "socket_connect_timeout": _REDIS_TIMEOUT_SECONDS}
+    if not url.startswith("unix:"):  # Unix socket connections reject TCP keepalive options
+        common |= {"socket_keepalive": True, "socket_keepalive_options": _keepalive_options()}
+    # ponytail: unbounded worker pool (redis-py 8 caps it at 100); bound HTTP concurrency upstream if Redis
+    # connections must be capped, since exhausting this pool would fail heartbeats.
+    worker = Redis.from_url(url, socket_timeout=_REDIS_TIMEOUT_SECONDS, max_connections=2**31, **common)
+    viewer = Redis.from_pool(
+        BlockingConnectionPool.from_url(
+            url,
+            max_connections=settings.durable_redis_max_viewers,
+            timeout=_VIEWER_POOL_WAIT_SECONDS,
+            socket_timeout=_STREAM_BLOCK_SECONDS + 15,
+            **common,
         )
-    worker_client, viewer_client = app.state.durable_redis_clients
-    return RedisExecutionStore(
-        worker_client,
-        name,
-        viewer_client=viewer_client,
-        config=store_config,
-        key_prefix=settings.durable_redis_key_prefix,
     )
+    viewer_timeout = viewer.connection_pool.connection_kwargs.get("socket_timeout")
+    if viewer_timeout is not None and viewer_timeout <= _STREAM_BLOCK_SECONDS:
+        msg = f"socket_timeout in the durable Redis URL must exceed {_STREAM_BLOCK_SECONDS:g} seconds, the SSE block"
+        raise ValueError(msg)
+    return worker, viewer
+
+
+def _keepalive_options() -> dict[int, int]:
+    # redis-py 8's defaults, so 5-7 also detect dead idle connections; macOS names the idle option TCP_KEEPALIVE.
+    idle = getattr(socket, "TCP_KEEPIDLE", getattr(socket, "TCP_KEEPALIVE", None))
+    options = {idle: 30, getattr(socket, "TCP_KEEPINTVL", None): 5, getattr(socket, "TCP_KEEPCNT", None): 3}
+    return {option: value for option, value in options.items() if option is not None}
 
 
 def run_app(

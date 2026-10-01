@@ -3,32 +3,6 @@
 from importlib import import_module
 from typing import Any
 
-__all__ = [
-    "AsyncPipeline",
-    "BasePipelineWrapper",
-    "DurableContext",
-    "Pipeline",
-    "PipelineEvent",
-    "SSEStream",
-    "YAMLPipelineWrapper",
-    "async_streaming_generator",
-    "chat_messages_from_openai_response",
-    "coerce_pipeline_inputs",
-    "create_app",
-    "current_durable_context",
-    "default_on_pipeline_end",
-    "default_on_tool_call_end",
-    "default_on_tool_call_start",
-    "durable_streaming_callback",
-    "get_input_files",
-    "get_last_user_input_text",
-    "get_last_user_message",
-    "is_user_message",
-    "log",
-    "run_app",
-    "streaming_generator",
-]
-
 _EXPORT_MODULES = {
     "AsyncPipeline": "hayhooks.server.utils.haystack_compat",
     "BasePipelineWrapper": "hayhooks.server.utils.base_pipeline_wrapper",
@@ -54,6 +28,7 @@ _EXPORT_MODULES = {
     "run_app": "hayhooks.server.app",
     "streaming_generator": "hayhooks.server.pipelines.utils",
 }
+__all__ = list(_EXPORT_MODULES)
 
 
 def __getattr__(name: str) -> Any:

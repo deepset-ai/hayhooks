@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from enum import Enum
+from typing import Any
 
 RUN_ID_PATTERN = r"[A-Za-z0-9_-]{1,128}"
 STORAGE_SCHEMA_VERSION = 1
@@ -25,12 +26,14 @@ def validate_run_id(run_id: str) -> None:
         raise ValueError(f"run_id must match {RUN_ID_PATTERN}")
 
 
+def bounded_text(value: str, max_length: int | None = None) -> str:
+    """Bound text by ``max_length`` characters and the persisted UTF-8 scalar byte limit."""
+    return value[:max_length].encode()[:MAX_CONTROL_SCALAR_BYTES].decode(errors="ignore")
+
+
 def normalize_cancellation_reason(reason: str | None) -> str | None:
     """Bound cancellation text by both characters and persisted UTF-8 bytes."""
-    if not reason:
-        return None
-    encoded = str(reason)[:MAX_CANCELLATION_REASON_LENGTH].encode()[:MAX_CONTROL_SCALAR_BYTES]
-    return encoded.decode(errors="ignore")
+    return bounded_text(str(reason), MAX_CANCELLATION_REASON_LENGTH) if reason else None
 
 
 class ExecutionStatus(str, Enum):
@@ -90,7 +93,9 @@ class ExecutionControl:
     status: ExecutionStatus = ExecutionStatus.QUEUED
     version: int = 1
     fence: int = 0
+    # run_attempt numbers claims for users; lease_recoveries (expired leases) is what max_run_attempts bounds.
     run_attempt: int = 0
+    lease_recoveries: int = 0
     application_retry_count: int = 0
     available_at_ms: int | None = None
     lease_owner: str | None = None
@@ -123,6 +128,7 @@ class ExecutionControl:
             "version",
             "fence",
             "run_attempt",
+            "lease_recoveries",
             "application_retry_count",
             "progress_sequence",
             "created_at_ms",
@@ -166,6 +172,23 @@ class TransitionPlan:
     payload_deletes: tuple[PayloadKind, ...] = ()
     progress_events: tuple[ProgressEvent, ...] = ()
     lease_index_update: LeaseIndexUpdate | None = None
+    discard_progress: bool = False
+
+
+def plan_changes(current: ExecutionControl, plan: TransitionPlan) -> bool:
+    """Whether committing ``plan`` over ``current`` has any effect to persist."""
+    return bool(
+        plan.next_control != current
+        or plan.payload_writes
+        or plan.payload_deletes
+        or plan.progress_events
+        or plan.lease_index_update
+        or plan.discard_progress
+    )
+
+
+def became_terminal(current: ExecutionControl, plan: TransitionPlan) -> bool:
+    return not current.terminal and plan.next_control.terminal
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +227,7 @@ class Checkpoint:
     checkpoint: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +246,8 @@ class ScheduleRetry:
     error: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    exhausted_error: bytes | None = None
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +259,7 @@ class Suspend:
     wait: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +278,7 @@ class Complete:
     result: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +289,8 @@ class Fail:
     error: bytes
     progress_events: tuple[bytes, ...] = ()
     lease_commit_safety_ms: int = 0
+    first_progress_sequence: int | None = None
+    discard_progress: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,10 +363,10 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         if control.available_at_ms is not None and control.available_at_ms > command.now_ms:
             raise InvalidExecutionTransitionError("queued execution is not due")
         if control.cancel_requested_at_ms is not None:
-            return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
+            return _cancel(control, command.now_ms)
         if control.definition_revision != command.worker_revision:
             raise InvalidExecutionTransitionError("definition revision is incompatible")
-        if control.run_attempt >= command.max_run_attempts:
+        if control.lease_recoveries >= command.max_run_attempts:
             return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error)
         deadline = command.now_ms + command.lease_duration_ms
         next_control = _business(
@@ -353,12 +383,11 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
     if isinstance(command, ReleaseClaim):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         if control.cancel_requested_at_ms is not None:
-            return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
+            return _cancel(control, command.now_ms)
         next_control = _business(
             control,
             command.now_ms,
             status=ExecutionStatus.QUEUED,
-            run_attempt=control.run_attempt - 1,
             lease_owner=None,
             lease_expires_at_ms=None,
         )
@@ -372,62 +401,47 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
     if isinstance(command, Checkpoint):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
+        progress_events = _progress_events(
+            control.progress_sequence, command.progress_events, command.first_progress_sequence
+        )
         next_control = _business(
             control,
             command.now_ms,
-            progress_sequence=control.progress_sequence + len(command.progress_events),
+            progress_sequence=control.progress_sequence + len(progress_events),
             lease_expires_at_ms=command.now_ms + command.lease_duration_ms,
         )
         return TransitionPlan(
             next_control,
             payload_writes=(PayloadWrite(PayloadKind.CHECKPOINT, command.checkpoint),),
-            progress_events=_progress_events(control.progress_sequence, command.progress_events),
+            progress_events=progress_events,
             lease_index_update=LeaseIndexUpdate(next_control.lease_expires_at_ms, control.fence),
         )
     if isinstance(command, RequestCancellation):
         if control.terminal or control.cancel_requested_at_ms is not None:
             return TransitionPlan(control)
-        if control.status is ExecutionStatus.RUNNING:
-            return TransitionPlan(
-                _business(
-                    control,
-                    command.now_ms,
-                    cancel_requested_at_ms=command.now_ms,
-                    cancel_reason=normalize_cancellation_reason(command.reason),
-                ),
-            )
-        return _terminal(
-            _business(
-                control,
-                command.now_ms,
-                cancel_requested_at_ms=command.now_ms,
-                cancel_reason=normalize_cancellation_reason(command.reason),
-            ),
+        requested = _business(
+            control,
             command.now_ms,
-            ExecutionStatus.CANCELED,
-            None,
-            None,
-            increment_version=False,
+            cancel_requested_at_ms=command.now_ms,
+            cancel_reason=normalize_cancellation_reason(command.reason),
         )
+        if control.status is ExecutionStatus.RUNNING:
+            return TransitionPlan(requested)
+        return _cancel(requested, command.now_ms, increment_version=False)
     if isinstance(command, ScheduleRetry):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
-        progress_events = _progress_events(control.progress_sequence, command.progress_events)
+        progress_events = _progress_events(
+            control.progress_sequence, command.progress_events, command.first_progress_sequence
+        )
         if control.cancel_requested_at_ms is not None:
-            return _terminal(
-                control,
-                command.now_ms,
-                ExecutionStatus.CANCELED,
-                None,
-                None,
-                progress_events=progress_events,
-            )
+            return _cancel(control, command.now_ms, progress_events=progress_events)
         if control.application_retry_count >= command.max_application_retries:
             return _terminal(
                 control,
                 command.now_ms,
                 ExecutionStatus.FAILED,
                 PayloadKind.ERROR,
-                command.error,
+                command.error if command.exhausted_error is None else command.exhausted_error,
                 progress_events=progress_events,
             )
         next_control = _business(
@@ -449,21 +463,16 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
     if isinstance(command, Suspend):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
-        progress_events = _progress_events(control.progress_sequence, command.progress_events)
+        progress_events = _progress_events(
+            control.progress_sequence, command.progress_events, command.first_progress_sequence
+        )
         if control.cancel_requested_at_ms is not None:
-            return _terminal(
-                control,
-                command.now_ms,
-                ExecutionStatus.CANCELED,
-                None,
-                None,
-                progress_events=progress_events,
-            )
+            return _cancel(control, command.now_ms, progress_events=progress_events)
         next_control = _business(
             control,
             command.now_ms,
             status=ExecutionStatus.WAITING,
-            progress_sequence=control.progress_sequence + len(command.progress_events),
+            progress_sequence=control.progress_sequence + len(progress_events),
             lease_owner=None,
             lease_expires_at_ms=None,
         )
@@ -484,7 +493,7 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         if control.definition_revision != command.worker_revision:
             raise InvalidExecutionTransitionError("definition revision is incompatible")
         if control.cancel_requested_at_ms is not None:
-            return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
+            return _cancel(control, command.now_ms)
         writes = (PayloadWrite(PayloadKind.CHECKPOINT, command.checkpoint),) if command.checkpoint is not None else ()
         next_control = _business(
             control,
@@ -499,23 +508,22 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
     if isinstance(command, (Complete, Fail)):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         completed = isinstance(command, Complete)
-        progress_events = _progress_events(control.progress_sequence, command.progress_events)
+        discard_progress = isinstance(command, Fail) and command.discard_progress
+        if discard_progress and command.progress_events:
+            raise InvalidExecutionTransitionError("discarding progress cannot append new progress events")
+        progress_events = _progress_events(
+            control.progress_sequence, command.progress_events, command.first_progress_sequence
+        )
         if control.cancel_requested_at_ms is not None:
-            return _terminal(
-                control,
-                command.now_ms,
-                ExecutionStatus.CANCELED,
-                None,
-                None,
-                progress_events=progress_events,
-            )
+            return _cancel(control, command.now_ms, progress_events=progress_events, discard_progress=discard_progress)
         return _terminal(
             control,
             command.now_ms,
             ExecutionStatus.COMPLETED if completed else ExecutionStatus.FAILED,
             PayloadKind.RESULT if completed else PayloadKind.ERROR,
-            command.result if isinstance(command, Complete) else command.error,
+            command.result if completed else command.error,
             progress_events=progress_events,
+            discard_progress=discard_progress,
         )
     if isinstance(command, RecoverExpiredLease):
         if control.status is not ExecutionStatus.RUNNING or control.fence != command.indexed_fence:
@@ -528,12 +536,15 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             )
         if control.lease_expires_at_ms > command.now_ms:
             return TransitionPlan(control)
+        recovered = replace(control, lease_recoveries=control.lease_recoveries + 1)
         if control.cancel_requested_at_ms is not None:
-            return _terminal(control, command.now_ms, ExecutionStatus.CANCELED, None, None)
-        if control.run_attempt >= command.max_run_attempts:
-            return _terminal(control, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error)
+            return _cancel(recovered, command.now_ms)
+        if recovered.lease_recoveries >= command.max_run_attempts:
+            return _terminal(
+                recovered, command.now_ms, ExecutionStatus.FAILED, PayloadKind.ERROR, command.attempts_error
+            )
         next_control = _business(
-            control,
+            recovered,
             command.now_ms,
             status=ExecutionStatus.QUEUED,
             lease_owner=None,
@@ -552,6 +563,7 @@ def _terminal(
     *,
     increment_version: bool = True,
     progress_events: tuple[ProgressEvent, ...] = (),
+    discard_progress: bool = False,
 ) -> TransitionPlan:
     if control.terminal:
         raise InvalidExecutionTransitionError("terminal execution cannot transition")
@@ -561,7 +573,9 @@ def _terminal(
         "lease_owner": None,
         "lease_expires_at_ms": None,
     }
-    if progress_events:
+    if discard_progress:
+        kwargs["progress_sequence"] = 0
+    elif progress_events:
         kwargs["progress_sequence"] = progress_events[-1].sequence
     next_control = (
         _business(control, now_ms, **kwargs) if increment_version else replace(control, updated_at_ms=now_ms, **kwargs)
@@ -580,7 +594,12 @@ def _terminal(
         payload_deletes=(*deletes, PayloadKind.WAIT),
         progress_events=progress_events,
         lease_index_update=LeaseIndexUpdate(None, control.fence),
+        discard_progress=discard_progress,
     )
+
+
+def _cancel(control: ExecutionControl, now_ms: int, **options: Any) -> TransitionPlan:
+    return _terminal(control, now_ms, ExecutionStatus.CANCELED, None, None, **options)
 
 
 def require_owned(
@@ -605,5 +624,14 @@ def _business(control: ExecutionControl, now_ms: int, **changes: object) -> Exec
     return replace(control, version=control.version + 1, updated_at_ms=now_ms, **changes)
 
 
-def _progress_events(sequence: int, values: tuple[bytes, ...]) -> tuple[ProgressEvent, ...]:
-    return tuple(ProgressEvent(sequence + index, value) for index, value in enumerate(values, start=1))
+def _progress_events(
+    sequence: int,
+    values: tuple[bytes, ...],
+    first: int | None = None,
+) -> tuple[ProgressEvent, ...]:
+    """Number events after ``sequence``; from ``first``, skip the ones a replayed commit already stored."""
+    if first is None:
+        first = sequence + 1
+    elif not 1 <= first <= sequence + 1:
+        raise InvalidExecutionTransitionError("progress events do not continue the stored sequence")
+    return tuple(ProgressEvent(first + index, value) for index, value in enumerate(values) if first + index > sequence)

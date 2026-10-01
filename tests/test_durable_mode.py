@@ -400,3 +400,245 @@ def test_durable_wrapper_runs_detached_while_ordinary_requests_stay_ordinary(
         "hayhooks.durable.definition_revision": "v1",
         "hayhooks.success": True,
     }.items() <= attempt.tags.items()
+
+
+def _redis_durable_app(durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, url: str) -> FastAPI:
+    for name, value in (("durable_store", "redis"), ("durable_redis_url", url), ("durable_redis_max_viewers", 7)):
+        monkeypatch.setattr(settings, name, value)
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    return create_app()
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_durable_redis_clients_have_explicit_timeouts_and_never_retry(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redis.asyncio import BlockingConnectionPool
+
+    worker, viewer = _redis_durable_app(
+        durable_pipelines_dir, monkeypatch, "redis://localhost:6379/15"
+    ).state.durable_redis_clients
+
+    # The viewer outlasts the 15 s SSE block; nothing connects at construction.
+    expected = {"worker": (5.0, 2**31), "viewer": (30.0, 7)}
+    for name, client in (("worker", worker), ("viewer", viewer)):
+        pool = client.connection_pool
+        kwargs = pool.connection_kwargs
+        assert (kwargs["socket_timeout"], pool.max_connections) == expected[name]
+        assert (kwargs["socket_connect_timeout"], kwargs["socket_keepalive"], kwargs["protocol"]) == (5.0, True, 2)
+        connection = pool.make_connection()
+        assert connection.retry._retries == 0
+        assert not connection.is_connected
+        assert client.auto_close_connection_pool
+    assert isinstance(viewer.connection_pool, BlockingConnectionPool)
+    assert viewer.connection_pool.timeout == 1.0
+    assert not isinstance(worker.connection_pool, BlockingConnectionPool)
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_redis_url_options_override_client_defaults(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _redis_durable_app(durable_pipelines_dir, monkeypatch, "redis://localhost:6379/15?socket_timeout=40")
+    timeouts = [
+        client.connection_pool.connection_kwargs["socket_timeout"] for client in app.state.durable_redis_clients
+    ]
+    assert timeouts == [40.0, 40.0]
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_a_url_socket_timeout_below_the_sse_block_fails_startup(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(PipelineModeError, match=r"socket_timeout .* must exceed 15 seconds"):
+        _redis_durable_app(durable_pipelines_dir, monkeypatch, "redis://localhost:6379/15?socket_timeout=10")
+
+
+def _memory_durable_app(durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
+    return create_app()
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_status_caches_durable_health_for_one_second(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hayhooks.server.routers import status as status_router
+
+    app = _memory_durable_app(durable_pipelines_dir, monkeypatch)
+    calls = []
+
+    async def health() -> dict[str, object]:
+        calls.append(1)
+        return {"healthy": True, "deployments": {"jobs": {"healthy": True, "call": len(calls)}}}
+
+    monkeypatch.setattr(app.state.durable_runtime, "health", health)
+    with TestClient(app) as client:
+        first, second = client.get("/status").json(), client.get("/status").json()
+        assert first == second
+        assert first["durable"]["deployments"]["jobs"]["call"] == 1
+        monkeypatch.setattr(status_router, "_DURABLE_HEALTH_TTL_SECONDS", 0.0)
+        assert client.get("/status").json()["durable"]["deployments"]["jobs"]["call"] == 2
+    assert len(calls) == 2
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_status_bounds_a_slow_durable_health_read(durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    from hayhooks.server.routers import status as status_router
+
+    app = _memory_durable_app(durable_pipelines_dir, monkeypatch)
+
+    async def hang() -> dict[str, object]:
+        await asyncio.sleep(30)
+        raise AssertionError
+
+    monkeypatch.setattr(app.state.durable_runtime, "health", hang)
+    monkeypatch.setattr(status_router, "_DURABLE_HEALTH_TIMEOUT_SECONDS", 0.05)
+    with TestClient(app) as client:
+        started = time.monotonic()
+        response = client.get("/status")
+        assert time.monotonic() - started < 1
+    assert response.status_code == 200
+    assert response.json()["status"] == "Degraded"
+    assert response.json()["durable"] == {
+        "healthy": False,
+        "deployments": {"jobs": {"healthy": False, "operational_error": "TimeoutError"}},
+    }
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+async def test_concurrent_status_probes_share_one_health_read(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    app = _memory_durable_app(durable_pipelines_dir, monkeypatch)
+    release = asyncio.Event()
+    calls = []
+
+    async def health() -> dict[str, object]:
+        calls.append(1)
+        await release.wait()
+        return {"healthy": True, "deployments": {}}
+
+    monkeypatch.setattr(app.state.durable_runtime, "health", health)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        probes = [asyncio.create_task(client.get("/status")) for _ in range(5)]
+        await asyncio.sleep(0.05)
+        release.set()
+        responses = await asyncio.gather(*probes)
+    assert [response.status_code for response in responses] == [200] * 5
+    assert len(calls) == 1
+
+
+def test_immutable_run_route_reuses_the_registry_request_model(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def rebuilt(*_args: Any, **_kwargs: Any) -> None:
+        message = "the run route rebuilt the request model"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(deploy_utils, "create_request_model_from_callable", rebuilt)
+    write_tree(durable_pipelines_dir, {"double/pipeline_wrapper.py": ORDINARY_WRAPPER})
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.post("/double/run", json={"value": 21}).json() == {"result": 42}
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert app.state.pipeline_registry.get_metadata("double")["request_model"].__name__ in schemas
+
+
+OWNED_DURABLE_WRAPPER = DURABLE_WRAPPER.replace(
+    "from pydantic import BaseModel\n",
+    "from fastapi import HTTPException\nfrom fastapi import Request as HTTPRequest\nfrom pydantic import BaseModel\n",
+).replace(
+    "    def run_durable(",
+    """    DURABLE_OWNER_ID
+
+    def run_durable(""",
+)
+SYNC_OWNER = """def durable_owner_id(self, request: HTTPRequest) -> str:
+        if not (user := request.headers.get("x-user")):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return user"""
+ASYNC_OWNER = "async " + SYNC_OWNER
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+@pytest.mark.parametrize("owner_source", [SYNC_OWNER, ASYNC_OWNER], ids=["sync", "async"])
+def test_durable_owner_id_scopes_hosted_executions(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, wait_for_execution, owner_source: str
+) -> None:
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    source = OWNED_DURABLE_WRAPPER.replace("DURABLE_OWNER_ID", owner_source)
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": source})
+    alice, bob = {"x-user": "alice"}, {"x-user": "bob"}
+
+    with TestClient(create_app()) as client:
+        assert client.post("/jobs/run-durable", json={"value": 1}).status_code == 401
+        # Ordinary routes are not covered by the durable owner hook.
+        assert client.post("/jobs/run", json={"value": 1}).json() == {"result": 2}
+
+        submitted = client.post("/jobs/run-durable", json={"value": 2, "wait": True}, headers=alice)
+        assert submitted.status_code == 202
+        location = submitted.headers["Location"]
+        wait_for_execution(client, location, "waiting", headers=alice)
+        for method, path in (("get", ""), ("post", "/cancel"), ("post", "/resume"), ("get", "/stream")):
+            assert getattr(client, method)(location + path, headers=bob).status_code == 404
+        assert client.get(location).status_code == 401
+        assert client.post(f"{location}/resume", json={"approved": True}, headers=alice).status_code == 202
+        assert wait_for_execution(client, location, "completed", headers=alice)["result"] == {"value": 20}
+        assert "event: completed" in client.get(f"{location}/stream", headers=alice).text
+
+        # Idempotency keys are scoped per owner.
+        key = {"Idempotency-Key": "order-1"}
+        first = client.post("/jobs/run-durable", json={"value": 3}, headers={**alice, **key})
+        replay = client.post("/jobs/run-durable", json={"value": 3}, headers={**alice, **key})
+        other = client.post("/jobs/run-durable", json={"value": 3}, headers={**bob, **key})
+        assert replay.json()["execution_id"] == first.json()["execution_id"] != other.json()["execution_id"]
+        assert replay.headers["Idempotent-Replay"] == "true"
+        assert "Idempotent-Replay" not in other.headers
+
+
+@pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
+def test_durable_owner_id_security_dependencies_appear_in_openapi(
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "durable_store", "memory")
+    owner = """def durable_owner_id(
+        self, credentials: HTTPAuthorizationCredentials = Security(HTTPBearer())
+    ) -> str:
+        return credentials.credentials"""
+    source = OWNED_DURABLE_WRAPPER.replace("DURABLE_OWNER_ID", owner).replace(
+        "from fastapi import HTTPException\nfrom fastapi import Request as HTTPRequest\n",
+        "from fastapi import Security\nfrom fastapi.security import HTTPAuthorizationCredentials, HTTPBearer\n",
+    )
+    write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": source})
+
+    with TestClient(create_app()) as client:
+        spec = client.get("/openapi.json").json()
+        assert client.post("/jobs/run-durable", json={"value": 1}).status_code in (401, 403)
+        assert (
+            client.post("/jobs/run-durable", json={"value": 1}, headers={"Authorization": "Bearer t"}).status_code
+            == 202
+        )
+    assert "HTTPBearer" in spec["components"]["securitySchemes"]
+    assert spec["paths"]["/jobs/run-durable"]["post"]["security"] == [{"HTTPBearer": []}]
+    assert "security" not in spec["paths"]["/jobs/run"]["post"]
+
+
+def test_durable_owner_id_requires_a_durable_wrapper(durable_pipelines_dir: Path) -> None:
+    source = ORDINARY_WRAPPER + "\n    def durable_owner_id(self, request) -> str:\n        return 'alice'\n"
+    write_tree(durable_pipelines_dir, {"double/pipeline_wrapper.py": source})
+    with pytest.raises(Exception, match="durable_owner_id requires run_durable or run_durable_async"):
+        create_app()
+
+
+async def test_durable_redis_clients_accept_unix_socket_urls() -> None:
+    from hayhooks.server.app import _redis_clients
+
+    for client in _redis_clients("unix:///tmp/redis.sock?db=15"):
+        client.connection_pool.make_connection()  # raises TypeError on TCP-only options
+        await client.aclose()

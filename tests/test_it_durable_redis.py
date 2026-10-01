@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import time
 import uuid
 from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -15,6 +18,7 @@ from redis.asyncio import ConnectionPool, Redis
 from redis.asyncio.client import Pipeline
 
 from hayhooks.durable import DurableContext, create_durable_router
+from hayhooks.durable.context import _ClaimedExecution
 from hayhooks.durable.engine import (
     Checkpoint,
     Claim,
@@ -22,14 +26,18 @@ from hayhooks.durable.engine import (
     ExecutionControl,
     ExecutionLeaseLostError,
     ExecutionStatus,
+    Fail,
     Heartbeat,
     InvalidExecutionTransitionError,
     PayloadKind,
+    RecoverExpiredLease,
     ReleaseClaim,
     RequestCancellation,
     Resume,
+    ScheduleRetry,
     Suspend,
 )
+from hayhooks.durable.models import PersistedError, decode_json
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys
 from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
 from hayhooks.durable.store import (
@@ -37,12 +45,19 @@ from hayhooks.durable.store import (
     PUBLIC_PAYLOAD_KINDS,
     ChunkCursorExpiredError,
     ExecutionAdmissionError,
+    ExecutionIdempotencyConflictError,
+    ExecutionProgressCorruptionError,
     ExecutionStoreCorruptionError,
     ExecutionStoreError,
 )
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
+    assert_cancel_after_lease_expiry_contract,
+    assert_discard_progress_contract,
+    assert_lost_lease_budget_contract,
+    assert_lowered_limits_keep_data_readable,
+    assert_maintenance_backlog_contract,
     assert_raced_recovery_contract,
     assert_revision_routing_contract,
     assert_store_contract,
@@ -55,6 +70,10 @@ pytestmark = pytest.mark.integration
 
 class SSERequest(BaseModel):
     chunks: int
+
+
+class RuntimeRequest(BaseModel):
+    value: int
 
 
 def store_prefix(store: RedisExecutionStore) -> str:
@@ -89,6 +108,105 @@ async def test_redis_store_matches_shared_contract(redis_store) -> None:
     await assert_store_contract(store)
 
 
+async def test_black_holed_connection_loses_the_lease_within_its_window(redis_store) -> None:  # noqa: PLR0915
+    redis, store = redis_store
+    connection = redis.connection_pool.connection_kwargs
+    black_holed = asyncio.Event()
+    proxy_tasks: set[asyncio.Task] = set()
+
+    async def proxy_connection(client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter) -> None:
+        server_reader, server_writer = await asyncio.open_connection(connection["host"], connection["port"])
+
+        async def forward(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                while data := await reader.read(64 * 1_024):
+                    if black_holed.is_set():
+                        continue
+                    writer.write(data)
+                    await writer.drain()
+            finally:
+                writer.close()
+
+        tasks = {
+            asyncio.create_task(forward(client_reader, server_writer)),
+            asyncio.create_task(forward(server_reader, client_writer)),
+        }
+        proxy_tasks.update(tasks)
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            proxy_tasks.difference_update(tasks)
+
+    proxy = await asyncio.start_server(proxy_connection, "127.0.0.1", 0)
+    proxy_port = proxy.sockets[0].getsockname()[1]
+    proxied_redis = Redis(
+        host="127.0.0.1",
+        port=proxy_port,
+        db=connection["db"],
+        decode_responses=False,
+        socket_timeout=None,
+        retry=None,
+    )
+    proxied_store = RedisExecutionStore(
+        proxied_redis,
+        "jobs",
+        config=store.config,
+        key_prefix=store_prefix(store),
+    )
+    claim = fresh_claim = None
+    try:
+        await store.submit(contract_control("jobs", "blackhole"), b"input")
+        confirmed_at = time.monotonic()
+        claimed = await proxied_store.claim(Claim("worker", 0, 600, 3, "v1", ATTEMPTS_ERROR))
+        assert claimed is not None
+        claim = _ClaimedExecution(
+            proxied_store,
+            claimed.next_control,
+            "worker",
+            600,
+            confirmed_at=confirmed_at,
+        )
+        await claim.start()
+        black_holed.set()
+
+        await asyncio.wait_for(claim.lease_lost.wait(), 1)
+        assert claim.owned is False
+        await asyncio.wait_for(claim.stop(), 1)
+
+        black_holed.clear()
+        await asyncio.sleep(0.1)
+        await asyncio.wait_for(store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR), 1)
+        fresh_at = time.monotonic()
+        reclaimed = await asyncio.wait_for(
+            proxied_store.claim(Claim("worker-2", 0, 600, 3, "v1", ATTEMPTS_ERROR)),
+            1,
+        )
+        assert reclaimed is not None and reclaimed.next_control.fence > claim.control.fence
+        fresh_claim = _ClaimedExecution(
+            proxied_store,
+            reclaimed.next_control,
+            "worker-2",
+            600,
+            confirmed_at=fresh_at,
+        )
+        await asyncio.wait_for(fresh_claim.start(), 1)
+        assert fresh_claim.owned
+    finally:
+        if fresh_claim is not None:
+            await asyncio.wait_for(fresh_claim.stop(), 1)
+        if claim is not None:
+            await asyncio.wait_for(claim.stop(), 1)
+        await asyncio.wait_for(proxied_redis.aclose(), 1)
+        proxy.close()
+        for task in tuple(proxy_tasks):
+            task.cancel()
+        await asyncio.wait_for(asyncio.gather(*proxy_tasks, return_exceptions=True), 1)
+        await asyncio.wait_for(proxy.wait_closed(), 1)
+
+
 async def test_redis_store_routes_claims_by_revision(redis_store) -> None:
     _, store = redis_store
     await assert_revision_routing_contract(store)
@@ -112,6 +230,294 @@ async def test_redis_store_skips_raced_lease_recovery(redis_store) -> None:
     await assert_raced_recovery_contract(store)
 
 
+async def test_redis_store_cancels_a_run_whose_lease_expired(redis_store) -> None:
+    _, store = redis_store
+    await assert_cancel_after_lease_expiry_contract(store)
+
+
+async def test_redis_store_fails_on_the_last_lost_lease(redis_store) -> None:
+    _, store = redis_store
+    await assert_lost_lease_budget_contract(store)
+
+
+async def test_redis_store_keeps_data_readable_after_lowering_limits(redis_store) -> None:
+    _, store = redis_store
+    await assert_lowered_limits_keep_data_readable(store)
+
+
+async def test_redis_store_discards_progress_only_when_requested(redis_store) -> None:
+    _, store = redis_store
+    await assert_discard_progress_contract(store)
+
+
+async def test_redis_store_recovers_a_backlog_larger_than_one_batch(redis_store) -> None:
+    _, store = redis_store
+    await assert_maintenance_backlog_contract(store)
+
+
+@pytest.mark.parametrize("corruption", ["wrong-type", "malformed"])
+async def test_invalid_data_failure_repairs_public_progress(redis_store, corruption: str) -> None:
+    redis, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    await store.transition("run_1", Checkpoint(1, "worker", 0, 10_000, b"checkpoint", (b"progress",)))
+    progress_key = store.keys.progress("run_1")
+    if corruption == "wrong-type":
+        await redis.delete(progress_key)
+        await redis.set(progress_key, b"wrong type")
+    else:
+        await redis.rpush(progress_key, b"bad")
+
+    with pytest.raises(ExecutionProgressCorruptionError):
+        await store.read_public("run_1")
+    error = b'{"type":"stored_execution_invalid"}'
+    await store.transition("run_1", Fail(1, "worker", 0, error, discard_progress=True))
+
+    public = await store.read_public("run_1")
+    assert public is not None and public.control.status is ExecutionStatus.FAILED
+    assert public.control.progress_sequence == 0 and public.progress == ()
+    assert public.payloads[PayloadKind.ERROR] == error
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 0,
+        "revision_nonterminal": 0,
+        "revision_runnable": 0,
+        "lease_expiry": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["wrong-type", "wrong-types", "malformed", "invalid-json", "invalid-model"],
+)
+async def test_runtime_exposes_readable_failure_for_corrupt_progress_and_chunks(redis_store, corruption: str) -> None:
+    redis, fixture_store = redis_store
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(fixture_store.config, max_payload_bytes=1_000, terminal_ttl_seconds=10),
+        key_prefix=store_prefix(fixture_store),
+    )
+    await store.submit(contract_control("jobs"), b'{"value":1}')
+    await redis.hset(store.keys.control("run_1"), "progress_sequence", 1)
+    progress_key = store.keys.progress("run_1")
+    if corruption in ("wrong-type", "wrong-types"):
+        await redis.set(progress_key, b"wrong type")
+    else:
+        payload = {
+            "malformed": b"bad",
+            "invalid-json": (1).to_bytes(8, "big") + b"not-json",
+            "invalid-model": (1).to_bytes(8, "big") + b'{"message":1}',
+        }[corruption]
+        await redis.rpush(progress_key, payload)
+    if corruption == "wrong-types":
+        input_key = store.keys.payload("run_1", PayloadKind.INPUT)
+        await redis.delete(input_key)
+        await redis.rpush(input_key, b"wrong type")
+    await redis.set(store.keys.chunks("run_1"), b"wrong type")
+    calls = 0
+
+    async def runner(_context: DurableContext, _request: RuntimeRequest) -> None:
+        nonlocal calls
+        calls += 1
+
+    deployment = DurableDeployment(
+        "jobs",
+        "v1",
+        store,
+        RuntimeRequest,
+        runner,
+        config=RuntimeConfig(poll_interval_seconds=0.005, lease_duration_ms=10_000),
+    )
+    await deployment.start()
+    try:
+        deadline = asyncio.get_running_loop().time() + 5
+        public = None
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                public = await store.read_public("run_1")
+            except ExecutionStoreCorruptionError:
+                public = None
+            if public is not None and public.control.terminal:
+                break
+            await asyncio.sleep(0.005)
+        assert public is not None and public.control.status is ExecutionStatus.FAILED
+        error = PersistedError.model_validate(decode_json(public.payloads[PayloadKind.ERROR], max_bytes=1_000))
+        assert (public.control.run_attempt, public.control.progress_sequence, public.progress, calls) == (1, 0, (), 0)
+        assert (error.type, error.code) == ("ExecutionStoreCorruptionError", "stored_execution_invalid")
+        assert (await store.read_chunks("run_1", CHUNK_CURSOR_START))[-1].terminal
+        assert await store.operational_counts(revision="v1") == {
+            "nonterminal": 0,
+            "revision_nonterminal": 0,
+            "revision_runnable": 0,
+            "lease_expiry": 0,
+        }
+        assert (await deployment.health())["store_error_streak"] == 0
+
+        app = _stream_app(store)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/executions/run_1")
+            streamed = (await client.get("/executions/run_1/stream")).text
+        result = response.json()
+        events = [line.removeprefix("event: ") for line in streamed.splitlines() if line.startswith("event: ")]
+        data = [line.removeprefix("data: ") for line in streamed.splitlines() if line.startswith("data: ")]
+        assert response.status_code == 200
+        assert (result["status"], result["error"]["code"]) == ("failed", "stored_execution_invalid")
+        assert events == ["failed"]
+        assert json.loads(data[-1])["error"]["code"] == "stored_execution_invalid"
+    finally:
+        await deployment.close()
+
+
+@pytest.mark.parametrize("corruption", ["wrong-type", "malformed", "sequence"])
+async def test_progress_corruption_precedes_payload_type_corruption(redis_store, corruption: str) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.transition(
+        "run_1",
+        Checkpoint(control.fence, "worker", 0, 10_000, b"checkpoint", (b"progress",)),
+    )
+    input_key = store.keys.payload("run_1", PayloadKind.INPUT)
+    await redis.delete(input_key)
+    await redis.rpush(input_key, b"wrong type")
+    progress_key = store.keys.progress("run_1")
+    await redis.delete(progress_key)
+    if corruption == "wrong-type":
+        await redis.set(progress_key, b"wrong type")
+    elif corruption == "malformed":
+        await redis.rpush(progress_key, b"bad")
+    else:
+        await redis.rpush(progress_key, (2).to_bytes(8, "big") + b"progress")
+
+    with pytest.raises(ExecutionProgressCorruptionError):
+        await store.read("run_1")
+
+
+async def test_stale_invalid_data_failure_does_not_clear_progress(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await redis.set(store.keys.progress("run_1"), b"wrong type")
+    await store.transition("run_1", ReleaseClaim(control.fence, "worker"))
+    assert await store.claim(Claim("other", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is not None
+
+    with pytest.raises(ExecutionLeaseLostError):
+        await store.transition("run_1", Fail(control.fence, "worker", 0, b"invalid", discard_progress=True))
+
+    assert await redis.type(store.keys.progress("run_1")) == b"string"
+
+
+async def test_cancellation_wins_invalid_data_failure_and_clears_progress(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.transition("run_1", RequestCancellation(0, "cancel"))
+    await redis.set(store.keys.progress("run_1"), b"wrong type")
+
+    canceled = await store.transition(
+        "run_1",
+        Fail(control.fence, "worker", 0, b"invalid", discard_progress=True),
+    )
+
+    assert canceled.next_control.status is ExecutionStatus.CANCELED
+    public = await store.read_public("run_1")
+    assert public is not None and public.control.status is ExecutionStatus.CANCELED
+    assert public.control.progress_sequence == 0 and public.progress == ()
+
+
+async def test_chunk_reads_skip_undecodable_entries(redis_store) -> None:
+    redis, store = redis_store
+    reader = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(store.config, max_stream_chunks=10),
+        key_prefix=store_prefix(store),
+    )
+    key = store.keys.chunks("run_1")
+    first = await redis.xadd(key, {"attempt": 1, "data": b"first"})
+    skipped = await redis.xadd(key, {"bogus": b"entry"})
+    oversized = await redis.xadd(key, {"attempt": 1, "data": b"x" * 100})
+    last = await redis.xadd(key, {"attempt": 1, "data": b"last"})
+
+    chunks = await reader.read_chunks("run_1", CHUNK_CURSOR_START)
+    waited = await reader.wait_chunks("run_1", CHUNK_CURSOR_START, 0.05)
+
+    assert [chunk.cursor for chunk in chunks] == [value.decode() for value in (first, skipped, oversized, last)]
+    assert chunks == waited
+    assert chunks[1].skipped and chunks[1].data == b""
+    assert chunks[2].data == b"x" * 100
+    assert await reader.read_chunks("run_1", skipped.decode()) == chunks[2:]
+
+
+async def test_corrupt_chunk_stream_does_not_block_an_owned_failure(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await redis.set(store.keys.chunks("run_1"), b"wrong type")
+
+    failed = await store.transition("run_1", Fail(control.fence, "worker", 0, b"failed"))
+
+    assert failed.next_control.status is ExecutionStatus.FAILED
+    assert await redis.type(store.keys.chunks("run_1")) == b"stream"
+    chunks = await store.read_chunks("run_1", CHUNK_CURSOR_START)
+    assert [(chunk.terminal, chunk.attempt) for chunk in chunks] == [(True, 1)]
+    assert (await store.operational_counts(revision="v1"))["nonterminal"] == 0
+
+
+async def test_stale_failure_does_not_repair_a_corrupt_chunk_stream(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.transition("run_1", ReleaseClaim(control.fence, "worker"))
+    assert await store.claim(Claim("other", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await redis.set(store.keys.chunks("run_1"), b"wrong type")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionLeaseLostError):
+        await store.transition("run_1", Fail(control.fence, "worker", 0, b"stale"))
+
+    assert await dump_keys(redis, store) == before
+
+
+async def test_corrupt_chunk_stream_does_not_block_terminal_recovery(redis_store) -> None:
+    redis, store = redis_store
+    for run_id in ("run_bad", "run_a", "run_b"):
+        await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await redis.hset(store.keys.control("run_bad"), "lease_recoveries", 2)
+    await redis.set(store.keys.chunks("run_bad"), b"wrong type")
+    await asyncio.sleep(0.06)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 2
+    bad = await store.read("run_bad")
+    assert bad is not None and bad.control.status is ExecutionStatus.FAILED
+    assert await redis.type(store.keys.chunks("run_bad")) == b"stream"
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 2,
+        "revision_nonterminal": 2,
+        "revision_runnable": 2,
+        "lease_expiry": 0,
+    }
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+
+    race = replace(
+        contract_control("jobs", "run_race", idempotency="run_race", binding="run_race"),
+        definition_revision="v2",
+    )
+    await store.submit(race, b"input")
+    assert await store.claim(Claim("worker", 0, 50, 3, "v2", ATTEMPTS_ERROR)) is not None
+    await redis.hset(store.keys.control("run_race"), "lease_recoveries", 2)
+    await redis.set(store.keys.chunks("run_race"), b"wrong type")
+    contender = RedisExecutionStore(redis, "jobs", config=store.config, key_prefix=store_prefix(store))
+    await asyncio.sleep(0.06)
+
+    recovered = await asyncio.gather(
+        store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR),
+        contender.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR),
+    )
+
+    assert sum(recovered) == 0
+    assert (await store.operational_counts(revision="v1"))["nonterminal"] == 2
+    assert await redis.zcard(store.keys.lease_expiry) == 0
+    assert await redis.type(store.keys.chunks("run_race")) == b"stream"
+
+
 async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) -> None:
     redis, store = redis_store
     submissions = await asyncio.gather(
@@ -125,22 +531,356 @@ async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) ->
     )
     winners = [plan for plan in claims if plan is not None and plan.next_control.status is ExecutionStatus.RUNNING]
     assert len(winners) == 1
-    assert await redis.zcard(store.keys.runnable) == 0
+    assert await redis.zcard(store.keys.runnable_revision("v1")) == 0
     assert await redis.zcard(store.keys.lease_expiry) == 1
+
+
+async def test_concurrent_submissions_are_admitted_without_contention(redis_store) -> None:
+    _, store = redis_store
+    controls = [
+        contract_control("jobs", f"run_{index}", idempotency=f"idem_{index}", binding=f"binding_{index}")
+        for index in range(100)
+    ]
+
+    results = await asyncio.gather(*(store.submit(control, b"input") for control in controls))
+
+    assert all(result.created for result in results)
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 100,
+        "revision_nonterminal": 100,
+        "revision_runnable": 100,
+        "lease_expiry": 0,
+    }
+
+
+@pytest.mark.parametrize("limit", [5, 0])
+async def test_admission_limit_is_exact_under_concurrent_submissions(redis_store, limit: int) -> None:
+    redis, store = redis_store
+    limited = RedisExecutionStore(
+        redis,
+        "limited",
+        config=replace(store.config, max_nonterminal_executions=limit),
+        key_prefix=f"{store_prefix(store)}:limited-{limit}",
+    )
+    controls = [
+        contract_control("limited", f"run_{index}", idempotency=f"idem_{index}", binding=f"binding_{index}")
+        for index in range(30)
+    ]
+
+    results = await asyncio.gather(*(limited.submit(control, b"input") for control in controls), return_exceptions=True)
+
+    expected = 30 if limit == 0 else limit
+    assert sum(not isinstance(result, BaseException) for result in results) == expected
+    assert sum(isinstance(result, ExecutionAdmissionError) for result in results) == 30 - expected
+    assert (await limited.operational_counts(revision="v1"))["nonterminal"] == expected
+
+
+@pytest.mark.parametrize("target", ["binding", "revision-index", "capacity", "control"])
+async def test_submission_with_a_wrong_type_key_writes_nothing(redis_store, target: str) -> None:
+    redis, store = redis_store
+    control = contract_control("jobs")
+    key = {
+        "binding": store.keys.idempotency(control.idempotency_digest),
+        "revision-index": store.keys.runnable_revision("v1"),
+        "capacity": store.keys.capacity,
+        "control": store.keys.control(control.run_id),
+    }[target]
+    await redis.set(key, b"wrong type")
+    before = await dump_keys(redis, store)
+
+    error = ExecutionIdempotencyConflictError if target == "control" else ExecutionStoreError
+    with pytest.raises(error):
+        await store.submit(control, b"input")
+
+    assert await dump_keys(redis, store) == before
+
+
+@pytest.mark.parametrize("field", ["nonterminal", "revision"])
+async def test_submission_rejects_an_invalid_capacity_counter(redis_store, field: str) -> None:
+    redis, store = redis_store
+    field = RedisKeys.revision_nonterminal_field("v1") if field == "revision" else field
+    await redis.hset(store.keys.capacity, field, "01")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionStoreCorruptionError, match="counter"):
+        await store.submit(contract_control("jobs"), b"input")
+
+    assert await dump_keys(redis, store) == before
+
+
+async def test_replay_that_races_terminal_expiry_creates_a_new_execution(redis_store, monkeypatch) -> None:
+    redis, store = redis_store
+    control = contract_control("jobs", "old")
+    await store.submit(control, b"input")
+    await store.transition("old", RequestCancellation(0, "done"))
+    original = redis.hgetall
+    called = False
+
+    async def expire_once(key):
+        nonlocal called
+        if not called:
+            called = True
+            await redis.delete(store.keys.idempotency(control.idempotency_digest), store.keys.control("old"))
+            return {}
+        return await original(key)
+
+    monkeypatch.setattr(redis, "hgetall", expire_once)
+    replay = await store.submit(contract_control("jobs", "new"), b"input")
+    assert replay.created and replay.control.run_id == "new"
+
+
+async def test_replay_of_a_binding_without_its_execution_reports_corruption(redis_store) -> None:
+    redis, store = redis_store
+    broken = RedisExecutionStore(
+        redis,
+        "broken",
+        config=store.config,
+        key_prefix=f"{store_prefix(store)}:broken",
+        transaction_backoff_ms=0,
+    )
+    control = contract_control("broken")
+    await redis.hset(
+        broken.keys.idempotency(control.idempotency_digest),
+        mapping={"run_id": control.run_id, "binding": control.idempotency_binding_digest},
+    )
+
+    with pytest.raises(ExecutionStoreCorruptionError, match="missing execution"):
+        await broken.submit(control, b"input")
 
 
 async def test_claim_that_loses_a_race_takes_the_next_runnable_execution(redis_store) -> None:
     redis, store = redis_store
     for index in range(2):
-        await store.submit(contract_control("jobs", f"run_{index}", idempotency=str(index), binding=str(index)), b"input")
+        await store.submit(
+            contract_control("jobs", f"run_{index}", idempotency=str(index), binding=str(index)), b"input"
+        )
     first = await store.claim(Claim("worker-0", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
-    assert first is not None and first.next_control.run_id == "run_0"
-    # A worker that read the index head before worker-0 committed still sees run_0 first.
-    await redis.zadd(store.keys.runnable_revision("v1"), {"run_0": 0})
+    assert first is not None
+    # A worker that read this candidate before worker-0 committed can still see it in the index.
+    await redis.zadd(store.keys.runnable_revision("v1"), {first.next_control.run_id: 0})
 
     second = await store.claim(Claim("worker-1", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
 
-    assert second is not None and second.next_control.run_id == "run_1"
+    assert second is not None and second.next_control.run_id != first.next_control.run_id
+
+
+@pytest.mark.parametrize(
+    ("member", "score"),
+    [
+        pytest.param("bad_inf", float("inf"), id="infinite"),
+        pytest.param("bad_negative", -1, id="negative"),
+        pytest.param("bad_fraction", 1.5, id="fraction"),
+        pytest.param("bad:id", 0, id="invalid-id"),
+    ],
+)
+async def test_claim_drops_invalid_runnable_entries(redis_store, member: str, score: float) -> None:
+    redis, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    await redis.zadd(store.keys.runnable_revision("v1"), {member: score})
+
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+
+    assert claimed is not None and claimed.next_control.run_id == "run_1"
+    assert await redis.zscore(store.keys.runnable_revision("v1"), member) is None
+
+
+async def test_claim_ignores_executions_that_are_not_due_yet(redis_store) -> None:
+    redis, store = redis_store
+    submitted = await store.submit(contract_control("jobs"), b"input")
+    future = submitted.control.updated_at_ms + 3_600_000
+    await redis.zadd(store.keys.runnable_revision("v1"), {"run_1": future})
+
+    assert await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is None
+    assert await redis.zscore(store.keys.runnable_revision("v1"), "run_1") == future
+    assert await store.read_control("run_1") == submitted.control
+
+
+async def test_noop_transitions_write_nothing(redis_store, monkeypatch) -> None:
+    redis, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    await store.transition("run_1", RequestCancellation(0, "done"))
+    before = await dump_keys(redis, store)
+    apply = AsyncMock(wraps=store._apply_script)
+    monkeypatch.setattr(store, "_apply_script", apply)
+
+    plan = await store.transition("run_1", RequestCancellation(0, "again"))
+
+    assert plan.next_control.status is ExecutionStatus.CANCELED
+    apply.assert_not_awaited()
+    assert await dump_keys(redis, store) == before
+
+
+async def test_terminal_chunk_streams_expire_before_the_execution(redis_store) -> None:
+    redis, fixture_store = redis_store
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(fixture_store.config, terminal_ttl_seconds=60, stream_ttl_seconds=1),
+        key_prefix=store_prefix(fixture_store),
+    )
+    control = await claim_one(store, lease_ms=10_000)
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b"chunk"])
+    await store.transition("run_1", Complete(control.fence, "worker", 0, b"done"))
+    assert 0 < await redis.pttl(store.keys.chunks("run_1")) <= 1_000
+    assert await redis.pttl(store.keys.control("run_1")) > 1_000
+
+    short = RedisExecutionStore(
+        redis,
+        "short",
+        config=replace(fixture_store.config, terminal_ttl_seconds=1),
+        key_prefix=f"{store_prefix(fixture_store)}:short",
+    )
+    await short.submit(contract_control("short"), b"input")
+    claimed = await short.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    await short.transition("run_1", Complete(1, "worker", 0, b"done"))
+    assert 0 < await redis.pttl(short.keys.chunks("run_1")) <= 1_000
+
+
+async def test_stepped_back_redis_time_keeps_controls_decodable(redis_store, monkeypatch) -> None:
+    _, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    updated_at_ms = claimed.next_control.updated_at_ms
+
+    from hayhooks.durable import redis as redis_module
+
+    real_milliseconds = redis_module._milliseconds
+    monkeypatch.setattr(redis_module, "_milliseconds", lambda value: real_milliseconds(value) - 5_000)
+    retried = await store.transition("run_1", ScheduleRetry(1, "worker", 0, 0, 3, b"retry"))
+    assert retried.next_control.updated_at_ms == updated_at_ms
+    assert (await store.read("run_1")).control.updated_at_ms == updated_at_ms
+
+    monkeypatch.setattr(redis_module, "_milliseconds", real_milliseconds)
+    assert await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is not None
+
+
+async def test_heartbeat_after_a_clock_step_renews_past_the_last_update(redis_store) -> None:
+    redis, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    updated_at_ms = claimed.next_control.lease_expires_at_ms - 1
+    await redis.hset(store.keys.control("run_1"), "updated_at_ms", updated_at_ms)
+
+    heartbeat = await store.transition("run_1", Heartbeat(1, "worker", 0, 50))
+
+    assert heartbeat.next_control.updated_at_ms == updated_at_ms
+    assert heartbeat.next_control.lease_expires_at_ms == updated_at_ms + 50
+
+
+async def test_claim_drops_an_undecodable_head_and_claims_the_next(redis_store, caplog) -> None:
+    redis, store = redis_store
+    for run_id in ("run_a", "run_b"):
+        await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
+    await redis.hset(store.keys.control("run_a"), "status", "bogus")
+
+    claims = [await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) for _ in range(2)]
+
+    assert [plan.next_control.run_id for plan in claims if plan is not None] == ["run_b"]
+    assert await redis.zscore(store.keys.runnable_revision("v1"), "run_a") is None
+    assert "Removed an undecodable durable execution from the runnable index" in caplog.messages
+    with pytest.raises(ExecutionStoreCorruptionError):
+        await store.read("run_a")
+
+
+async def test_maintenance_drops_an_undecodable_lease_member_and_recovers_the_rest(redis_store, caplog) -> None:
+    redis, store = redis_store
+    for run_id in ("run_a", "run_b", "run_c", "run_d"):
+        await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    created = await redis.hget(store.keys.control("run_a"), "created_at_ms")
+    await redis.hset(store.keys.control("run_a"), "updated_at_ms", int(created) - 1)
+    await asyncio.sleep(0.1)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 3
+    assert await redis.zscore(store.keys.lease_expiry, RedisKeys.lease_member("run_a", 1)) is None
+    assert "Removed an undecodable durable execution from the lease index" in caplog.messages
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+
+
+async def test_maintenance_removes_invalid_lease_entries(redis_store) -> None:
+    redis, store = redis_store
+    members = {"run_1|1": float("inf"), "run_1": 0}
+    await redis.zadd(store.keys.lease_expiry, members)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+    assert await redis.zcard(store.keys.lease_expiry) == 0
+
+
+async def test_maintenance_ignores_leases_that_are_not_due(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+    assert (
+        await redis.zscore(
+            store.keys.lease_expiry,
+            RedisKeys.lease_member("run_1", control.fence),
+        )
+        == control.lease_expires_at_ms
+    )
+
+
+async def test_concurrent_maintainers_recover_each_lease_once(redis_store, monkeypatch) -> None:
+    redis, store = redis_store
+    contender = RedisExecutionStore(redis, "jobs", config=store.config, key_prefix=store_prefix(store))
+    for index in range(100):
+        run_id = f"run_{index}"
+        await store.submit(contract_control("jobs", run_id, idempotency=run_id, binding=run_id), b"input")
+        assert await store.claim(Claim("worker", 0, 50, 3, "v1", ATTEMPTS_ERROR)) is not None
+    await asyncio.sleep(0.06)
+    calls = [0]
+
+    def count_commits(target: RedisExecutionStore) -> None:
+        original = target._commit
+
+        async def counted(*args, **kwargs):
+            calls[0] += 1
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(target, "_commit", counted)
+
+    count_commits(store)
+    count_commits(contender)
+    requeued = await asyncio.gather(
+        store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR),
+        contender.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR),
+    )
+
+    assert sum(requeued) == 100
+    assert calls[0] < 150
+    assert await redis.zcard(store.keys.lease_expiry) == 0
+
+
+async def test_read_keeps_operational_command_errors_visible(redis_store, monkeypatch) -> None:
+    _, store = redis_store
+    await store.submit(contract_control("jobs"), b"input")
+    original = store.redis.pipeline
+
+    class BrokenPipeline:
+        async def __aenter__(self):
+            self.pipe = original(transaction=True)
+            await self.pipe.__aenter__()
+            return self
+
+        async def __aexit__(self, *args):
+            return await self.pipe.__aexit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.pipe, name)
+
+        async def execute(self, **_kwargs):
+            replies = list(await self.pipe.execute())
+            replies[-1] = ResponseError("NOPERM denied")
+            return replies
+
+    from redis.exceptions import ResponseError
+
+    monkeypatch.setattr(store.redis, "pipeline", lambda **_kwargs: BrokenPipeline())
+    with pytest.raises(ExecutionStoreError, match="ResponseError NOPERM"):
+        await store.read("run_1")
 
 
 async def test_concurrent_progress_and_cancellation_remain_atomic(redis_store) -> None:
@@ -171,7 +911,7 @@ async def test_concurrent_progress_and_cancellation_remain_atomic(redis_store) -
 
     terminal = await store.transition(control.run_id, Complete(fence, "worker", 0, b"ignored"))
     assert terminal.next_control.status is ExecutionStatus.CANCELED
-    assert (await store.operational_counts())["nonterminal"] == 0
+    assert (await store.operational_counts(revision="v1"))["nonterminal"] == 0
     with pytest.raises(ExecutionLeaseLostError):
         await store.append_chunks(control.run_id, 1, fence, "worker", [b"late"])
     assert [chunk.terminal for chunk in await store.read_chunks(control.run_id, CHUNK_CURSOR_START)] == [True]
@@ -221,7 +961,12 @@ async def test_control_key_identity_corruption_is_rejected(redis_store, operatio
             await store.submit(control, b"input")
 
     assert not await redis.exists(store.keys.control("run_2"))
-    assert await store.operational_counts() == {"nonterminal": 1, "runnable": 1, "lease_expiry": 0}
+    assert await store.operational_counts(revision="v1") == {
+        "nonterminal": 1,
+        "revision_nonterminal": 1,
+        "revision_runnable": 1,
+        "lease_expiry": 0,
+    }
 
 
 async def test_admission_heartbeat_and_stale_lease_repair_are_transactional(redis_store, monkeypatch) -> None:
@@ -362,22 +1107,42 @@ async def test_changed_control_snapshot_retries_from_a_fresh_read(redis_store, m
 
 
 @pytest.mark.parametrize(
-    "key", ["chunks", "progress", "runnable", "revision", "lease_expiry", "capacity-fraction", "capacity-leading-zero"]
+    "key",
+    [
+        "progress",
+        "revision",
+        "lease_expiry",
+        "capacity-fraction",
+        "capacity-leading-zero",
+        "capacity-revision",
+    ],
 )
 async def test_corrupt_commit_targets_leave_every_key_unchanged(redis_store, key: str) -> None:
     redis, store = redis_store
     control = await claim_one(store, lease_ms=10_000)
     if key.startswith("capacity-"):
-        await redis.hset(store.keys.capacity, "nonterminal", "1.5" if key == "capacity-fraction" else "01")
+        field = RedisKeys.revision_nonterminal_field("v1") if key == "capacity-revision" else "nonterminal"
+        await redis.hset(store.keys.capacity, field, "1.5" if key == "capacity-fraction" else "01")
     else:
         target = {
-            "chunks": store.keys.chunks("run_1"),
             "progress": store.keys.progress("run_1"),
-            "runnable": store.keys.runnable,
             "revision": store.keys.runnable_revision("v1"),
             "lease_expiry": store.keys.lease_expiry,
         }[key]
         await redis.set(target, b"wrong type")
+    before = await dump_keys(redis, store)
+
+    with pytest.raises(ExecutionStoreError):
+        await store.transition("run_1", Complete(control.fence, "worker", 0, b"done", (b"progress",)))
+
+    assert await dump_keys(redis, store) == before
+
+
+async def test_corrupt_chunks_are_not_repaired_when_another_commit_target_is_invalid(redis_store) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await redis.set(store.keys.chunks("run_1"), b"wrong type")
+    await redis.set(store.keys.runnable_revision("v1"), b"wrong type")
     before = await dump_keys(redis, store)
 
     with pytest.raises(ExecutionStoreError):
@@ -412,7 +1177,7 @@ async def test_claim_ignores_unrelated_submissions_during_its_commit(redis_store
 
     assert claimed is not None and claimed.next_control.status is ExecutionStatus.RUNNING
     assert calls[0][0] == 1
-    assert (await store.operational_counts())["runnable"] == 1
+    assert (await store.operational_counts(revision="v1"))["revision_runnable"] == 1
 
 
 @pytest.fixture
@@ -439,6 +1204,73 @@ def _command_name(args: tuple) -> tuple[str, ...]:
     name = args[0].decode() if isinstance(args[0], bytes) else str(args[0])
     key = args[1] if name in {"GET", "HGETALL", "LRANGE", "XRANGE"} else None
     return (name,) if key is None else (name, key.decode() if isinstance(key, bytes) else str(key))
+
+
+async def test_scheduling_paths_cost_one_round_trip_each(redis_store, round_trips) -> None:
+    _, store = redis_store
+    warm = replace(
+        contract_control("jobs", "warm", idempotency="warm", binding="warm"),
+        definition_revision="warm",
+    )
+    await store.submit(warm, b"input")
+    assert await store.claim(Claim("warm", 0, 10_000, 3, "warm", ATTEMPTS_ERROR)) is not None
+
+    control = contract_control("jobs")
+    round_trips.clear()
+    await store.submit(control, b"input")
+    assert round_trips == [[("EVALSHA",)]]
+
+    round_trips.clear()
+    await store.submit(control, b"input")
+    assert round_trips == [[("EVALSHA",)], [("HGETALL", store.keys.control("run_1"))]]
+
+    round_trips.clear()
+    claimed = await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    assert round_trips == [
+        [("ZRANGE",), ("TIME",)],
+        [("HGETALL", store.keys.control("run_1")), ("TIME",)],
+        [("EVALSHA",)],
+    ]
+
+    round_trips.clear()
+    assert await store.claim(Claim("worker", 0, 10_000, 3, "v1", ATTEMPTS_ERROR)) is None
+    assert round_trips == [[("ZRANGE",), ("TIME",)]]
+
+    round_trips.clear()
+    assert await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR) == 0
+    assert round_trips == [[("ZRANGE",), ("TIME",)]]
+
+    await store.transition("run_1", Complete(1, "worker", 0, b"done"))
+    round_trips.clear()
+    await store.transition("run_1", RequestCancellation(0, "late"))
+    assert round_trips == [[("HGETALL", store.keys.control("run_1")), ("TIME",)]]
+
+    round_trips.clear()
+    assert await store.read_control("run_1") is not None
+    assert round_trips == [[("HGETALL", store.keys.control("run_1"))]]
+
+    recovered = replace(
+        contract_control("jobs", "recovered", idempotency="recovered", binding="recovered"),
+        definition_revision="recovery",
+    )
+    await store.submit(recovered, b"input")
+    claim = await store.claim(Claim("worker", 0, 50, 3, "recovery", ATTEMPTS_ERROR))
+    assert claim is not None and claim.next_control.lease_expires_at_ms is not None
+    await asyncio.sleep(0.06)
+    await store.maintain(max_run_attempts=3, attempts_error=ATTEMPTS_ERROR)
+    command = RecoverExpiredLease(
+        0,
+        claim.next_control.fence,
+        claim.next_control.lease_expires_at_ms,
+        3,
+        ATTEMPTS_ERROR,
+    )
+    round_trips.clear()
+    await store.transition("recovered", command)
+    assert round_trips == [
+        [("HGETALL", store.keys.control("recovered")), ("TIME",), ("ZSCORE",)],
+    ]
 
 
 async def test_hot_paths_cost_one_round_trip(redis_store, round_trips) -> None:
@@ -499,7 +1331,7 @@ async def test_wrong_type_keys_fail_closed_only_for_existing_executions(
     await redis.set(store.keys.progress("run_1"), b"wrong type")
 
     if control_present:
-        with pytest.raises(ExecutionStoreCorruptionError, match="invalid types"):
+        with pytest.raises(ExecutionProgressCorruptionError, match="progress key has an invalid type"):
             await getattr(store, read)("run_1")
     else:
         assert await getattr(store, read)("run_1") is None
@@ -609,3 +1441,88 @@ async def test_sse_streams_through_redis_viewer_client(redis_store) -> None:
 
     events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
     assert events == ["chunk"] * 5 + ["completed"]
+
+
+def _stream_app(store: RedisExecutionStore) -> FastAPI:
+    deployment = DurableDeployment("jobs", "v1", store, SSERequest, lambda _context, _request: None)
+    app = FastAPI()
+    app.include_router(create_durable_router(deployment, owner_id_dependency=None))
+    return app
+
+
+async def _stream_body(store: RedisExecutionStore, headers: dict[str, str] | None = None) -> str:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_stream_app(store)), base_url="http://test"
+    ) as client:
+        return (await client.get("/executions/run_1/stream", headers=headers)).text
+
+
+async def test_sse_moves_past_undecodable_redis_entries(redis_store) -> None:
+    redis, contract_store = redis_store
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(contract_store.config, max_stream_chunks=100),
+        key_prefix=store_prefix(contract_store),
+    )
+    control = await claim_one(store, lease_ms=10_000)
+    chunks = store.keys.chunks("run_1")
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b'{"index":0}'])
+    await redis.xadd(chunks, {"attempt": "not-a-number", "data": b"{}"})
+    await redis.xadd(chunks, {"attempt": "1", "data": b"\xff"})
+    await redis.xadd(chunks, {"attempt": "1", "data": b'{"blob":"' + b"x" * 100 + b'"}'})
+    await store.append_chunks("run_1", 1, control.fence, "worker", [b'{"index":3}'])
+    await store.transition("run_1", Complete(control.fence, "worker", 0, b"{}"))
+
+    body = await _stream_body(store)
+
+    events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
+    assert events == ["chunk", "chunk", "chunk", "completed"]
+
+
+async def test_sse_delivers_a_large_redis_chunk_after_the_write_limit_is_lowered(redis_store, caplog) -> None:
+    redis, contract_store = redis_store
+    store = RedisExecutionStore(
+        redis,
+        "jobs",
+        config=replace(contract_store.config, max_stream_chunks=10, max_stream_chunk_bytes=6_000_000),
+        key_prefix=store_prefix(contract_store),
+    )
+    control = await claim_one(store, lease_ms=10_000)
+    data = b'{"blob":"' + b"x" * 5_000_000 + b'"}'
+    assert len(data) == 5_000_011
+    await store.append_chunks("run_1", 1, control.fence, "worker", [data])
+    large_cursor = (await store.read_chunks("run_1", CHUNK_CURSOR_START))[0].cursor
+    await redis.xadd(store.keys.chunks("run_1"), {"attempt": "1", "data": b"not-json"})
+    await store.transition("run_1", Complete(control.fence, "worker", 0, b"{}"))
+    store.config = replace(store.config, max_stream_chunk_bytes=64 * 1024)
+
+    body = await _stream_body(store)
+
+    events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
+    data_lines = [line.removeprefix("data: ") for line in body.splitlines() if line.startswith("data: ")]
+    assert events == ["chunk", "completed"]
+    assert f"id: {large_cursor}" in body
+    assert json.loads(data_lines[0])["payload"] == {"blob": "x" * 5_000_000}
+    assert caplog.messages.count("Skipped an undecodable durable stream chunk") == 1
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        pytest.param(None, ["completed"], id="fresh"),
+        pytest.param({"Last-Event-ID": "1-0"}, ["gap", "completed"], id="resumed"),
+    ],
+)
+async def test_sse_ends_a_terminal_run_with_expired_history_at_once(redis_store, headers, expected) -> None:
+    redis, store = redis_store
+    control = await claim_one(store, lease_ms=10_000)
+    await store.transition("run_1", Complete(control.fence, "worker", 0, b"{}"))
+    await redis.delete(store.keys.chunks("run_1"))
+
+    started = asyncio.get_running_loop().time()
+    body = await _stream_body(store, headers)
+
+    events = [line.removeprefix("event: ") for line in body.splitlines() if line.startswith("event: ")]
+    assert events == expected
+    assert asyncio.get_running_loop().time() - started < 2

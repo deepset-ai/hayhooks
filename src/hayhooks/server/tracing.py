@@ -29,6 +29,7 @@ from haystack.tracing import Span, Tracer, enable_tracing, is_tracing_enabled, t
 from haystack.tracing.tracer import NullTracer
 
 from hayhooks.durable._threading import is_async_callable
+from hayhooks.durable.context import _ExecutionSuspendedError
 from hayhooks.server.logger import log, normalize_trace_correlation_data
 from hayhooks.server.utils.live_trace_buffer import record_live_span_finish, record_live_span_start
 from hayhooks.settings import settings
@@ -128,9 +129,8 @@ def _span_correlation_data(span: Span | None) -> dict[str, str]:
 
 def _is_checkpoint_exception(exc: BaseException) -> bool:
     exception_type = type(exc)
-    return (exception_type.__name__ == "BreakpointException" and exception_type.__module__.startswith("haystack.")) or (
-        exception_type.__name__ == "_ExecutionSuspendedError"
-        and exception_type.__module__ == "hayhooks.durable.context"
+    return isinstance(exc, _ExecutionSuspendedError) or (
+        exception_type.__name__ == "BreakpointException" and exception_type.__module__.startswith("haystack.")
     )
 
 
@@ -656,7 +656,6 @@ class _OperationTrace:
 
         live_tags: dict[str, Any] = {}
         try:
-            live_tags: dict[str, Any]
             if exc is None or _is_checkpoint_exception(exc):
                 _mark_success(span)
                 live_tags = {_TAG_SUCCESS: True}

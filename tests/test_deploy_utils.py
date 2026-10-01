@@ -948,3 +948,17 @@ class TestFormatRunStreamChunk:
     )
     def test_passthrough_values(self, stream_item: Any, expected: str | bytes):
         assert _format_run_stream_chunk(stream_item) == expected
+
+
+def test_mutable_run_route_reuses_the_registry_request_model(mocker):
+    mock_app = mocker.Mock()
+    mock_app.routes = []
+    rebuilt = mocker.spy(deploy_utils, "create_request_model_from_callable")
+    files = {"pipeline_wrapper.py": Path("tests/test_files/files/no_chat/pipeline_wrapper.py").read_text()}
+
+    deploy_pipeline_files(app=mock_app, pipeline_name="reuse_model", files=files, save_files=False)
+
+    assert rebuilt.call_count == 0
+    endpoint = mock_app.add_api_route.call_args.kwargs["endpoint"]
+    request_model = registry.get_metadata("reuse_model")["request_model"]
+    assert inspect.signature(endpoint).parameters["run_req"].annotation is request_model

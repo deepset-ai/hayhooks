@@ -124,7 +124,10 @@ Pipelines that perform heavy computation locally -- embedding generation, docume
     hayhooks run --workers 4
     ```
 
-    A common starting point is `(2 x CPU_cores) + 1`. Monitor actual CPU usage and adjust.
+    A common starting point is `(2 x CPU_cores) + 1`. Monitor actual CPU usage
+    and adjust. This applies to default mode. Durable mode rejects `--workers`
+    values above 1; scale it with replicas that share Redis, and do not use
+    another multi-worker supervisor.
 
 - **On Kubernetes, keep one worker per pod and scale via replicas.** This gives the orchestrator full control over scheduling, resource limits, and rolling updates.
 - **Move heavy initialization into `setup()`.** Loading models or building indexes in `setup()` runs once at startup. Doing it inside `run_api()` would repeat the cost on every request.
@@ -145,7 +148,8 @@ Hayhooks does not include built-in authentication. For production, you should ad
 
 ## Set Up Health Checks
 
-The `/status` endpoint returns the server status and list of deployed pipelines. Use it as a health check for container orchestrators:
+The `/status` endpoint always returns HTTP 200, so use it as a liveness check
+for container orchestrators:
 
 ```yaml
 # Docker Compose
@@ -167,6 +171,11 @@ livenessProbe:
   initialDelaySeconds: 40
   periodSeconds: 30
 ```
+
+For readiness and alerts, parse the response body and require `status` to be
+`Up!` (in durable mode this matches `durable.healthy: true`). Durable health is at most one second
+old; a store read that exceeds one second reports `status: "Degraded"` and
+`operational_error: "TimeoutError"` while the HTTP response remains 200.
 
 ## Docker and Container Tips
 

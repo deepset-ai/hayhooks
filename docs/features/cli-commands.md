@@ -56,7 +56,7 @@ hayhooks run
 # With custom host and port
 hayhooks run --host 0.0.0.0 --port 1416
 
-# With multiple workers
+# With multiple workers in default mode
 hayhooks run --workers 4
 
 # With custom pipelines directory
@@ -82,6 +82,12 @@ hayhooks run --tracing-dashboard
     and clear operations are worker-local.
     For a consistent dashboard view, use `--workers 1`.
 
+!!! warning "Durable mode uses one worker per process"
+    `hayhooks run --workers N` with `N > 1` exits with an error in durable mode.
+    Scale with replicas that share Redis, and do not place a durable-mode app
+    under another multi-worker supervisor such as `uvicorn --workers` or
+    gunicorn.
+
 For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm run lint`, `npm run build`), see the
 [dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
 
@@ -91,7 +97,7 @@ For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm ru
 |--------|-------|-------------|---------|
 | `--host` | | Host to bind to | `localhost` |
 | `--port` | | Port to listen on | `1416` |
-| `--workers` | | Number of worker processes | `1` |
+| `--workers` | | Number of worker processes; values above 1 are rejected in durable mode | `1` |
 | `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
 | `--additional-python-path` | | Additional Python path | `None` |
 | `--root-path` | | Root path for API | `/` |
@@ -431,7 +437,7 @@ export HAYHOOKS_HOST=0.0.0.0
 export HAYHOOKS_PORT=1416
 export LOG=INFO
 
-# 2. Start server with multiple workers
+# 2. Start a default-mode server with multiple workers
 hayhooks run --workers 4
 
 # 3. Deploy pipelines

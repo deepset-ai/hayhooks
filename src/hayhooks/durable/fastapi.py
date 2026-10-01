@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
 from typing import Annotated, Any, cast
@@ -15,6 +16,7 @@ from loguru import logger as log
 
 from hayhooks.durable.engine import (
     RUN_ID_PATTERN,
+    ExecutionControl,
     ExecutionNotFoundError,
     ExecutionPayloadSizeError,
     ExecutionStatus,
@@ -61,7 +63,7 @@ def _validated_owner(owner_id: object, *, enforce_owner: bool) -> str | None:
     return cast(str, owner_id)
 
 
-def _translate_errors(handler: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+def _translate_errors(handler: Callable[..., Awaitable[Any]], deployment: str) -> Callable[..., Awaitable[Any]]:
     @wraps(handler)
     async def translated(*args: Any, **kwargs: Any) -> Any:
         try:
@@ -70,9 +72,7 @@ def _translate_errors(handler: Callable[..., Awaitable[Any]]) -> Callable[..., A
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found") from error
         except (ExecutionIdempotencyConflictError, InvalidExecutionTransitionError) as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-        except ExecutionPayloadSizeError as error:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
-        except ValueError as error:
+        except (ExecutionPayloadSizeError, ValueError) as error:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
         except ExecutionAdmissionError as error:
             raise HTTPException(
@@ -80,15 +80,34 @@ def _translate_errors(handler: Callable[..., Awaitable[Any]]) -> Callable[..., A
                 detail=str(error),
                 headers={"Retry-After": "1"},
             ) from error
+        except ExecutionStoreCorruptionError as error:
+            _log_failure("Durable execution state is invalid", error, deployment, kwargs.get("execution_id"))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Durable execution state is invalid",
+            ) from error
         except ExecutionStoreError as error:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Durable execution store is unavailable",
             ) from error
         except RuntimeError as error:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+            _log_failure("Durable execution request failed", error, deployment, kwargs.get("execution_id"))
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Durable execution service is unavailable",
+            ) from error
 
     return translated
+
+
+def _log_failure(message: str, error: BaseException, deployment: str, run_id: object) -> None:
+    log.opt(exception=error).bind(
+        deployment=deployment,
+        run_id=run_id,
+        exception_type=type(error).__name__,
+        error=str(error),
+    ).error(message)
 
 
 def _project(
@@ -96,7 +115,6 @@ def _project(
     deployment: DurableDeployment,
     route_names: dict[str, str],
     stored: StoredExecution,
-    response_model: type[ExecutionResult],
 ) -> ExecutionResult:
     execution_id = stored.control.run_id
     links = {
@@ -107,7 +125,8 @@ def _project(
         public = project_execution(
             stored,
             links=links,
-            max_payload_bytes=deployment.store.config.max_payload_bytes,
+            # Reads never re-apply write limits, which may have been lowered since the write.
+            max_payload_bytes=sys.maxsize,
         )
         if (
             deployment.result_model is not None
@@ -115,9 +134,26 @@ def _project(
             and stored.control.status is ExecutionStatus.COMPLETED
         ):
             deployment.result_model.model_validate(public.result)
-        return response_model.model_validate(public.model_dump(mode="python"))
+        return public
     except (ExecutionPayloadSizeError, OSError, OverflowError, TypeError, ValueError) as error:
         raise ExecutionStoreCorruptionError("stored execution cannot be projected") from error  # noqa: EM101
+
+
+async def _read_projected(  # noqa: PLR0913
+    request: Request,
+    deployment: DurableDeployment,
+    route_names: dict[str, str],
+    execution_id: str,
+    owner_id: str | None,
+    enforce_owner: bool,
+) -> ExecutionResult:
+    stored = await deployment.get(
+        execution_id,
+        owner_id=owner_id,
+        enforce_owner=enforce_owner,
+        allow_revision_mismatch=True,
+    )
+    return _project(request, deployment, route_names, stored)
 
 
 def _sse(event: str, data: str, *, cursor: str | None = None) -> str:
@@ -129,8 +165,7 @@ async def _stream_events(  # noqa: C901, PLR0913
     request: Request,
     deployment: DurableDeployment,
     route_names: dict[str, str],
-    response_model: type[ExecutionResult],
-    stored: StoredExecution,
+    control: ExecutionControl,
     owner_id: str | None,
     enforce_owner: bool,
     cursor: str,
@@ -138,74 +173,80 @@ async def _stream_events(  # noqa: C901, PLR0913
     """
     Push chunks as workers flush them and end on the terminal marker.
 
-    A resumed cursor first catches up with bounded pages. After that every
-    iteration blocks on the stream, and a block timeout sends a keepalive and
-    checks control once, so a terminal run that lost its marker still ends.
+    A resumed cursor, or a run that is already terminal, first catches up with bounded
+    pages; a terminal run with no marker left ends once caught up. Otherwise every
+    iteration blocks on the stream, and a block timeout sends a keepalive and checks the
+    control, so a run that ends without a visible marker still ends its stream.
     """
-    execution_id = stored.control.run_id
-    visible_attempt = stored.control.run_attempt
+    execution_id = control.run_id
+    visible_attempt = control.run_attempt
+    terminal = control.terminal
     store = deployment.store
     page_size = chunk_read_count(store.config)
+    chunk_bytes = sys.maxsize
 
-    async def read() -> StoredExecution:
-        return await deployment.get(
-            execution_id,
-            owner_id=owner_id,
-            enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
-        )
-
-    def terminal_event(stored: StoredExecution) -> str:
-        public = _project(request, deployment, route_names, stored, response_model)
-        return _sse(stored.control.status.value, public.model_dump_json())
+    async def terminal_event() -> str:
+        public = await _read_projected(request, deployment, route_names, execution_id, owner_id, enforce_owner)
+        return _sse(public.status.value, public.model_dump_json())
 
     try:
         yield _SSE_HEARTBEAT
-        catching_up = cursor != CHUNK_CURSOR_START
+        catching_up = terminal or cursor != CHUNK_CURSOR_START
         while True:
             try:
                 if catching_up:
                     chunks = await store.read_chunks(execution_id, cursor)
                     catching_up = len(chunks) == page_size
+                elif terminal:
+                    yield await terminal_event()
+                    return
                 else:
                     waited = await deployment.wait_chunks(execution_id, cursor, _STREAM_BLOCK_SECONDS)
                     if waited is None:
                         return
                     if not waited:
                         yield _SSE_HEARTBEAT
-                        stored = await read()
-                        if stored.control.terminal:
-                            yield terminal_event(stored)
-                            return
+                        control = await deployment.get_control(
+                            execution_id,
+                            owner_id=owner_id,
+                            enforce_owner=enforce_owner,
+                        )
+                        terminal = catching_up = control.terminal
                         continue
                     chunks = waited
             except ChunkCursorExpiredError:
                 yield _sse("gap", '{"detail":"Requested stream history is no longer available"}')
-                cursor, catching_up = CHUNK_CURSOR_START, False
+                cursor, catching_up = CHUNK_CURSOR_START, terminal
                 continue
 
             for chunk in chunks:
                 cursor = chunk.cursor
                 if chunk.terminal:
-                    yield terminal_event(await read())
+                    yield await terminal_event()
                     return
-                if chunk.attempt < visible_attempt:
+                if chunk.skipped or chunk.attempt < visible_attempt:
+                    continue
+                try:
+                    payload = decode_json(chunk.data, max_bytes=chunk_bytes)
+                except (ExecutionPayloadSizeError, ValueError):
+                    log.bind(run_id=execution_id, cursor=chunk.cursor).warning(
+                        "Skipped an undecodable durable stream chunk"
+                    )
                     continue
                 visible_attempt = chunk.attempt
                 yield _sse(
                     "chunk",
                     json.dumps(
-                        {
-                            "attempt": chunk.attempt,
-                            "payload": decode_json(chunk.data, max_bytes=store.config.max_stream_chunk_bytes),
-                        },
+                        {"attempt": chunk.attempt, "payload": payload},
                         ensure_ascii=False,
                         separators=(",", ":"),
                     ),
                     cursor=chunk.cursor,
                 )
     except Exception as error:
-        log.bind(run_id=execution_id, exception_type=type(error).__name__).warning("Durable execution stream failed")
+        log.bind(run_id=execution_id, exception_type=type(error).__name__, error=str(error)).warning(
+            "Durable execution stream failed"
+        )
         yield _sse("error", '{"detail":"Execution stream interrupted"}')
 
 
@@ -218,7 +259,6 @@ def create_durable_router(  # noqa: C901
     router = APIRouter()
     owner_dependency = owner_id_dependency or _unscoped_owner
     enforce_owner = owner_id_dependency is not None
-    response_model = ExecutionResult
     route_names = {
         key: f"hayhooks.durable.{deployment.name}.{key}" for key in ("submit", "self", "cancel", "resume", "stream")
     }
@@ -242,13 +282,18 @@ def create_durable_router(  # noqa: C901
                     detail="Idempotency-Key must be at most 512 UTF-8 bytes",
                 )
         submission = await deployment.submit(payload, owner_id=owner, idempotency_key=idempotency_key)
-        stored = await deployment.get(
-            submission.control.run_id,
-            owner_id=owner,
-            enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
+        # A new execution is queued with no payloads or progress, so the submitted control is its snapshot.
+        stored = (
+            StoredExecution(submission.control, {}, ())
+            if submission.created
+            else await deployment.get(
+                submission.control.run_id,
+                owner_id=owner,
+                enforce_owner=enforce_owner,
+                allow_revision_mismatch=True,
+            )
         )
-        public = _project(request, deployment, route_names, stored, response_model)
+        public = _project(request, deployment, route_names, stored)
         response.status_code = (
             status.HTTP_200_OK if not submission.created and stored.control.terminal else status.HTTP_202_ACCEPTED
         )
@@ -265,13 +310,7 @@ def create_durable_router(  # noqa: C901
         owner_id: object = Depends(owner_dependency),
     ) -> ExecutionResult:
         owner = _validated_owner(owner_id, enforce_owner=enforce_owner)
-        stored = await deployment.get(
-            execution_id,
-            owner_id=owner,
-            enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
-        )
-        return _project(request, deployment, route_names, stored, response_model)
+        return await _read_projected(request, deployment, route_names, execution_id, owner, enforce_owner)
 
     async def cancel_execution(
         execution_id: ExecutionId,
@@ -282,13 +321,7 @@ def create_durable_router(  # noqa: C901
         owner = _validated_owner(owner_id, enforce_owner=enforce_owner)
         plan = await deployment.cancel(execution_id, owner_id=owner, enforce_owner=enforce_owner)
         response.status_code = status.HTTP_200_OK if plan.next_control.terminal else status.HTTP_202_ACCEPTED
-        stored = await deployment.get(
-            execution_id,
-            owner_id=owner,
-            enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
-        )
-        return _project(request, deployment, route_names, stored, response_model)
+        return await _read_projected(request, deployment, route_names, execution_id, owner, enforce_owner)
 
     async def resume_execution(
         execution_id: ExecutionId,
@@ -300,13 +333,7 @@ def create_durable_router(  # noqa: C901
         owner = _validated_owner(owner_id, enforce_owner=enforce_owner)
         await deployment.resume(execution_id, resume_input, owner_id=owner, enforce_owner=enforce_owner)
         response.status_code = status.HTTP_202_ACCEPTED
-        stored = await deployment.get(
-            execution_id,
-            owner_id=owner,
-            enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
-        )
-        return _project(request, deployment, route_names, stored, response_model)
+        return await _read_projected(request, deployment, route_names, execution_id, owner, enforce_owner)
 
     if deployment.resume_model is not None:
         resume_execution.__annotations__["resume_input"] = deployment.resume_model
@@ -331,19 +358,13 @@ def create_durable_router(  # noqa: C901
         owner = _validated_owner(owner_id, enforce_owner=enforce_owner)
         cursor = CHUNK_CURSOR_START if last_event_id is None else last_event_id
         parse_chunk_cursor(cursor)
-        stored = await deployment.get(
-            execution_id,
-            owner_id=owner,
-            enforce_owner=enforce_owner,
-            allow_revision_mismatch=True,
-        )
+        control = await deployment.get_control(execution_id, owner_id=owner, enforce_owner=enforce_owner)
         return StreamingResponse(
             _stream_events(
                 request,
                 deployment,
                 route_names,
-                response_model,
-                stored,
+                control,
                 owner,
                 enforce_owner,
                 cursor,
@@ -353,13 +374,13 @@ def create_durable_router(  # noqa: C901
         )
 
     for path, endpoint, methods, name, model, status_code in (
-        ("/run-durable", submit_execution, ["POST"], route_names["submit"], response_model, status.HTTP_202_ACCEPTED),
+        ("/run-durable", submit_execution, ["POST"], route_names["submit"], ExecutionResult, status.HTTP_202_ACCEPTED),
         (
             "/executions/{execution_id}",
             inspect_execution,
             ["GET"],
             route_names["self"],
-            response_model,
+            ExecutionResult,
             status.HTTP_200_OK,
         ),
         (
@@ -367,7 +388,7 @@ def create_durable_router(  # noqa: C901
             cancel_execution,
             ["POST"],
             route_names["cancel"],
-            response_model,
+            ExecutionResult,
             status.HTTP_202_ACCEPTED,
         ),
         (
@@ -375,7 +396,7 @@ def create_durable_router(  # noqa: C901
             resume_execution,
             ["POST"],
             route_names["resume"],
-            response_model,
+            ExecutionResult,
             status.HTTP_202_ACCEPTED,
         ),
         (
@@ -389,7 +410,7 @@ def create_durable_router(  # noqa: C901
     ):
         router.add_api_route(
             path,
-            _translate_errors(endpoint),
+            _translate_errors(endpoint, deployment.name),
             methods=methods,
             name=name,
             response_model=model,

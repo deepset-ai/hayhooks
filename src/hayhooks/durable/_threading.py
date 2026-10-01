@@ -12,6 +12,9 @@ from threading import Thread
 from typing import TypeVar
 
 _T = TypeVar("_T")
+# Never let these reach the event loop: SystemExit and KeyboardInterrupt stop it, and Python 3.10/3.11 cannot set
+# StopIteration on an asyncio future. Other BaseExceptions, including the runtime's signals, pass through.
+_CONVERTED = (SystemExit, KeyboardInterrupt, GeneratorExit, StopIteration, StopAsyncIteration)
 
 
 def is_async_callable(function: object) -> bool:
@@ -35,6 +38,10 @@ def start_daemon_thread(function: Callable[[], _T], *, name: str) -> tuple[async
     def run() -> None:
         try:
             result.set_result(function())
+        except _CONVERTED as error:
+            converted = RuntimeError(f"durable work raised {type(error).__name__}")
+            converted.__cause__ = error
+            result.set_exception(converted)
         except BaseException as error:
             result.set_exception(error)
         finally:

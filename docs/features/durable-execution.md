@@ -12,8 +12,9 @@ pip install "hayhooks[durable]"
 docker compose -f examples/durable-compose.yaml up -d
 ```
 
-Durable execution requires Haystack 3.1 or newer. Use the memory store only for
-tests and local development; it does not survive process loss.
+The durable extra installs `redis>=5.0.1,<9`. Durable execution requires
+Haystack 3.1 or newer. Use the memory store only for tests and local
+development; it does not survive process loss.
 
 There are two ways to host durable work:
 
@@ -81,6 +82,63 @@ never reroutes ordinary requests. Set `durable_resume_model` to accept typed
 resume input. The [durable execution example](https://github.com/deepset-ai/hayhooks/tree/main/examples/durable_execution)
 covers checkpoints, retries, approval, and cancellation.
 
+### Owner scoping
+
+Durable routes use bearer-ID access unless the wrapper overrides
+`durable_owner_id`, synchronously or asynchronously. Hayhooks uses that method
+as a FastAPI dependency for `run-durable` and `/executions/...` only; ordinary
+`/run`, chat, and compatibility routes are unaffected. Return a stable user or
+tenant ID. The runner receives it as `context.owner_id`, executions belonging
+to another owner return `404`, and idempotency keys are scoped per owner. Raise
+`HTTPException(401)` or `HTTPException(403)` to reject a request.
+
+An authenticating proxy can supply a trusted identity header. It must remove
+any caller-supplied copy and set `x-user` only after authentication:
+
+```python
+from fastapi import HTTPException, Request as HTTPRequest
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def durable_owner_id(self, request: HTTPRequest) -> str:
+        if not (owner := request.headers.get("x-user")):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return owner
+```
+
+For bearer authentication, declare a security dependency and validate the
+token before returning its principal. `HTTPBearer` only extracts credentials;
+it does not authenticate them. The `Security` annotation also exposes the
+scheme in OpenAPI:
+
+```python
+from typing import Annotated
+
+from fastapi import Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from my_app.auth import validate_token
+
+bearer = HTTPBearer()
+
+
+class PipelineWrapper(BasePipelineWrapper):
+    def durable_owner_id(
+        self,
+        credentials: Annotated[HTTPAuthorizationCredentials, Security(bearer)],
+    ) -> str:
+        principal = validate_token(credentials.credentials)  # Raises 401 or 403 when invalid.
+        return principal.subject
+```
+
+FastAPI treats parameters without its annotations as query parameters.
+Browser `EventSource` cannot send authorization headers, so use an authenticated
+cookie or a fetch-based SSE client when the owner dependency needs credentials.
+Adding owner scoping to an existing pipeline makes its earlier unscoped
+executions unreachable over HTTP. Roll every replica over together: an older
+unscoped replica still grants bearer-ID access, including to executions created
+with an owner ID.
+
 ### What durable mode changes
 
 | | Default mode | Durable mode |
@@ -90,7 +148,7 @@ covers checkpoints, retries, approval, and cancellation.
 | MCP `deploy_pipeline`/`undeploy_pipeline` tools | Available | Neither listed nor callable |
 | Python deployment helpers | Available | Raise `PipelineModeError` before any side effect |
 | Durable wrappers | Rejected | Served by the main HTTP server |
-| Startup | `HAYHOOKS_STARTUP_DEPLOY_*` strategy; failing pipelines are skipped | Sequential, and any failure stops startup |
+| Startup | `HAYHOOKS_STARTUP_DEPLOY_*` strategy; failing pipelines are skipped, but a durable wrapper stops startup because it requires durable mode | Sequential, and any failure stops startup |
 | Source directory | Deployments may write to it | Never written, including automatic bytecode |
 
 Ordinary run, OpenAI-compatible, streaming, file, dashboard, and Chainlit
@@ -155,7 +213,10 @@ mount.
 
 Run one durable-mode app per process. The import root, the bytecode policy,
 and the dashboard trace stream are process-wide, so building a second app in
-the same process replaces the first app's pipeline modules. Standalone
+the same process replaces the first app's pipeline modules.
+`hayhooks run --workers N` exits with an error when `N > 1` in durable mode.
+Scale with replicas that share Redis, and do not use another multi-worker
+supervisor such as `uvicorn --workers` or gunicorn. Standalone
 `hayhooks mcp run` and `hayhooks a2a run` also honor `HAYHOOKS_DURABLE_MODE`:
 they load the directory the same way and serve its ordinary pipelines, but a
 durable wrapper fails their startup, since only the main HTTP server runs
@@ -237,7 +298,7 @@ request model, a runner, a Haystack adapter, and an execution store.
    worker-owned Redis write, including heartbeats and stream chunks, re-checks
    ownership and Redis time against the lease inside one script before it
    writes. After a crash, lease maintenance requeues the execution or fails it
-   when the run attempt budget is exhausted.
+   on its `max_run_attempts`-th lost lease.
 5. Inspection and SSE read Redis-backed state. They do not depend on the worker
    or client connection that originally submitted the work.
 
@@ -251,7 +312,7 @@ stateDiagram-v2
     running --> queued: retry or expired lease
     running --> waiting: suspend
     running --> completed: complete
-    running --> failed: error or attempt budget
+    running --> failed: error or max_run_attempts-th lost lease
     running --> canceled: requested cancellation wins
     waiting --> queued: resume
     waiting --> canceled: cancel
@@ -313,7 +374,15 @@ are not run again.
 
 For an Agent, call `context.run_agent[_async](...)`. The adapter restores Agent
 state and checkpoints continuing loops after tools, on continuation exits, and
-after the final run.
+after the final run. Resume `messages` are applied even when the Agent suspended
+before its first step checkpoint.
+
+`context.retry()` / `retry_sync()` and `context.suspend()` / `suspend_sync()`
+work inside Pipeline components and Agent tools. Their control signals are not
+`Exception` subclasses, so `except Exception` does not intercept them; never
+catch `BaseException` around durable calls. A retry from a component resumes at
+the last explicit checkpoint and re-runs later components. A retry from a tool
+resumes at the last Agent step checkpoint.
 
 The adapter methods also take the context explicitly, so a runner can build its
 own `HaystackDurableAdapter` for each execution, for example from a Pipeline
@@ -329,20 +398,56 @@ Pipeline with approval, checkpoint recovery, and cancellation.
 - **At least once:** a process can fail after an external effect and before its
   checkpoint. Use an idempotency key derived from the execution ID and logical
   step for every external write.
-- **Two retry budgets:** an expired lease consumes a run attempt. Application
-  code requests a bounded delayed retry with `context.retry(...)`. An ordinary
-  unhandled application exception fails the execution; it is not automatically
-  retried.
+- **Two retry budgets:** `max_run_attempts` bounds lost leases, so an execution
+  fails on its Nth expired lease. Graceful handoffs, resumes, and
+  `context.retry()` do not count toward it. `max_application_retries` bounds
+  `context.retry()` separately, while `attempt` numbers every claim. While a
+  retry is waiting, its public error is the retryable `RetryRequestedError`.
+  Exhausting the budget fails the run with `ApplicationRetriesExhaustedError`
+  and code `application_retries_exhausted`. The message passed to `retry()` is
+  logged and never stored. An ordinary unhandled application exception fails
+  the execution; it is not automatically retried.
 - **Cooperative cancellation:** call `context.check_cancelled()` around long
   operations. The engine cannot safely interrupt an arbitrary external call.
+- **Bounded lease ownership:** the local lease window starts before the claim
+  request. A worker stops treating the claim as its own once
+  `lease_duration_ms - lease_commit_safety_ms` passes without store
+  confirmation, regardless of socket timeouts. Preparation reads and pre-start
+  failure or release writes use the same bound, so a hung preparation frees its
+  worker slot on expiry and never starts user code. Durable calls then raise
+  `ExecutionLeaseLostError`; async applications are cancelled, and thread work
+  fails at its next durable call. Embedders should still set a worker-client
+  `socket_timeout` so half-open connections fail promptly.
+- **Store error retries:** heartbeats and commits retry transient store errors,
+  from `operational_backoff_min_seconds` up to
+  `operational_backoff_max_seconds`, until the lease window ends. A commit whose
+  reply was lost may log lease loss even when it landed; the stored status is
+  authoritative.
+- **Contained thread exits:** `SystemExit`, `KeyboardInterrupt`,
+  `GeneratorExit`, `StopIteration`, and `StopAsyncIteration` from a synchronous
+  runner or adapter thread fail the run as `RuntimeError`; the host keeps
+  running. Async code, including the threads an async Haystack Agent starts
+  for synchronous tools, is not covered: `SystemExit` there stops the server.
+- **Invalid stored data:** unreadable or invalid claimed input, checkpoint, or
+  progress data fails with a publicly readable `stored_execution_invalid`
+  error. Guarded recovery may discard unusable progress, and corrupt
+  best-effort chunks cannot block terminal recovery or capacity release.
+  Claims and maintenance instead remove undecodable controls from scheduling
+  indexes, log an error with the execution ID, and leave those records for
+  operator cleanup.
+- **Cancellation errors:** `DurableExecutionCancelledError` without a pending
+  cancellation request fails the run. With a pending request, cancellation
+  still wins and the run ends `canceled`.
 - **Buffered progress:** `report_progress` is persisted with the next
   checkpoint or terminal transition. Call `checkpoint` when progress must be
   durable immediately.
-- **Display-only streaming:** streaming callbacks never wait on Redis. Chunks
-  are buffered and flushed about every 100 ms, and always before the run
-  leaves `running`, so the final chunks precede the terminal event. They are
-  bounded and may be dropped without failing the execution. The terminal result
-  remains the source of truth.
+- **Display-only streaming:** streaming callbacks check ownership, encode and
+  queue chunks in the calling thread, and never wait for Redis or the event
+  loop. The first chunk after a quiet period flushes immediately; later chunks
+  flush at most once per 100 ms while work is pending, and always before the run
+  leaves `running`. Buffer size and pending wake-ups stay bounded even when the
+  event loop stalls. Chunks may be dropped without failing the execution, so
+  the terminal result remains the source of truth.
 
 Queued, running, and waiting executions are pinned to their deployment
 revision, and workers claim only a matching revision. Change the revision only
@@ -362,15 +467,34 @@ SSE streams are reattachable with `Last-Event-ID`. Viewers block on the chunk
 stream and receive chunks as soon as a worker flushes them. A `gap` event means
 that the requested bounded history has expired and the retained tail follows. A
 terminal `completed`, `failed`, or `canceled` event contains the authoritative
-execution projection. A stream that ends without a terminal event, for example
-when its deployment closes, can be resumed with its last cursor on any
-replica.
+execution projection. The first frame and every idle 15 seconds are heartbeat
+comments; undecodable entries are skipped. A finished run replays retained
+history and ends immediately. If its history expired, a new stream receives
+only the terminal event, while a resumed cursor receives `gap` and then the
+terminal event. A stream failure sends an `error` event without an `id` and
+ends; a deployment close ends the stream without a terminal event. Reconnect
+with the last cursor on any replica.
+
+Portable Python callers can use `DurableDeployment.get_control(...)` to read
+only the control snapshot with the same authorization checks as `get()`.
+Unlike `get()`, it allows a revision mismatch by default. `submit()` raises
+`ExecutionAdmissionError` when the deployment is not accepting submissions.
 
 Without an owner dependency, the router uses bearer-ID access: possession of a
-random execution ID grants access. A multi-user host should pass an
+random execution ID grants access. Execution IDs appear in logs and in the
+tracing dashboard as `hayhooks.durable.execution_id`, so restrict access to
+both. A multi-user host should pass an
 `owner_id_dependency` to `create_durable_router`. The host authenticates the request and returns a stable
 user or tenant ID. The router scopes execution access and idempotency to that ID
 and hides owner mismatches as `404`.
+
+An idempotency key binds the deployment, owner, and request fields that the
+client actually sent. Unset defaults and the deployment revision are excluded,
+so a replay during a rolling deploy returns the existing execution and adding
+an optional field does not break clients that omit it. Sending a field
+explicitly, even with its default value, is a different request and returns
+`409`. Without an owner dependency, every caller shares one idempotency-key
+namespace; use unguessable keys such as UUIDs.
 
 ## Host lifecycle
 
@@ -397,8 +521,10 @@ Hayhooks server's lifespan.
 - **Stopped work is handed back.** Async work that stops in response to
   cancellation at the end of the grace releases its claim: its buffered chunks
   are flushed, and the run returns to the queue
-  without spending a run attempt, so another process can claim it immediately. Progress since the last checkpoint is lost,
-  as after a crash. A pending cancellation wins, and the run ends `canceled`.
+  without counting toward `max_run_attempts`; the next claim is a new `attempt`,
+  so another process can claim it immediately. Progress since the last
+  checkpoint is lost, as after a crash. A pending cancellation wins, and the
+  run ends `canceled`.
   A coroutine that suppresses cancellation or awaits cleanup keeps its claim,
   heartbeats, and context access until it exits; `wait_drained()` waits for it.
   An exception raised during shutdown cleanup also hands the claim back.
@@ -426,21 +552,28 @@ async def lifespan(_app: FastAPI):
 ```
 
 In durable mode, the server reports readiness only after every durable
-deployment has started. On shutdown it closes them all, even when one fails,
-waits for retained work to drain, and only then closes its Redis clients:
-retained work keeps Redis and the event loop until it no longer owns a claim.
+deployment has started. On SIGTERM, uvicorn first stops accepting connections
+and waits up to `HAYHOOKS_GRACEFUL_SHUTDOWN_TIMEOUT` (5 seconds by default) for
+open requests. Durable SSE streams hold that wait and are then cancelled, while
+workers continue claiming. The server then closes all deployments, even when
+one fails, waits for retained work to drain, and only then closes its Redis
+clients: retained work keeps Redis and the event loop until it no longer owns a
+claim. Clients resume cancelled streams from their cursor.
 Graceful shutdown can therefore outlast `HAYHOOKS_DURABLE_SHUTDOWN_GRACE_SECONDS`,
 which is the grace before cancelling workers, not a bound on shutdown. The
-server logs while it waits. When a hard deadline is required, terminate the
-process externally, or set `HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN=true`
-(below); forced termination resumes through lease and checkpoint recovery and
-cannot promise exactly-once external side effects.
+server logs while it waits. Budget the process kill deadline for at least the
+HTTP grace plus twice the durable shutdown grace, with additional time for
+retained work. When a hard deadline is required, terminate the process
+externally, or set `HAYHOOKS_DURABLE_RELEASE_RUNNING_ON_SHUTDOWN=true` (below);
+forced termination resumes through lease and checkpoint recovery and cannot
+promise exactly-once external side effects.
 
 The server uses two Redis clients built from `HAYHOOKS_DURABLE_REDIS_URL`: one
 for workers, and one for SSE viewers, whose connection pool of
 `HAYHOOKS_DURABLE_REDIS_MAX_VIEWERS` connections bounds the concurrent durable
-streams per process. Durable routes use bearer-ID access; put authentication in
-front of the server for multi-user deployments.
+streams per process. Durable routes use bearer-ID access unless the wrapper
+implements `durable_owner_id`. Multi-user deployments should implement it and
+still authenticate at the edge.
 
 ### Hosts with short kill deadlines
 

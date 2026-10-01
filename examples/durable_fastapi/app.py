@@ -137,9 +137,15 @@ def owner_id(
 
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-redis = Redis.from_url(redis_url, decode_responses=False)
+redis_options = {
+    "decode_responses": False,
+    "protocol": 2,
+    "retry": None,
+    "socket_connect_timeout": 5,
+}
+redis = Redis.from_url(redis_url, socket_timeout=5, **redis_options)
 # Blocking SSE reads use their own pool, so a surge of viewers cannot starve worker heartbeats.
-viewers = Redis.from_url(redis_url, decode_responses=False, max_connections=100)
+viewers = Redis.from_url(redis_url, socket_timeout=30, max_connections=100, **redis_options)
 store = RedisExecutionStore(
     redis,
     DEPLOYMENT_NAME,

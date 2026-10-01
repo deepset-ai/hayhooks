@@ -6,11 +6,11 @@ import asyncio
 import json
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,9 +19,49 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from hayhooks.durable import DurableContext, create_durable_router
-from hayhooks.durable.engine import PayloadKind
+from hayhooks.durable.engine import (
+    ExecutionLeaseLostError,
+    ExecutionNotFoundError,
+    ExecutionPayloadSizeError,
+    InvalidExecutionTransitionError,
+    PayloadKind,
+)
 from hayhooks.durable.runtime import DurableDeployment, RuntimeConfig
-from hayhooks.durable.store import ExecutionStoreError, MemoryExecutionStore, StoreConfig, StreamChunk
+from hayhooks.durable.store import (
+    ExecutionAdmissionError,
+    ExecutionContentionError,
+    ExecutionIdempotencyConflictError,
+    ExecutionStoreCorruptionError,
+    ExecutionStoreError,
+    MemoryExecutionStore,
+    StoreConfig,
+    StreamChunk,
+)
+
+SKIPPED = object()
+
+
+class CountingStore(MemoryExecutionStore):
+    """Count the reads HTTP routes make; workers use none of these methods."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.calls: Counter[str] = Counter()
+        self.on_read_control: Callable[[int], None] | None = None
+
+    async def submit(self, control, input_payload):
+        self.calls["submit"] += 1
+        return await super().submit(control, input_payload)
+
+    async def read_public(self, run_id):
+        self.calls["read_public"] += 1
+        return await super().read_public(run_id)
+
+    async def read_control(self, run_id):
+        self.calls["read_control"] += 1
+        if self.on_read_control is not None:
+            self.on_read_control(self.calls["read_control"])
+        return await super().read_control(run_id)
 
 
 class JobRequest(BaseModel):
@@ -76,8 +116,9 @@ def durable_app_factory() -> Iterator[Callable[..., tuple[FastAPI, DurableDeploy
         max_nonterminal: int = 0,
         max_stream_chunks: int = 10_000,
         max_stream_chunk_bytes: int = 64_000,
+        store_class: type[MemoryExecutionStore] = MemoryExecutionStore,
     ) -> tuple[FastAPI, DurableDeployment]:
-        store = MemoryExecutionStore(
+        store = store_class(
             "jobs",
             config=StoreConfig(
                 lease_commit_safety_ms=10,
@@ -153,7 +194,9 @@ def seed_stream_chunks(
     if not store.config.max_stream_chunks:
         return
     encoded = [
-        StreamChunk(
+        StreamChunk(f"0-{index}", attempt, b"", skipped=True)
+        if payload is SKIPPED
+        else StreamChunk(
             f"0-{index}",
             attempt,
             payload if isinstance(payload, bytes) else json.dumps(payload, separators=(",", ":")).encode(),
@@ -269,7 +312,9 @@ def test_terminal_result_remains_readable_after_result_schema_revision() -> None
             store._controls[execution_id],
             definition_revision="v2",
         )
-        assert client.get(f"/jobs/executions/{execution_id}").status_code == 503
+        rejected = client.get(f"/jobs/executions/{execution_id}")
+        assert rejected.status_code == 500
+        assert rejected.json() == {"detail": "Durable execution state is invalid"}
 
 
 @pytest.mark.parametrize(
@@ -385,6 +430,42 @@ def test_owner_scopes_idempotency_and_invalid_values_fail_closed(durable_app_fac
             id="terminal-backlog",
         ),
         pytest.param(0, 64_000, [(1, {"index": 0})], None, ["completed"], [], id="disabled-log"),
+        pytest.param(
+            10,
+            64_000,
+            [(1, {"index": 0}), (1, SKIPPED), (1, {"index": 2})],
+            None,
+            ["chunk", "chunk", "completed"],
+            [{"index": 0}, {"index": 2}],
+            id="skipped-entry",
+        ),
+        pytest.param(
+            10,
+            64_000,
+            [(1, {"index": 0}), (1, SKIPPED), (1, {"index": 2})],
+            "0-1",
+            ["chunk", "completed"],
+            [{"index": 2}],
+            id="reconnect-past-skipped-entry",
+        ),
+        pytest.param(
+            10,
+            64_000,
+            [(1, b"not-json"), (1, {"index": 1})],
+            None,
+            ["chunk", "completed"],
+            [{"index": 1}],
+            id="undecodable-chunk",
+        ),
+        pytest.param(
+            10,
+            16,
+            [(1, {"blob": "x" * 1_000})],
+            None,
+            ["chunk", "completed"],
+            [{"blob": "x" * 1_000}],
+            id="lowered-chunk-limit",
+        ),
     ],
 )
 def test_stream_resume_gap_fencing_and_drain(
@@ -410,6 +491,70 @@ def test_stream_resume_gap_fencing_and_drain(
         payloads = [json.loads(event["data"])["payload"] for event in events if event["event"] == "chunk"]
         assert [event["event"] for event in events] == expected_events
         assert payloads == expected_payloads
+
+
+def test_sse_delivers_a_large_chunk_after_the_write_limit_is_lowered(
+    durable_app_factory, wait_for_execution, caplog
+) -> None:
+    app, deployment = durable_app_factory(max_stream_chunk_bytes=6_000_000)
+    blob = "x" * 5_000_000
+
+    async def stream_large_chunk(context: DurableContext, request: JobRequest) -> JobResult:
+        await context.stream_chunk({"blob": blob})
+        return JobResult(value=request.value, owner_id=context.owner_id)
+
+    deployment.runner = stream_large_chunk
+    with TestClient(app) as client:
+        submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
+        wait_for_execution(client, submitted["links"]["self"], "completed")
+        stream = deployment.store._chunks[submitted["execution_id"]]
+        marker = stream.pop()
+        stream.append(StreamChunk(marker.cursor, 1, b"not-json"))
+        deployment.store._chunk_sequence += 1
+        stream.append(replace(marker, cursor=f"0-{deployment.store._chunk_sequence}"))
+        deployment.store.config = replace(deployment.store.config, max_stream_chunk_bytes=64 * 1024)
+
+        events, _, _ = read_sse(client, submitted["links"]["stream"])
+
+    chunks = [event for event in events if event["event"] == "chunk"]
+    assert [event["event"] for event in events] == ["chunk", "completed"]
+    assert chunks[0]["id"] == "0-1"
+    assert json.loads(chunks[0]["data"])["payload"] == {"blob": blob}
+    assert caplog.messages.count("Skipped an undecodable durable stream chunk") == 1
+
+
+def test_projection_ignores_a_lowered_payload_limit(durable_app_factory, wait_for_execution) -> None:
+    app, deployment = durable_app_factory()
+    with TestClient(app) as client:
+        submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
+        wait_for_execution(client, submitted["links"]["self"], "completed")
+        deployment.store.config = replace(deployment.store.config, max_payload_bytes=8)
+        response = client.get(submitted["links"]["self"])
+
+    assert response.status_code == 200
+    assert response.json()["result"] == {"value": 1, "owner_id": None}
+
+
+def test_routes_read_only_what_they_project(durable_app_factory, wait_for_execution) -> None:
+    app, deployment = durable_app_factory(store_class=CountingStore)
+    store = cast(CountingStore, deployment.store)
+    headers = {"Idempotency-Key": "same"}
+    with TestClient(app) as client:
+        created = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"}, headers=headers)
+        assert created.status_code == 202 and created.json()["status"] == "queued"
+        assert store.calls == {"submit": 1}
+        wait_for_execution(client, created.json()["links"]["self"], "waiting")
+
+        store.calls.clear()
+        replay = client.post("/api/jobs/run-durable", json={"value": 1, "action": "wait"}, headers=headers)
+        assert replay.status_code == 202 and replay.headers["idempotent-replay"] == "true"
+        assert replay.json()["status"] == "waiting"
+        assert store.calls == {"submit": 1, "read_public": 1}
+
+        store.calls.clear()
+        canceled = client.post(created.json()["links"]["cancel"])
+        assert canceled.status_code == 200 and canceled.json()["status"] == "canceled"
+        assert store.calls == {"read_control": 1, "read_public": 1}
 
 
 @pytest.mark.parametrize(
@@ -442,19 +587,67 @@ def test_blocked_viewer_wakes_on_the_final_flush_and_terminal_marker(
     assert time.monotonic() - started < 2
 
 
-def test_block_timeout_keeps_alive_and_ends_on_terminal_control_without_marker(
-    durable_app_factory, monkeypatch, wait_for_execution
+@pytest.mark.parametrize(
+    ("cursor", "expected_events"),
+    [
+        pytest.param(None, ["completed"], id="fresh"),
+        pytest.param("0-1", ["gap", "completed"], id="expired-cursor"),
+    ],
+)
+def test_terminal_run_without_history_ends_without_blocking(
+    durable_app_factory,
+    monkeypatch,
+    wait_for_execution,
+    cursor: str | None,
+    expected_events: list[str],
 ) -> None:
     app, deployment = durable_app_factory()
-    monkeypatch.setattr("hayhooks.durable.fastapi._STREAM_BLOCK_SECONDS", 0.05)
+    monkeypatch.setattr(deployment, "wait_chunks", AsyncMock(side_effect=AssertionError("terminal streams never block")))
     with TestClient(app) as client:
         submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
         wait_for_execution(client, submitted["links"]["self"], "completed")
         deployment.store._chunks.pop(submitted["execution_id"])
-        events, comments, _ = read_sse(client, submitted["links"]["stream"])
+        headers = {"Last-Event-ID": cursor} if cursor is not None else None
+        events, comments, _ = read_sse(client, submitted["links"]["stream"], headers=headers)
+
+    assert [event["event"] for event in events] == expected_events
+    assert comments == [": heartbeat"]
+
+
+def test_idle_stream_reads_only_the_control_until_the_run_ends_without_a_marker(
+    durable_app_factory, monkeypatch
+) -> None:
+    app, deployment = durable_app_factory(store_class=CountingStore)
+    store = cast(CountingStore, deployment.store)
+    monkeypatch.setattr("hayhooks.durable.fastapi._STREAM_BLOCK_SECONDS", 0.01)
+    release_runner = threading.Event()
+
+    async def controlled_run(context: DurableContext, request: JobRequest) -> JobResult:
+        await asyncio.to_thread(release_runner.wait)
+        return JobResult(value=request.value, owner_id=context.owner_id)
+
+    deployment.runner = controlled_run
+    wait_chunks = store.wait_chunks
+
+    async def wait_without_markers(run_id: str, after: str, timeout: float) -> tuple[StreamChunk, ...]:
+        return tuple(chunk for chunk in await wait_chunks(run_id, after, timeout) if not chunk.terminal)
+
+    monkeypatch.setattr(store, "wait_chunks", wait_without_markers)
+    store.on_read_control = lambda count: count == 3 and release_runner.set()
+    fallback = threading.Timer(5, release_runner.set)
+    fallback.start()
+    try:
+        with TestClient(app) as client:
+            submitted = client.post("/api/jobs/run-durable", json={"value": 1}).json()
+            store.calls.clear()
+            events, comments, _ = read_sse(client, submitted["links"]["stream"])
+    finally:
+        fallback.cancel()
 
     assert [event["event"] for event in events] == ["completed"]
-    assert len(comments) == 2
+    assert store.calls["read_public"] == 1
+    assert store.calls["read_control"] >= 4
+    assert len(comments) == store.calls["read_control"]
 
 
 @pytest.mark.parametrize(
@@ -510,13 +703,13 @@ def test_chunk_failures_are_display_only_and_midstream_errors_are_framed(
         monkeypatch.setattr(deployment.store, "append_chunks", append_chunks)
         oversized = client.post("/api/jobs/run-durable", json={"value": 1, "action": "oversized"}).json()
         assert wait_for_execution(client, oversized["links"]["self"], "completed")["attempt"] == 1
-        monkeypatch.setattr(deployment.store, "wait_chunks", AsyncMock(side_effect=ExecutionStoreError("down")))
+        monkeypatch.setattr(deployment.store, "read_chunks", AsyncMock(side_effect=ExecutionStoreError("down")))
         events, _, _ = read_sse(client, oversized["links"]["stream"])
         assert events == [{"event": "error", "data": '{"detail":"Execution stream interrupted"}'}]
 
 
-def test_admission_and_store_failures_are_service_unavailable(
-    durable_app_factory, monkeypatch, wait_for_execution
+def test_corruption_is_an_internal_error_and_store_failures_are_unavailable(
+    durable_app_factory, monkeypatch, wait_for_execution, caplog
 ) -> None:
     app, deployment = durable_app_factory(max_nonterminal=1)
     with TestClient(app) as client:
@@ -526,18 +719,65 @@ def test_admission_and_store_failures_are_service_unavailable(
         projected_corruption = client.get(first["links"]["self"])
         deployment.store._payloads[first["execution_id"]][PayloadKind.CHECKPOINT] = b"not-json"
         resumed_corruption = client.post(first["links"]["resume"], json={"approved": True})
-        assert projected_corruption.status_code == resumed_corruption.status_code == 503
+        assert projected_corruption.status_code == resumed_corruption.status_code == 500
         assert (
             projected_corruption.json()
             == resumed_corruption.json()
-            == {"detail": "Durable execution store is unavailable"}
+            == {"detail": "Durable execution state is invalid"}
         )
+        assert "stored checkpoint payload is invalid" in caplog.text
         admission = client.post("/api/jobs/run-durable", json={"value": 2})
         assert admission.status_code == 503 and admission.headers["retry-after"] == "1"
-        monkeypatch.setattr(deployment.store, "read", AsyncMock(side_effect=ExecutionStoreError("down")))
+        monkeypatch.setattr(deployment.store, "read_public", AsyncMock(side_effect=ExecutionStoreError("down")))
         unavailable = client.get(first["links"]["self"])
-        assert unavailable.status_code == 503
+        assert unavailable.status_code == 503 and "retry-after" not in unavailable.headers
         assert unavailable.json() == {"detail": "Durable execution store is unavailable"}
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "detail"),
+    [
+        pytest.param(ExecutionNotFoundError("hidden"), 404, "Execution not found", id="not-found"),
+        pytest.param(ExecutionIdempotencyConflictError("bound"), 409, "bound", id="idempotency"),
+        pytest.param(InvalidExecutionTransitionError("state"), 409, "state", id="transition"),
+        pytest.param(ExecutionPayloadSizeError("too big"), 422, "too big", id="payload-size"),
+        pytest.param(ValueError("invalid"), 422, "invalid", id="value"),
+        pytest.param(ExecutionAdmissionError("full"), 503, "full", id="admission"),
+        pytest.param(
+            ExecutionStoreCorruptionError("secret"), 500, "Durable execution state is invalid", id="corruption"
+        ),
+        pytest.param(
+            ExecutionContentionError("secret"), 503, "Durable execution store is unavailable", id="contention"
+        ),
+        pytest.param(ExecutionStoreError("secret"), 503, "Durable execution store is unavailable", id="store"),
+        pytest.param(
+            ExecutionLeaseLostError("secret"), 503, "Durable execution service is unavailable", id="lease-lost"
+        ),
+        pytest.param(RuntimeError("secret"), 503, "Durable execution service is unavailable", id="runtime"),
+    ],
+)
+def test_route_errors_map_to_stable_responses(
+    durable_app_factory, monkeypatch, caplog, error: Exception, status_code: int, detail: str
+) -> None:
+    app, deployment = durable_app_factory()
+    monkeypatch.setattr(deployment, "get", AsyncMock(side_effect=error))
+    with TestClient(app) as client:
+        response = client.get(f"/api/jobs/executions/{'a' * 32}")
+    assert response.status_code == status_code
+    assert response.json() == {"detail": detail}
+    assert ("retry-after" in response.headers) is isinstance(error, ExecutionAdmissionError)
+    assert "secret" not in response.text
+    logged = detail in ("Durable execution state is invalid", "Durable execution service is unavailable")
+    assert ("secret" in caplog.text) is logged
+
+
+def test_closed_admission_is_retryable(durable_app_factory) -> None:
+    app, deployment = durable_app_factory()
+    with TestClient(app) as client:
+        client.portal.call(deployment.quiesce)
+        response = client.post("/api/jobs/run-durable", json={"value": 1})
+    assert response.status_code == 503 and response.headers["retry-after"] == "1"
+    assert response.json() == {"detail": "durable deployment 'jobs' is not accepting submissions"}
 
 
 def test_waiting_stream_disconnect_does_not_cancel(durable_app_factory, wait_for_execution) -> None:

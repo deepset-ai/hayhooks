@@ -308,6 +308,15 @@ For a full working example, see the [Image Generation example](https://github.co
 
 ## Optional Methods
 
+### durable_owner_id()
+
+A durable wrapper can override `durable_owner_id` as the FastAPI dependency for
+its durable routes. It returns a stable authenticated owner ID, which scopes
+execution access and idempotency. Defining it on a wrapper without
+`run_durable` or `run_durable_async` fails loading. See
+[Owner scoping](../features/durable-execution.md#owner-scoping) for authentication
+examples and route coverage.
+
 ### run_api_async()
 
 The asynchronous version of `run_api()` for better performance under high load.
