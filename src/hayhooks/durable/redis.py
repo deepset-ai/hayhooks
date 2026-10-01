@@ -679,7 +679,7 @@ class RedisExecutionStore:
         for kind, payload in zip(kinds, raw_payloads, strict=True):
             if payload is None:
                 continue
-            if not isinstance(payload, bytes) or len(payload) > self.config.max_payload_bytes:
+            if not isinstance(payload, bytes):
                 raise ExecutionStoreCorruptionError(f"stored {kind.value} payload is invalid")
             payloads[kind] = payload
         progress = []
@@ -690,7 +690,7 @@ class RedisExecutionStore:
                 int.from_bytes(entry[:_PROGRESS_SEQUENCE_BYTES], "big"),
                 entry[_PROGRESS_SEQUENCE_BYTES:],
             )
-            if event.sequence < 1 or len(event.data) > self.config.max_progress_event_bytes:
+            if event.sequence < 1:
                 raise ExecutionStoreCorruptionError("stored progress event is invalid")
             progress.append(event)
         sequences = [event.sequence for event in progress]
@@ -950,11 +950,7 @@ class RedisExecutionStore:
                 if values.keys() == {"terminal"}:
                     chunks.append(StreamChunk(_text(entry_id), attempt, b"", terminal=True))
                     continue
-                if (
-                    values.keys() != {"data"}
-                    or not isinstance(values["data"], bytes)
-                    or len(values["data"]) > self.config.max_stream_chunk_bytes
-                ):
+                if values.keys() != {"data"} or not isinstance(values["data"], bytes):
                     raise ValueError
                 chunks.append(StreamChunk(_text(entry_id), attempt, values["data"]))
             except (KeyError, TypeError, UnicodeError, ValueError) as error:

@@ -13,6 +13,7 @@ from hayhooks.durable.engine import (
     Claim,
     Complete,
     ExecutionCommand,
+    ExecutionPayloadSizeError,
     ExecutionStatus,
     Heartbeat,
     InvalidExecutionTransitionError,
@@ -229,6 +230,34 @@ async def assert_revision_routing_contract(store: ExecutionStore) -> None:
     old_claim = await store.claim(Claim("worker-v1", 0, 500, 3, "v1", ATTEMPTS_ERROR))
     assert old_claim is not None
     assert (old_claim.next_control.run_id, old_claim.next_control.status) == ("run_a_old", ExecutionStatus.RUNNING)
+
+
+async def assert_lowered_limits_keep_data_readable(store: ExecutionStore) -> None:
+    """Configured byte limits reject new writes without invalidating retained data."""
+    await store.submit(contract_control(store.deployment), b"i" * 20)
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    await store.transition("run_1", Checkpoint(1, "worker", 0, 500, b"c" * 20, (b"p" * 10,)))
+    await store.append_chunks("run_1", 1, 1, "worker", [b"s" * 10])
+    before = await store.read("run_1")
+    public = await store.read_public("run_1")
+    chunks = await store.read_chunks("run_1", CHUNK_CURSOR_START)
+
+    store.config = replace(
+        store.config,
+        max_payload_bytes=1,
+        max_progress_event_bytes=1,
+        max_stream_chunk_bytes=1,
+    )
+
+    assert await store.read("run_1") == before
+    assert await store.read_public("run_1") == public
+    assert await store.read_chunks("run_1", CHUNK_CURSOR_START) == chunks
+    assert await store.wait_chunks("run_1", CHUNK_CURSOR_START, 0.05) == chunks
+    with pytest.raises(ExecutionPayloadSizeError):
+        await store.append_chunks("run_1", 1, 1, "worker", [b"xx"])
+    with pytest.raises(ExecutionPayloadSizeError):
+        await store.transition("run_1", Complete(1, "worker", 0, b"xx"))
 
 
 async def assert_terminal_markers_contract(store: ExecutionStore) -> None:

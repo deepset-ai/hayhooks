@@ -46,6 +46,7 @@ from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
     assert_lost_lease_budget_contract,
+    assert_lowered_limits_keep_data_readable,
     assert_raced_recovery_contract,
     assert_revision_routing_contract,
     assert_store_contract,
@@ -118,6 +119,11 @@ async def test_redis_store_skips_raced_lease_recovery(redis_store) -> None:
 async def test_redis_store_fails_on_the_last_lost_lease(redis_store) -> None:
     _, store = redis_store
     await assert_lost_lease_budget_contract(store)
+
+
+async def test_redis_store_keeps_data_readable_after_lowering_limits(redis_store) -> None:
+    _, store = redis_store
+    await assert_lowered_limits_keep_data_readable(store)
 
 
 async def test_concurrent_submissions_and_claims_have_one_winner(redis_store) -> None:
