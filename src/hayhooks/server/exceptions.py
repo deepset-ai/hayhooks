@@ -4,6 +4,10 @@ class PipelineFilesError(Exception):
     pass
 
 
+class PipelinePathError(PipelineFilesError, ValueError):
+    """Exception for unsafe pipeline names or source file paths."""
+
+
 class PipelineWrapperError(Exception):
     """Exception for errors loading pipeline wrapper."""
 

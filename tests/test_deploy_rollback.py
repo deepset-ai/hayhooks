@@ -170,3 +170,20 @@ def test_http_failed_rollback_is_a_server_error_with_both_messages(pipelines_dir
     assert response.status_code == 500
     assert "candidate route failed" in response.json()["detail"]
     assert "restore route failed" in response.json()["detail"]
+
+
+def test_failed_overwrite_restores_a_contained_absolute_yaml_symlink(app, pipelines_dir, monkeypatch) -> None:
+    old_wrapper = registry.get("demo")
+    shared_yaml = pipelines_dir / "shared.yml"
+    shared_yaml.write_text(SAMPLE_YAML)
+    yaml_file = pipelines_dir / "demo.yml"
+    yaml_file.symlink_to(shared_yaml.resolve())
+    fail_route_additions(monkeypatch, "candidate route failed")
+
+    with pytest.raises(RuntimeError, match="candidate route failed"):
+        deploy_utils.deploy_pipeline_yaml("demo", SAMPLE_YAML, app=app, overwrite=True)
+
+    assert yaml_file.is_symlink()
+    assert yaml_file.resolve() == shared_yaml.resolve()
+    assert shared_yaml.read_text() == SAMPLE_YAML
+    assert_old_pipeline_restored(app, pipelines_dir, old_wrapper)
