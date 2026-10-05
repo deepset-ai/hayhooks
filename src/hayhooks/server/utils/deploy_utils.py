@@ -19,7 +19,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from starlette.datastructures import Headers
 
-from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError
+from hayhooks.server.exceptions import PipelineAlreadyExistsError, PipelineFilesError, PipelinePathError
 from hayhooks.server.logger import log, log_elapsed
 from hayhooks.server.pipelines.models import (
     create_request_model_from_callable,
@@ -46,6 +46,12 @@ from hayhooks.server.utils.module_loader import (
     create_pipeline_wrapper_instance,
     load_pipeline_module,
     unload_pipeline_modules,
+)
+from hayhooks.server.utils.pipeline_paths import (
+    require_contained_path,
+    validate_file_keys,
+    validate_pipeline_files,
+    validate_pipeline_name,
 )
 from hayhooks.server.utils.request_headers import accepts_request_headers
 from hayhooks.server.utils.streaming_response_utils import _streaming_response_from_result
@@ -148,7 +154,9 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
     Raises:
         PipelineFilesError: If there are any issues saving the files
     """
+    validate_pipeline_files(pipeline_name, files, pipelines_dir)
     try:
+        _pipeline_source_paths(Path(pipelines_dir), pipeline_name)
         pipelines_path = Path(pipelines_dir)
         pipelines_path.mkdir(parents=True, exist_ok=True)
 
@@ -156,7 +164,7 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
         # Save directly in pipelines_dir as {name}.yml
         if _is_single_yaml_file(files):
             content = next(iter(files.values()))
-            file_path = pipelines_path / f"{pipeline_name}.yml"
+            file_path = require_contained_path(pipelines_path / f"{pipeline_name}.yml", pipelines_path)
             log.debug("Saving YAML pipeline file: '{}'", file_path)
             file_path.write_text(content)
             return {f"{pipeline_name}.yml": str(file_path)}
@@ -169,13 +177,15 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
 
         saved_files = {}
         for filename, content in files.items():
-            file_path = pipeline_dir / filename
+            file_path = require_contained_path(pipeline_dir / filename, pipeline_dir)
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content)
             saved_files[filename] = str(file_path)
 
         return saved_files
 
+    except PipelinePathError:
+        raise
     except Exception as e:
         msg = f"Failed to save pipeline files for '{pipeline_name}': {e!s}"
         raise PipelineFilesError(msg) from e
@@ -193,14 +203,23 @@ def remove_pipeline_files(pipeline_name: str, pipelines_dir: str) -> None:
         pipeline_name: Name of the pipeline
         pipelines_dir: Path to the pipelines directory
     """
-    pipelines_path = Path(pipelines_dir)
+    pipeline_dir, *yaml_files = _pipeline_source_paths(Path(pipelines_dir), pipeline_name)
+    shutil.rmtree(pipeline_dir, ignore_errors=True)
+    for path in yaml_files:
+        path.unlink(missing_ok=True)
 
-    # Remove pipeline directory (wrapper-based pipelines)
-    shutil.rmtree(pipelines_path / pipeline_name, ignore_errors=True)
 
-    # Remove YAML files (YAML-based pipelines)
-    for ext in (".yml", ".yaml"):
-        (pipelines_path / f"{pipeline_name}{ext}").unlink(missing_ok=True)
+def _pipeline_source_paths(pipelines_dir: Path, pipeline_name: str) -> tuple[Path, ...]:
+    """Return a pipeline's persisted source paths: its wrapper directory first, then its YAML files."""
+    validate_pipeline_name(pipeline_name)
+    paths = (pipelines_dir / pipeline_name, *(pipelines_dir / f"{pipeline_name}{ext}" for ext in (".yml", ".yaml")))
+    for path in paths:
+        require_contained_path(path, pipelines_dir)
+        if path.is_dir():
+            for child in path.rglob("*"):
+                if child.is_symlink():
+                    require_contained_path(child, path)
+    return paths
 
 
 def handle_pipeline_exceptions() -> Callable:
@@ -672,6 +691,8 @@ def prepare_pipeline_files(
     expensive work that is safe to run in a thread.  The returned
     ``PreparedPipeline`` can be committed later via ``_register_prepared_pipeline``.
     """
+    validate_pipeline_name(pipeline_name)
+    validate_file_keys(files)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_PREPARE,
         tags=build_trace_tags(
@@ -719,6 +740,7 @@ def prepare_pipeline_yaml(
     description = (options or {}).get("description")
     skip_mcp = bool((options or {}).get("skip_mcp", False))
 
+    validate_pipeline_name(pipeline_name)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_PREPARE,
         tags=build_trace_tags(
@@ -769,6 +791,9 @@ def commit_prepared_pipeline(
         _defer_openapi_rebuild: Forwarded to route registration.
         cleanup_files_on_overwrite: If ``True``, remove persisted files when replacing an existing pipeline.
     """
+    validate_pipeline_name(prepared.name)
+    if overwrite and cleanup_files_on_overwrite:
+        _pipeline_source_paths(Path(settings.pipelines_dir), prepared.name)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_COMMIT,
         tags=build_trace_tags(
@@ -832,6 +857,11 @@ def deploy_pipeline_files(
         PipelineModuleLoadError: If loading the pipeline module fails.
         PipelineWrapperError: If wrapper creation or setup fails.
     """
+    validate_pipeline_name(pipeline_name)
+    validate_file_keys(files)
+    if save_files:
+        validate_pipeline_files(pipeline_name, files, settings.pipelines_dir)
+        _pipeline_source_paths(Path(settings.pipelines_dir), pipeline_name)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY,
         tags=build_trace_tags(
@@ -893,6 +923,8 @@ def deploy_pipeline_yaml(
         ValueError: If the YAML cannot be parsed into a Pipeline.
         InvalidYamlIOError: If the YAML is missing inputs/outputs declarations.
     """
+    validate_pipeline_name(pipeline_name)
+    _pipeline_source_paths(Path(settings.pipelines_dir), pipeline_name)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY,
         tags=build_trace_tags(
@@ -991,6 +1023,7 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
     Raises:
         HTTPException: If the pipeline is not found in the registry (404).
     """
+    _pipeline_source_paths(Path(settings.pipelines_dir), pipeline_name)
     with trace_operation(
         SPAN_PIPELINE_UNDEPLOY,
         tags=build_trace_tags(

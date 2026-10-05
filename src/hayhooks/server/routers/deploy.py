@@ -6,10 +6,12 @@ from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
     PipelineModuleLoadError,
+    PipelinePathError,
     PipelineWrapperError,
     PipelineYamlError,
 )
 from hayhooks.server.utils.deploy_utils import deploy_pipeline_files_async, deploy_pipeline_yaml_async
+from hayhooks.server.utils.pipeline_paths import validate_file_keys, validate_pipeline_name
 
 router = APIRouter()
 
@@ -50,13 +52,15 @@ class PipelineFilesRequest(BaseModel):
         }
     }
 
+    _validate_name = field_validator("name")(validate_pipeline_name)
+
     @field_validator("files")
     @classmethod
     def validate_files(cls, v: dict[str, str]) -> dict[str, str]:
         if "pipeline_wrapper.py" not in v:
             msg = "Missing required file: pipeline_wrapper.py"
             raise ValueError(msg)
-        return v
+        return validate_file_keys(v)
 
 
 class DeployResponse(BaseModel):
@@ -90,6 +94,8 @@ class YamlDeployRequest(BaseModel):
         }
     }
 
+    _validate_name = field_validator("name")(validate_pipeline_name)
+
 
 @router.post(
     "/deploy-yaml",
@@ -116,6 +122,8 @@ async def deploy_yaml(yaml_request: YamlDeployRequest, request: Request) -> Depl
             },
         )
         return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
+    except PipelinePathError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except InvalidYamlIOError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineYamlError as e:
@@ -147,6 +155,8 @@ async def deploy_files(pipeline_files_request: PipelineFilesRequest, request: Re
             overwrite=pipeline_files_request.overwrite,
         )
         return DeployResponse(name=result["name"], success=True, endpoint=f"/{result['name']}/run")
+    except PipelinePathError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except PipelineFilesError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     except PipelineModuleLoadError as e:
