@@ -24,6 +24,7 @@ from hayhooks.server.exceptions import (
     PipelineAlreadyExistsError,
     PipelineFilesError,
     PipelineModeError,
+    PipelinePathError,
     PipelineRollbackError,
 )
 from hayhooks.server.logger import log, log_elapsed
@@ -57,6 +58,12 @@ from hayhooks.server.utils.module_loader import (
     pipeline_modules,
     reject_durable_wrapper,
     unload_pipeline_modules,
+)
+from hayhooks.server.utils.pipeline_paths import (
+    require_contained_path,
+    validate_file_keys,
+    validate_pipeline_files,
+    validate_pipeline_name,
 )
 from hayhooks.server.utils.request_headers import accepts_request_headers
 from hayhooks.server.utils.streaming_response_utils import _streaming_response_from_result
@@ -178,7 +185,9 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
         PipelineModeError: In durable mode
     """
     require_live_deployment()
+    validate_pipeline_files(pipeline_name, files, pipelines_dir)
     try:
+        _pipeline_source_paths(Path(pipelines_dir), pipeline_name)
         pipelines_path = Path(pipelines_dir)
         pipelines_path.mkdir(parents=True, exist_ok=True)
 
@@ -186,7 +195,7 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
         # Save directly in pipelines_dir as {name}.yml
         if _is_single_yaml_file(files):
             content = next(iter(files.values()))
-            file_path = pipelines_path / f"{pipeline_name}.yml"
+            file_path = require_contained_path(pipelines_path / f"{pipeline_name}.yml", pipelines_path)
             log.debug("Saving YAML pipeline file: '{}'", file_path)
             file_path.write_text(content)
             return {f"{pipeline_name}.yml": str(file_path)}
@@ -199,13 +208,15 @@ def save_pipeline_files(pipeline_name: str, files: dict[str, str], pipelines_dir
 
         saved_files = {}
         for filename, content in files.items():
-            file_path = pipeline_dir / filename
+            file_path = require_contained_path(pipeline_dir / filename, pipeline_dir)
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content)
             saved_files[filename] = str(file_path)
 
         return saved_files
 
+    except PipelinePathError:
+        raise
     except Exception as e:
         msg = f"Failed to save pipeline files for '{pipeline_name}': {e!s}"
         raise PipelineFilesError(msg) from e
@@ -235,18 +246,29 @@ def remove_pipeline_files(pipeline_name: str, pipelines_dir: str) -> None:
 
 def _pipeline_source_paths(pipelines_dir: Path, pipeline_name: str) -> tuple[Path, ...]:
     """Return a pipeline's persisted source paths: its wrapper directory first, then its YAML files."""
-    return (pipelines_dir / pipeline_name, *(pipelines_dir / f"{pipeline_name}{ext}" for ext in YAML_SUFFIXES))
+    validate_pipeline_name(pipeline_name)
+    paths = (pipelines_dir / pipeline_name, *(pipelines_dir / f"{pipeline_name}{ext}" for ext in YAML_SUFFIXES))
+    for path in paths:
+        require_contained_path(path, pipelines_dir)
+        if path.is_dir():
+            for child in path.rglob("*"):
+                if child.is_symlink():
+                    require_contained_path(child, path)
+    return paths
 
 
 def _backup_pipeline_files(pipeline_name: str) -> Path:
     """Move a pipeline's persisted source aside so a failed deployment can restore it."""
     pipelines_dir = Path(settings.pipelines_dir)
+    source_paths = _pipeline_source_paths(pipelines_dir, pipeline_name)
     pipelines_dir.mkdir(parents=True, exist_ok=True)
     backup_dir = Path(tempfile.mkdtemp(prefix=f".{pipeline_name}-", dir=pipelines_dir))
     try:
-        for path in _pipeline_source_paths(pipelines_dir, pipeline_name):
+        for path in source_paths:
             if path.exists():
-                path.replace(backup_dir / path.name)
+                require_contained_path(path, pipelines_dir).replace(
+                    require_contained_path(backup_dir / path.name, backup_dir)
+                )
     except BaseException:
         _restore_pipeline_files(pipeline_name, str(pipelines_dir), backup_dir, remove_candidate=False)
         _cleanup_pipeline_backup(pipeline_name, backup_dir, rolled_back=True)
@@ -258,6 +280,7 @@ def _restore_pipeline_files(
     pipeline_name: str, pipelines_dir: str, backup_dir: Path, *, remove_candidate: bool = True
 ) -> None:
     """Best-effort rollback that retains any backup files it cannot restore."""
+    validate_pipeline_name(pipeline_name)
     clog = log.bind(pipeline_name=pipeline_name, backup_dir=str(backup_dir))
     if remove_candidate:
         try:
@@ -265,13 +288,16 @@ def _restore_pipeline_files(
         except BaseException as error:
             clog.bind(exception_type=type(error).__name__).error("Failed to remove candidate pipeline files")
     try:
+        require_contained_path(backup_dir, Path(pipelines_dir))
         paths = tuple(backup_dir.iterdir())
     except BaseException as error:
         clog.bind(exception_type=type(error).__name__).error("Failed to read pipeline backup")
         return
     for path in paths:
         try:
-            path.replace(Path(pipelines_dir) / path.name)
+            require_contained_path(path, Path(pipelines_dir)).replace(
+                require_contained_path(Path(pipelines_dir) / path.name, Path(pipelines_dir))
+            )
         except BaseException as error:
             clog.bind(exception_type=type(error).__name__, path=str(path)).error("Failed to restore pipeline backup")
 
@@ -279,6 +305,7 @@ def _restore_pipeline_files(
 def _cleanup_pipeline_backup(pipeline_name: str, backup_dir: Path | None, rolled_back: bool) -> None:
     if backup_dir is None:
         return
+    require_contained_path(backup_dir, Path(settings.pipelines_dir))
     if not rolled_back:
         shutil.rmtree(backup_dir, ignore_errors=True)
         return
@@ -751,6 +778,8 @@ def prepare_pipeline_files(
         PipelineModeError: In durable mode, or if the wrapper is durable.
     """
     require_live_deployment()
+    validate_pipeline_name(pipeline_name)
+    validate_file_keys(files)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_PREPARE,
         tags=build_trace_tags(
@@ -798,6 +827,7 @@ def prepare_pipeline_yaml(
         PipelineModeError: In durable mode.
     """
     require_live_deployment()
+    validate_pipeline_name(pipeline_name)
     save_file: bool = True if options is None else bool(options.get("save_file", True))
     description = (options or {}).get("description")
     skip_mcp = bool((options or {}).get("skip_mcp", False))
@@ -878,6 +908,10 @@ def commit_prepared_pipeline(
         PipelineRollbackError: If the commit failed and the replaced pipeline could not be restored.
     """
     require_live_deployment(app)
+    validate_pipeline_name(prepared.name)
+    if source_files is not None or (overwrite and cleanup_files_on_overwrite):
+        validate_pipeline_files(prepared.name, source_files or {}, settings.pipelines_dir)
+        _pipeline_source_paths(Path(settings.pipelines_dir), prepared.name)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY_COMMIT,
         tags=build_trace_tags(
@@ -969,6 +1003,11 @@ def deploy_pipeline_files(
         PipelineRollbackError: If the deployment failed and the replaced pipeline could not be restored.
     """
     require_live_deployment(app)
+    validate_pipeline_name(pipeline_name)
+    validate_file_keys(files)
+    if save_files:
+        validate_pipeline_files(pipeline_name, files, settings.pipelines_dir)
+        _pipeline_source_paths(Path(settings.pipelines_dir), pipeline_name)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY,
         tags=build_trace_tags(
@@ -1047,6 +1086,8 @@ def deploy_pipeline_yaml(
         PipelineModeError: In durable mode.
     """
     require_live_deployment(app)
+    validate_pipeline_name(pipeline_name)
+    _pipeline_source_paths(Path(settings.pipelines_dir), pipeline_name)
     with trace_operation(
         SPAN_PIPELINE_DEPLOY,
         tags=build_trace_tags(
@@ -1156,6 +1197,7 @@ def undeploy_pipeline(pipeline_name: str, app: FastAPI | None = None) -> None:
         PipelineModeError: In durable mode.
     """
     require_live_deployment(app)
+    _pipeline_source_paths(Path(settings.pipelines_dir), pipeline_name)
     with trace_operation(
         SPAN_PIPELINE_UNDEPLOY,
         tags=build_trace_tags(
