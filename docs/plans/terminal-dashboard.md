@@ -259,6 +259,34 @@ recoloring unchanged rows when switching themes.
 These are synthetic qualification fixtures, not production data. Temporary
 qualification servers and browser tabs were stopped after review.
 
+## Visual refinement — 7 October 2026
+
+Commit **`cfbfc5a9`** refines the terminal interface using the requested
+high-end visual design guidance within Textual's native widgets. A quieter
+charcoal blue / warm light palette, inset masthead, compact controls, subdued
+selection and grouped inspector establish clearer hierarchy. Short terminals
+condense spacing; full execution IDs and timestamps remain in details while
+table IDs and revisions show explicit ellipses. Theme switching is visible in
+the footer. No project dependencies were added.
+
+- Focused dashboard, CLI and status checks: **41 passed**, including **24 TUI
+  cases**. Compact selector navigation and full-ID inspection pass at 80x24,
+  120x36 and 160x48.
+- TUI Ruff, formatting, type checks and `git diff --check` passed. Documentation
+  built successfully with the same pre-existing source-link warnings.
+- The final wheel passed core-only CLI/server, missing-extra, JSON snapshot,
+  bundled styles and headless theme checks on **Python 3.10 and 3.14**.
+- A real terminal exercised execution browsing, details, theme switching and
+  pause. Exit code was 0, with the alternate terminal screen restored.
+- The eighteen state captures above were refreshed and reviewed. Six additional
+  realistic synthetic overview/execution captures cover all three sizes. Raster
+  previews are retained for convenient review:
+  [Deployment overview](../assets/terminal-dashboard/overview-120x36.png) and
+  [Execution inspector](../assets/terminal-dashboard/browse-160x48.png).
+
+The earlier full backend/Redis qualification remains recorded above; this
+follow-up changes terminal presentation and its focused checks.
+
 ## Deferred features
 
 Defer execution controls, live token streams, tracing waterfalls, charts, cross-server/fleet aggregation, cross-deployment execution merging, persistent dashboard preferences, and automatic historical backfill. Add selected-execution SSE only if polling proves insufficient; reuse the existing endpoint and cursor behavior when that need arises. Request-bound execution history also needs its own observation source, so do not invent it from durable records or present process-local traces as a complete history.
