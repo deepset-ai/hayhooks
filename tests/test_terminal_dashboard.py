@@ -93,6 +93,8 @@ async def test_keyboard_browsing_text_inputs_pages_and_resize(size):
         app.action_refresh_now()
         await settled(app, pilot)
         assert len(app.items) == 50
+        if size == (80, 24):
+            assert app._widget("#rows").content_size.height >= 8
         assert app.pipeline == "agent"
         await pilot.press("down", "enter")
         await pilot.pause()
@@ -363,3 +365,35 @@ async def test_theme_change_recolors_unchanged_rows_without_losing_selection():
         after = table.get_row("agent")[3].spans
         assert before != after and after[0].style == "#855600"
         assert app.selected["deployments"] == selected
+
+
+@pytest.mark.parametrize("size", [(80, 24), (120, 36), (160, 48)])
+async def test_compact_filters_and_long_execution_ids_stay_reachable(size):
+    client = FakeClient()
+    full_id = "a1b2c3d4" * 4
+    client.rows[0]["execution_id"] = full_id
+    app = DashboardApp(client, pipeline="agent", interval=100)
+    async with app.run_test(size=size) as pilot:
+        await settled(app, pilot)
+        selector = app._widget("#type-filter")
+        selector.focus()
+        await pilot.press("enter", "down", "enter")
+        await pilot.pause()
+        assert selector.value == "agent" and list(app.items) == ["agent"]
+        assert selector.region.right <= size[0] and selector.region.y >= 0
+        app.action_executions()
+        await settled(app, pilot)
+        table = app._widget("#rows")
+        assert table.columns[next(iter(table.columns))].width == 18
+        await pilot.press("enter")
+        await pilot.pause()
+        assert full_id in app._selected_detail().plain
+        assert app.selected["executions"] == full_id
+        await pilot.press("escape")
+        selector = app._widget("#status-filter")
+        selector.focus()
+        await pilot.press("enter", "down", "enter")
+        await settled(app, pilot)
+        assert selector.value == "queued"
+        calls = [call for call in client.calls if len(call) == 3 and isinstance(call[2], dict)]
+        assert calls[-1][2]["status"] == "queued"

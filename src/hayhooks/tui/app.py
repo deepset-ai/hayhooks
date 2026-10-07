@@ -15,7 +15,7 @@ from textual.screen import Screen
 from textual.theme import Theme
 from textual.widgets import Button, DataTable, Footer, Input, Select, Static, Tab, Tabs
 
-from hayhooks.colors import BRAND_COLOR, ERROR_COLOR, SUCCESS_COLOR, WARNING_COLOR
+from hayhooks.colors import BRAND_COLOR
 from hayhooks.tui.client import DashboardClient, DashboardError, literal
 
 HELP = """Keyboard and mouse
@@ -41,13 +41,27 @@ All network requests are GET. Public results are discarded.
 
 
 WIDE_TERMINAL = 110
+COMFORTABLE_TERMINAL_HEIGHT = 30
 
 
-def detail_text(item: dict[str, Any], *, execution: bool = False) -> Text:  # noqa: C901
+def state_color(state: str, theme: Theme) -> str:
+    role = {
+        "Healthy": "success",
+        "Connected": "success",
+        "completed": "success",
+        "Degraded": "warning",
+        "waiting": "warning",
+        "queued": "warning",
+        "failed": "error",
+        "running": "accent",
+    }.get(state)
+    return (getattr(theme, role) if role else theme.variables["text-muted"]) or BRAND_COLOR
+
+
+def detail_text(item: dict[str, Any], *, execution: bool = False, theme: Theme) -> Text:  # noqa: C901, PLR0912
     """Explicit display fields, always literal and bounded; results never appear."""
     fields = (
         (
-            ("execution_id", "Execution"),
             ("deployment", "Deployment"),
             ("kind", "Type"),
             ("revision", "Stored revision"),
@@ -55,64 +69,89 @@ def detail_text(item: dict[str, Any], *, execution: bool = False) -> Text:  # no
             ("attempt", "Attempt"),
             ("created_at", "Created"),
             ("updated_at", "Updated"),
-            ("cancellation_pending", "Cancellation pending"),
-            ("available_at", "Retry available at"),
-            ("cancellation_requested_at", "Cancellation requested"),
+            ("cancellation_pending", "Cancel pending"),
+            ("available_at", "Retry at"),
+            ("cancellation_requested_at", "Cancel requested"),
         )
         if execution
         else (
-            ("name", "Deployment"),
             ("type", "Type"),
             ("execution_mode", "Execution"),
             ("state", "State"),
-            ("description", "Description"),
-            ("capabilities", "API capabilities / eligibility"),
             ("revision", "Served revision"),
-            ("worker_scope", "Worker scope"),
-            ("store_scope", "Store scope"),
         )
     )
+    muted = theme.variables["text-muted"]
     text = Text()
+    text.append("EXECUTION\n" if execution else "DEPLOYMENT\n", style=f"bold {theme.accent}")
+    text.append(literal(item.get("execution_id" if execution else "name", "")) + "\n", style="bold")
+    if not execution and item.get("description"):
+        text.append(literal(item["description"]) + "\n", style=muted)
+    text.append("\n")
     for field, label in fields:
         if field in item and item[field] is not None:
             value = item[field]
-            if isinstance(value, list):
-                value = ", ".join(str(part) for part in value)
-            text.append(label + ": ", style="bold")
-            text.append(literal(value) + "\n")
+            text.append(label.ljust(18), style=muted)
+            text.append(
+                literal(value) + "\n", style=state_color(str(value), theme) if field in {"state", "status"} else ""
+            )
     text.append("\n")
     if execution:
         for field, label in (("waiting", "Waiting"), ("progress", "Progress"), ("error", "Error")):
             if item.get(field):
-                text.append(label + "\n", style="bold")
+                text.append(label.upper() + "\n", style=f"bold {theme.accent}")
                 text.append(literal(json.dumps(item[field], ensure_ascii=False, indent=2)) + "\n\n")
         if message := item.get("detail_message"):
             text.append(literal(message) + "\n\n")
         text.append(
-            "Creation/update timestamps do not measure runtime duration.\nResults are not displayed or retained."
+            "Creation/update times are not runtime duration.\nResults are not displayed or retained.", style=muted
         )
     elif item.get("health") is not None:
-        text.append("Responding process\n", style="bold")
+        text.append("PROCESS\n", style=f"bold {theme.accent}")
+        text.append(literal(item.get("worker_scope", "Responding process")) + "\n", style=muted)
         health = item["health"]
-        for field in (
-            "active_executions",
-            "configured_slots",
-            "running_slots",
-            "draining_slots",
-            "draining_runs",
-            "maintenance_running",
-            "accepting",
-            "store_error_streak",
-            "operational_error",
+        for field, label in (
+            ("active_executions", "Active executions"),
+            ("configured_slots", "Configured slots"),
+            ("running_slots", "Running slots"),
+            ("draining_slots", "Draining slots"),
+            ("draining_runs", "Draining runs"),
+            ("maintenance_running", "Maintenance"),
+            ("accepting", "Accepting"),
+            ("store_error_streak", "Store error streak"),
+            ("operational_error", "Operational error"),
         ):
             if field in health:
-                text.append(f"{field}: {literal(health[field])}\n")
-        text.append("\nStore counts\n", style="bold")
+                text.append(label.ljust(18), style=muted)
+                text.append(literal(health[field]) + "\n")
+        text.append("\nSTORE\n", style=f"bold {theme.accent}")
+        if item.get("store_scope"):
+            text.append(literal(item["store_scope"]) + "\n", style=muted)
         for field, value in health.get("counts", {}).items():
-            text.append(f"{literal(field)}: {literal(value)}\n")
-        text.append("\nrevision_runnable includes queued delayed retries.\nWorker totals describe this process.")
+            text.append(literal(field).replace("_", " ").capitalize().ljust(18), style=muted)
+            text.append(literal(value) + "\n")
+        text.append(
+            "\nRevision runnable includes queued delayed retries.\nWorker totals describe this process.", style=muted
+        )
     else:
-        text.append("Loaded confirms the wrapper is registered. External services are not probed.")
+        text.append("Loaded confirms registration.\nExternal services are not probed.", style=muted)
+    if not execution and "capabilities" in item:
+        text.append("\n\nAPI / ELIGIBILITY\n", style=f"bold {theme.accent}")
+        labels = {
+            "run_api": "Run API",
+            "responses": "Responses",
+            "chat_completion": "Chat completions",
+            "file_upload": "File upload",
+            "mcp_eligible": "MCP eligible",
+            "a2a_eligible": "A2A eligible",
+        }
+        values = item["capabilities"]
+        value = (
+            ", ".join(labels.get(str(part), str(part).replace("_", " ")) for part in values) or "None advertised"
+            if isinstance(values, list)
+            else values
+        )
+        text.append(literal(value))
     return text
 
 
@@ -125,10 +164,10 @@ class DetailScreen(Screen):
         self.content = content
 
     def compose(self) -> ComposeResult:
-        yield Static("Hayhooks  /  " + ("Shortcuts" if self.help_screen else "Details"), classes="detail-heading")
+        yield Static("HAYHOOKS   /   " + ("Shortcuts" if self.help_screen else "Inspector"), classes="detail-heading")
         with VerticalScroll(id="full-detail", can_focus=True):
             yield Static(self.content, id="full-detail-text", markup=False)
-        yield Footer()
+        yield Footer(compact=True)
 
     def on_mount(self) -> None:
         self.query_one(VerticalScroll).focus()
@@ -142,14 +181,14 @@ class DashboardApp(App):
         Binding("q", "quit", "Quit"),
         Binding("ctrl+c", "exit", "Exit", priority=True, show=False),
         Binding("slash", "search", "Search"),
-        Binding("space", "pause", "Pause", priority=True),
+        Binding("space", "pause", "Pause", key_display="Space", priority=True),
         Binding("r", "refresh_now", "Refresh"),
         Binding("question_mark", "help", "Help"),
         Binding("e", "executions", "Executions"),
         Binding("left_square_bracket", "previous", "Prev", show=False),
         Binding("right_square_bracket", "next", "Next", show=False),
         Binding("escape", "escape", "Back", show=False),
-        Binding("t", "theme", "Theme", show=False),
+        Binding("t", "theme", "Theme"),
     ]
 
     def __init__(self, client: DashboardClient, *, pipeline: str | None = None, interval: float = 2.0) -> None:
@@ -159,11 +198,25 @@ class DashboardApp(App):
                 Theme(
                     name=name,
                     primary=BRAND_COLOR,
-                    accent=BRAND_COLOR,
-                    success=SUCCESS_COLOR if dark else "#007D35",
-                    error=ERROR_COLOR if dark else "#C12636",
-                    warning=WARNING_COLOR if dark else "#855600",
+                    accent="#8BAAFF" if dark else BRAND_COLOR,
+                    success="#72CCA5" if dark else "#007D35",
+                    error="#F18D99" if dark else "#C12636",
+                    warning="#E4BD78" if dark else "#855600",
+                    foreground="#DBE3EF" if dark else "#252C3C",
+                    background="#0F141E" if dark else "#F6F5F1",
+                    surface="#171E2B" if dark else "#EEEEE9",
+                    panel="#202B3D" if dark else "#E3E8F1",
                     dark=dark,
+                    variables={
+                        "text-muted": "#91A0B6" if dark else "#636D7D",
+                        "text-disabled": "#6E7C91" if dark else "#717B89",
+                        "block-cursor-background": "#263C62" if dark else "#D9E3FA",
+                        "block-cursor-foreground": "#F4F7FD" if dark else "#182D57",
+                        "block-cursor-blurred-background": "#1E2D46" if dark else "#E1E7F2",
+                        "block-cursor-text-style": "bold",
+                        "footer-key-foreground": "#8BAAFF" if dark else "#315FCE",
+                        "footer-description-foreground": "#91A0B6" if dark else "#636D7D",
+                    },
                 )
             )
         self.theme = "hayhooks-dark"
@@ -190,15 +243,18 @@ class DashboardApp(App):
         self.previous_focus = None
 
     def compose(self) -> ComposeResult:
-        yield Static("Hayhooks  /  Connecting…", id="connection", markup=False)
+        with Horizontal(id="masthead"):
+            yield Static(Text("HAYHOOKS\nTerminal monitor", style="bold"), id="brand")
+            yield Static("Connecting…", id="connection", markup=False)
         yield Tabs(Tab("Deployments", id="deployments"), Tab("Executions", id="executions"), id="views")
         with Horizontal(id="filters"):
-            yield Input(placeholder="Search deployments", id="search")
+            yield Input(placeholder="/  Search deployments", id="search", compact=True)
             yield Select(
                 [("All types", "all"), ("Agent", "agent"), ("Pipeline", "pipeline"), ("Unknown", "unknown")],
                 value="all",
                 allow_blank=False,
                 id="type-filter",
+                compact=True,
             )
             yield Select(
                 [
@@ -208,24 +264,26 @@ class DashboardApp(App):
                 value="all",
                 allow_blank=False,
                 id="status-filter",
+                compact=True,
             )
         with Horizontal(id="execution-controls"):
-            yield Select([], prompt="Durable deployment", id="deployment-filter")
-            yield Input(placeholder="Revision (all retained)", id="revision-filter")
+            yield Select([], prompt="Durable deployment", id="deployment-filter", compact=True)
+            yield Input(placeholder="Revision · all retained", id="revision-filter", compact=True)
         yield Static("Connecting…", id="message", markup=False)
         with Horizontal(id="panes"):
             yield DataTable(id="rows", cursor_type="row", zebra_stripes=False)
             with VerticalScroll(id="detail-pane", can_focus=True):
                 yield Static("Select a deployment", id="detail", markup=False)
         with Horizontal(id="pagination"):
-            yield Button("Previous", id="previous", disabled=True)
+            yield Button("← Previous", id="previous", disabled=True, compact=True)
             yield Static("Page 1", id="page-label", markup=False)
-            yield Button("Next", id="next", disabled=True)
+            yield Button("Next →", id="next", disabled=True, compact=True)
         yield Static("Tab Focus   Enter Details   Arrows Navigate", id="navigation-hint", markup=False)
-        yield Footer()
+        yield Footer(compact=True)
 
     def on_mount(self) -> None:
         self.main_screen = self.screen
+        self.main_screen.set_class(self.size.height < COMFORTABLE_TERMINAL_HEIGHT, "compact")
         self._widget("#detail-pane").display = self.size.width >= WIDE_TERMINAL
         self._configure_view()
         self.query_one(DataTable).focus()
@@ -248,7 +306,7 @@ class DashboardApp(App):
         self._widget("#pagination").display = executions
         search = self._widget("#search")
         search.value = self.searches[self.view]
-        search.placeholder = "Search indexed execution IDs" if executions else "Search deployment names"
+        search.placeholder = "/  Search indexed IDs" if executions else "/  Search deployment names"
         table = self._widget("#rows")
         table.clear(columns=True)
         columns = (
@@ -256,7 +314,9 @@ class DashboardApp(App):
             if executions
             else ("Name", "Type", "Execution", "State")
         )
-        table.add_columns(*columns)
+        for label in columns:
+            width = 18 if executions and label == "ID" else 8 if executions and label == "Revision" else None
+            table.add_column(label, width=width)
         self.items = {}
         self._update_table()
         self.updating = False
@@ -275,7 +335,7 @@ class DashboardApp(App):
         elif self.focused is self._widget("#detail-pane"):
             navigation = "Tab Focus   Esc List   Arrows Scroll"
         else:
-            navigation = "Tab Focus   Enter Details   Arrows Navigate"
+            navigation = "Tab Focus   Enter Inspect   ↑↓ Rows   ←→ Columns"
         self._widget("#navigation-hint").update(Text(navigation))
         if not self.paused and not self.in_flight and time.monotonic() >= self.next_poll:
             self._request_refresh()
@@ -290,7 +350,22 @@ class DashboardApp(App):
         annotation = "  PAUSED" if self.paused else ""
         if self.error:
             annotation += "  STALE"
-        self._widget("#connection").update(Text(f"Hayhooks  /  {self.client.label}  /  {state}  /  {age}{annotation}"))
+        text = Text(
+            literal(self.client.label) + "\n",
+            style=self.current_theme.variables["text-muted"],
+            no_wrap=True,
+            overflow="ellipsis",
+        )
+        text.append("● " + state, style=state_color(state, self.current_theme))
+        text.append("  ·  " + age)
+        text.append(annotation, style=f"bold {self.current_theme.warning}")
+        self._widget("#connection").update(text)
+        self._widget("#brand").update(
+            Text.assemble(
+                ("▎ HAYHOOKS\n", f"bold {self.current_theme.accent}"),
+                ("  Terminal monitor", self.current_theme.variables["text-muted"]),
+            )
+        )
 
     def _query(self) -> tuple:
         return (
@@ -435,7 +510,7 @@ class DashboardApp(App):
         if execution:
             rows = self.page.get("executions", []) if self._can_enumerate() else []
             message = (
-                f"{literal(self.pipeline)}  /  Stored kind and revision  /  Indexed collection search"
+                f"{literal(self.pipeline)}  ·  {len(rows)} on this page  ·  Stored kind / revision"
                 if rows
                 else "No filter matches on this bounded page; try Next."
                 if self.page.get("has_more")
@@ -463,7 +538,7 @@ class DashboardApp(App):
                 if self.searches["deployments"].lower() in item["name"].lower()
                 and (type_filter == "all" or item["type"] == type_filter)
             ]
-            message = "Loaded = registered wrapper. Durable health and workers describe the responding process."
+            message = f"{len(rows)} deployments  ·  Loaded = registered  ·  Process-scoped health"
             if not rows:
                 message = (
                     "No deployments match these filters."
@@ -496,19 +571,11 @@ class DashboardApp(App):
                 if execution
                 else [item["name"], item["type"].title(), item["execution_mode"].title(), item["state"]]
             )
-            cells = [Text(literal(value, 512)) for value in values]
+            cells = [Text(literal(value, 512), no_wrap=True, overflow="ellipsis") for value in values]
             state = str((item.get("status") if execution else item.get("state")) or "")
-            role = {
-                "Healthy": "success",
-                "completed": "success",
-                "Degraded": "warning",
-                "waiting": "warning",
-                "queued": "warning",
-                "failed": "error",
-                "running": "primary",
-            }.get(state)
-            if role:
-                cells[3].stylize(getattr(self.current_theme, role) or BRAND_COLOR)
+            cells[0].stylize("bold")
+            cells[1].stylize(self.current_theme.variables["text-muted"])
+            cells[3].stylize(state_color(state, self.current_theme))
             if key not in self.items:
                 table.add_row(*cells, key=key)
             elif recolor or self.items[key] != item:
@@ -539,7 +606,7 @@ class DashboardApp(App):
         if self.view == "executions" and self.details.get("execution_id") == selected:
             item = self.details
         return (
-            detail_text(item, execution=self.view == "executions")
+            detail_text(item, execution=self.view == "executions", theme=self.current_theme)
             if item
             else Text("Select an item to read its details.")
         )
@@ -661,6 +728,7 @@ class DashboardApp(App):
     def action_theme(self) -> None:
         self.theme = "hayhooks-light" if self.theme == "hayhooks-dark" else "hayhooks-dark"
         self._update_table(recolor=True)
+        self._header()
 
     def action_executions(self) -> None:
         self._widget("#views").active = "executions"
@@ -691,6 +759,7 @@ class DashboardApp(App):
 
     def on_resize(self, event: events.Resize) -> None:
         if hasattr(self, "main_screen"):
+            self.main_screen.set_class(event.size.height < COMFORTABLE_TERMINAL_HEIGHT, "compact")
             if event.size.width < WIDE_TERMINAL and self.focused is self._widget("#detail-pane"):
                 self.push_screen(DetailScreen(self._selected_detail()))
             self._widget("#detail-pane").display = event.size.width >= WIDE_TERMINAL

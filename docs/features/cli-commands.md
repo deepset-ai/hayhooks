@@ -140,12 +140,17 @@ identity or prove a protocol server is running. `Loaded` means registered, not
 that external services were probed. Workers describe the responding process;
 store/revision counts are labeled separately.
 
-Use arrows to select rows, Tab/Shift+Tab to move focus, Enter for details, Esc
+Use up/down to select rows, left/right to scroll wide tables, Tab/Shift+Tab to move focus, Enter for details, Esc
 to return, `/` to search, `e` for the selected durable deployment's executions,
 Space to pause, `r` to refresh, `?` for help, and `q` or Ctrl+C to exit. Text
 inputs keep ordinary shortcut characters as text; Ctrl+C always exits. Mouse
 selection and scrolling are supported. Details appear alongside the list on
 wide terminals and on a separate screen below 110 columns. `t` toggles themes.
+
+The dashboard uses a charcoal blue dark palette and a warm light palette. Short
+terminals condense spacing to leave room for rows; wide terminals group metadata,
+process health and store counts in an inspector pane. Long IDs and revisions use
+ellipses in the table; details preserve their full values and timestamps.
 
 Deployment searches and type filters apply to the complete deployment snapshot.
 Execution ID searches, status and revision filters query the indexed collection,

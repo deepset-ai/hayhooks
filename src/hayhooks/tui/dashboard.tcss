@@ -1,20 +1,68 @@
-Screen { background: $background; color: $text; }
-#connection { height: 2; padding: 0 1; background: $panel; text-style: bold; }
-#views { height: 3; }
-#filters, #execution-controls { height: 3; padding: 0 1; }
-#search { width: 2fr; }
-#type-filter, #status-filter { width: 1fr; min-width: 22; }
+Screen {
+    background: $background;
+    color: $text;
+    scrollbar-size: 1 1;
+    scrollbar-background: $surface;
+    scrollbar-color: $panel;
+    scrollbar-color-hover: $primary 65%;
+    scrollbar-color-active: $primary;
+}
+#masthead { height: 3; padding: 0 2; content-align: left middle; }
+#brand { width: 22; height: 2; margin-top: 1; }
+#connection { width: 1fr; height: 2; margin-top: 1; text-align: right; }
+#views { height: 2; margin: 1 2; }
+#views Tab { padding: 0 2; color: $text-muted; }
+#views Tab.-active { color: $accent; text-style: bold; }
+#views .underline--bar { background: $panel; color: $primary; }
+#filters, #execution-controls { height: 2; padding: 0 2; }
+Input { background: $surface; color: $text; }
+Input.-textual-compact { padding: 0 1; }
+Input:focus { background: $panel; background-tint: transparent; }
+Input > .input--placeholder { color: $text-muted; }
+Select { background: $surface; }
+Select > SelectCurrent { color: $text; background: $surface; }
+Select.-textual-compact > SelectCurrent { padding: 0 1; }
+Select:focus > SelectCurrent { background: $panel; background-tint: transparent; }
+Select .arrow { color: $text-muted; }
+Select > SelectOverlay { border: outer $primary 40%; padding: 1 0; }
+#search { width: 2fr; margin-right: 2; }
+#type-filter, #status-filter { width: 1fr; min-width: 20; }
 #deployment-filter, #revision-filter { width: 1fr; }
-#message { height: auto; max-height: 3; padding: 0 1; color: $text-muted; }
-#panes { height: 1fr; padding: 0 1; }
-#rows { width: 3fr; height: 1fr; }
-#detail-pane { width: 2fr; height: 1fr; padding: 0 2; background: $surface; }
-#detail-pane:focus, #full-detail:focus { background: $panel; }
+#deployment-filter { margin-right: 2; }
+#message { height: auto; min-height: 2; max-height: 3; padding: 0 2; color: $text-muted; }
+#panes { height: 1fr; padding: 0 2; }
+DataTable, VerticalScroll {
+    scrollbar-size: 1 1;
+    scrollbar-background: $surface;
+    scrollbar-color: $panel;
+    scrollbar-color-hover: $primary 65%;
+    scrollbar-color-active: $primary;
+}
+#rows { width: 3fr; height: 1fr; background: $background; }
+#rows:focus { background-tint: transparent; }
+#rows > .datatable--header { background: $surface; color: $text-muted; text-style: none; }
+#rows:focus > .datatable--header { background-tint: transparent; }
+#rows > .datatable--hover { background: $panel 65%; }
+#detail-pane {
+    width: 2fr; height: 1fr; margin-left: 2; padding: 1 2;
+    background: $surface; border-left: solid $primary 30%;
+}
+#detail-pane:focus { border-left: solid $accent; }
 #detail { height: auto; }
-#pagination { height: 3; padding: 0 1; }
-#pagination Button { min-width: 12; }
-#page-label { width: 1fr; content-align: center middle; }
-.detail-heading { height: 2; padding: 0 2; background: $panel; text-style: bold; }
-#full-detail { height: 1fr; padding: 1 2; }
-Footer { background: $panel; }
-#navigation-hint { height: 1; padding: 0 1; background: $panel; color: $text-muted; }
+#pagination { height: 2; padding: 0 2; margin-top: 1; }
+#pagination Button { min-width: 12; background: $surface; color: $text; text-style: none; }
+#pagination Button:disabled { color: $text-disabled; background: $background; }
+#pagination Button:hover, #pagination Button:focus { background: $panel; color: $accent; text-style: bold; }
+#page-label { width: 1fr; content-align: center top; color: $text-muted; }
+.detail-heading { height: 3; padding: 1 2 0 2; color: $accent; text-style: bold; }
+#full-detail { height: 1fr; margin: 0 2 1 2; padding: 1 2; background: $surface; border-left: solid $accent; }
+#navigation-hint { height: 1; margin-top: 1; padding: 0 2; color: $text-muted; }
+Footer { background: $background; padding: 0 2; }
+Footer .footer-key--key { background: $background; }
+Footer .footer-key--description { background: $background; }
+Screen.compact #masthead { height: 2; }
+Screen.compact #brand, Screen.compact #connection { margin-top: 0; }
+Screen.compact #views { margin: 1 2 0 2; }
+Screen.compact #message { min-height: 1; }
+Screen.compact #pagination { height: 1; margin-top: 0; }
+Screen.compact #navigation-hint { margin-top: 0; }
