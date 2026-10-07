@@ -305,3 +305,15 @@ async def test_new_execution_rows_preserve_selection_focus_and_server_order():
         assert app.selected["executions"] == selected
         assert table.ordered_rows[0].key.value == "inserted_before"
         assert isinstance(app.focused, Input)
+
+
+async def test_poll_and_late_reply_do_not_touch_unmounted_widgets():
+    client = FakeClient()
+    app = DashboardApp(client, interval=100)
+    async with app.run_test() as pilot:
+        await settled(app, pilot)
+        generation, query = app.generation, app._query()
+    calls = len(client.calls)
+    app._tick()
+    app._apply_refresh(generation, query, SNAPSHOT, None, None, None, "", "")
+    assert len(client.calls) == calls and not app.in_flight

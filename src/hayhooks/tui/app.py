@@ -88,7 +88,9 @@ def detail_text(item: dict[str, Any], *, execution: bool = False) -> Text:  # no
                 text.append(literal(json.dumps(item[field], ensure_ascii=False, indent=2)) + "\n\n")
         if message := item.get("detail_message"):
             text.append(literal(message) + "\n\n")
-        text.append("Timestamps show elapsed age, not measured runtime.\nResults are not displayed or retained.")
+        text.append(
+            "Creation/update timestamps do not measure runtime duration.\nResults are not displayed or retained."
+        )
     elif item.get("health") is not None:
         text.append("Responding process\n", style="bold")
         health = item["health"]
@@ -265,6 +267,8 @@ class DashboardApp(App):
         self.next_poll = 0
 
     def _tick(self) -> None:
+        if not self.is_running:
+            return
         self._header()
         if isinstance(self.focused, Input):
             navigation = "Tab Next control   Esc Return   Ctrl+C Exit"
@@ -358,6 +362,8 @@ class DashboardApp(App):
         detail_error: str,
     ) -> None:
         self.in_flight = False
+        if not self.is_running:
+            return
         if self.paused or generation != self.generation or query != self._query():
             self.next_poll = 0
             self._tick()
