@@ -107,7 +107,10 @@ class DashboardClient:
             or not all(
                 isinstance(row, dict)
                 and all(isinstance(row.get(key), str) for key in ("name", "type", "execution_mode", "state"))
-                and (row.get("health") is None or isinstance(row["health"], dict))
+                and (
+                    row.get("health") is None
+                    or (isinstance(row["health"], dict) and isinstance(row["health"].get("counts", {}), dict))
+                )
                 for row in data["deployments"]
             )
         ):

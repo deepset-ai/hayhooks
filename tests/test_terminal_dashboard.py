@@ -186,6 +186,36 @@ def test_once_json_stdout_and_error_exit(monkeypatch):
     assert "degraded" in result.stderr
 
 
+@pytest.mark.parametrize("code,path,detail,message", [
+    (404, "status", None, "Status API unavailable"),
+    (404, "agent/executions", None, "monitoring disabled"),
+    (404, "agent/executions/run_1", None, "expired"),
+    (503, "agent/executions", "Durable execution store is unavailable", "Execution store unavailable"),
+    (302, "status", None, "HTTP 302"),
+])
+def test_client_failures_are_distinct_and_never_become_empty_pages(code, path, detail, message):
+    client = DashboardClient("https://example.com/prefix")
+    response = Mock(status_code=code)
+    response.json.return_value = {"detail": detail}
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=None)
+    client.session.get = Mock(return_value=response)
+    with pytest.raises(DashboardError, match=message):
+        client.get(path)
+    assert client.session.get.call_args.kwargs["allow_redirects"] is False
+    client.close()
+
+
+def test_invalid_health_counts_are_rejected_before_rendering(monkeypatch):
+    client = DashboardClient("https://example.com")
+    malformed = copy.deepcopy(SNAPSHOT)
+    malformed["deployments"][0]["health"]["counts"] = []
+    monkeypatch.setattr(client, "get", lambda _: malformed)
+    with pytest.raises(DashboardError, match="invalid deployment"):
+        client.status()
+    client.close()
+
+
 async def test_obsolete_selection_single_worker_mouse_and_scroll():
     client = FakeClient()
     client.long_detail = True
