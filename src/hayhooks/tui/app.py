@@ -428,7 +428,7 @@ class DashboardApp(App):
     def _can_enumerate(self) -> bool:
         return any(item["name"] == self.pipeline and item.get("execution_enumeration") for item in self._deployments())
 
-    def _update_table(self) -> None:  # noqa: C901, PLR0912, PLR0915
+    def _update_table(self, *, recolor: bool = False) -> None:  # noqa: C901, PLR0912, PLR0915
         if not hasattr(self, "main_screen"):
             return
         execution = self.view == "executions"
@@ -511,7 +511,7 @@ class DashboardApp(App):
                 cells[3].stylize(getattr(self.current_theme, role) or BRAND_COLOR)
             if key not in self.items:
                 table.add_row(*cells, key=key)
-            elif self.items[key] != item:
+            elif recolor or self.items[key] != item:
                 for column, value in zip(table.columns, cells, strict=True):
                     table.update_cell(key, column, value)
         self.items = wanted
@@ -660,6 +660,7 @@ class DashboardApp(App):
 
     def action_theme(self) -> None:
         self.theme = "hayhooks-light" if self.theme == "hayhooks-dark" else "hayhooks-dark"
+        self._update_table(recolor=True)
 
     def action_executions(self) -> None:
         self._widget("#views").active = "executions"

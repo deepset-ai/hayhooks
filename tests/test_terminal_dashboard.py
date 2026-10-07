@@ -210,7 +210,9 @@ async def test_obsolete_selection_single_worker_mouse_and_scroll():
         client.block = None
         app.action_refresh_now()
         await settled(app, pilot)
-        await pilot.press("down", "enter", "end")
+        await pilot.press("down")
+        await settled(app, pilot)
+        await pilot.press("enter", "end")
         await pilot.pause()
         pane = app._widget("#detail-pane")
         pane.scroll_end(animate=False)
@@ -317,3 +319,17 @@ async def test_poll_and_late_reply_do_not_touch_unmounted_widgets():
     app._tick()
     app._apply_refresh(generation, query, SNAPSHOT, None, None, None, "", "")
     assert len(client.calls) == calls and not app.in_flight
+
+
+async def test_theme_change_recolors_unchanged_rows_without_losing_selection():
+    app = DashboardApp(FakeClient(), interval=100)
+    async with app.run_test() as pilot:
+        await settled(app, pilot)
+        table = app._widget("#rows")
+        before = table.get_row("agent")[3].spans
+        selected = app.selected["deployments"]
+        app.action_theme()
+        await pilot.pause()
+        after = table.get_row("agent")[3].spans
+        assert before != after and after[0].style == "#855600"
+        assert app.selected["deployments"] == selected
