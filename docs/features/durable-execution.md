@@ -624,3 +624,37 @@ recovery timing, monitoring, and incident response.
 
 Long-running A2A execution, A2A task persistence, push delivery, and A2A resume
 are not supported in this release. Existing A2A execution remains request-bound.
+
+## Monitoring API
+
+With `HAYHOOKS_MONITORING_ENABLED=true`, the main server additionally exposes
+`GET /{name}/executions`. Portable hosts opt in on both the store configuration
+and `create_durable_router`. Owner-scoped collections reuse the owner dependency;
+unscoped collections deny access unless an authenticated operator dependency
+explicitly authorizes the request. See
+[authentication and coverage](../deployment/durable-operations.md#execution-monitoring).
+
+| Query | Behavior |
+| --- | --- |
+| `limit` | 1–100, default 50 |
+| `cursor` | Validated opaque cursor from the previous page, bound to owner and filters |
+| `status` | queued, running, waiting, completed, failed, canceled |
+| `revision` | Exact stored revision |
+| `search` | Case-insensitive substring of the indexed execution ID, up to 128 characters |
+
+The response has `executions`, `next_cursor`, `has_more`, and `skipped_controls`.
+Each summary includes `execution_id`, `deployment`, stored `kind`/`revision`,
+`status`, `attempt`, UTC `created_at`/`updated_at`, `cancellation_pending` and
+`available_at` (retry timing). It includes no owners, leases, fences, idempotency
+material or application payloads. There is no exact filtered total. A bounded,
+sparse page may still have a next cursor. Monitoring-disabled collection routes
+answer 404; denied access answers 401/403; malformed queries answer 422; store
+unavailability answers 503. Existing selected-execution inspection stays scoped
+and includes public results; the terminal client discards those results.
+
+`GET /status` additively includes typed `deployments` and
+`capabilities.execution_enumeration`. Existing `pipelines`, `durable_mode` and
+`durable` fields and bounded health caching remain available. A degraded body
+can still return HTTP 200. Deployment summaries label worker/store scopes and
+MCP/A2A eligibility. They do not claim fleet worker totals or external service
+health for an ordinary loaded wrapper.

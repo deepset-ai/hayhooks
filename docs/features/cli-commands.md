@@ -102,10 +102,72 @@ For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm ru
 | `--additional-python-path` | | Additional Python path | `None` |
 | `--root-path` | | Root path for API | `/` |
 | `--reload` | | Reload on code changes (development) | `false` |
+| `--with-monitoring` | | Enable authenticated durable execution indexing and collection routes | `false` |
 | `--with-tracing-dashboard` | | Enable tracing dashboard UI and auto-build dashboard assets locally at runtime | `false` |
 | `--dashboard-path` | | URL path for tracing dashboard (requires `--with-tracing-dashboard`) | `/dashboard` |
 
 `--with-dashboard` and `--tracing-dashboard` are aliases for `--with-tracing-dashboard`.
+
+### dashboard
+
+Browse deployments and durable executions using GET requests only:
+
+```bash
+pip install 'hayhooks[tui]'
+hayhooks dashboard
+hayhooks dashboard --url https://example.com/hayhooks --pipeline research_agent
+hayhooks dashboard --interval 5
+hayhooks dashboard --once --json
+```
+
+`--url` preserves reverse-proxy path prefixes. The default URL follows the
+existing host/port/HTTPS settings. TLS verification stays enabled, including
+when `HAYHOOKS_DISABLE_SSL` is set; use `REQUESTS_CA_BUNDLE` for a private CA.
+The client uses 3-second connection and 5-second read timeouts. Polling defaults
+to two seconds and backs off up to 30 seconds after failures.
+
+Credentials come from `HAYHOOKS_DASHBOARD_TOKEN` (bearer token) or
+`HAYHOOKS_DASHBOARD_API_KEY` (`X-API-Key`, override its name with
+`HAYHOOKS_DASHBOARD_API_KEY_HEADER`). Keep credentials out of URLs.
+[Monitoring authentication](../deployment/durable-operations.md#monitoring-authentication)
+shows the supported FastAPI dependency integration.
+
+Deployments show the direct Haystack target's type, execution mode, description,
+API capabilities and durable health. Custom wrappers can declare
+`deployment_type = "agent"`, `"pipeline"`, or `"unknown"`; other values fail
+validation. A chat endpoint or MCP/A2A eligibility does not establish agent
+identity or prove a protocol server is running. `Loaded` means registered, not
+that external services were probed. Workers describe the responding process;
+store/revision counts are labeled separately.
+
+Use arrows to select rows, Tab/Shift+Tab to move focus, Enter for details, Esc
+to return, `/` to search, `e` for the selected durable deployment's executions,
+Space to pause, `r` to refresh, `?` for help, and `q` or Ctrl+C to exit. Text
+inputs keep ordinary shortcut characters as text; Ctrl+C always exits. Mouse
+selection and scrolling are supported. Details appear alongside the list on
+wide terminals and on a separate screen below 110 columns. `t` toggles themes.
+
+Deployment searches and type filters apply to the complete deployment snapshot.
+Execution ID searches, status and revision filters query the indexed collection,
+not just the visible page. Choose a durable deployment with the execution view's
+selector. Next/Previous buttons (or `]`/`[`) navigate bounded pages. A sparse page
+can have a next page. Stored kind and revision remain visible for older executions.
+Waiting, progress and errors are shown only for the selected item, bounded and
+rendered as literal text. Public results are discarded. Creation/update timestamps
+are shown; actual runtime duration is not inferred.
+
+Deployment browsing works without server monitoring. Execution discovery requires
+`HAYHOOKS_MONITORING_ENABLED=true` or `hayhooks run --with-monitoring` on **every
+writer**, plus owner authentication or an explicit operator dependency. It does
+not enable either dashboard UI. Request-bound execution history is unavailable.
+See [index coverage and retention](../deployment/durable-operations.md#execution-monitoring).
+
+`--once` prints one JSON status snapshot without Textual; `--json` requires
+`--once`. Adding `--pipeline NAME` also includes that deployment's execution page.
+Stdout contains JSON only. Errors go to stderr with exit code 1; a degraded server
+returns its structured snapshot and exits 1. Interactive failures retain the last
+good snapshot with stale/age indicators. Pausing stops polling and rejects in-flight
+updates; resuming refreshes the view.
 
 ### mcp run
 

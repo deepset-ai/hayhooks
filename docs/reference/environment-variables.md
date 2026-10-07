@@ -116,6 +116,36 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=serialized
 export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 ```
 
+## Terminal Monitoring
+
+### HAYHOOKS_MONITORING_ENABLED
+
+- Default: `false`
+- Description: Index new durable submissions and enable authenticated execution
+  collection routes. Equivalent to `hayhooks run --with-monitoring`. Enable it on
+  every writing replica. Does not launch a TUI or enable the tracing dashboard.
+  Existing executions are not backfilled; unscoped enumeration requires an explicit
+  [operator dependency](../deployment/durable-operations.md#monitoring-authentication).
+
+### HAYHOOKS_DASHBOARD_TOKEN
+
+- Default: unset
+- Description: Terminal client bearer token. Sent as `Authorization: Bearer ...`.
+
+### HAYHOOKS_DASHBOARD_API_KEY
+
+- Default: unset
+- Description: Terminal client API key. Sent in `X-API-Key` by default.
+
+### HAYHOOKS_DASHBOARD_API_KEY_HEADER
+
+- Default: `X-API-Key`
+- Description: HTTP header name for the terminal client's API key.
+
+These credential variables configure only the terminal client, not server
+authentication. The client always verifies TLS. Configure `REQUESTS_CA_BUNDLE`
+when the server uses a private certificate authority.
+
 ## Durable Mode
 
 ### HAYHOOKS_DURABLE_MODE

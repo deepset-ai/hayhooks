@@ -54,6 +54,18 @@ This guide covers how to install Hayhooks and its dependencies.
     For dashboard frontend local development commands, see the
     [dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
 
+=== "With Terminal Dashboard"
+
+    ```bash
+    pip install 'hayhooks[tui]'
+    hayhooks dashboard
+    ```
+
+    Adds Textual for the read-only terminal dashboard on Python 3.10–3.14.
+    Server startup and ordinary CLI commands do not require Textual.
+    [Dashboard commands](../features/cli-commands.md#dashboard) describe authentication,
+    snapshots, navigation, and the separate monitoring opt-in.
+
 === "With Durable Execution"
 
     ```bash
