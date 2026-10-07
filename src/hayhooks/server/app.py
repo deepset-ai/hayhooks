@@ -380,6 +380,8 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
     app.state.durable_runtime = None
     app.state.durable_redis_clients = ()
     app.state.durable_health = None
+    app.state.monitoring_enabled = settings.monitoring_enabled
+    app.state.durable_store = settings.durable_store
 
     app.add_middleware(RequestIdMiddleware)
 
@@ -469,6 +471,7 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         max_progress_event_bytes=settings.durable_max_progress_event_bytes,
         max_stream_chunks=settings.durable_max_stream_chunks,
         max_stream_chunk_bytes=settings.durable_max_stream_chunk_bytes,
+        monitoring_enabled=settings.monitoring_enabled,
     )
     runtime_config = RuntimeConfig(
         worker_concurrency=settings.durable_worker_concurrency,
@@ -526,7 +529,12 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         except Exception as error:
             msg = f"Failed to build the durable deployment of pipeline '{name}': {error}"
             raise PipelineModeError(msg) from error
-        router = create_durable_router(deployment, owner_id_dependency=durable_owner_dependency(wrapper))
+        router = create_durable_router(
+            deployment,
+            owner_id_dependency=durable_owner_dependency(wrapper),
+            monitoring_enabled=settings.monitoring_enabled,
+            monitoring_dependency=wrapper.durable_monitoring_access,
+        )
         if conflicts := [
             route.path
             for route in router.routes

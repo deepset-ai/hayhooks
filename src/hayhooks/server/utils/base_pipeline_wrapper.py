@@ -37,6 +37,7 @@ class BasePipelineWrapper(ABC):
     # Opt in to detached durable execution with an immutable deployment revision.
     durable_revision: str | None = None
     durable_resume_model: type[BaseModel] | None = None
+    deployment_type: str | None = None
 
     def __init__(self):
         self.pipeline = None
@@ -109,6 +110,13 @@ class BasePipelineWrapper(ABC):
         del request
         message = "durable_owner_id not implemented"
         raise NotImplementedError(message)
+
+    def durable_monitoring_access(self, request: Request) -> bool:
+        """Authenticate an unscoped collection request using host dependencies; return exactly True to allow it."""
+        del request
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Authenticated monitoring/operator dependency is required")
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         """

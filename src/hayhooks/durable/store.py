@@ -4,6 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import bisect
+import hashlib
+import heapq
+import json
 import re
 import time
 from collections import deque
@@ -39,6 +44,7 @@ from hayhooks.durable.engine import (
     plan_changes,
     require_owned,
     submission_plan,
+    validate_run_id,
 )
 
 CHUNK_CURSOR_START = "0-0"
@@ -46,6 +52,12 @@ MAINTENANCE_BATCH_SIZE = 100
 MAINTENANCE_MAX_BATCHES = 10
 MAX_CHUNK_READ_BYTES = 4_000_000
 MAX_CHUNK_READ_COUNT = 1_000
+MAX_EXECUTION_PAGE_SIZE = 100
+EXECUTION_CANDIDATE_LIMIT = 200
+EXECUTION_CURSOR_STAMP_WIDTH = 20
+MAX_EXECUTION_SEARCH_LENGTH = 128
+MAX_EXECUTION_REVISION_LENGTH = 512
+MAX_EXECUTION_CURSOR_LENGTH = 1024
 _CHUNK_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
 _MAX_CURSOR_PART = 2**64 - 1
 LEASE_COMMANDS = (ReleaseClaim, Heartbeat, Checkpoint, ScheduleRetry, Suspend, Complete, Fail)
@@ -93,6 +105,7 @@ class StoreConfig:
     max_progress_event_bytes: int = 8_192
     max_stream_chunks: int = 100
     max_stream_chunk_bytes: int = 64_000
+    monitoring_enabled: bool = False
 
     def __post_init__(self) -> None:
         if min(self.lease_commit_safety_ms, self.max_nonterminal_executions, self.max_stream_chunks) < 0:
@@ -135,6 +148,85 @@ class StreamChunk:
     skipped: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class ControlPage:
+    controls: tuple[ExecutionControl, ...]
+    next_cursor: str | None
+    has_more: bool
+    skipped_controls: int = 0
+
+
+def monitoring_scope(owner_id: str | None) -> str:
+    # Separate unscoped access from an explicitly empty owner.
+    return hashlib.sha256(json.dumps(owner_id).encode()).hexdigest()
+
+
+def creation_member(control: ExecutionControl) -> str:
+    return f"{control.created_at_ms:0{EXECUTION_CURSOR_STAMP_WIDTH}d}:{control.run_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class ControlQuery:
+    """Bounded, owner-scoped creation pagination shared by both stores."""
+
+    owner_id: str | None = None
+    limit: int = 50
+    cursor: str | None = None
+    status: ExecutionStatus | None = None
+    revision: str | None = None
+    search: str = ""
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.limit <= MAX_EXECUTION_PAGE_SIZE:
+            raise ValueError("limit must be between 1 and 100")
+        if len(self.search) > MAX_EXECUTION_SEARCH_LENGTH or (
+            self.revision is not None and not 1 <= len(self.revision) <= MAX_EXECUTION_REVISION_LENGTH
+        ):
+            raise ValueError("execution filter is too long or empty")
+        self.after()
+
+    @property
+    def scope(self) -> str:
+        return monitoring_scope(self.owner_id)
+
+    @property
+    def fingerprint(self) -> str:
+        return hashlib.sha256(json.dumps([self.scope, self.status, self.revision, self.search]).encode()).hexdigest()
+
+    def after(self) -> str:
+        if self.cursor is None:
+            return ""
+        try:
+            if len(self.cursor) > MAX_EXECUTION_CURSOR_LENGTH:
+                raise ValueError
+            fingerprint, member = json.loads(base64.b64decode(self.cursor, altchars=b"-_", validate=True))
+            if not isinstance(fingerprint, str) or not isinstance(member, str):
+                raise ValueError
+            stamp, run_id = member.split(":", 1)
+            validate_run_id(run_id)
+            if (
+                fingerprint != self.fingerprint
+                or len(stamp) != EXECUTION_CURSOR_STAMP_WIDTH
+                or not stamp.isascii()
+                or not stamp.isdigit()
+            ):
+                raise ValueError
+            return member
+        except (ValueError, TypeError, UnicodeError) as error:
+            raise ValueError("invalid execution cursor for this owner and query") from error
+
+    def encode_cursor(self, member: str) -> str:
+        return base64.urlsafe_b64encode(json.dumps([self.fingerprint, member]).encode()).decode()
+
+    def matches(self, control: ExecutionControl) -> bool:
+        return (
+            control.owner_id == self.owner_id
+            and (self.status is None or control.status == self.status)
+            and (self.revision is None or control.definition_revision == self.revision)
+            and self.search.lower() in control.run_id.lower()
+        )
+
+
 class ExecutionStore(Protocol):
     """Atomic persistence required by the durable runtime."""
 
@@ -153,6 +245,10 @@ class ExecutionStore(Protocol):
 
     async def read_control(self, run_id: str) -> ExecutionControl | None:
         """Read only the decoded control, or ``None`` when the execution does not exist."""
+        ...
+
+    async def list_controls(self, query: ControlQuery) -> ControlPage:
+        """Read at most 200 indexed candidates, never payloads or another owner's index."""
         ...
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan: ...
@@ -208,7 +304,11 @@ class MemoryExecutionStore:
         self._lease_expiry: dict[tuple[str, int], int] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
         self._terminal_cleanup: dict[str, tuple[int, int, str, tuple[str, str]]] = {}
+        self._terminal_expiry: list[tuple[int, str]] = []
+        self._chunk_expiry: list[tuple[int, str]] = []
         self._nonterminal = 0
+        # ponytail: sorted lists cost O(n) per insertion/removal; use Redis for large monitored collections.
+        self._execution_index: dict[str, list[str]] = {}
 
     async def initialize(self) -> None:
         return None
@@ -218,6 +318,9 @@ class MemoryExecutionStore:
             raise ValueError("control deployment does not match this store")
         validate_payload_size("input", input_payload, self.config.max_payload_bytes)
         self._cleanup_terminal(self._clock())
+        self._expire_control(control.run_id, self._clock())
+        if existing := self._idempotency.get(control.idempotency_digest):
+            self._expire_control(existing[0], self._clock())
         binding = (control.run_id, control.idempotency_binding_digest)
         if existing := self._idempotency.get(control.idempotency_digest):
             if existing[1] != binding[1]:
@@ -236,6 +339,10 @@ class MemoryExecutionStore:
         plan = submission_plan(control, input_payload)
         self._idempotency[control.idempotency_digest] = binding
         self._apply(control, plan, new_submission=True)
+        if self.config.monitoring_enabled:
+            bisect.insort(
+                self._execution_index.setdefault(monitoring_scope(control.owner_id), []), creation_member(control)
+            )
         log.bind(run_id=control.run_id, deployment=control.deployment).debug("Submitted durable execution")
         return SubmissionResult(created=True, control=control)
 
@@ -247,7 +354,29 @@ class MemoryExecutionStore:
 
     async def read_control(self, run_id: str) -> ExecutionControl | None:
         self._cleanup_terminal(self._clock())
+        self._expire_control(run_id, self._clock())
         return self._controls.get(run_id)
+
+    async def list_controls(self, query: ControlQuery) -> ControlPage:
+        if not self.config.monitoring_enabled:
+            raise ExecutionStoreError("execution monitoring is disabled")
+        self._cleanup_terminal(self._clock())
+        index = self._execution_index.get(query.scope, [])
+        start = bisect.bisect_right(index, query.after())
+        candidates = index[start : start + EXECUTION_CANDIDATE_LIMIT + 1]
+        controls = []
+        examined = 0
+        for member in candidates[:EXECUTION_CANDIDATE_LIMIT]:
+            examined += 1
+            self._expire_control(member.split(":", 1)[1], self._clock())
+            control = self._controls.get(member.split(":", 1)[1])
+            if control is not None and query.matches(control):
+                controls.append(control)
+                if len(controls) == query.limit:
+                    break
+        more = examined < len(candidates)
+        cursor = query.encode_cursor(candidates[examined - 1]) if more and examined else None
+        return ControlPage(tuple(controls), cursor, more)
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         current = self._controls.get(run_id)
@@ -413,9 +542,13 @@ class MemoryExecutionStore:
                 control.idempotency_digest,
                 binding,
             )
+            expiry, chunk_expiry, _, _ = self._terminal_cleanup[control.run_id]
+            heapq.heappush(self._terminal_expiry, (expiry, control.run_id))
+            heapq.heappush(self._chunk_expiry, (chunk_expiry, control.run_id))
 
     def _read(self, run_id: str, *, private: bool) -> StoredExecution | None:
         self._cleanup_terminal(self._clock())
+        self._expire_control(run_id, self._clock())
         control = self._controls.get(run_id)
         if control is None:
             return None
@@ -429,6 +562,10 @@ class MemoryExecutionStore:
         return stored
 
     def _chunks_after(self, run_id: str, after: str) -> tuple[StreamChunk, ...]:
+        now_ms = self._clock()
+        self._expire_control(run_id, now_ms)
+        if (entry := self._terminal_cleanup.get(run_id)) is not None and entry[1] <= now_ms:
+            self._chunks.pop(run_id, None)
         _, sequence = parse_chunk_cursor(after)
         chunks = tuple(self._chunks.get(run_id, ()))
         if after != CHUNK_CURSOR_START and not any(chunk.cursor == after for chunk in chunks):
@@ -448,18 +585,34 @@ class MemoryExecutionStore:
             self._chunks_written.notify_all()
 
     def _cleanup_terminal(self, now_ms: int) -> None:
-        for run_id, (expires_at, chunks_expire_at, digest, binding) in tuple(self._terminal_cleanup.items()):
-            if chunks_expire_at <= now_ms:
-                self._chunks.pop(run_id, None)
-            if expires_at > now_ms:
-                continue
-            self._terminal_cleanup.pop(run_id)
-            if self._idempotency.get(digest) == binding:
-                self._idempotency.pop(digest)
-            self._controls.pop(run_id, None)
-            self._payloads.pop(run_id, None)
-            self._progress.pop(run_id, None)
-            self._chunks.pop(run_id, None)
+        for queue, chunks_only in ((self._chunk_expiry, True), (self._terminal_expiry, False)):
+            for _ in range(MAINTENANCE_BATCH_SIZE):
+                if not queue or queue[0][0] > now_ms:
+                    break
+                _, run_id = heapq.heappop(queue)
+                if chunks_only:
+                    if (entry := self._terminal_cleanup.get(run_id)) is not None and entry[1] <= now_ms:
+                        self._chunks.pop(run_id, None)
+                else:
+                    self._expire_control(run_id, now_ms)
+
+    def _expire_control(self, run_id: str, now_ms: int) -> None:
+        entry = self._terminal_cleanup.get(run_id)
+        if entry is None or entry[0] > now_ms:
+            return
+        _, _, digest, binding = self._terminal_cleanup.pop(run_id)
+        if self._idempotency.get(digest) == binding:
+            self._idempotency.pop(digest)
+        control = self._controls.pop(run_id, None)
+        if control is not None:
+            index = self._execution_index.get(monitoring_scope(control.owner_id), [])
+            member = creation_member(control)
+            position = bisect.bisect_left(index, member)
+            if position < len(index) and index[position] == member:
+                index.pop(position)
+        self._payloads.pop(run_id, None)
+        self._progress.pop(run_id, None)
+        self._chunks.pop(run_id, None)
 
 
 def parse_chunk_cursor(value: str) -> tuple[int, int]:

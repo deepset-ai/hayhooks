@@ -115,6 +115,7 @@ class AppSettings(BaseSettings):
     # HAYHOOKS_PIPELINES_DIR, deploy/undeploy is disabled, and the main HTTP
     # server hosts durable wrappers.
     durable_mode: bool = False
+    monitoring_enabled: bool = False
     # Hand claims of work still running after the shutdown grace to another process.
     durable_release_running_on_shutdown: bool = False
     # Redis is deliberately the production default; memory storage is useful

@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import wraps
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Request, Response, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from loguru import logger as log
 
@@ -22,11 +22,12 @@ from hayhooks.durable.engine import (
     ExecutionStatus,
     InvalidExecutionTransitionError,
 )
-from hayhooks.durable.models import ExecutionResult, decode_json, project_execution
+from hayhooks.durable.models import ExecutionPage, ExecutionResult, decode_json, project_execution, summarize_execution
 from hayhooks.durable.runtime import DurableDeployment
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     ChunkCursorExpiredError,
+    ControlQuery,
     ExecutionAdmissionError,
     ExecutionIdempotencyConflictError,
     ExecutionStoreCorruptionError,
@@ -46,6 +47,10 @@ OwnerIdDependency = Callable[..., str | Awaitable[str]]
 
 def _unscoped_owner() -> None:
     return None
+
+
+def _deny_monitoring() -> bool:
+    raise HTTPException(status_code=403, detail="Authenticated monitoring/operator dependency is required")
 
 
 def _validated_owner(owner_id: object, *, enforce_owner: bool) -> str | None:
@@ -250,10 +255,12 @@ async def _stream_events(  # noqa: C901, PLR0913
         yield _sse("error", '{"detail":"Execution stream interrupted"}')
 
 
-def create_durable_router(  # noqa: C901
+def create_durable_router(  # noqa: C901, PLR0915
     deployment: DurableDeployment,
     *,
     owner_id_dependency: OwnerIdDependency | None,
+    monitoring_enabled: bool = False,
+    monitoring_dependency: Callable[..., Any] | None = None,
 ) -> APIRouter:
     """Expose one caller-owned deployment without managing its lifecycle."""
     router = APIRouter()
@@ -262,6 +269,47 @@ def create_durable_router(  # noqa: C901
     route_names = {
         key: f"hayhooks.durable.{deployment.name}.{key}" for key in ("submit", "self", "cancel", "resume", "stream")
     }
+
+    if monitoring_enabled:
+        # Owner dependencies always retain their scope. Operator access applies only to unscoped deployments.
+        collection_dependency = owner_dependency if enforce_owner else (monitoring_dependency or _deny_monitoring)
+
+        async def list_executions(  # noqa: PLR0913
+            access: object = Depends(collection_dependency),
+            limit: int = Query(default=50, ge=1, le=100),
+            cursor: str | None = Query(default=None, max_length=1024),
+            status_filter: ExecutionStatus | None = Query(default=None, alias="status"),
+            revision: str | None = Query(default=None, min_length=1, max_length=512),
+            search: str = Query(default="", max_length=128),
+        ) -> ExecutionPage:
+            if not enforce_owner and access is not True:
+                raise HTTPException(status_code=403, detail="Monitoring dependency must explicitly authorize access")
+            owner = _validated_owner(access, enforce_owner=enforce_owner)
+            page = await deployment.store.list_controls(
+                ControlQuery(
+                    owner_id=owner,
+                    limit=limit,
+                    cursor=cursor,
+                    status=status_filter,
+                    revision=revision,
+                    search=search,
+                )
+            )
+            return ExecutionPage(
+                executions=[summarize_execution(control) for control in page.controls],
+                next_cursor=page.next_cursor,
+                has_more=page.has_more,
+                skipped_controls=page.skipped_controls,
+            )
+
+        router.add_api_route(
+            "/executions",
+            _translate_errors(list_executions, deployment.name),
+            methods=["GET"],
+            name=f"hayhooks.durable.{deployment.name}.list",
+            response_model=ExecutionPage,
+            tags=["durable executions"],
+        )
 
     async def submit_execution(
         payload: Any,
