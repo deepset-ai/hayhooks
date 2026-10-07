@@ -1,0 +1,20 @@
+Screen { background: $background; color: $text; }
+#connection { height: 2; padding: 0 1; background: $panel; text-style: bold; }
+#views { height: 3; }
+#filters, #execution-controls { height: 3; padding: 0 1; }
+#search { width: 2fr; }
+#type-filter, #status-filter { width: 1fr; min-width: 22; }
+#deployment-filter, #revision-filter { width: 1fr; }
+#message { height: auto; max-height: 3; padding: 0 1; color: $text-muted; }
+#panes { height: 1fr; padding: 0 1; }
+#rows { width: 3fr; height: 1fr; }
+#detail-pane { width: 2fr; height: 1fr; padding: 0 2; background: $surface; }
+#detail-pane:focus, #full-detail:focus { background: $panel; }
+#detail { height: auto; }
+#pagination { height: 3; padding: 0 1; }
+#pagination Button { min-width: 12; }
+#page-label { width: 1fr; content-align: center middle; }
+.detail-heading { height: 2; padding: 0 2; background: $panel; text-style: bold; }
+#full-detail { height: 1fr; padding: 1 2; }
+Footer { background: $panel; }
+#navigation-hint { height: 1; padding: 0 1; background: $panel; color: $text-muted; }

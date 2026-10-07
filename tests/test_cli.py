@@ -305,3 +305,20 @@ def test_run_command_refuses_workers_in_durable_mode(monkeypatch, caplog):
     assert result.exit_code == 1
     assert "--workers 2 is not supported" in caplog.text
     assert "replicas" in caplog.text
+
+
+def test_run_with_monitoring_propagates_server_setting_and_environment(monkeypatch):
+    import os
+    from unittest.mock import Mock
+    from typer.testing import CliRunner
+    from hayhooks.cli import hayhooks_cli
+    from hayhooks.settings import settings
+
+    monkeypatch.setattr(settings, "monitoring_enabled", False)
+    monkeypatch.delenv("HAYHOOKS_MONITORING_ENABLED", raising=False)
+    monkeypatch.setattr("hayhooks.cli.base.get_app", Mock())
+    monkeypatch.setattr("hayhooks.server.app.run_app", Mock())
+    result = CliRunner().invoke(hayhooks_cli, ["run", "--with-monitoring"])
+    assert result.exit_code == 0, result.output
+    assert settings.monitoring_enabled is True
+    assert os.environ["HAYHOOKS_MONITORING_ENABLED"] == "true"

@@ -9,6 +9,7 @@ import typer
 from fastapi import FastAPI
 
 from hayhooks.cli.a2a import a2a
+from hayhooks.cli.dashboard import dashboard
 from hayhooks.cli.mcp import mcp
 from hayhooks.cli.pipeline import pipeline
 from hayhooks.cli.theme import apply_typer_theme
@@ -20,6 +21,7 @@ hayhooks_cli = typer.Typer(name="hayhooks", rich_markup_mode="rich")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
 hayhooks_cli.add_typer(mcp, name="mcp")
 hayhooks_cli.add_typer(a2a, name="a2a")
+hayhooks_cli.command()(dashboard)
 
 
 def _set_env(key: str, value: str | None) -> None:
@@ -101,6 +103,9 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
     with_chainlit: Annotated[
         bool, typer.Option("--with-chainlit", help="Enable embedded Chainlit UI (requires hayhooks[chainlit])")
     ] = False,
+    with_monitoring: Annotated[
+        bool, typer.Option("--with-monitoring", help="Enable authenticated durable execution enumeration")
+    ] = False,
     with_tracing_dashboard: Annotated[
         bool,
         typer.Option(
@@ -156,6 +161,9 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
     settings.port = port
     settings.pipelines_dir = pipelines_dir
     settings.root_path = root_path
+    if with_monitoring:
+        _set_env("HAYHOOKS_MONITORING_ENABLED", "true")
+        settings.monitoring_enabled = True
 
     if additional_python_path:
         _set_env("HAYHOOKS_ADDITIONAL_PYTHON_PATH", additional_python_path)
