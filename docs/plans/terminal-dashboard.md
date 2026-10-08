@@ -4,9 +4,10 @@ Build an opt-in, browsable, read-only terminal dashboard with Textual. It should
 
 This carries forward the decisions agreed in the dashboard conversation: Textual, an optional `hayhooks[tui]` extra, a separate `hayhooks dashboard` command, keyboard and mouse browsing, deployment and execution views, and progressive detail disclosure. A passive Rich display is no longer the target.
 
-## Current baseline
+## Historical baseline
 
-Verified on 7 October 2026 against `ec83936c`:
+Verified on 7 October 2026 against `ec83936c`. This baseline is historical;
+the 8 October migration below supersedes the separate browser tracing dashboard:
 
 - The existing React tracing dashboard lives under `dashboard/`. It is a separate feature and remains available.
 - There is no Textual dependency, `tui` extra, or terminal dashboard command in the current checkout. Rebuilding does not assume that earlier implementation files can be recovered.
@@ -289,4 +290,83 @@ follow-up changes terminal presentation and its focused checks.
 
 ## Deferred features
 
-Defer execution controls, live token streams, tracing waterfalls, charts, cross-server/fleet aggregation, cross-deployment execution merging, persistent dashboard preferences, and automatic historical backfill. Add selected-execution SSE only if polling proves insufficient; reuse the existing endpoint and cursor behavior when that need arises. Request-bound execution history also needs its own observation source, so do not invent it from durable records or present process-local traces as a complete history.
+Defer execution controls, live token streams, charts, cross-server/fleet aggregation, cross-deployment execution merging, persistent dashboard preferences, and automatic historical backfill. Add selected-execution SSE only if polling proves insufficient; reuse the existing endpoint and cursor behavior when that need arises. Request-bound execution history also needs its own observation source, so do not invent it from durable records or present process-local traces as a complete history.
+
+
+## Terminal tracing migration — 8 October 2026
+
+Commits **`dd6211e7`** (browser removal and authenticated trace API) and
+**`fccf4b44`** (terminal views, documentation and reviewed artifacts) complete
+this migration. The recovery record follows those implementation commits.
+
+The requested migration replaces the React tracing dashboard with a third native
+**Traces** tab in `hayhooks dashboard`. The browser sources, npm build/test job,
+static asset packaging/mounting, web-only settings and old CLI flags are removed.
+The existing bounded trace buffer, Haystack component capture, durable attempt
+traces and optional OTLP export remain in use. No project dependencies were added.
+
+The terminal now offers entrypoint/kind/state filters, trace/tag search,
+newest/slowest sorting, failure counts, finished-duration averages, streaming
+indicators, tags/errors and a native expandable span tree with timing offsets,
+waterfall bars and slow-component highlighting. Keyboard navigation, light/dark
+themes, compact layouts, pause, local clearing and stale snapshots work across
+80x24, 120x36 and 160x48. Expanded branches, selected spans and scroll positions
+survive trace updates; inspecting an evicted/filtered trace explicitly labels
+its retained snapshot. Returning from help restores inspector focus.
+
+Enable the API with `hayhooks run --with-tracing` and open it using
+`hayhooks dashboard --traces`. See [operator setup and migration](../reference/tracing.md).
+All `/traces` routes require a private bearer token or a host-provided verified
+operator dependency. These traces can include every user served by one process;
+owner-scoped durable authorization alone does not grant access. The terminal
+performs GET requests only, fetching at most 100 recent traces per refresh on
+its existing background worker. Clearing hides traces locally. This bounded
+process sample is distinct from durable execution history or persistent OTLP data.
+
+### Qualification
+
+- Final unit run: **1,346 passed, 4 skipped, 129 deselected, 3 expected failures**.
+  Command: `PYTHONPATH=/tmp/hayhooks-tracing-protobuf6:.:src .venv/bin/pytest -q -m 'not integration'`.
+  The temporary target supplies protobuf 6.33.6 for the previously documented
+  A2A/protobuf 7 incompatibility. Project dependency constraints and the existing
+  environment were not changed. This run used Haystack 3.3.0 and Textual 8.2.8.
+- The **38 terminal cases** passed, including 14 trace cases covering all three
+  sizes, search/filter/sort, navigation, live root semantics, malformed metadata,
+  local clearing, pause, eviction, themes, help/focus and JSON snapshots.
+  Trace API checks cover disabled mounting, removed browser paths, default denial,
+  bearer credentials, operator overrides and every protected route.
+- Final wheel smoke checks on **Python 3.10 and 3.14** cover core-only CLI/server
+  startup, missing-extra guidance, JSON trace snapshots without Textual, bundled
+  styles and an installed native trace inspector/tree/theme. The wheel contains
+  no React dashboard files.
+- A real local HTTP server captured successful and failed real Haystack Pipeline
+  runs with component spans. Unauthorized access returned 401. A real terminal
+  browsed the span tree, changed theme, cleared locally and exited with code 0;
+  the alternate screen was restored. A six-trace fixture had a median snapshot
+  round trip of **1.74 ms** across ten local requests; this is a small fixture
+  observation, not a production performance claim.
+- Source Ruff/format checks, focused type checks of TUI/CLI/settings/trace router,
+  `git diff --check` and the documentation build passed. The previously recorded
+  full-source type diagnostics and documentation source-link warnings remain.
+  Redis store/runtime behavior is unchanged; the earlier Redis qualification
+  above remains the recorded evidence, rather than a new Redis run.
+
+### Trace review artifacts
+
+Twenty-one additional SVG captures in `docs/assets/terminal-dashboard/` cover
+traces, light traces, spans, light spans, errors, empty filters and stale snapshots
+at all three sizes. They use synthetic fixtures, not production data.
+
+| State | 80x24 | 120x36 | 160x48 |
+| --- | --- | --- | --- |
+| Traces | [Capture](../assets/terminal-dashboard/traces-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-160x48.svg) |
+| Light traces | [Capture](../assets/terminal-dashboard/traces-light-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-light-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-light-160x48.svg) |
+| Span inspector | [Capture](../assets/terminal-dashboard/spans-80x24.svg) | [Capture](../assets/terminal-dashboard/spans-120x36.svg) | [Capture](../assets/terminal-dashboard/spans-160x48.svg) |
+| Light spans | [Capture](../assets/terminal-dashboard/spans-light-80x24.svg) | [Capture](../assets/terminal-dashboard/spans-light-120x36.svg) | [Capture](../assets/terminal-dashboard/spans-light-160x48.svg) |
+| Errors | [Capture](../assets/terminal-dashboard/traces-error-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-error-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-error-160x48.svg) |
+| Empty | [Capture](../assets/terminal-dashboard/traces-empty-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-empty-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-empty-160x48.svg) |
+| Stale | [Capture](../assets/terminal-dashboard/traces-stale-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-stale-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-stale-160x48.svg) |
+
+Raster previews: [Trace list](../assets/terminal-dashboard/traces-120x36.png)
+and [Span inspector](../assets/terminal-dashboard/spans-160x48.png).
+Temporary qualification servers and browser tabs were stopped after review.
