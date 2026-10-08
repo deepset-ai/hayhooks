@@ -12,6 +12,11 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import requests
 
+TRACE_LIMIT = 100
+MAX_TRACE_DEPTH = 64
+MAX_TRACE_SPANS = 500
+MAX_TRACE_ID_LENGTH = 128
+
 
 class DashboardError(RuntimeError):
     """A safe display message, without URLs, credentials or response bodies."""
@@ -43,6 +48,7 @@ class DashboardClient:
         self.url = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
         self.label = literal(parts.netloc + parts.path.rstrip("/"), 200)
         self.timeout = timeout
+        self.trace_config: dict[str, Any] | None = None
         self.session = requests.Session()
         if token := os.environ.get("HAYHOOKS_DASHBOARD_TOKEN"):
             self.session.headers["Authorization"] = f"Bearer {token}"
@@ -65,6 +71,8 @@ class DashboardClient:
                 if response.status_code in {401, 403}:
                     raise DashboardError("Authentication failed or monitoring access denied (401/403)")
                 if response.status_code == HTTPStatus.NOT_FOUND:
+                    if path.startswith("traces"):
+                        raise DashboardError("Local tracing unavailable; enable --with-tracing on the server (404)")
                     if path == "status":
                         raise DashboardError("Status API unavailable (404)")
                     if path.endswith("/executions"):
@@ -140,6 +148,78 @@ class DashboardClient:
         if data.get("execution_id") != execution_id:
             raise DashboardError("Server returned details for a different execution")
         return data
+
+    def traces(self) -> dict[str, Any]:  # noqa: C901
+        """A bounded authoritative snapshot, so restarts/evictions need no cursor recovery."""
+        if self.trace_config is None:
+            config = self.get("traces/config")
+            if (
+                not all(
+                    type(config.get(key)) is int and config[key] > 0
+                    for key in ("buffer_capacity", "fetch_limit", "slow_component_ms")
+                )
+                or config["fetch_limit"] > TRACE_LIMIT
+            ):
+                raise DashboardError("Server returned invalid trace configuration")
+            self.trace_config = config
+        data = self.get("traces", limit=self.trace_config["fetch_limit"])
+        if (
+            not isinstance(data.get("traces"), list)
+            or len(data["traces"]) > self.trace_config["fetch_limit"]
+            or not isinstance(data.get("has_more"), bool)
+        ):
+            raise DashboardError("Server returned an invalid trace snapshot")
+        try:
+            ids = set()
+            for trace in data["traces"]:
+                if (
+                    not isinstance(trace, dict)
+                    or not isinstance(trace["trace_id"], str)
+                    or not 0 < len(trace["trace_id"]) <= MAX_TRACE_ID_LENGTH
+                    or trace["trace_id"] in ids
+                ):
+                    raise ValueError
+                ids.add(trace["trace_id"])
+                if trace.get("entrypoint") is not None and not isinstance(trace["entrypoint"], str):
+                    raise ValueError
+                nodes = [(trace["root_span"], 0)]
+                spans = set()
+                self._validate_trace_fields(trace, 32)
+                while nodes:
+                    span, depth = nodes.pop()
+                    self._validate_trace_fields(span, 8)
+                    if (
+                        depth > MAX_TRACE_DEPTH
+                        or len(spans) >= MAX_TRACE_SPANS
+                        or not isinstance(span["span_id"], str)
+                        or span["span_id"] in spans
+                        or not isinstance(span["name"], str)
+                        or not isinstance(span["running"], bool)
+                        or not isinstance(span["children"], list)
+                    ):
+                        raise ValueError
+                    spans.add(span["span_id"])
+                    nodes.extend((child, depth + 1) for child in span["children"])
+                if type(trace["span_count"]) is not int or not len(spans) <= trace["span_count"] <= MAX_TRACE_SPANS:
+                    raise ValueError
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise DashboardError("Server returned invalid trace metadata") from error
+        return {**data, "config": self.trace_config}
+
+    @staticmethod
+    def _validate_trace_fields(item: dict[str, Any], tag_limit: int) -> None:
+        if not all(type(item[key]) is int and item[key] >= 0 for key in ("start_time_ms", "duration_ms")):
+            raise ValueError
+        tags = item["tags"]
+        if (
+            not isinstance(tags, list)
+            or len(tags) > tag_limit
+            or not all(
+                isinstance(tag, dict) and isinstance(tag.get("key"), str) and isinstance(tag.get("value"), str)
+                for tag in tags
+            )
+        ):
+            raise ValueError
 
     def close(self) -> None:
         self.session.close()

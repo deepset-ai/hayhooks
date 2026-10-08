@@ -151,7 +151,7 @@ with an owner ID.
 | Startup | `HAYHOOKS_STARTUP_DEPLOY_*` strategy; failing pipelines are skipped, but a durable wrapper stops startup because it requires durable mode | Sequential, and any failure stops startup |
 | Source directory | Deployments may write to it | Never written, including automatic bytecode |
 
-Ordinary run, OpenAI-compatible, streaming, file, dashboard, and Chainlit
+Ordinary run, OpenAI-compatible, streaming, file, tracing, and Chainlit
 endpoints behave the same in both modes. `GET /status` reports `durable_mode`,
 so clients can tell which kind of server they are talking to.
 
@@ -172,7 +172,7 @@ fails, so a typo never becomes a silently missing pipeline:
   other files are ignored.
 - Names are the file stem or directory name, restricted to letters, digits,
   `_`, and `-`. Two definitions with the same name, or a name whose routes a
-  server route or mount would shadow (such as `status` or the dashboard path),
+  server route or mount would shadow (such as `status`),
   fail startup.
 - `files_to_ignore_patterns` and the startup deployment strategy settings do
   not apply.
@@ -212,7 +212,7 @@ Serve production pipelines from an immutable image or a read-only, versioned
 mount.
 
 Run one durable-mode app per process. The import root, the bytecode policy,
-and the dashboard trace stream are process-wide, so building a second app in
+and the process trace stream are process-wide, so building a second app in
 the same process replaces the first app's pipeline modules.
 `hayhooks run --workers N` exits with an error when `N > 1` in durable mode.
 Scale with replicas that share Redis, and do not use another multi-worker
@@ -482,7 +482,7 @@ Unlike `get()`, it allows a revision mismatch by default. `submit()` raises
 
 Without an owner dependency, the router uses bearer-ID access: possession of a
 random execution ID grants access. Execution IDs appear in logs and in the
-tracing dashboard as `hayhooks.durable.execution_id`, so restrict access to
+terminal trace inspector as `hayhooks.durable.execution_id`, so restrict access to
 both. A multi-user host should pass an
 `owner_id_dependency` to `create_durable_router`. The host authenticates the request and returns a stable
 user or tenant ID. The router scopes execution access and idempotency to that ID

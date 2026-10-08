@@ -17,6 +17,16 @@ from textual.widgets import Button, DataTable, Footer, Input, Select, Static, Ta
 
 from hayhooks.colors import BRAND_COLOR
 from hayhooks.tui.client import DashboardClient, DashboardError, literal
+from hayhooks.tui.traces import (
+    COMFORTABLE_TERMINAL_HEIGHT,
+    WIDE_TERMINAL,
+    TraceScreen,
+    duration,
+    trace_detail,
+    trace_kind,
+    trace_state,
+    trace_tags,
+)
 
 HELP = """Keyboard and mouse
 
@@ -36,12 +46,13 @@ q / Ctrl+C   Exit
 Click rows to select; use the wheel to scroll.
 Search and filters stay in place when returning from details.
 Execution pages scan at most 200 candidates; a sparse page may have a next page.
+v                  Traces tab
+c                  Hide the currently buffered traces locally (Traces tab)
+Traces: filter entrypoint/kind/state, sort newest/slowest, Enter for span tree.
+Span tree: arrows select, Enter expands/collapses, Tab scrollable tags/errors.
+Recent traces describe the responding process, not durable execution history.
 All network requests are GET. Public results are discarded.
 """
-
-
-WIDE_TERMINAL = 110
-COMFORTABLE_TERMINAL_HEIGHT = 30
 
 
 def state_color(state: str, theme: Theme) -> str:
@@ -189,9 +200,13 @@ class DashboardApp(App):
         Binding("right_square_bracket", "next", "Next", show=False),
         Binding("escape", "escape", "Back", show=False),
         Binding("t", "theme", "Theme"),
+        Binding("v", "traces", "Traces", show=False),
+        Binding("c", "clear_traces", "Clear locally", show=False),
     ]
 
-    def __init__(self, client: DashboardClient, *, pipeline: str | None = None, interval: float = 2.0) -> None:
+    def __init__(
+        self, client: DashboardClient, *, pipeline: str | None = None, interval: float = 2.0, traces: bool = False
+    ) -> None:
         super().__init__()
         for name, dark in (("hayhooks-dark", True), ("hayhooks-light", False)):
             self.register_theme(
@@ -223,15 +238,18 @@ class DashboardApp(App):
         self.client = client
         self.pipeline = pipeline
         self.interval = interval
-        self.view = "deployments"
+        self.view = "traces" if traces else "deployments"
         self.snapshot: dict[str, Any] = {}
         self.page: dict[str, Any] = {}
+        self.trace_page: dict[str, Any] = {}
+        self.hidden_traces: set[str] = set()
+        self.trace_entrypoints: tuple[str, ...] = ()
         self.items: dict[str, dict[str, Any]] = {}
-        self.selected: dict[str, str | None] = {"deployments": pipeline, "executions": None}
+        self.selected: dict[str, str | None] = {"deployments": pipeline, "executions": None, "traces": None}
         self.details: dict[str, Any] = {}
         self.cursor: str | None = None
         self.history: list[str | None] = []
-        self.searches = {"deployments": "", "executions": ""}
+        self.searches = {"deployments": "", "executions": "", "traces": ""}
         self.paused = False
         self.in_flight = False
         self.generation = 0
@@ -246,7 +264,12 @@ class DashboardApp(App):
         with Horizontal(id="masthead"):
             yield Static(Text("HAYHOOKS\nTerminal monitor", style="bold"), id="brand")
             yield Static("Connecting…", id="connection", markup=False)
-        yield Tabs(Tab("Deployments", id="deployments"), Tab("Executions", id="executions"), id="views")
+        yield Tabs(
+            Tab("Deployments", id="deployments"),
+            Tab("Executions", id="executions"),
+            Tab("Traces", id="traces"),
+            id="views",
+        )
         with Horizontal(id="filters"):
             yield Input(placeholder="/  Search deployments", id="search", compact=True)
             yield Select(
@@ -266,6 +289,35 @@ class DashboardApp(App):
                 id="status-filter",
                 compact=True,
             )
+            yield Select(
+                [
+                    ("All kinds", "all"),
+                    *[
+                        (kind.title(), kind)
+                        for kind in ("run", "deploy", "undeploy", "openai", "mcp", "a2a", "durable", "other")
+                    ],
+                ],
+                value="all",
+                allow_blank=False,
+                id="trace-kind",
+                compact=True,
+            )
+        with Horizontal(id="trace-controls"):
+            yield Select([], prompt="All entrypoints", id="trace-entrypoint", compact=True)
+            yield Select(
+                [("All states", "all"), ("Running", "running"), ("Completed", "completed"), ("Failed", "failed")],
+                value="all",
+                allow_blank=False,
+                id="trace-state",
+                compact=True,
+            )
+            yield Select(
+                [("Newest", "newest"), ("Slowest", "slowest")],
+                value="newest",
+                allow_blank=False,
+                id="trace-sort",
+                compact=True,
+            )
         with Horizontal(id="execution-controls"):
             yield Select([], prompt="Durable deployment", id="deployment-filter", compact=True)
             yield Input(placeholder="Revision · all retained", id="revision-filter", compact=True)
@@ -283,6 +335,7 @@ class DashboardApp(App):
 
     def on_mount(self) -> None:
         self.main_screen = self.screen
+        self._widget("#views").active = self.view
         self.main_screen.set_class(self.size.height < COMFORTABLE_TERMINAL_HEIGHT, "compact")
         self._widget("#detail-pane").display = self.size.width >= WIDE_TERMINAL
         self._configure_view()
@@ -292,6 +345,8 @@ class DashboardApp(App):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
+        if action == "clear_traces" and self.view != "traces":
+            return False
         return not (isinstance(self.focused, Input) and action not in {"escape", "close_detail", "exit"})
 
     def _widget(self, selector: str):
@@ -300,22 +355,35 @@ class DashboardApp(App):
     def _configure_view(self) -> None:
         self.updating = True
         executions = self.view == "executions"
-        self._widget("#type-filter").display = not executions
+        traces = self.view == "traces"
+        self._widget("#type-filter").display = not executions and not traces
+        self._widget("#trace-kind").display = traces
+        self._widget("#trace-controls").display = traces
         self._widget("#status-filter").display = executions
         self._widget("#execution-controls").display = executions
         self._widget("#pagination").display = executions
         search = self._widget("#search")
         search.value = self.searches[self.view]
-        search.placeholder = "/  Search indexed IDs" if executions else "/  Search deployment names"
+        search.placeholder = (
+            "/  Search traces / tags"
+            if traces
+            else "/  Search indexed IDs"
+            if executions
+            else "/  Search deployment names"
+        )
         table = self._widget("#rows")
         table.clear(columns=True)
         columns = (
-            ("ID", "Type", "Revision", "Status", "Attempt", "Updated (UTC)")
+            ("ID", "Entrypoint", "Kind", "State", "Duration", "Spans", "Stream")
+            if traces
+            else ("ID", "Type", "Revision", "Status", "Attempt", "Updated (UTC)")
             if executions
             else ("Name", "Type", "Execution", "State")
         )
         for label in columns:
-            width = 18 if executions and label == "ID" else 8 if executions and label == "Revision" else None
+            width = (
+                18 if (executions or traces) and label == "ID" else 8 if executions and label == "Revision" else None
+            )
             table.add_column(label, width=width)
         self.items = {}
         self._update_table()
@@ -380,9 +448,10 @@ class DashboardApp(App):
         )
 
     def _reading_detail(self) -> bool:
-        return (isinstance(self.screen, DetailScreen) and not self.screen.help_screen) or (
-            self.focused is self._widget("#detail-pane")
-        )
+        return any(
+            isinstance(screen, TraceScreen) or (isinstance(screen, DetailScreen) and not screen.help_screen)
+            for screen in self.screen_stack
+        ) or (self.focused is self._widget("#detail-pane"))
 
     def _request_refresh(self) -> None:
         if self.paused or self.in_flight:
@@ -417,6 +486,8 @@ class DashboardApp(App):
                         detail = self.client.detail(pipeline, selected)
                     except DashboardError as failure:
                         detail_error = str(failure)
+            if view == "traces":
+                page = self.client.traces()
         except DashboardError as failure:
             error = str(failure)
         finally:
@@ -447,6 +518,7 @@ class DashboardApp(App):
             self.error = error
             self.failures += 1
             self._widget("#message").update(Text(error + ". Retaining last snapshot; retrying."))
+            self._show_detail()
         else:
             self.error = ""
             self.failures = 0
@@ -465,7 +537,10 @@ class DashboardApp(App):
                 if self.pipeline in [value for _, value in durable]:
                     options.value = self.pipeline
                 self.updating = False
-            if page is not None:
+            if page is not None and self.view == "traces":
+                self.trace_page = page
+                self.hidden_traces.intersection_update(item["trace_id"] for item in page["traces"])
+            if page is not None and self.view == "executions":
                 self.page = page
                 self.selected["executions"] = selected
                 summary = next((item for item in page["executions"] if item["execution_id"] == selected), {})
@@ -507,7 +582,10 @@ class DashboardApp(App):
         if not hasattr(self, "main_screen"):
             return
         execution = self.view == "executions"
-        if execution:
+        traces = self.view == "traces"
+        if traces:
+            rows, message = self._trace_rows()
+        elif execution:
             rows = self.page.get("executions", []) if self._can_enumerate() else []
             message = (
                 f"{literal(self.pipeline)}  ·  {len(rows)} on this page  ·  Stored kind / revision"
@@ -550,7 +628,7 @@ class DashboardApp(App):
         if not self.error:
             self._widget("#message").update(Text(message))
         table = self._widget("#rows")
-        key_field = "execution_id" if execution else "name"
+        key_field = "trace_id" if traces else "execution_id" if execution else "name"
         wanted = {item[key_field]: item for item in rows}
         was_updating = self.updating
         self.updating = True
@@ -559,6 +637,21 @@ class DashboardApp(App):
         for key, item in wanted.items():
             values = (
                 [
+                    item["trace_id"],
+                    item["entrypoint"] or "—",
+                    trace_kind(item),
+                    trace_state(item),
+                    "live" if item["root_span"]["running"] else duration(item["duration_ms"]),
+                    item["span_count"],
+                    "yes"
+                    if any(
+                        trace_tags(item).get(key) == "true"
+                        for key in ("hayhooks.openai.stream_requested", "hayhooks.response.streaming")
+                    )
+                    else "—",
+                ]
+                if traces
+                else [
                     item["execution_id"],
                     item.get("kind", "unknown"),
                     item.get("revision", ""),
@@ -572,7 +665,7 @@ class DashboardApp(App):
                 else [item["name"], item["type"].title(), item["execution_mode"].title(), item["state"]]
             )
             cells = [Text(literal(value, 512), no_wrap=True, overflow="ellipsis") for value in values]
-            state = str((item.get("status") if execution else item.get("state")) or "")
+            state = trace_state(item) if traces else str((item.get("status") if execution else item.get("state")) or "")
             cells[0].stylize("bold")
             cells[1].stylize(self.current_theme.variables["text-muted"])
             cells[3].stylize(state_color(state, self.current_theme))
@@ -582,11 +675,13 @@ class DashboardApp(App):
                 for column, value in zip(table.columns, cells, strict=True):
                     table.update_cell(key, column, value)
         self.items = wanted
-        if execution:
+        if execution or traces:
             positions = {key: index for index, key in enumerate(wanted)}
             table.sort(key=lambda cells: positions[cells[0].plain])
         selected = self.selected[self.view]
-        keep_reading = self._reading_detail() and self.details.get("execution_id") == selected
+        keep_reading = self._reading_detail() and (
+            self.details.get("execution_id") == selected or self.view == "traces"
+        )
         if selected not in wanted and not keep_reading:
             selected = next(iter(wanted), None)
             self.selected[self.view] = selected
@@ -600,11 +695,79 @@ class DashboardApp(App):
         self._widget("#next").disabled = not self.page.get("has_more", False) or not self._can_enumerate()
         self._widget("#page-label").update(Text(f"Page {len(self.history) + 1}"))
 
+    def _trace_rows(self) -> tuple[list[dict[str, Any]], str]:
+        traces = self.trace_page.get("traces", [])
+        entrypoints = tuple(
+            sorted(
+                {item["entrypoint"] for item in traces if item["entrypoint"]}
+                | {item["name"] for item in self._deployments()}
+            )
+        )
+        if entrypoints != self.trace_entrypoints:
+            self.trace_entrypoints = entrypoints
+            selector = self._widget("#trace-entrypoint")
+            selected = selector.value
+            selector.set_options([(literal(name), name) for name in entrypoints])
+            selector.value = selected if selected in entrypoints else Select.NULL
+        rows = []
+        search = self.searches["traces"].lower()
+        for item in traces:
+            if item["trace_id"] in self.hidden_traces:
+                continue
+            entrypoint = self._widget("#trace-entrypoint").value
+            if entrypoint is not Select.NULL and entrypoint != item["entrypoint"]:
+                continue
+            if any(
+                self._widget(selector).value not in ("all", value)
+                for selector, value in (
+                    ("#trace-kind", trace_kind(item)),
+                    ("#trace-state", trace_state(item)),
+                )
+            ):
+                continue
+            if (
+                search
+                and search
+                not in (
+                    item["trace_id"]
+                    + " "
+                    + (item["entrypoint"] or "")
+                    + " "
+                    + item["root_span"]["name"]
+                    + " "
+                    + str(trace_tags(item))
+                ).lower()
+            ):
+                continue
+            rows.append(item)
+        rows.sort(
+            key=lambda item: (
+                item["duration_ms"] if self._widget("#trace-sort").value == "slowest" else item["start_time_ms"],
+                item["trace_id"],
+            ),
+            reverse=True,
+        )
+        finished = [item for item in rows if not item["root_span"]["running"]]
+        average = duration(sum(item["duration_ms"] for item in finished) / len(finished)) if finished else "—"
+        failures = sum(trace_state(item) == "failed" for item in rows)
+        cap = " · capped" if self.trace_page.get("has_more") else ""
+        message = (
+            f"{len(rows)} of {len(traces)} recent traces{cap} · {failures} failed · Avg finished {average}\n"
+            "Responding process · Enter Span tree · c Clear locally"
+        )
+        if not self.trace_page:
+            message = "Loading local traces… Enable --with-tracing and configure authenticated operator access."
+        return rows, message
+
     def _selected_detail(self) -> Text:
         selected = self.selected[self.view]
         item = self.items.get(selected, {}) if selected is not None else {}
         if self.view == "executions" and self.details.get("execution_id") == selected:
             item = self.details
+        if self.view == "traces" and item:
+            return trace_detail(
+                item, self.current_theme, self.trace_page.get("config", {}).get("slow_component_ms", 1000)
+            )
         return (
             detail_text(item, execution=self.view == "executions", theme=self.current_theme)
             if item
@@ -614,6 +777,18 @@ class DashboardApp(App):
     def _show_detail(self) -> None:
         content = self._selected_detail()
         self._widget("#detail").update(content)
+        if isinstance(self.screen, TraceScreen):
+            selected = self.selected["traces"]
+            trace = self.items.get(selected) if selected is not None else None
+            warning = (
+                self.error + ". Inspector snapshot stale."
+                if self.error
+                else ("Trace outside the current buffer/filter. Inspector snapshot retained." if trace is None else "")
+            )
+            self.screen.query_one("#trace-warning", Static).update(Text(warning))
+            self.screen.query_one("#trace-warning").display = bool(warning)
+            if trace is not None:
+                self.screen.update_trace(trace)
         if isinstance(self.screen, DetailScreen) and not self.screen.help_screen:
             self.screen.query_one("#full-detail-text", Static).update(content)
 
@@ -643,7 +818,12 @@ class DashboardApp(App):
     def open_detail(self) -> None:
         if not self.items:
             return
-        if self.size.width >= WIDE_TERMINAL:
+        if self.view == "traces":
+            selected = self.selected["traces"]
+            trace = self.items.get(selected) if selected is not None else None
+            if trace:
+                self.push_screen(TraceScreen(trace, self.trace_page.get("config", {}).get("slow_component_ms", 1000)))
+        elif self.size.width >= WIDE_TERMINAL:
             self._widget("#detail-pane").focus()
         else:
             self.push_screen(DetailScreen(self._selected_detail()))
@@ -697,7 +877,7 @@ class DashboardApp(App):
         self.exit()
 
     def action_escape(self) -> None:
-        if isinstance(self.screen, DetailScreen):
+        if isinstance(self.screen, (DetailScreen, TraceScreen)):
             self.action_close_detail()
         elif isinstance(self.focused, Input):
             (self.previous_focus or self._widget("#rows")).focus()
@@ -708,7 +888,12 @@ class DashboardApp(App):
 
     def action_close_detail(self) -> None:
         self.pop_screen()
-        self._widget("#rows").focus()
+        if isinstance(self.screen, TraceScreen):
+            self.screen.query_one("#span-tree").focus()
+        elif isinstance(self.screen, DetailScreen):
+            self.screen.query_one("#full-detail").focus()
+        else:
+            self._widget("#rows").focus()
         self.call_later(self._update_table)
         self._invalidate()
 
@@ -729,14 +914,29 @@ class DashboardApp(App):
         self.theme = "hayhooks-light" if self.theme == "hayhooks-dark" else "hayhooks-dark"
         self._update_table(recolor=True)
         self._header()
+        if isinstance(self.screen, TraceScreen):
+            self.screen.update_trace(self.screen.trace, force=True)
+
+    def action_traces(self) -> None:
+        while self.screen is not self.main_screen:
+            self.pop_screen()
+        self._widget("#views").active = "traces"
+        self._widget("#rows").focus()
+
+    def action_clear_traces(self) -> None:
+        if self.view == "traces":
+            self.hidden_traces.update(item["trace_id"] for item in self.trace_page.get("traces", []))
+            self._update_table()
 
     def action_executions(self) -> None:
+        while self.screen is not self.main_screen:
+            self.pop_screen()
         self._widget("#views").active = "executions"
         self._widget("#rows").focus()
 
     @on(Button.Pressed, "#next")
     def action_next(self) -> None:
-        if not self.page.get("has_more") or self.paused:
+        if self.view != "executions" or not self.page.get("has_more") or self.paused:
             return
         self.history.append(self.cursor)
         self.cursor = self.page.get("next_cursor")
@@ -748,7 +948,7 @@ class DashboardApp(App):
 
     @on(Button.Pressed, "#previous")
     def action_previous(self) -> None:
-        if not self.history or self.paused:
+        if self.view != "executions" or not self.history or self.paused:
             return
         self.cursor = self.history.pop()
         self.page = {}

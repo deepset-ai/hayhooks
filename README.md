@@ -58,7 +58,7 @@ Publish pipelines as [A2A](https://a2a-protocol.org) agents ([guide](docs/featur
 <td valign="top">
 
 📈 **Tracing and dashboard**<br>
-OpenTelemetry spans (`hayhooks[tracing]`) for deploy, run, and durable attempts, with a live `/dashboard` via `--with-tracing-dashboard`.
+OpenTelemetry spans (`hayhooks[tracing]`) for deploy, run, and durable attempts, with trace/span inspection in `hayhooks dashboard --traces` (enable the authenticated API with `--with-tracing`).
 
 </td>
 </tr>
@@ -279,7 +279,6 @@ Stop the server mid-run and start it again: the run continues from its last chec
 - [Installation](docs/getting-started/installation.md) - Install Hayhooks and dependencies
 - [Configuration](docs/getting-started/configuration.md) - Configure Hayhooks for your needs
 - [Durable Execution](docs/features/durable-execution.md) - Run Pipelines and Agents beyond the request
-- [Tracing Dashboard Frontend](dashboard/README.md) - Local dashboard setup and frontend development commands
 - [Examples](docs/examples/overview.md) - Explore example implementations
 
 ## Community & Support

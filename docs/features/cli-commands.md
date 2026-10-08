@@ -68,28 +68,18 @@ hayhooks run --additional-python-path ./custom_code
 # Reload on changes (development)
 hayhooks run --reload
 
-# Enable tracing dashboard UI (auto-builds dashboard frontend locally at runtime)
-hayhooks run --with-tracing-dashboard
-
-# Equivalent aliases
-hayhooks run --with-dashboard
-hayhooks run --tracing-dashboard
+# Enable local trace inspection (configure operator authorization first)
+hayhooks run --with-tracing
 ```
 
-!!! warning "Tracing dashboard with multiple workers"
-    The built-in tracing dashboard reads from an in-process buffer.
-    With `hayhooks run --workers >1`, each worker has a separate trace buffer, so dashboard results can be partial
-    and clear operations are worker-local.
-    For a consistent dashboard view, use `--workers 1`.
+Trace inspection reads a process-local buffer. With multiple workers, use a
+connection pinned to one process or an external OTLP backend for aggregate history.
 
 !!! warning "Durable mode uses one worker per process"
     `hayhooks run --workers N` with `N > 1` exits with an error in durable mode.
     Scale with replicas that share Redis, and do not place a durable-mode app
     under another multi-worker supervisor such as `uvicorn --workers` or
     gunicorn.
-
-For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm run lint`, `npm run build`), see the
-[dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
 
 #### Options for `run`
 
@@ -103,22 +93,23 @@ For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm ru
 | `--root-path` | | Root path for API | `/` |
 | `--reload` | | Reload on code changes (development) | `false` |
 | `--with-monitoring` | | Enable authenticated durable execution indexing and collection routes | `false` |
-| `--with-tracing-dashboard` | | Enable tracing dashboard UI and auto-build dashboard assets locally at runtime | `false` |
-| `--dashboard-path` | | URL path for tracing dashboard (requires `--with-tracing-dashboard`) | `/dashboard` |
-
-`--with-dashboard` and `--tracing-dashboard` are aliases for `--with-tracing-dashboard`.
+| `--with-tracing` | | Enable the authenticated local trace API for terminal inspection | `false` |
 
 ### dashboard
 
-Browse deployments and durable executions using GET requests only:
+Browse deployments, durable executions and recent process traces using GET requests only:
 
 ```bash
 pip install 'hayhooks[tui]'
 hayhooks dashboard
 hayhooks dashboard --url https://example.com/hayhooks --pipeline research_agent
+hayhooks dashboard --traces
 hayhooks dashboard --interval 5
 hayhooks dashboard --once --json
 ```
+
+`--traces` opens Traces initially; with `--once --json`, it adds a bounded
+`tracing` snapshot alongside status.
 
 `--url` preserves reverse-proxy path prefixes. The default URL follows the
 existing host/port/HTTPS settings. TLS verification stays enabled, including
@@ -145,7 +136,9 @@ to return, `/` to search, `e` for the selected durable deployment's executions,
 Space to pause, `r` to refresh, `?` for help, and `q` or Ctrl+C to exit. Text
 inputs keep ordinary shortcut characters as text; Ctrl+C always exits. Mouse
 selection and scrolling are supported. Details appear alongside the list on
-wide terminals and on a separate screen below 110 columns. `t` toggles themes.
+wide terminals and on a separate screen below 110 columns. `t` toggles themes. `v` opens Traces, where entrypoint/kind/state filters,
+newest/slowest sorting and span trees are available. `c` hides current traces
+locally. See [tracing setup and operator authorization](../reference/tracing.md#terminal-trace-inspection).
 
 The dashboard uses a charcoal blue dark palette and a warm light palette. Short
 terminals condense spacing to leave room for rows; wide terminals group metadata,
@@ -164,7 +157,7 @@ are shown; actual runtime duration is not inferred.
 Deployment browsing works without server monitoring. Execution discovery requires
 `HAYHOOKS_MONITORING_ENABLED=true` or `hayhooks run --with-monitoring` on **every
 writer**, plus owner authentication or an explicit operator dependency. It does
-not enable either dashboard UI. Request-bound execution history is unavailable.
+not enable local tracing or launch the terminal UI. Request-bound execution history is unavailable.
 See [index coverage and retention](../deployment/durable-operations.md#execution-monitoring).
 
 `--once` prints one JSON status snapshot without Textual; `--json` requires
