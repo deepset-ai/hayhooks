@@ -5,7 +5,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from hayhooks.server.app import create_app
-from hayhooks.server.routers.dashboard import config, traces_stream
+from hayhooks.server.routers.traces import config, traces_stream
 from hayhooks.server.utils.live_trace_buffer import (
     clear_live_traces,
     get_recent_traces,
@@ -256,6 +256,6 @@ def test_span_running_flag_reflects_finish_state():
 
 
 async def test_config_exposes_stream_enabled(monkeypatch):
-    monkeypatch.setattr(settings, "dashboard_stream_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "tracing_stream_enabled", True, raising=False)
     result = await config()
     assert result.stream_enabled is True

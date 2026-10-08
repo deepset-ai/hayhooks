@@ -54,8 +54,6 @@ cover/
 
 !docs/**/*.png
 !src/hayhooks/server/chainlit_app/public/*.png
-!dashboard/src/assets/*.png
-!dashboard/src/lib/
 
 # Translations
 *.mo

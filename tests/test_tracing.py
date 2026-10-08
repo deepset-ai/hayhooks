@@ -588,7 +588,7 @@ def test_trace_operation_records_spans_without_tracer_context(monkeypatch):
 
 def test_haystack_component_spans_are_not_mirrored_by_default(recording_tracer, monkeypatch):
     clear_live_traces()
-    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", False)
+    monkeypatch.setattr(settings, "tracing_include_haystack_spans", False)
 
     with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
         pass
@@ -599,7 +599,7 @@ def test_haystack_component_spans_are_not_mirrored_by_default(recording_tracer, 
 
 def test_haystack_component_spans_are_mirrored_when_flag_enabled(recording_tracer, monkeypatch):
     clear_live_traces()
-    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", True)
+    monkeypatch.setattr(settings, "tracing_include_haystack_spans", True)
     assert configure_tracing() is True
 
     with trace_operation("hayhooks.pipeline.run", tags={"hayhooks.pipeline.name": "demo"}):
@@ -617,7 +617,7 @@ def test_haystack_component_spans_are_mirrored_when_flag_enabled(recording_trace
 
 def test_haystack_breakpoint_is_a_checkpoint_not_a_dashboard_error(recording_tracer, monkeypatch):
     clear_live_traces()
-    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", True)
+    monkeypatch.setattr(settings, "tracing_include_haystack_spans", True)
     assert configure_tracing() is True
     checkpoint_exception = type("BreakpointException", (Exception,), {"__module__": "haystack.core.errors"})
 
@@ -638,7 +638,7 @@ def test_haystack_breakpoint_is_a_checkpoint_not_a_dashboard_error(recording_tra
 def test_haystack_component_spans_are_mirrored_without_external_tracing(monkeypatch):
     clear_live_traces()
     disable_tracing()
-    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", True)
+    monkeypatch.setattr(settings, "tracing_include_haystack_spans", True)
 
     try:
         assert is_tracing_enabled() is False
@@ -659,7 +659,7 @@ def test_haystack_component_spans_are_mirrored_without_external_tracing(monkeypa
 def test_haystack_component_spans_are_nested_under_hayhooks_span_without_external_tracing(monkeypatch):
     clear_live_traces()
     disable_tracing()
-    monkeypatch.setattr(settings, "dashboard_trace_include_haystack_spans", True)
+    monkeypatch.setattr(settings, "tracing_include_haystack_spans", True)
 
     try:
         assert is_tracing_enabled() is False

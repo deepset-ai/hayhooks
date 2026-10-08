@@ -296,7 +296,7 @@ def test_postponed_header_annotation_is_resolved_without_resolving_unrelated_typ
 
 
 def test_injected_headers_are_not_payload_logs_or_trace_tags(headers_client, recording_tracer, caplog, monkeypatch):
-    monkeypatch.setattr(settings, "dashboard_trace_include_payload_values", True)
+    monkeypatch.setattr(settings, "tracing_include_payload_values", True)
     deploy(headers_client, wrapper_source("run_api"))
     response = headers_client.post(
         "/headers_test/run",

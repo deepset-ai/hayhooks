@@ -109,7 +109,7 @@ def _new_span_state(
 
 
 def _max_buffered_traces() -> int:
-    return settings.dashboard_trace_buffer_capacity
+    return settings.tracing_buffer_capacity
 
 
 def _truncate_tag_text(value: str) -> str:

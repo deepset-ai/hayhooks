@@ -83,6 +83,6 @@ def notify_trace_changed() -> None:
 
 
 # Wire the buffer's change hook to our notify as soon as this module is imported
-# (it is imported when the dashboard router loads, before any traces flow).
+# (it is imported when the trace router loads, before any traces flow).
 register_change_listener(notify_trace_changed)
 log.debug("Live trace stream broadcaster registered as buffer change listener")

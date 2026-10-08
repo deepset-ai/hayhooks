@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import find_dotenv, load_dotenv
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from hayhooks.server.logger import log
@@ -52,7 +52,7 @@ class AppSettings(BaseSettings):
 
     # Max seconds to wait for in-flight connections to drain on shutdown (Ctrl-C)
     # before they are cancelled. Bounds graceful shutdown so long-lived
-    # connections (e.g. the dashboard SSE stream) don't block server exit
+    # connections (e.g. the trace SSE stream) don't block server exit
     # indefinitely. Passed to uvicorn as ``timeout_graceful_shutdown``.
     graceful_shutdown_timeout: int = Field(default=5, ge=0, le=300)
 
@@ -156,38 +156,21 @@ class AppSettings(BaseSettings):
     # Only these loggers are patched; everything else (httpx, haystack, etc.)
     # keeps its default behaviour.
     intercepted_loggers: list[str] = ["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]
-    # Access-log path prefixes to suppress from uvicorn.access output.
-    # Defaults hide noisy dashboard polling endpoints.
-    access_log_excluded_path_prefixes: list[str] = [
-        "/dashboard/api/config",
-        "/dashboard/api/entrypoints",
-        "/dashboard/api/traces",
-    ]
+    # Suppress background monitoring requests from access logs.
+    access_log_excluded_path_prefixes: list[str] = ["/traces"]
 
-    # Exclude low-level ASGI send/receive spans from framework instrumentation
-    # to keep streaming traces readable by default.
     tracing_excluded_spans: list[Literal["send", "receive"]] = ["send", "receive"]
-
-    # Dashboard trace API settings (in-process live buffer)
-    dashboard_trace_default_limit: int = Field(default=25, gt=0, le=200)
-    dashboard_trace_max_limit: int = Field(default=100, gt=0, le=500)
-    dashboard_trace_buffer_capacity: int = Field(default=200, gt=0, le=10_000)
-    dashboard_trace_include_haystack_spans: bool = True
-    dashboard_ui_poll_ms: int = Field(default=2500, ge=250, le=60_000)
-    dashboard_ui_list_cap: int = Field(default=100, gt=0, le=500)
-    dashboard_ui_fetch_limit: int = Field(default=50, gt=0, le=500)
-    dashboard_ui_fresh_ms: int = Field(default=6000, ge=0, le=60_000)
-    dashboard_ui_slow_component_min_duration_ms: int = Field(default=1000, gt=0)
-    # Real-time trace streaming (SSE). When enabled, the dashboard receives trace
-    # updates over a Server-Sent Events stream instead of polling; polling stays
-    # as an automatic client-side fallback. Heartbeat keeps the connection alive
-    # through proxies during idle periods.
-    dashboard_stream_enabled: bool = True
-    dashboard_stream_heartbeat_ms: int = Field(default=15_000, ge=1_000, le=120_000)
-    dashboard_enabled: bool = False
-    dashboard_path: str = "/dashboard"
-    dashboard_dist_dir: str = str(Path.cwd() / "dashboard" / "dist")
-    dashboard_trace_include_payload_values: bool = False
+    # Local trace API; external OpenTelemetry exporters remain independent.
+    tracing_enabled: bool = False
+    tracing_token: SecretStr | None = None
+    tracing_default_limit: int = Field(default=25, gt=0, le=200)
+    tracing_max_limit: int = Field(default=100, gt=0, le=500)
+    tracing_buffer_capacity: int = Field(default=200, gt=0, le=10_000)
+    tracing_include_haystack_spans: bool = True
+    tracing_slow_component_ms: int = Field(default=1000, gt=0)
+    tracing_stream_enabled: bool = True
+    tracing_stream_heartbeat_ms: int = Field(default=15_000, ge=1_000, le=120_000)
+    tracing_include_payload_values: bool = False
 
     # Chainlit Settings
     # Enable embedded Chainlit UI frontend

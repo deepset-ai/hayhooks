@@ -222,7 +222,7 @@ def _mirror_trace_context(
 
 
 class _LiveBufferProxyTracer(Tracer):
-    """Tracer wrapper that mirrors Haystack spans into the dashboard live buffer."""
+    """Tracer wrapper that mirrors Haystack spans into the local trace buffer."""
 
     def __init__(self, delegate: Tracer) -> None:
         self._delegate = delegate
@@ -249,7 +249,7 @@ class _LiveBufferProxyTracer(Tracer):
 
 
 class _LiveBufferNullTracer(NullTracer):
-    """Null tracer variant that still mirrors spans into the dashboard live buffer."""
+    """Null tracer variant that still mirrors spans into the local trace buffer."""
 
     @contextmanager
     def trace(
@@ -282,13 +282,13 @@ def _enable_live_buffer_span_capture() -> None:
     if isinstance(actual_tracer, NullTracer):
         enable_tracing(_LiveBufferNullTracer())
         log.info(
-            "Dashboard live buffer now includes Haystack tracer spans (local capture mode; "
+            "Local trace buffer now includes Haystack tracer spans (local capture mode; "
             "external tracing backend is not configured)."
         )
         return
 
     enable_tracing(_LiveBufferProxyTracer(actual_tracer))
-    log.info("Dashboard live buffer now includes Haystack tracer spans.")
+    log.info("Local trace buffer now includes Haystack tracer spans.")
 
 
 def _first_set_env(*keys: str) -> str | None:
@@ -448,7 +448,7 @@ def configure_tracing() -> bool:
         if tracing_enabled:
             log.debug("Hayhooks tracing enabled by OTLP environment configuration")
 
-    if settings.dashboard_trace_include_haystack_spans:
+    if settings.tracing_include_haystack_spans:
         _enable_live_buffer_span_capture()
 
     return tracing_enabled

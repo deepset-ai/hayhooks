@@ -425,7 +425,7 @@ def _payload_value_to_trace_text(value: Any) -> str:
 
 
 def _build_payload_value_tags(payload: dict[str, Any]) -> list[str]:
-    include_values = settings.dashboard_trace_include_payload_values
+    include_values = settings.tracing_include_payload_values
     tags: list[str] = []
     for key, value in sorted(payload.items()):
         if include_values:

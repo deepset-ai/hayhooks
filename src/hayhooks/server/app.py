@@ -22,7 +22,6 @@ from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
-from fastapi.staticfiles import StaticFiles
 from starlette.routing import Match, Mount, compile_path
 
 from hayhooks.server.exceptions import PipelineModeError
@@ -31,10 +30,10 @@ from hayhooks.server.pipelines.loader import build_immutable_host
 from hayhooks.server.pipelines.registry import ImmutablePipelineRegistry, PipelineRegistry, registry
 from hayhooks.server.routers import (
     create_openai_router,
-    dashboard_router,
     deploy_router,
     draw_router,
     status_router,
+    traces_router,
     undeploy_router,
 )
 from hayhooks.server.tracing import (
@@ -406,9 +405,8 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
         app.include_router(deploy_router)
         app.include_router(undeploy_router)
     app.include_router(create_openai_router(pipeline_registry))
-    app.include_router(dashboard_router, prefix=settings.dashboard_path)
-
-    _mount_dashboard_ui(app)
+    if settings.tracing_enabled:
+        app.include_router(traces_router, prefix="/traces")
 
     # Mount Chainlit UI if enabled
     if settings.chainlit_enabled:
@@ -642,34 +640,3 @@ def _mount_chainlit_ui(app: FastAPI) -> None:
             import traceback
 
             log.error(traceback.format_exc())
-
-
-def _mount_dashboard_ui(app: FastAPI) -> None:
-    """
-    Mount dashboard static files if enabled and available.
-
-    Args:
-        app: FastAPI application instance
-    """
-    if not settings.dashboard_enabled:
-        return
-
-    dashboard_dist_dir = _resolve_dashboard_dist_dir()
-    if dashboard_dist_dir is None:
-        return
-
-    app.mount(
-        settings.dashboard_path,
-        StaticFiles(directory=str(dashboard_dist_dir), html=True),
-        name="dashboard-ui",
-    )
-
-
-def _resolve_dashboard_dist_dir() -> Path | None:
-    """Resolve configured dashboard dist directory when available."""
-    configured_dist_dir = Path(settings.dashboard_dist_dir).expanduser()
-    if configured_dist_dir.exists() and configured_dist_dir.is_dir():
-        return configured_dist_dir
-
-    log.warning("Dashboard UI enabled but dist dir was not found: '{}'", configured_dist_dir)
-    return None

@@ -94,7 +94,7 @@ def test_live_trace_buffer_preserves_long_tag_values():
 
 
 def test_live_trace_buffer_respects_configured_capacity(monkeypatch):
-    monkeypatch.setattr(settings, "dashboard_trace_buffer_capacity", 2)
+    monkeypatch.setattr(settings, "tracing_buffer_capacity", 2)
 
     for index in range(3):
         trace_id = f"trace-{index}"

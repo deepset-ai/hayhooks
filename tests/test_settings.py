@@ -168,9 +168,7 @@ def test_additional_python_path_in_sys_path_via_env(monkeypatch, test_settings):
 def test_access_log_excluded_path_prefixes_default():
     settings = AppSettings()
     assert settings.access_log_excluded_path_prefixes == [
-        "/dashboard/api/config",
-        "/dashboard/api/entrypoints",
-        "/dashboard/api/traces",
+        "/traces",
     ]
 
 
@@ -180,34 +178,34 @@ def test_access_log_excluded_path_prefixes_env_var(monkeypatch):
     assert settings.access_log_excluded_path_prefixes == ["/status", "/metrics"]
 
 
-def test_dashboard_trace_include_haystack_spans_default():
+def test_tracing_include_haystack_spans_default():
     settings = AppSettings()
-    assert settings.dashboard_trace_include_haystack_spans is True
+    assert settings.tracing_include_haystack_spans is True
 
 
-def test_dashboard_trace_include_haystack_spans_env_var(monkeypatch):
-    monkeypatch.setenv("HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS", "true")
+def test_tracing_include_haystack_spans_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_TRACING_INCLUDE_HAYSTACK_SPANS", "true")
     settings = AppSettings()
-    assert settings.dashboard_trace_include_haystack_spans is True
+    assert settings.tracing_include_haystack_spans is True
 
 
-def test_dashboard_trace_buffer_capacity_default():
+def test_tracing_buffer_capacity_default():
     settings = AppSettings()
-    assert settings.dashboard_trace_buffer_capacity == 200
+    assert settings.tracing_buffer_capacity == 200
 
 
-def test_dashboard_trace_buffer_capacity_env_var(monkeypatch):
-    monkeypatch.setenv("HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY", "2000")
+def test_tracing_buffer_capacity_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_TRACING_BUFFER_CAPACITY", "2000")
     settings = AppSettings()
-    assert settings.dashboard_trace_buffer_capacity == 2000
+    assert settings.tracing_buffer_capacity == 2000
 
 
-def test_dashboard_ui_slow_component_min_duration_ms_default():
+def test_tracing_slow_component_ms_default():
     settings = AppSettings()
-    assert settings.dashboard_ui_slow_component_min_duration_ms == 1000
+    assert settings.tracing_slow_component_ms == 1000
 
 
-def test_dashboard_ui_slow_component_min_duration_ms_env_var(monkeypatch):
-    monkeypatch.setenv("HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS", "2500")
+def test_tracing_slow_component_ms_env_var(monkeypatch):
+    monkeypatch.setenv("HAYHOOKS_TRACING_SLOW_COMPONENT_MS", "2500")
     settings = AppSettings()
-    assert settings.dashboard_ui_slow_component_min_duration_ms == 2500
+    assert settings.tracing_slow_component_ms == 2500

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# Generate dashboard traces using real pipeline wrappers from examples/.
+# Generate local traces using real pipeline wrappers from examples/.
 #
 # Prerequisites:
-#   - Hayhooks running on localhost:1416 with dashboard enabled
+#   - Hayhooks running on localhost:1416 with local tracing enabled
 #   - OPENAI_API_KEY set (for LLM-based pipelines)
 #   - jq installed
 #
 # Usage:
-#   bash scripts/demo_dashboard_traces.sh            # 0.3s delay (fast — generates all traces, then explore manually)
-#   DELAY=2 bash scripts/demo_dashboard_traces.sh    # 2s delay (watch traces appear live)
+#   bash scripts/demo_traces.sh            # 0.3s delay (fast — generates all traces, then explore manually)
+#   DELAY=2 bash scripts/demo_traces.sh    # 2s delay (watch traces appear live)
 #
 set -euo pipefail
 
@@ -134,7 +134,7 @@ echo
 echo
 blue "╔══════════════════════════════════════════════════════════╗"
 blue "║                                                          ║"
-blue "║   Open $BASE/dashboard   ║"
+blue "║   Run hayhooks dashboard --traces --url $BASE   ║"
 blue "║                                                          ║"
 blue "╚══════════════════════════════════════════════════════════╝"
 echo
@@ -281,4 +281,4 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/undeploy/calculator
 check 200 "$CODE" "undeployed calculator" "undeploy failed"
 
 echo
-green "Done — all traces visible at $BASE/dashboard"
+green "Done — inspect with: hayhooks dashboard --traces --url $BASE"
