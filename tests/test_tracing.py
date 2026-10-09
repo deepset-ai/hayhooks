@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import haystack.tracing
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from haystack.tracing import disable_tracing, is_tracing_enabled, tracer as haystack_tracer
 from starlette.applications import Starlette
@@ -563,7 +563,7 @@ def test_trace_operation_records_spans_for_dashboard_live_buffer(recording_trace
         with trace_operation("hayhooks.openai.run"):
             pass
 
-    traces = get_recent_traces(since_ms=None, limit=10)
+    traces = get_recent_traces(limit=10)
     assert len(traces) == 1
     assert traces[0]["entrypoint"] == "demo"
     assert traces[0]["root_span"]["name"] == "hayhooks.pipeline.run"
@@ -578,7 +578,7 @@ def test_trace_operation_records_spans_without_tracer_context(monkeypatch):
         with trace_operation("hayhooks.openai.run"):
             pass
 
-    traces = get_recent_traces(since_ms=None, limit=10)
+    traces = get_recent_traces(limit=10)
     assert len(traces) == 1
     assert traces[0]["trace_id"]
     assert traces[0]["entrypoint"] == "demo"
@@ -593,7 +593,7 @@ def test_haystack_component_spans_are_not_mirrored_by_default(recording_tracer, 
     with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
         pass
 
-    traces = get_recent_traces(since_ms=None, limit=10)
+    traces = get_recent_traces(limit=10)
     assert traces == []
 
 
@@ -606,7 +606,7 @@ def test_haystack_component_spans_are_mirrored_when_flag_enabled(recording_trace
         with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
             pass
 
-    traces = get_recent_traces(since_ms=None, limit=10)
+    traces = get_recent_traces(limit=10)
     assert len(traces) == 1
     assert traces[0]["span_count"] == 2
     assert traces[0]["root_span"]["name"] == "hayhooks.pipeline.run"
@@ -628,7 +628,7 @@ def test_haystack_breakpoint_is_a_checkpoint_not_a_dashboard_error(recording_tra
     ):
         raise checkpoint_exception("Breaking at component work")
 
-    trace = get_recent_traces(since_ms=None, limit=10)[0]
+    trace = get_recent_traces(limit=10)[0]
     child_tags = trace["root_span"]["children"][0]["tags"]
     assert {"key": "hayhooks.checkpoint", "value": "true"} in child_tags
     assert {"key": "hayhooks.success", "value": "true"} in child_tags
@@ -648,7 +648,7 @@ def test_haystack_component_spans_are_mirrored_without_external_tracing(monkeypa
         with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
             pass
 
-        traces = get_recent_traces(since_ms=None, limit=10)
+        traces = get_recent_traces(limit=10)
         assert len(traces) == 1
         assert traces[0]["root_span"]["name"] == "haystack.component.run"
         assert {"key": "haystack.component.name", "value": "prompt_builder"} in traces[0]["root_span"]["tags"]
@@ -670,7 +670,7 @@ def test_haystack_component_spans_are_nested_under_hayhooks_span_without_externa
             with haystack_tracer.trace("haystack.component.run", tags={"haystack.component.name": "prompt_builder"}):
                 pass
 
-        traces = get_recent_traces(since_ms=None, limit=10)
+        traces = get_recent_traces(limit=10)
         assert len(traces) == 1
         assert traces[0]["root_span"]["name"] == "hayhooks.pipeline.run"
         children = traces[0]["root_span"]["children"]
@@ -679,3 +679,39 @@ def test_haystack_component_spans_are_nested_under_hayhooks_span_without_externa
         assert {"key": "haystack.component.name", "value": "prompt_builder"} in children[0]["tags"]
     finally:
         disable_tracing()
+
+
+@pytest.mark.parametrize("mirror", [False, True], ids=["operation-capture", "tracer-capture"])
+@pytest.mark.parametrize("outcome", ["success", "failure", "http", "checkpoint"])
+def test_shared_capture_records_operation_outcomes_once(recording_tracer, monkeypatch, mirror, outcome):
+    clear_live_traces()
+    monkeypatch.setattr(settings, "show_tracebacks", False)
+    monkeypatch.setattr(settings, "tracing_include_haystack_spans", mirror)
+    if mirror:
+        configure_tracing()
+    checkpoint = type("BreakpointException", (Exception,), {"__module__": "haystack.core.errors"})
+    error = {
+        "success": None,
+        "failure": ValueError("broken"),
+        "http": HTTPException(404, "missing"),
+        "checkpoint": checkpoint("pause"),
+    }[outcome]
+    try:
+        with trace_operation("hayhooks.pipeline.run"):
+            if error is not None:
+                raise error
+    except Exception as caught:
+        assert caught is error
+
+    traces = get_recent_traces(limit=10)
+    assert len(traces) == 1 and traces[0]["span_count"] == 1
+    assert traces[0]["root_span"]["running"] is False
+    tags = {tag["key"]: tag["value"] for tag in traces[0]["root_span"]["tags"]}
+    assert tags["hayhooks.success"] == ("true" if outcome in {"success", "checkpoint"} else "false")
+    assert "hayhooks.error.stack" not in tags
+    if outcome in {"failure", "http"}:
+        assert tags["hayhooks.error.type"] == type(error).__name__
+    if outcome == "http":
+        assert tags["hayhooks.http.status_code"] == "404"
+    if outcome == "checkpoint":
+        assert tags["hayhooks.checkpoint"] == "true"

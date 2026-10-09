@@ -276,13 +276,11 @@ more frequently.
 | `HAYHOOKS_TRACING_ENABLED` | `false` | Mount the authenticated local trace API |
 | `HAYHOOKS_TRACING_TOKEN` | unset | Private bearer token for operator access |
 | `HAYHOOKS_TRACING_BUFFER_CAPACITY` | `200` | Maximum retained process traces |
-| `HAYHOOKS_TRACING_DEFAULT_LIMIT` | `25` | Default API page size |
-| `HAYHOOKS_TRACING_MAX_LIMIT` | `100` | Maximum API page size |
+| `HAYHOOKS_TRACING_DEFAULT_LIMIT` | `25` | Default trace snapshot size |
+| `HAYHOOKS_TRACING_MAX_LIMIT` | `100` | Maximum trace snapshot size (also capped at 100 and buffer capacity) |
 | `HAYHOOKS_TRACING_SLOW_COMPONENT_MS` | `1000` | Minimum completed duration for slow-component highlighting |
 | `HAYHOOKS_TRACING_INCLUDE_HAYSTACK_SPANS` | `true` | Mirror Haystack components into the local buffer |
 | `HAYHOOKS_TRACING_INCLUDE_PAYLOAD_VALUES` | `false` | Include redacted raw request values in tags |
-| `HAYHOOKS_TRACING_STREAM_ENABLED` | `true` | Expose the optional SSE API for external consumers |
-| `HAYHOOKS_TRACING_STREAM_HEARTBEAT_MS` | `15000` | SSE keepalive interval |
 
 The local API requires operator authorization. See
 [terminal tracing](tracing.md#terminal-trace-inspection) for scope, authentication,
@@ -319,7 +317,7 @@ These map 1:1 to FastAPI CORSMiddleware and the settings in `hayhooks.settings.A
 
 ### HAYHOOKS_CORS_EXPOSE_HEADERS
 
-- Default: `["X-Hayhooks-Trace-Cursor"]`
+- Default: `[]`
 - Description: Headers to expose in response
 
 ### HAYHOOKS_CORS_MAX_AGE

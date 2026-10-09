@@ -1,4 +1,3 @@
-import asyncio
 import os
 import socket
 import sys
@@ -56,7 +55,6 @@ from hayhooks.server.utils.deploy_utils import (
     rebuild_openapi,
     require_live_deployment,
 )
-from hayhooks.server.utils.live_trace_stream import get_trace_stream_broadcaster
 from hayhooks.server.utils.models import PreparedPipeline
 from hayhooks.server.utils.module_loader import durable_owner_dependency, inspect_durable_runner
 from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy, check_cors_settings, settings
@@ -277,34 +275,27 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # Capture the running loop so synchronous span recording can wake SSE
-    # subscribers via call_soon_threadsafe.
-    broadcaster = get_trace_stream_broadcaster()
-    broadcaster.set_loop(asyncio.get_running_loop())
+    runtime = app.state.durable_runtime
     try:
-        runtime = app.state.durable_runtime
-        try:
-            if not app.state.durable_mode and settings.pipelines_dir:
-                deploy_pipelines(app, settings.pipelines_dir)
-            if runtime is not None:
-                await runtime.start()
-            yield
-        finally:
-            if runtime is not None:
-                try:
-                    # Uvicorn drains or cancels open requests, SSE streams included, before lifespan shutdown;
-                    # closing ends any stream still waiting, so none outlives its viewer client.
-                    await runtime.close()
-                finally:
-                    # ponytail: retained threads can delay graceful shutdown past the grace period;
-                    # process isolation is the upgrade path for an enforceable execution deadline.
-                    await runtime.wait_drained()
-                    # Reached only after drainage: retained work keeps Redis until it no longer owns claims.
-                    async with AsyncExitStack() as clients:
-                        for client in app.state.durable_redis_clients:
-                            clients.push_async_callback(client.aclose)
+        if not app.state.durable_mode and settings.pipelines_dir:
+            deploy_pipelines(app, settings.pipelines_dir)
+        if runtime is not None:
+            await runtime.start()
+        yield
     finally:
-        broadcaster.clear_loop()
+        if runtime is not None:
+            try:
+                # Uvicorn drains or cancels open requests, SSE streams included, before lifespan shutdown;
+                # closing ends any stream still waiting, so none outlives its viewer client.
+                await runtime.close()
+            finally:
+                # ponytail: retained threads can delay graceful shutdown past the grace period;
+                # process isolation is the upgrade path for an enforceable execution deadline.
+                await runtime.wait_drained()
+                # Reached only after drainage: retained work keeps Redis until it no longer owns claims.
+                async with AsyncExitStack() as clients:
+                    for client in app.state.durable_redis_clients:
+                        clients.push_async_callback(client.aclose)
 
 
 @lru_cache(maxsize=1)

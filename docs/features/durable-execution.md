@@ -212,7 +212,7 @@ Serve production pipelines from an immutable image or a read-only, versioned
 mount.
 
 Run one durable-mode app per process. The import root, the bytecode policy,
-and the process trace stream are process-wide, so building a second app in
+and the trace buffer are process-wide, so building a second app in
 the same process replaces the first app's pipeline modules.
 `hayhooks run --workers N` exits with an error when `N > 1` in durable mode.
 Scale with replicas that share Redis, and do not use another multi-worker

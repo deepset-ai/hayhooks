@@ -143,30 +143,26 @@ appear in tags.
 | `HAYHOOKS_TRACING_ENABLED` | `false` | Mount the authenticated local trace API |
 | `HAYHOOKS_TRACING_TOKEN` | unset | Private bearer token for operator access |
 | `HAYHOOKS_TRACING_BUFFER_CAPACITY` | `200` | Maximum retained process traces |
-| `HAYHOOKS_TRACING_DEFAULT_LIMIT` | `25` | Default API page size |
-| `HAYHOOKS_TRACING_MAX_LIMIT` | `100` | Maximum API page size |
+| `HAYHOOKS_TRACING_DEFAULT_LIMIT` | `25` | Default trace snapshot size |
+| `HAYHOOKS_TRACING_MAX_LIMIT` | `100` | Maximum trace snapshot size (also capped at 100 and buffer capacity) |
 | `HAYHOOKS_TRACING_SLOW_COMPONENT_MS` | `1000` | Minimum completed duration for slow-component highlighting |
 | `HAYHOOKS_TRACING_INCLUDE_HAYSTACK_SPANS` | `true` | Mirror Haystack components into the local buffer |
 | `HAYHOOKS_TRACING_INCLUDE_PAYLOAD_VALUES` | `false` | Include redacted raw request values in tags |
-| `HAYHOOKS_TRACING_STREAM_ENABLED` | `true` | Expose the optional SSE API for external consumers |
-| `HAYHOOKS_TRACING_STREAM_HEARTBEAT_MS` | `15000` | SSE keepalive interval |
 
-### API endpoints
+### Trace snapshot API
 
-These are mounted only when local tracing is enabled and require operator access:
+`GET /traces` is mounted only when local tracing is enabled and requires
+operator access. It accepts a positive `limit`, capped at 100, the configured
+maximum and buffer capacity. The response includes:
 
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `/traces/config` | GET | Buffer limits and inspection settings |
-| `/traces/entrypoints` | GET | Currently deployed entrypoints |
-| `/traces` | GET | Normalized recent traces; `limit`, `since_ms`, `after_seq` |
-| `/traces/stream` | GET | Optional SSE snapshots/deltas for other consumers |
-| `/traces/clear` | POST | Clear the process buffer (never used by the terminal client) |
+- `traces`: recent normalized traces, including running spans and their tree, tags and outcomes.
+- `has_more`: whether the bounded snapshot omits older traces.
+- `config`: `buffer_capacity`, `fetch_limit`, `slow_component_ms` and the process-local `scope`.
 
-`GET /traces` returns `traces`, `next_after_seq` and `has_more`; the cursor is
-also exposed in `X-Hayhooks-Trace-Cursor`. The terminal uses bounded snapshots,
-not SSE or incremental history. External incremental clients should start a
-fresh snapshot after a server restart or buffer clear.
+Each terminal refresh reads one authoritative snapshot. There is no streaming
+subscription or cursor to recover after restarts or evictions. Entrypoint
+filters use `/status` and captured trace metadata; clearing the terminal list
+hides traces locally without deleting the server buffer.
 
 Generate representative deployment, REST and OpenAI traces with:
 
@@ -179,13 +175,16 @@ bash scripts/demo_traces.sh
 The React dashboard, bundled web sources, static mount and runtime npm build
 have been removed. Replace `--with-tracing-dashboard` (including its old aliases)
 with `--with-tracing`, and open `hayhooks dashboard --traces` instead of `/dashboard`.
-`--dashboard-path` is removed. Trace routes move from `/dashboard/api/*` to
-`/traces`, `/traces/config`, `/traces/entrypoints`, `/traces/stream` and `/traces/clear`.
+`--dashboard-path` is removed. The local tracing API is now just `GET /traces`,
+with inspection settings included in every snapshot. The separate config,
+entrypoints, stream and server-clear endpoints, cursor fields/header, and
+`since_ms`/`after_seq` parameters are removed. External clients must poll bounded
+snapshots instead of consuming SSE or incremental deltas.
 
 Rename `HAYHOOKS_DASHBOARD_TRACE_*` capture settings to `HAYHOOKS_TRACING_*`;
 `HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS` becomes
-`HAYHOOKS_TRACING_SLOW_COMPONENT_MS`. Stream settings also use `HAYHOOKS_TRACING_*`.
-Other `HAYHOOKS_DASHBOARD_UI_*` and static frontend settings are removed;
+`HAYHOOKS_TRACING_SLOW_COMPONENT_MS`. Trace stream/heartbeat settings, other
+`HAYHOOKS_DASHBOARD_UI_*` and static frontend settings are removed;
 `hayhooks dashboard --interval` controls terminal refreshes. The existing
 `HAYHOOKS_DASHBOARD_TOKEN` and API-key variables remain terminal client credentials.
 

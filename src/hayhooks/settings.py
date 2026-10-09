@@ -52,7 +52,7 @@ class AppSettings(BaseSettings):
 
     # Max seconds to wait for in-flight connections to drain on shutdown (Ctrl-C)
     # before they are cancelled. Bounds graceful shutdown so long-lived
-    # connections (e.g. the trace SSE stream) don't block server exit
+    # connections (e.g. durable event streams) don't block server exit
     # indefinitely. Passed to uvicorn as ``timeout_graceful_shutdown``.
     graceful_shutdown_timeout: int = Field(default=5, ge=0, le=300)
 
@@ -149,7 +149,7 @@ class AppSettings(BaseSettings):
     cors_allow_headers: list[str] = ["*"]
     cors_allow_credentials: bool = False
     cors_allow_origin_regex: str | None = None
-    cors_expose_headers: list[str] = ["X-Hayhooks-Trace-Cursor"]
+    cors_expose_headers: list[str] = []
     cors_max_age: int = 600
 
     # Stdlib loggers to intercept and route through loguru.
@@ -168,8 +168,6 @@ class AppSettings(BaseSettings):
     tracing_buffer_capacity: int = Field(default=200, gt=0, le=10_000)
     tracing_include_haystack_spans: bool = True
     tracing_slow_component_ms: int = Field(default=1000, gt=0)
-    tracing_stream_enabled: bool = True
-    tracing_stream_heartbeat_ms: int = Field(default=15_000, ge=1_000, le=120_000)
     tracing_include_payload_values: bool = False
 
     # Chainlit Settings

@@ -370,3 +370,21 @@ at all three sizes. They use synthetic fixtures, not production data.
 Raster previews: [Trace list](../assets/terminal-dashboard/traces-120x36.png)
 and [Span inspector](../assets/terminal-dashboard/spans-160x48.png).
 Temporary qualification servers and browser tabs were stopped after review.
+
+## Tracing simplification — 9 October 2026
+
+Local tracing now exposes one authenticated `GET /traces` snapshot, with current
+inspection settings included. SSE, cursor replay, the separate config/entrypoint
+routes, server clearing, stream settings and broadcaster lifecycle wiring are
+removed. Terminal filters, local clearing, live spans and OTLP remain available.
+Operation traces reuse the existing span-capture helper. This removes **400
+implementation lines**, without dependencies or changes to the terminal layout.
+
+Qualification: **1,349 unit tests passed, 4 skipped, 129 deselected and 3 expected
+failures**, using the same isolated protobuf 6.33.6 target documented above.
+Source lint/format and focused type checks passed. The documentation build
+retains its existing source-link warnings. A real local HTTP server verified
+operator authentication, nested component capture and CLI JSON export; it was
+stopped afterwards. Redis and the Python-version wheel matrix were not rerun.
+External trace consumers must migrate to snapshots; see the
+[API migration](../reference/tracing.md#trace-snapshot-api).

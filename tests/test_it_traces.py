@@ -1,18 +1,15 @@
-from pathlib import Path
-
 import pytest
 
 from hayhooks.server.routers.traces import require_tracing_access
-
-from hayhooks.server.pipelines import registry
 from hayhooks.server.utils.live_trace_buffer import clear_live_traces, record_live_span_finish, record_live_span_start
 from hayhooks.settings import settings
 
 
 @pytest.fixture(autouse=True)
-def tracing_access(client, monkeypatch):
+def tracing_access(client):
     # The shared test app is built before this fixture; explicitly mount the opt-in router.
     from hayhooks.server.routers.traces import router
+
     if not getattr(client.app.state, "test_traces_mounted", False):
         client.app.include_router(router, prefix="/traces")
         client.app.state.test_traces_mounted = True
@@ -51,37 +48,11 @@ def _sample_trace(trace_id: str, start_time_ms: int) -> dict[str, object]:
     }
 
 
-def test_tracing_entrypoints_empty(client):
-    clear_live_traces()
-    registry.clear()
-
-    response = client.get("/traces/entrypoints")
-
-    assert response.status_code == 200
-    assert response.json() == {"entrypoints": []}
-
-
-def test_tracing_entrypoints_lists_deployed_pipelines(client, deploy_yaml_pipeline):
-    clear_live_traces()
-    registry.clear()
-    pipeline_file = Path(__file__).parent / "test_files/yaml" / "inputs_outputs_pipeline.yml"
-    pipeline_name = "dashboard_trace_pipeline"
-    deploy_response = deploy_yaml_pipeline(client, pipeline_name, pipeline_file.read_text())
-    assert deploy_response.status_code == 200
-
-    response = client.get("/traces/entrypoints")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert "entrypoints" in body
-    assert pipeline_name in body["entrypoints"]
-
-
-def test_tracing_config_returns_buffer_settings(client, monkeypatch):
+def test_tracing_snapshot_includes_buffer_settings(client, monkeypatch):
     monkeypatch.setattr(settings, "tracing_buffer_capacity", 40)
     monkeypatch.setattr(settings, "tracing_max_limit", 60)
     monkeypatch.setattr(settings, "tracing_slow_component_ms", 1800)
-    body = client.get("/traces/config").json()
+    body = client.get("/traces").json()["config"]
     assert body["buffer_capacity"] == 40
     assert body["fetch_limit"] == 40
     assert body["slow_component_ms"] == 1800
@@ -102,7 +73,7 @@ def test_tracing_traces_returns_local_buffer_traces(client, monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["traces"] == [trace]
-    assert "next_after_seq" in body
+    assert "next_after_seq" not in body
     assert "has_more" in body
 
 
@@ -166,9 +137,7 @@ def test_tracing_traces_respects_default_and_max_limit(client, monkeypatch):
 
     observed_limits: list[int] = []
 
-    def _fake_get_recent_traces(*, since_ms, limit, after_seq=None):
-        assert since_ms is None
-        assert after_seq is None
+    def _fake_get_recent_traces(*, limit):
         observed_limits.append(limit)
         return []
 
@@ -186,119 +155,14 @@ def test_tracing_traces_respects_default_and_max_limit(client, monkeypatch):
     assert observed_limits == [12, 21]
 
 
-def test_tracing_traces_after_seq_sets_cursor_header(client, monkeypatch):
-    clear_live_traces()
-
-    traces = [
-        {**_sample_trace("trace-a", 1_700_000_000_000), "_cursor_seq": 3},
-        {**_sample_trace("trace-b", 1_700_000_000_100), "_cursor_seq": 5},
-    ]
-
-    def _fake_get_recent_traces(*, since_ms, limit, after_seq=None):
-        assert since_ms is None
-        assert limit == 6
-        assert after_seq == 2
-        return traces
-
-    monkeypatch.setattr(
-        "hayhooks.server.routers.traces.get_recent_traces",
-        _fake_get_recent_traces,
-        raising=False,
-    )
-
-    response = client.get("/traces?limit=5&after_seq=2")
-
-    assert response.status_code == 200
-    assert response.headers["X-Hayhooks-Trace-Cursor"] == "5"
-    body = response.json()
-    assert body["traces"] == [
-        _sample_trace("trace-b", 1_700_000_000_100),
-        _sample_trace("trace-a", 1_700_000_000_000),
-    ]
-    assert body["next_after_seq"] == 5
-    assert body["has_more"] is False
-
-
-def test_tracing_traces_sets_zero_cursor_header_when_empty(client, monkeypatch):
-    clear_live_traces()
-
-    monkeypatch.setattr(
-        "hayhooks.server.routers.traces.get_recent_traces",
-        lambda **_kwargs: [],
-        raising=False,
-    )
-
-    response = client.get("/traces?limit=5")
-
-    assert response.status_code == 200
-    assert response.headers["X-Hayhooks-Trace-Cursor"] == "0"
-    body = response.json()
-    assert body["traces"] == []
-    assert body["next_after_seq"] == 0
-    assert body["has_more"] is False
-
-
-def test_tracing_clear_traces_clears_local_buffer(client, monkeypatch):
-    clear_live_traces()
-
-    clear_calls: list[bool] = []
-
-    def _fake_clear_live_traces() -> None:
-        clear_calls.append(True)
-
-    monkeypatch.setattr(
-        "hayhooks.server.routers.traces.clear_live_traces",
-        _fake_clear_live_traces,
-        raising=False,
-    )
-
-    response = client.post("/traces/clear")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "ok": True,
-        "message": "Cleared local traces from local in-process buffer.",
-    }
-    assert clear_calls == [True]
-
-
-def test_tracing_clear_traces_clears_live_buffer_without_mocking(client):
-    clear_live_traces()
-    trace_id = "integration-trace-2"
-    start_time_ms = 1_700_000_000_100
-    record_live_span_start(
-        trace_id=trace_id,
-        span_id="root",
-        parent_span_id=None,
-        operation_name="hayhooks.pipeline.run",
-        start_time_ms=start_time_ms,
-        tags={"hayhooks.pipeline.name": "demo-pipeline"},
-    )
-    record_live_span_finish(trace_id=trace_id, span_id="root", duration_ms=8)
-
-    before_clear = client.get("/traces")
-    assert before_clear.status_code == 200
-    assert len(before_clear.json()["traces"]) == 1
-
-    clear_response = client.post("/traces/clear")
-    assert clear_response.status_code == 200
-
-    after_clear = client.get("/traces")
-    assert after_clear.status_code == 200
-    assert after_clear.json()["traces"] == []
-
-
 def test_tracing_traces_has_more_when_beyond_limit(client, monkeypatch):
     clear_live_traces()
 
-    traces = [
-        {**_sample_trace(f"trace-{i}", 1_700_000_000_000 + i), "_cursor_seq": i + 1}
-        for i in range(10)
-    ]
+    traces = [_sample_trace(f"trace-{i}", 1_700_000_000_000 + i) for i in range(10)]
 
     limit_arg: list[int] = []
 
-    def _fake_get_recent_traces(*, since_ms, limit, after_seq=None):
+    def _fake_get_recent_traces(*, limit):
         limit_arg.append(limit)
         return traces[:limit]
 
@@ -314,19 +178,15 @@ def test_tracing_traces_has_more_when_beyond_limit(client, monkeypatch):
     body = response.json()
     assert len(body["traces"]) == 4
     assert body["has_more"] is True
-    assert body["next_after_seq"] == 4
     assert limit_arg[-1] == 5
 
 
 def test_tracing_traces_has_more_false_when_no_more(client, monkeypatch):
     clear_live_traces()
 
-    traces = [
-        {**_sample_trace(f"trace-{i}", 1_700_000_000_000 + i), "_cursor_seq": i + 1}
-        for i in range(2)
-    ]
+    traces = [_sample_trace(f"trace-{i}", 1_700_000_000_000 + i) for i in range(2)]
 
-    def _fake_get_recent_traces(*, since_ms, limit, after_seq=None):
+    def _fake_get_recent_traces(*, limit):
         return traces[:limit]
 
     monkeypatch.setattr(
@@ -341,4 +201,17 @@ def test_tracing_traces_has_more_false_when_no_more(client, monkeypatch):
     body = response.json()
     assert len(body["traces"]) == 2
     assert body["has_more"] is False
-    assert body["next_after_seq"] == 2
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "invalid"])
+def test_trace_snapshot_rejects_invalid_limits(client, limit):
+    assert client.get("/traces", params={"limit": limit}).status_code == 422
+
+
+def test_trace_snapshot_is_bounded_even_when_settings_allow_more(client, monkeypatch):
+    monkeypatch.setattr(settings, "tracing_max_limit", 500)
+    limits = []
+    monkeypatch.setattr("hayhooks.server.routers.traces.get_recent_traces", lambda *, limit: limits.append(limit) or [])
+    body = client.get("/traces?limit=999").json()
+    assert limits == [101]
+    assert body["config"]["fetch_limit"] == 100

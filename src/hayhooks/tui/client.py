@@ -48,7 +48,6 @@ class DashboardClient:
         self.url = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
         self.label = literal(parts.netloc + parts.path.rstrip("/"), 200)
         self.timeout = timeout
-        self.trace_config: dict[str, Any] | None = None
         self.session = requests.Session()
         if token := os.environ.get("HAYHOOKS_DASHBOARD_TOKEN"):
             self.session.headers["Authorization"] = f"Bearer {token}"
@@ -149,23 +148,22 @@ class DashboardClient:
             raise DashboardError("Server returned details for a different execution")
         return data
 
-    def traces(self) -> dict[str, Any]:  # noqa: C901
+    def traces(self) -> dict[str, Any]:
         """A bounded authoritative snapshot, so restarts/evictions need no cursor recovery."""
-        if self.trace_config is None:
-            config = self.get("traces/config")
-            if (
-                not all(
-                    type(config.get(key)) is int and config[key] > 0
-                    for key in ("buffer_capacity", "fetch_limit", "slow_component_ms")
-                )
-                or config["fetch_limit"] > TRACE_LIMIT
-            ):
-                raise DashboardError("Server returned invalid trace configuration")
-            self.trace_config = config
-        data = self.get("traces", limit=self.trace_config["fetch_limit"])
+        data = self.get("traces", limit=TRACE_LIMIT)
+        config = data.get("config")
+        if (
+            not isinstance(config, dict)
+            or not all(
+                type(config.get(key)) is int and config[key] > 0
+                for key in ("buffer_capacity", "fetch_limit", "slow_component_ms")
+            )
+            or config["fetch_limit"] > min(TRACE_LIMIT, config["buffer_capacity"])
+        ):
+            raise DashboardError("Server returned invalid trace configuration")
         if (
             not isinstance(data.get("traces"), list)
-            or len(data["traces"]) > self.trace_config["fetch_limit"]
+            or len(data["traces"]) > config["fetch_limit"]
             or not isinstance(data.get("has_more"), bool)
         ):
             raise DashboardError("Server returned an invalid trace snapshot")
@@ -204,7 +202,7 @@ class DashboardClient:
                     raise ValueError
         except (KeyError, TypeError, ValueError, AttributeError) as error:
             raise DashboardError("Server returned invalid trace metadata") from error
-        return {**data, "config": self.trace_config}
+        return data
 
     @staticmethod
     def _validate_trace_fields(item: dict[str, Any], tag_limit: int) -> None:

@@ -7,6 +7,7 @@ from hayhooks.tui.client import DashboardClient, DashboardError
 
 pytest.importorskip("textual")
 from textual.widgets import Static, Tree
+
 from hayhooks.tui.app import DashboardApp
 from hayhooks.tui.traces import TraceScreen, trace_state
 from tests.test_terminal_dashboard import FakeClient, settled
@@ -165,10 +166,11 @@ def test_trace_client_rejects_invalid_snapshots(corruption):
     else:
         trace["root_span"]["children"][0]["span_id"] = "root"
     client.get = Mock(
-        side_effect=[
-            {"fetch_limit": 100, "buffer_capacity": 200, "slow_component_ms": 1000},
-            {"traces": [trace], "has_more": False},
-        ]
+        return_value={
+            "config": {"fetch_limit": 100, "buffer_capacity": 200, "slow_component_ms": 1000},
+            "traces": [trace],
+            "has_more": False,
+        }
     )
     with pytest.raises(DashboardError, match="invalid trace metadata"):
         client.traces()
@@ -189,7 +191,9 @@ async def test_start_in_traces_and_keep_root_selection_after_theme_change():
 
 def test_trace_once_json_uses_no_textual_runtime(monkeypatch):
     import json
+
     from typer.testing import CliRunner
+
     from hayhooks.cli import hayhooks_cli
 
     monkeypatch.setattr(DashboardClient, "status", lambda _: {"status": "Up!", "pipelines": []})
@@ -232,3 +236,43 @@ async def test_help_preserves_trace_inspection_and_view_shortcuts_return_to_list
         await pilot.press("e")
         await pilot.pause()
         assert app.screen is app.main_screen and app.view == "executions"
+
+
+def test_trace_client_refreshes_config_in_one_request_per_snapshot():
+    client = DashboardClient("https://example.test/proxy")
+    snapshots = [
+        {
+            "traces": [sample_trace()],
+            "has_more": False,
+            "config": {"fetch_limit": 100, "buffer_capacity": 200, "slow_component_ms": 1000},
+        },
+        {"traces": [], "has_more": False, "config": {"fetch_limit": 1, "buffer_capacity": 1, "slow_component_ms": 500}},
+    ]
+    client.get = Mock(side_effect=snapshots)
+    try:
+        assert client.traces() == snapshots[0]
+        assert client.traces() == snapshots[1]
+        assert client.get.call_args_list == [(("traces",), {"limit": 100})] * 2
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        None,
+        [],
+        {},
+        {"fetch_limit": True, "buffer_capacity": 200, "slow_component_ms": 1000},
+        {"fetch_limit": 101, "buffer_capacity": 200, "slow_component_ms": 1000},
+        {"fetch_limit": 100, "buffer_capacity": 1, "slow_component_ms": 1000},
+    ],
+)
+def test_trace_client_rejects_invalid_inline_config(config):
+    client = DashboardClient("https://example.test")
+    client.get = Mock(return_value={"traces": [], "has_more": False, "config": config})
+    try:
+        with pytest.raises(DashboardError, match="invalid trace configuration"):
+            client.traces()
+    finally:
+        client.close()

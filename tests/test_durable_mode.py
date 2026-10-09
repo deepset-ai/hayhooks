@@ -13,10 +13,10 @@ from fastapi.testclient import TestClient
 
 from hayhooks.server import app as server_app
 from hayhooks.server.app import create_app
-from hayhooks.server.routers.traces import require_tracing_access
 from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.pipelines.loader import REGISTRY_ROOT, load_pipeline_registry
 from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.routers.traces import require_tracing_access
 from hayhooks.server.utils import deploy_utils
 from hayhooks.server.utils.models import PreparedPipeline
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
@@ -74,7 +74,7 @@ def test_immutable_server_serves_fixed_pipelines_without_deployment_routes(
         assert completion["choices"][0]["message"]["content"] == "hello from chat"
         names = ["calc", "chat", "double", "image", "stream", "upload"]
         assert sorted(model["id"] for model in client.get("/models").json()["data"]) == names
-        assert client.get("/traces/entrypoints").json() == {"entrypoints": names}
+        assert client.get("/traces").status_code == 200
         assert client.get("/status/double").status_code == 200
 
         status = client.get("/status").json()
@@ -190,9 +190,7 @@ def test_startup_helpers_do_not_create_a_missing_directory(
 @pytest.mark.parametrize(
     ("files", "mount_path", "match"),
     [
-        pytest.param(
-            {"status/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/chat", r"\['status'\] conflict", id="status"
-        ),
+        pytest.param({"status/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/chat", r"\['status'\] conflict", id="status"),
         pytest.param({"draw/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/chat", r"\['draw'\] conflict", id="draw"),
         pytest.param(
             {"ops/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/ops", r"\['ops'\] conflict", id="configured-mount"
