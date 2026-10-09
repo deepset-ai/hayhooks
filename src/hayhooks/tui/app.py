@@ -676,8 +676,9 @@ class DashboardApp(App):
                     table.update_cell(key, column, value)
         self.items = wanted
         if execution or traces:
-            positions = {key: index for index, key in enumerate(wanted)}
-            table.sort(key=lambda cells: positions[cells[0].plain])
+            # Cell identity preserves row keys when display text is sanitized or truncated.
+            positions = {id(table.get_row(key)[0]): index for index, key in enumerate(wanted)}
+            table.sort(key=lambda cells: positions[id(cells[0])])
         selected = self.selected[self.view]
         keep_reading = self._reading_detail() and (
             self.details.get("execution_id") == selected or self.view == "traces"

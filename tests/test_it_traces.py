@@ -3,6 +3,7 @@ import pytest
 from hayhooks.server.routers.traces import require_tracing_access
 from hayhooks.server.utils.live_trace_buffer import clear_live_traces, record_live_span_finish, record_live_span_start
 from hayhooks.settings import settings
+from hayhooks.tui.client import MAX_TRACE_DEPTH, DashboardClient
 
 
 @pytest.fixture(autouse=True)
@@ -215,3 +216,37 @@ def test_trace_snapshot_is_bounded_even_when_settings_allow_more(client, monkeyp
     body = client.get("/traces?limit=999").json()
     assert limits == [101]
     assert body["config"]["fetch_limit"] == 100
+
+
+@pytest.mark.parametrize("depth", [64, 65, 499])
+def test_deep_trace_snapshot_remains_usable_by_dashboard(client, monkeypatch, depth):
+    clear_live_traces()
+    for index in range(depth + 1):
+        record_live_span_start(
+            trace_id="deep",
+            span_id=str(index),
+            parent_span_id=str(index - 1) if index else None,
+            operation_name="nested",
+            start_time_ms=1000 + index,
+        )
+    record_live_span_start(
+        trace_id="healthy",
+        span_id="root",
+        parent_span_id=None,
+        operation_name="normal",
+        start_time_ms=2000,
+    )
+    dashboard = DashboardClient("http://test")
+    monkeypatch.setattr(dashboard, "get", lambda path, **params: client.get(f"/{path}", params=params).json())
+    try:
+        snapshot = dashboard.traces()
+    finally:
+        dashboard.close()
+    assert {trace["trace_id"] for trace in snapshot["traces"]} == {"deep", "healthy"}
+    trace = next(trace for trace in snapshot["traces"] if trace["trace_id"] == "deep")
+    assert trace["span_count"] == depth + 1
+    node, shown = trace["root_span"], 1
+    while node["children"]:
+        node = node["children"][0]
+        shown += 1
+    assert shown == min(depth + 1, MAX_TRACE_DEPTH + 1)

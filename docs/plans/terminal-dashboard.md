@@ -388,3 +388,14 @@ operator authentication, nested component capture and CLI JSON export; it was
 stopped afterwards. Redis and the Python-version wheel matrix were not rerun.
 External trace consumers must migrate to snapshots; see the
 [API migration](../reference/tracing.md#trace-snapshot-api).
+
+### Final review fixes
+
+The agent review found two refresh failures: deeply nested span trees exceeded
+client validation, and sanitized IDs broke row sorting. Trees now stop at depth
+64 while retaining total span counts and disclosing omitted spans; sorting uses
+stored cell identity independently of displayed labels. Regression tests failed
+before the fixes. All **71 focused cases** and **1,354 unit tests** passed with
+the isolated protobuf target (4 skipped, 129 deselected, 3 expected failures).
+Source lint/format, focused types and docs passed; the agent's follow-up found
+both issues resolved with no new actionable finding. No Redis or wheel matrix rerun.

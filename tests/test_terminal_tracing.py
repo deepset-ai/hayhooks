@@ -238,6 +238,51 @@ async def test_help_preserves_trace_inspection_and_view_shortcuts_return_to_list
         assert app.screen is app.main_screen and app.view == "executions"
 
 
+async def test_trace_sorting_keeps_raw_row_identity_after_sanitization():
+    client = TraceClient()
+    unsafe = "unsafe\x1b[2J-id"
+    client.trace_rows = [
+        sample_trace(unsafe),
+        sample_trace("unsafe-id", start=1700000001000),
+        sample_trace("third\x1b[31m", start=1700000002000),
+    ]
+    app = DashboardApp(client, traces=True, interval=100)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await trace_settled(app, pilot)
+        table = app._widget("#rows")
+        assert [row.key.value for row in table.ordered_rows] == list(app.items)
+        assert table.get_row(unsafe)[0].plain == table.get_row("unsafe-id")[0].plain == "unsafe-id"
+        table.move_cursor(row=table.get_row_index(unsafe))
+        await pilot.pause()
+        assert app.selected["traces"] == unsafe
+        client.trace_rows[0]["duration_ms"] = 4000
+        app.action_refresh_now()
+        await trace_settled(app, pilot)
+        app._widget("#trace-sort").value = "slowest"
+        await pilot.press("t")
+        await pilot.pause()
+        assert [row.key.value for row in table.ordered_rows] == list(app.items)
+        assert table.get_row_index(unsafe) == 0 and app.selected["traces"] == unsafe
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, TraceScreen) and app.screen.trace["trace_id"] == unsafe
+        assert "\x1b" not in app.screen.query_one("#trace-heading", Static).render().plain
+
+
+async def test_partial_span_tree_discloses_omitted_spans():
+    client = TraceClient()
+    trace = sample_trace()
+    trace["span_count"] = 66
+    client.trace_rows = [trace]
+    app = DashboardApp(client, traces=True, interval=100)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await trace_settled(app, pilot)
+        assert "2 of 66 shown" in app._widget("#detail").render().plain
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "2 of 66 spans shown" in app.screen.query_one("#trace-heading", Static).render().plain
+
+
 def test_trace_client_refreshes_config_in_one_request_per_snapshot():
     client = DashboardClient("https://example.test/proxy")
     snapshots = [

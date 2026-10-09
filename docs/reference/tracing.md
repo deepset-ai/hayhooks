@@ -159,6 +159,10 @@ maximum and buffer capacity. The response includes:
 - `has_more`: whether the bounded snapshot omits older traces.
 - `config`: `buffer_capacity`, `fetch_limit`, `slow_component_ms` and the process-local `scope`.
 
+Span trees stop at depth 64 (root depth zero). The total captured `span_count`
+is retained; the terminal shows visible versus total spans when descendants
+are omitted. This keeps deeply nested traces usable within the snapshot limits.
+
 Each terminal refresh reads one authoritative snapshot. There is no streaming
 subscription or cursor to recover after restarts or evictions. Entrypoint
 filters use `/status` and captured trace metadata; clearing the terminal list

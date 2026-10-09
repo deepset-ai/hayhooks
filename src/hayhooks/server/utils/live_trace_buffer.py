@@ -27,6 +27,7 @@ _IGNORED_TRACE_TAG_KEYS = {"hayhooks.elapsed_ms"}
 _MAX_TRACE_TAGS = 32
 _MAX_SPAN_TAGS = 8
 _MAX_SPANS_PER_TRACE = 500
+_MAX_SPAN_DEPTH = 64  # Root depth is zero, matching terminal snapshot validation.
 _MAX_TAG_VALUE_LENGTH = 500
 
 
@@ -312,7 +313,7 @@ class _LiveTraceBuffer:
             for parent, child_ids in children_by_parent.items()
         }
 
-        def build_span_tree(span_id: str) -> TraceSpanNodeDict:
+        def build_span_tree(span_id: str, depth: int = 0) -> TraceSpanNodeDict:
             span = spans_by_id[span_id]
             child_ids = sorted_children.get(span_id, [])
             return {
@@ -322,7 +323,9 @@ class _LiveTraceBuffer:
                 "duration_ms": span["duration_ms"],
                 "running": span["running"],
                 "tags": _collect_span_tags(span.get("tags", {})),
-                "children": [build_span_tree(child_id) for child_id in child_ids],
+                "children": [build_span_tree(child_id, depth + 1) for child_id in child_ids]
+                if depth < _MAX_SPAN_DEPTH
+                else [],
             }
 
         start_time_ms = min(span["start_time_ms"] for span in spans_by_id.values())

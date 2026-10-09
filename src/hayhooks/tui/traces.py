@@ -77,6 +77,7 @@ def slowest_component(trace: dict[str, Any]) -> dict[str, Any] | None:
 
 def trace_detail(trace: dict[str, Any], theme: Theme, slow_ms: int = 1000) -> Text:
     text = Text()
+    shown = len(all_spans(trace))
     text.append("TRACE\n", style=f"bold {theme.accent}")
     text.append(literal(trace["trace_id"]) + "\n\n", style="bold")
     for label, value in (
@@ -85,7 +86,7 @@ def trace_detail(trace: dict[str, Any], theme: Theme, slow_ms: int = 1000) -> Te
         ("State", trace_state(trace)),
         ("Started (UTC)", started_at(trace["start_time_ms"])),
         ("Duration", "In progress" if trace["root_span"]["running"] else duration(trace["duration_ms"])),
-        ("Spans", trace["span_count"]),
+        ("Spans", trace["span_count"] if shown == trace["span_count"] else f"{shown} of {trace['span_count']} shown"),
     ):
         text.append(label.ljust(18), style=theme.variables["text-muted"])
         text.append(literal(value) + "\n", style=theme.foreground or "")
@@ -140,16 +141,14 @@ class TraceScreen(Screen):
         expanded = {key for key, node in self.nodes.items() if node.is_expanded}
         scroll = tree.scroll_offset
         self.trace = trace
-        self.query_one("#trace-heading", Static).update(
-            Text(
-                literal(trace["entrypoint"] or "No entrypoint")
-                + "  ·  "
-                + trace_state(trace)
-                + "  ·  "
-                + ("In progress" if trace["root_span"]["running"] else duration(trace["duration_ms"]))
-                + "  ·  "
-                + literal(trace["trace_id"])
-            )
+        heading = Text(
+            literal(trace["entrypoint"] or "No entrypoint")
+            + "  ·  "
+            + trace_state(trace)
+            + "  ·  "
+            + ("In progress" if trace["root_span"]["running"] else duration(trace["duration_ms"]))
+            + "  ·  "
+            + literal(trace["trace_id"])
         )
         theme = self.app.current_theme
         slow = slowest_component(trace)
@@ -176,6 +175,9 @@ class TraceScreen(Screen):
             )
             self.nodes[span["span_id"]] = node
             pending.extend((child, node) for child in reversed(span["children"]))
+        if len(self.nodes) < trace["span_count"]:
+            heading.append(f"  ·  {len(self.nodes)} of {trace['span_count']} spans shown")
+        self.query_one("#trace-heading", Static).update(heading)
         node = (self.nodes.get(selected) if selected is not None else None) or next(iter(self.nodes.values()))
         tree.call_after_refresh(tree.move_cursor, node)
         tree.call_after_refresh(tree.scroll_to, scroll.x, scroll.y, animate=False)
