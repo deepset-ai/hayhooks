@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from starlette.routing import Match, Mount, compile_path
 
+from hayhooks.dashboard_auth import LOCAL_HOSTS, local_dashboard_token
 from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
 from hayhooks.server.pipelines.loader import build_immutable_host
@@ -371,6 +372,16 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
     app.state.durable_redis_clients = ()
     app.state.durable_health = None
     app.state.monitoring_enabled = settings.monitoring_enabled
+    app.state.dashboard_token = None
+    if (
+        settings.host in LOCAL_HOSTS
+        and not settings.tracing_token
+        and (settings.monitoring_enabled or settings.tracing_enabled)
+    ):
+        try:
+            app.state.dashboard_token = local_dashboard_token(create=True)
+        except (OSError, ValueError):
+            log.warning("Private dashboard credentials unavailable; configure a tracing token or operator dependency.")
     app.state.durable_store = settings.durable_store
 
     app.add_middleware(RequestIdMiddleware)

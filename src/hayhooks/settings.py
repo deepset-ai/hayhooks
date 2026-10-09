@@ -115,7 +115,7 @@ class AppSettings(BaseSettings):
     # HAYHOOKS_PIPELINES_DIR, deploy/undeploy is disabled, and the main HTTP
     # server hosts durable wrappers.
     durable_mode: bool = False
-    monitoring_enabled: bool = False
+    monitoring_enabled: bool = True
     # Hand claims of work still running after the shutdown grace to another process.
     durable_release_running_on_shutdown: bool = False
     # Redis is deliberately the production default; memory storage is useful
@@ -161,7 +161,7 @@ class AppSettings(BaseSettings):
 
     tracing_excluded_spans: list[Literal["send", "receive"]] = ["send", "receive"]
     # Local trace API; external OpenTelemetry exporters remain independent.
-    tracing_enabled: bool = False
+    tracing_enabled: bool = True
     tracing_token: SecretStr | None = None
     tracing_default_limit: int = Field(default=25, gt=0, le=200)
     tracing_max_limit: int = Field(default=100, gt=0, le=500)

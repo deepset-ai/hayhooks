@@ -64,7 +64,7 @@ def test_typed_status_distinguishes_loaded_unknown_and_pipeline(client):
     assert {row["state"] for row in rows.values()} == {"Loaded"}
     assert {row["execution_mode"] for row in rows.values()} == {"request-bound"}
     assert "chat_completion" in rows["custom_chat"]["capabilities"]
-    assert not body["capabilities"]["execution_enumeration"]
+    assert body["capabilities"]["execution_enumeration"]
 
 
 def test_invalid_type_hint_is_rejected():

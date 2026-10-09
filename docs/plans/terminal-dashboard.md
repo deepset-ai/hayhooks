@@ -399,3 +399,32 @@ before the fixes. All **71 focused cases** and **1,354 unit tests** passed with
 the isolated protobuf target (4 skipped, 129 deselected, 3 expected failures).
 Source lint/format, focused types and docs passed; the agent's follow-up found
 both issues resolved with no new actionable finding. No Redis or wheel matrix rerun.
+
+## Default capture and mixed executions — 9 October 2026
+
+This supersedes the earlier opt-in and durable-only execution scope. The main
+host now enables local trace inspection and durable indexing by default, with
+explicit CLI/environment opt-outs. The Executions tab combines recent ordinary
+REST/OpenAI/MCP/A2A runs with indexed durable history across deployments.
+Durable attempts are not duplicated. Deployment, ID and status filters work for
+both sources; revision filters and subsequent pages apply to durable history.
+Each durable deployment contributes at most 50 summaries per page. Recent
+ordinary runs are a bounded responding-process sample, lost on eviction/restart.
+
+Local POSIX servers and same-user clients automatically share a private operator
+credential. Explicit credentials, verified middleware and FastAPI dependency
+overrides remain supported; owner-scoped collections retain their owner policy.
+Automatic credentials are never sent to remote URLs or environment proxies.
+Unsafe/unavailable local credentials do not prevent server startup and leave
+operator access denied. Each unavailable collection retains its own previous
+rows while other collections and the trace sample continue to refresh.
+
+Qualification: **1,372 unit tests passed, 4 skipped, 129 deselected, 3 expected
+failures**, with the isolated protobuf 6.33.6 target described above. Source
+lint/format, focused types and docs passed (existing source-link warnings remain).
+The agent review's authentication, proxy and source-isolation findings were
+fixed and verified. A temporary real HTTP server exercised automatic credentials,
+ordinary and durable runs, and the combined terminal view at 80×24 and 120×36;
+it was stopped afterward. SVG captures remain in
+`/tmp/hayhooks-default-dashboard-captures/`. The user's running server on port
+1416 was not restarted. Redis integration and the wheel/Python matrix were not rerun.

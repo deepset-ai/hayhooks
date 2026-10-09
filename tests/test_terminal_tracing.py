@@ -6,7 +6,7 @@ import pytest
 from hayhooks.tui.client import DashboardClient, DashboardError
 
 pytest.importorskip("textual")
-from textual.widgets import Static, Tree
+from textual.widgets import Select, Static, Tree
 
 from hayhooks.tui.app import DashboardApp
 from hayhooks.tui.traces import TraceScreen, trace_state
@@ -321,3 +321,81 @@ def test_trace_client_rejects_invalid_inline_config(config):
             client.traces()
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("size", [(80, 24), (120, 36)])
+async def test_executions_combine_recent_and_durable_runs_by_default(size):
+    client = TraceClient()
+    durable_attempt = sample_trace("durable-attempt")
+    durable_attempt["entrypoint"] = "agent"
+    durable_attempt["tags"].append({"key": "hayhooks.durable.execution_id", "value": "run_000"})
+    deployment = sample_trace("deploy-trace")
+    deployment["root_span"]["name"] = "hayhooks.pipeline.deploy"
+    client.trace_rows += [durable_attempt, deployment]
+    app = DashboardApp(client, interval=100)
+    async with app.run_test(size=size) as pilot:
+        await settled(app, pilot)
+        app.action_executions()
+        await settled(app, pilot)
+        assert app.pipeline is None
+        assert len(app.items) == 53
+        assert sum(bool(item.get("_trace")) for item in app.items.values()) == 3
+        assert {row["deployment"] for row in app.items.values()} == {"agent", "rag"}
+        assert "durable-attempt" not in [row["execution_id"] for row in app.items.values()]
+        assert "deploy-trace" not in [row["execution_id"] for row in app.items.values()]
+        app._widget("#deployment-filter").value = "rag"
+        await settled(app, pilot)
+        assert len(app.items) == 3
+        assert all(row.get("_trace") for row in app.items.values())
+        selected = app.selected["executions"]
+        app.open_detail()
+        await pilot.pause()
+        assert isinstance(app.screen, TraceScreen)
+        assert not any(len(call) > 2 and isinstance(call[2], str) and call[2] in {"trace-one", "trace-two", "trace-live"}
+                       for call in client.calls)
+        client.trace_rows = [row for row in client.trace_rows if row["trace_id"] != app.screen.trace["trace_id"]]
+        app.action_refresh_now()
+        await settled(app, pilot)
+        assert app.selected["executions"] == selected
+        assert "retained" in app.screen.query_one("#trace-warning", Static).content.plain
+        await pilot.press("escape")
+        app._widget("#status-filter").value = "failed"
+        await settled(app, pilot)
+        assert all(row["status"] == "failed" for row in app.items.values())
+        app._widget("#deployment-filter").value = Select.NULL
+        app._widget("#status-filter").value = "all"
+        await settled(app, pilot)
+        assert app.pipeline is None and any(not row.get("_trace") for row in app.items.values())
+        app.action_next()
+        await settled(app, pilot)
+        assert len(app.items) == 15
+        assert all(not row.get("_trace") for row in app.items.values())
+        app.action_previous()
+        await settled(app, pilot)
+        assert any(row.get("_trace") for row in app.items.values())
+
+
+async def test_trace_denial_keeps_owner_history_and_store_failure_keeps_recent_runs(monkeypatch):
+    client = TraceClient()
+    app = DashboardApp(client, pipeline="agent", interval=100)
+    async with app.run_test() as pilot:
+        await settled(app, pilot)
+        original_traces = client.traces
+
+        def denied(*args, **kwargs):
+            raise DashboardError("Authentication failed or monitoring access denied (401/403)")
+
+        monkeypatch.setattr(client, "traces", denied)
+        app.action_executions()
+        await settled(app, pilot)
+        assert len(app.items) == 50 and app.error
+        monkeypatch.setattr(client, "traces", original_traces)
+        monkeypatch.setattr(client, "executions", denied)
+        app._widget("#deployment-filter").value = Select.NULL
+        for _ in range(80):
+            await pilot.pause(0.025)
+            app._tick()
+            if not app.in_flight and app.trace_page:
+                break
+        assert app.error and len(app.items) == 3
+        assert all(row.get("_trace") for row in app.items.values())

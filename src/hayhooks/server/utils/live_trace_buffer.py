@@ -10,6 +10,7 @@ from hayhooks.settings import settings
 
 _TRACE_TAG_PRIORITY = (
     "hayhooks.pipeline.name",
+    "hayhooks.durable.execution_id",
     "hayhooks.transport",
     "hayhooks.openai.operation",
     "hayhooks.openai.stream_requested",

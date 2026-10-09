@@ -12,6 +12,8 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import requests
 
+from hayhooks.dashboard_auth import LOCAL_HOSTS, local_dashboard_token
+
 TRACE_LIMIT = 100
 MAX_TRACE_DEPTH = 64
 MAX_TRACE_SPANS = 500
@@ -49,7 +51,19 @@ class DashboardClient:
         self.label = literal(parts.netloc + parts.path.rstrip("/"), 200)
         self.timeout = timeout
         self.session = requests.Session()
-        if token := os.environ.get("HAYHOOKS_DASHBOARD_TOKEN"):
+        token = os.environ.get("HAYHOOKS_DASHBOARD_TOKEN")
+        if not token and parts.hostname in LOCAL_HOSTS and not os.environ.get("HAYHOOKS_DASHBOARD_API_KEY"):
+            try:
+                token = local_dashboard_token()
+                if token:
+                    self.session.trust_env = False
+                    self.session.verify = (
+                        os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE") or True
+                    )
+            except (OSError, ValueError) as error:
+                self.session.close()
+                raise DashboardError("Cannot read private local dashboard credential") from error
+        if token:
             self.session.headers["Authorization"] = f"Bearer {token}"
         if key := os.environ.get("HAYHOOKS_DASHBOARD_API_KEY"):
             header = os.environ.get("HAYHOOKS_DASHBOARD_API_KEY_HEADER", "X-API-Key")
@@ -64,14 +78,14 @@ class DashboardClient:
                 self.url + "/" + path.lstrip("/"),
                 params=params,
                 timeout=self.timeout,
-                verify=True,
+                verify=self.session.verify,
                 allow_redirects=False,
             ) as response:
                 if response.status_code in {401, 403}:
                     raise DashboardError("Authentication failed or monitoring access denied (401/403)")
                 if response.status_code == HTTPStatus.NOT_FOUND:
                     if path.startswith("traces"):
-                        raise DashboardError("Local tracing unavailable; enable --with-tracing on the server (404)")
+                        raise DashboardError("Local tracing unavailable; restart or enable tracing on the server (404)")
                     if path == "status":
                         raise DashboardError("Status API unavailable (404)")
                     if path.endswith("/executions"):

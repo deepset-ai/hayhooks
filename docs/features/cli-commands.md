@@ -68,8 +68,8 @@ hayhooks run --additional-python-path ./custom_code
 # Reload on changes (development)
 hayhooks run --reload
 
-# Enable local trace inspection (configure operator authorization first)
-hayhooks run --with-tracing
+# Disable local trace inspection if it is not needed
+hayhooks run --without-tracing
 ```
 
 Trace inspection reads a process-local buffer. With multiple workers, use a
@@ -92,12 +92,12 @@ connection pinned to one process or an external OTLP backend for aggregate histo
 | `--additional-python-path` | | Additional Python path | `None` |
 | `--root-path` | | Root path for API | `/` |
 | `--reload` | | Reload on code changes (development) | `false` |
-| `--with-monitoring` | | Enable authenticated durable execution indexing and collection routes | `false` |
-| `--with-tracing` | | Enable the authenticated local trace API for terminal inspection | `false` |
+| `--with-monitoring/--without-monitoring` | | Authenticated durable execution indexing and collection routes | Enabled by settings (`true`) |
+| `--with-tracing/--without-tracing` | | Authenticated local trace API for terminal inspection | Enabled by settings (`true`) |
 
 ### dashboard
 
-Browse deployments, durable executions and recent process traces using GET requests only:
+Browse deployments, ordinary and durable executions, and recent process traces using GET requests only:
 
 ```bash
 pip install 'hayhooks[tui]'
@@ -117,7 +117,9 @@ when `HAYHOOKS_DISABLE_SSL` is set; use `REQUESTS_CA_BUNDLE` for a private CA.
 The client uses 3-second connection and 5-second read timeouts. Polling defaults
 to two seconds and backs off up to 30 seconds after failures.
 
-Credentials come from `HAYHOOKS_DASHBOARD_TOKEN` (bearer token) or
+Local POSIX servers and clients under the same OS account automatically share a
+private operator credential; see [local authentication](../reference/tracing.md#operator-authorization).
+Explicit credentials come from `HAYHOOKS_DASHBOARD_TOKEN` (bearer token) or
 `HAYHOOKS_DASHBOARD_API_KEY` (`X-API-Key`, override its name with
 `HAYHOOKS_DASHBOARD_API_KEY_HEADER`). Keep credentials out of URLs.
 [Monitoring authentication](../deployment/durable-operations.md#monitoring-authentication)
@@ -132,7 +134,7 @@ that external services were probed. Workers describe the responding process;
 store/revision counts are labeled separately.
 
 Use up/down to select rows, left/right to scroll wide tables, Tab/Shift+Tab to move focus, Enter for details, Esc
-to return, `/` to search, `e` for the selected durable deployment's executions,
+to return, `/` to search, `e` for recent ordinary runs and durable executions,
 Space to pause, `r` to refresh, `?` for help, and `q` or Ctrl+C to exit. Text
 inputs keep ordinary shortcut characters as text; Ctrl+C always exits. Mouse
 selection and scrolling are supported. Details appear alongside the list on
@@ -146,18 +148,25 @@ process health and store counts in an inspector pane. Long IDs and revisions use
 ellipses in the table; details preserve their full values and timestamps.
 
 Deployment searches and type filters apply to the complete deployment snapshot.
-Execution ID searches, status and revision filters query the indexed collection,
-not just the visible page. Choose a durable deployment with the execution view's
-selector. Next/Previous buttons (or `]`/`[`) navigate bounded pages. A sparse page
-can have a next page. Stored kind and revision remain visible for older executions.
+Executions show all deployments by default. Ordinary REST, OpenAI, MCP and A2A runs
+come from the bounded recent process trace buffer; durable executions come from
+their indexed store. Durable attempts are not duplicated as ordinary runs.
+Choose a deployment to narrow the view. ID searches and status filters apply to
+both sources; revision filters apply only to stored durable history. Durable
+searches query the index beyond the visible page; ordinary searches cover only
+the recent sample. Next/Previous buttons (or `]`/`[`) navigate durable pages of
+up to 50 rows per deployment. Recent ordinary runs appear on page 1 only.
+A sparse durable page can have a next page. Durable kind, revision and attempt
+remain available in details; Enter on an ordinary run opens its span tree.
 Waiting, progress and errors are shown only for the selected item, bounded and
-rendered as literal text. Public results are discarded. Creation/update timestamps
-are shown; actual runtime duration is not inferred.
+rendered as literal text. Public results are discarded. Actual trace durations are shown for ordinary runs; durable creation/update
+timestamps are not treated as runtime duration.
 
-Deployment browsing works without server monitoring. Execution discovery requires
-`HAYHOOKS_MONITORING_ENABLED=true` or `hayhooks run --with-monitoring` on **every
-writer**, plus owner authentication or an explicit operator dependency. It does
-not enable local tracing or launch the terminal UI. Request-bound execution history is unavailable.
+Capture and durable indexing are enabled by default, with authentication required.
+They do not launch the terminal UI. Ordinary history is process-local and disappears
+on buffer eviction or server restart; durable retention follows the execution store.
+Multiple server workers have separate trace samples. All writing replicas must
+index submissions for complete durable coverage.
 See [index coverage and retention](../deployment/durable-operations.md#execution-monitoring).
 
 `--once` prints one JSON status snapshot without Textual; `--json` requires

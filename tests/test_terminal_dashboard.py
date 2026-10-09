@@ -67,6 +67,11 @@ class FakeClient:
         return {"execution_id": execution_id, "waiting": {"message": "[bold]literal[/bold]\x1b[2J\x1b]52;c;bad\x07"},
                 "progress": [{"message": "long progress line"} for _ in range(50)] if self.long_detail else [], "error": None}
 
+    def traces(self):
+        self.calls.append(("GET", "traces"))
+        return {"traces": [], "has_more": False,
+                "config": {"fetch_limit": 100, "buffer_capacity": 200, "slow_component_ms": 1000}}
+
 
 async def settled(app, pilot):
     for _ in range(80):
@@ -277,8 +282,8 @@ async def test_empty_disabled_stale_and_light_layouts(size):
         assert "No deployments match" in app._widget("#message").content.plain
         app.snapshot["deployments"][0]["execution_enumeration"] = False
         app.action_executions()
-        await pilot.pause()
-        assert "HAYHOOKS_MONITORING_ENABLED" in app._widget("#message").content.plain
+        await settled(app, pilot)
+        assert "No executions yet" in app._widget("#message").content.plain
         app.action_help()
         await pilot.pause()
         await pilot.press("escape")
@@ -397,3 +402,47 @@ async def test_compact_filters_and_long_execution_ids_stay_reachable(size):
         assert selector.value == "queued"
         calls = [call for call in client.calls if len(call) == 3 and isinstance(call[2], dict)]
         assert calls[-1][2]["status"] == "queued"
+
+
+async def test_all_deployments_page_independently_and_isolate_collection_denials(monkeypatch):
+    client = FakeClient()
+    snapshot = copy.deepcopy(SNAPSHOT)
+    snapshot["pipelines"].append("second")
+    snapshot["deployments"].append(dict(snapshot["deployments"][0], name="second"))
+    monkeypatch.setattr(client, "status", lambda: copy.deepcopy(snapshot))
+    batches = {"agent": copy.deepcopy(EXECUTIONS[:11]), "second": copy.deepcopy(EXECUTIONS)}
+    denied = set()
+    original = client.executions
+
+    def executions(pipeline, **params):
+        if pipeline in denied:
+            raise DashboardError("Execution store unavailable")
+        client.rows = batches[pipeline]
+        return original(pipeline, **params)
+
+    monkeypatch.setattr(client, "executions", executions)
+    app = DashboardApp(client, interval=100)
+    async with app.run_test() as pilot:
+        await settled(app, pilot)
+        app.action_executions()
+        await settled(app, pilot)
+        assert len(app.items) == 61
+        assert app.page["next_cursor"] == {"second": "50"}
+        assert len({row["execution_id"] for row in app.items.values()}) == 50
+        app.action_next()
+        await settled(app, pilot)
+        assert len(app.items) == 15
+        assert {row["deployment"] for row in app.items.values()} == {"second"}
+        app.action_previous()
+        await settled(app, pilot)
+        denied.add("agent")
+        batches["second"][0]["status"] = "failed"
+        app.action_refresh_now()
+        await settled(app, pilot)
+        assert app.error and len(app.items) == 61
+        assert next(row for row in app.items.values() if row["deployment"] == "second")["status"] == "failed"
+        app._reset_page()
+        app.action_refresh_now()
+        await settled(app, pilot)
+        assert len(app.items) == 50
+        assert {row["deployment"] for row in app.items.values()} == {"second"}

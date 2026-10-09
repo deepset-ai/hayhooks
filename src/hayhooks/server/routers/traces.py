@@ -1,27 +1,9 @@
-from secrets import compare_digest
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
+from hayhooks.dashboard_auth import require_tracing_access
 from hayhooks.server.utils.live_trace_buffer import get_recent_traces
 from hayhooks.settings import settings
-
-
-def require_tracing_access(request: Request) -> None:
-    """
-    Process traces may include every user's operations; require operator access.
-
-    Hosts may override this dependency with their verified authentication function,
-    or have trusted authentication middleware set request.state.tracing_operator.
-    """
-    if settings.tracing_token and settings.tracing_token.get_secret_value():
-        expected = "Bearer " + settings.tracing_token.get_secret_value()
-        if not compare_digest(request.headers.get("Authorization", "").encode(), expected.encode()):
-            raise HTTPException(status_code=401, detail="Invalid tracing credentials")
-        return
-    if getattr(request.state, "tracing_operator", False) is not True:
-        raise HTTPException(status_code=403, detail="Authenticated tracing/operator dependency is required")
-
 
 router = APIRouter(dependencies=[Depends(require_tracing_access)])
 

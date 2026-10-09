@@ -63,18 +63,15 @@ Open Jaeger at `http://localhost:16686` and use the same `OTEL_*` variables show
 
 ## Terminal trace inspection
 
-Tracing is part of `hayhooks dashboard`. Enable the local trace API on the server,
-then open the **Traces** tab (`v`) in another terminal:
+Tracing and durable execution indexing are enabled by default. On a local POSIX
+machine, start the server and dashboard under the same OS account:
 
 ```bash
 pip install "hayhooks[tui]"
-# Choose a private operator token; keep it out of command arguments and URLs.
-export HAYHOOKS_TRACING_TOKEN="your-private-operator-token"
-hayhooks run --with-tracing
-
-# In the client terminal, supply the same token:
-export HAYHOOKS_DASHBOARD_TOKEN="your-private-operator-token"
-hayhooks dashboard --traces
+hayhooks run
+# In another terminal:
+hayhooks dashboard
+# e: recent ordinary runs + durable history; v: all process traces
 ```
 
 No Node.js, npm build or browser is required. Local capture includes Hayhooks
@@ -106,8 +103,22 @@ An inspector outside the current buffer/filter is explicitly marked as retained.
 
 Trace buffers include operations from every user handled by the responding
 process. Owner-scoped durable access does not authorize viewing the whole buffer.
-All `/traces` routes default to denied unless `HAYHOOKS_TRACING_TOKEN` validates
-an incoming bearer token, or the host supplies verified operator authorization.
+Local servers bound to `localhost`, `127.0.0.1` or `::1` automatically create a
+private operator credential at `~/.cache/hayhooks/dashboard-token` (or under
+`XDG_CACHE_HOME`). The directory and file must belong to the current user and
+have private permissions (700 and 600). Concurrent workers share this credential.
+The terminal discovers it only for those literal loopback hostnames, and never
+sends it automatically to remote hosts. Windows requires explicit credentials.
+
+All `/traces` requests still require operator authorization. Remote servers
+require an explicit `HAYHOOKS_TRACING_TOKEN` or verified host dependency. Set
+`HAYHOOKS_DASHBOARD_TOKEN` to the same token in the client terminal. Explicit
+credentials take precedence over local discovery. Treat the local file as an
+operator secret: it authorizes process-wide inspection, including other users'
+operations. Owner-scoped durable access alone does not authorize this buffer.
+Use `--without-tracing` / `HAYHOOKS_TRACING_ENABLED=false` to disable the API,
+and `--without-monitoring` / `HAYHOOKS_MONITORING_ENABLED=false` to disable
+durable indexing and collection routes.
 The terminal also supports its existing API-key headers with a custom host dependency.
 
 For an existing authentication system, override the dependency on your app:
@@ -116,7 +127,7 @@ For an existing authentication system, override the dependency on your app:
 from hayhooks.server.app import create_app
 from hayhooks.server.routers.traces import require_tracing_access
 
-app = create_app()  # HAYHOOKS_TRACING_ENABLED=true
+app = create_app()
 app.dependency_overrides[require_tracing_access] = require_operator
 ```
 
@@ -140,8 +151,8 @@ appear in tags.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `HAYHOOKS_TRACING_ENABLED` | `false` | Mount the authenticated local trace API |
-| `HAYHOOKS_TRACING_TOKEN` | unset | Private bearer token for operator access |
+| `HAYHOOKS_TRACING_ENABLED` | `true` | Mount the authenticated local trace API |
+| `HAYHOOKS_TRACING_TOKEN` | unset | Explicit operator bearer token; local POSIX hosts otherwise use a private credential |
 | `HAYHOOKS_TRACING_BUFFER_CAPACITY` | `200` | Maximum retained process traces |
 | `HAYHOOKS_TRACING_DEFAULT_LIMIT` | `25` | Default trace snapshot size |
 | `HAYHOOKS_TRACING_MAX_LIMIT` | `100` | Maximum trace snapshot size (also capped at 100 and buffer capacity) |
@@ -178,7 +189,8 @@ bash scripts/demo_traces.sh
 
 The React dashboard, bundled web sources, static mount and runtime npm build
 have been removed. Replace `--with-tracing-dashboard` (including its old aliases)
-with `--with-tracing`, and open `hayhooks dashboard --traces` instead of `/dashboard`.
+with `hayhooks run` (local tracing is enabled by default), and open
+`hayhooks dashboard --traces` instead of `/dashboard`.
 `--dashboard-path` is removed. The local tracing API is now just `GET /traces`,
 with inspection settings included in every snapshot. The separate config,
 entrypoints, stream and server-clear endpoints, cursor fields/header, and

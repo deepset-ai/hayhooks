@@ -309,3 +309,20 @@ def test_run_with_monitoring_propagates_server_setting_and_environment(monkeypat
     assert result.exit_code == 0, result.output
     assert settings.monitoring_enabled is True
     assert os.environ["HAYHOOKS_MONITORING_ENABLED"] == "true"
+
+
+@pytest.mark.parametrize("setting,flag,variable", [
+    ("tracing_enabled", "--without-tracing", "HAYHOOKS_TRACING_ENABLED"),
+    ("monitoring_enabled", "--without-monitoring", "HAYHOOKS_MONITORING_ENABLED"),
+])
+def test_monitoring_opt_out_propagates_to_reloaded_workers(monkeypatch, setting, flag, variable):
+    import os
+    import uvicorn
+
+    monkeypatch.setattr(settings, setting, True)
+    monkeypatch.setenv(variable, "true")
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    result = runner.invoke(hayhooks_cli, ["run", "--reload", flag])
+    assert result.exit_code == 0, result.output
+    assert getattr(settings, setting) is False
+    assert os.environ[variable] == "false"

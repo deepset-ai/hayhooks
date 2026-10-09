@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Generator
-from typing import Any
+from typing import Annotated, Any
 
+from fastapi import Depends
 from pydantic import BaseModel
 from starlette.requests import Request
 
+from hayhooks.dashboard_auth import require_tracing_access
 from hayhooks.durable.context import DurableContext
 
 
@@ -111,12 +113,10 @@ class BasePipelineWrapper(ABC):
         message = "durable_owner_id not implemented"
         raise NotImplementedError(message)
 
-    def durable_monitoring_access(self, request: Request) -> bool:
-        """Authenticate an unscoped collection request using host dependencies; return exactly True to allow it."""
-        del request
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=403, detail="Authenticated monitoring/operator dependency is required")
+    def durable_monitoring_access(self, access: Annotated[None, Depends(require_tracing_access)]) -> bool:
+        """Authenticate an unscoped collection through the host's operator dependency."""
+        del access
+        return True
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         """

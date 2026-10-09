@@ -120,17 +120,16 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 
 ### HAYHOOKS_MONITORING_ENABLED
 
-- Default: `false`
+- Default: `true`
 - Description: Index new durable submissions and enable authenticated execution
-  collection routes. Equivalent to `hayhooks run --with-monitoring`. Enable it on
-  every writing replica. Does not launch a TUI or enable local trace inspection.
-  Existing executions are not backfilled; unscoped enumeration requires an explicit
-  [operator dependency](../deployment/durable-operations.md#monitoring-authentication).
+  collection routes on every writing replica. Disable with `hayhooks run --without-monitoring`.
+  Does not launch a TUI. Existing executions are not backfilled; collections require
+  [owner or operator authentication](../deployment/durable-operations.md#monitoring-authentication).
 
 ### HAYHOOKS_DASHBOARD_TOKEN
 
 - Default: unset
-- Description: Terminal client bearer token. Sent as `Authorization: Bearer ...`.
+- Description: Terminal client bearer token. Sent as `Authorization: Bearer ...`. When unset, local POSIX clients discover the private same-user dashboard credential for literal loopback URLs only.
 
 ### HAYHOOKS_DASHBOARD_API_KEY
 
@@ -273,8 +272,8 @@ more frequently.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `HAYHOOKS_TRACING_ENABLED` | `false` | Mount the authenticated local trace API |
-| `HAYHOOKS_TRACING_TOKEN` | unset | Private bearer token for operator access |
+| `HAYHOOKS_TRACING_ENABLED` | `true` | Mount the authenticated local trace API |
+| `HAYHOOKS_TRACING_TOKEN` | unset | Explicit operator bearer token; loopback POSIX servers otherwise use a private local credential |
 | `HAYHOOKS_TRACING_BUFFER_CAPACITY` | `200` | Maximum retained process traces |
 | `HAYHOOKS_TRACING_DEFAULT_LIMIT` | `25` | Default trace snapshot size |
 | `HAYHOOKS_TRACING_MAX_LIMIT` | `100` | Maximum trace snapshot size (also capped at 100 and buffer capacity) |

@@ -62,7 +62,7 @@ This guide covers how to install Hayhooks and its dependencies.
     Adds Textual for the read-only terminal dashboard on Python 3.10–3.14.
     Server startup and ordinary CLI commands do not require Textual.
     [Dashboard commands](../features/cli-commands.md#dashboard) describe authentication,
-    snapshots, navigation, and the separate monitoring opt-in.
+    snapshots, navigation, and default local monitoring.
 
 === "With Durable Execution"
 

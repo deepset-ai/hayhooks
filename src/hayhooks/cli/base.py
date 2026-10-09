@@ -56,11 +56,15 @@ def run(  # noqa: C901, PLR0913
         bool, typer.Option("--with-chainlit", help="Enable embedded Chainlit UI (requires hayhooks[chainlit])")
     ] = False,
     with_monitoring: Annotated[
-        bool, typer.Option("--with-monitoring", help="Enable authenticated durable execution enumeration")
-    ] = False,
+        bool | None,
+        typer.Option(
+            "--with-monitoring/--without-monitoring", help="Durable execution enumeration (enabled by default)"
+        ),
+    ] = None,
     with_tracing: Annotated[
-        bool, typer.Option("--with-tracing", help="Enable the authenticated local trace API for the terminal dashboard")
-    ] = False,
+        bool | None,
+        typer.Option("--with-tracing/--without-tracing", help="Local dashboard capture API (enabled by default)"),
+    ] = None,
     chainlit_path: Annotated[
         str | None, typer.Option("--chainlit-path", help="URL path for the Chainlit UI (default: /chat)")
     ] = None,
@@ -104,9 +108,9 @@ def run(  # noqa: C901, PLR0913
     settings.port = port
     settings.pipelines_dir = pipelines_dir
     settings.root_path = root_path
-    if with_monitoring:
-        _set_env("HAYHOOKS_MONITORING_ENABLED", "true")
-        settings.monitoring_enabled = True
+    if with_monitoring is not None:
+        _set_env("HAYHOOKS_MONITORING_ENABLED", str(with_monitoring).lower())
+        settings.monitoring_enabled = with_monitoring
 
     if additional_python_path:
         _set_env("HAYHOOKS_ADDITIONAL_PYTHON_PATH", additional_python_path)
@@ -144,9 +148,9 @@ def run(  # noqa: C901, PLR0913
             _set_env("HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR", chainlit_custom_elements_dir)
             settings.chainlit_custom_elements_dir = chainlit_custom_elements_dir
 
-    if with_tracing:
-        _set_env("HAYHOOKS_TRACING_ENABLED", "true")
-        settings.tracing_enabled = True
+    if with_tracing is not None:
+        _set_env("HAYHOOKS_TRACING_ENABLED", str(with_tracing).lower())
+        settings.tracing_enabled = with_tracing
 
     if workers > 1 or reload:
         # Multi-worker and auto-reload require a string import path so each

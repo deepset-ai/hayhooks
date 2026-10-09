@@ -8,12 +8,11 @@ from hayhooks.tui.client import MAX_TRACE_DEPTH, DashboardClient
 
 @pytest.fixture(autouse=True)
 def tracing_access(client):
-    # The shared test app is built before this fixture; explicitly mount the opt-in router.
+    # Some CLI tests explicitly disable tracing; support either shared-app configuration.
     from hayhooks.server.routers.traces import router
 
-    if not getattr(client.app.state, "test_traces_mounted", False):
+    if not any(getattr(route, "path", None) == "/traces" for route in client.app.routes):
         client.app.include_router(router, prefix="/traces")
-        client.app.state.test_traces_mounted = True
     client.app.dependency_overrides[require_tracing_access] = lambda: None
     yield
     client.app.dependency_overrides.pop(require_tracing_access, None)

@@ -21,7 +21,9 @@ from hayhooks.tui.traces import (
     COMFORTABLE_TERMINAL_HEIGHT,
     WIDE_TERMINAL,
     TraceScreen,
+    all_spans,
     duration,
+    started_at,
     trace_detail,
     trace_kind,
     trace_state,
@@ -35,7 +37,7 @@ Tab / Shift+Tab   Move focus
 Enter        Read selected item details
 Esc          Return from details/help or leave search
 /            Search deployment names or indexed execution IDs
-e            Executions for the selected durable deployment
+e            Recent runs and stored durable executions
 Space        Pause / resume refresh
 r            Refresh now
 [ / ]        Previous / next page
@@ -46,6 +48,8 @@ q / Ctrl+C   Exit
 Click rows to select; use the wheel to scroll.
 Search and filters stay in place when returning from details.
 Execution pages scan at most 200 candidates; a sparse page may have a next page.
+All deployments: up to 50 durable executions per deployment on each page.
+Recent request-bound runs appear on page 1 and disappear after buffer eviction/restart.
 v                  Traces tab
 c                  Hide the currently buffered traces locally (Traces tab)
 Traces: filter entrypoint/kind/state, sort newest/slowest, Enter for span tree.
@@ -247,8 +251,8 @@ class DashboardApp(App):
         self.items: dict[str, dict[str, Any]] = {}
         self.selected: dict[str, str | None] = {"deployments": pipeline, "executions": None, "traces": None}
         self.details: dict[str, Any] = {}
-        self.cursor: str | None = None
-        self.history: list[str | None] = []
+        self.cursor: str | dict[str, str] | None = None
+        self.history: list[str | dict[str, str] | None] = []
         self.searches = {"deployments": "", "executions": "", "traces": ""}
         self.paused = False
         self.in_flight = False
@@ -319,7 +323,7 @@ class DashboardApp(App):
                 compact=True,
             )
         with Horizontal(id="execution-controls"):
-            yield Select([], prompt="Durable deployment", id="deployment-filter", compact=True)
+            yield Select([], prompt="All deployments", id="deployment-filter", compact=True)
             yield Input(placeholder="Revision · all retained", id="revision-filter", compact=True)
         yield Static("Connecting…", id="message", markup=False)
         with Horizontal(id="panes"):
@@ -376,7 +380,7 @@ class DashboardApp(App):
         columns = (
             ("ID", "Entrypoint", "Kind", "State", "Duration", "Spans", "Stream")
             if traces
-            else ("ID", "Type", "Revision", "Status", "Attempt", "Updated (UTC)")
+            else ("ID", "Deployment", "Mode", "Status", "Duration", "Updated (UTC)")
             if executions
             else ("Name", "Type", "Execution", "State")
         )
@@ -456,44 +460,98 @@ class DashboardApp(App):
     def _request_refresh(self) -> None:
         if self.paused or self.in_flight:
             return
-        if self.view == "executions" and self.snapshot and not self._can_enumerate():
-            self._update_table()
-            self.next_poll = time.monotonic() + self.interval
-            return
         self.in_flight = True
-        self._fetch(self.generation, self._query(), not bool(self.snapshot))
+        selected = self.selected["executions"]
+        self._fetch(
+            self.generation, self._query(), not bool(self.snapshot), self.items.get(selected or "", self.details)
+        )
 
     @work(thread=True, exit_on_error=False)
-    def _fetch(self, generation: int, query: tuple, need_status: bool) -> None:
+    def _fetch(self, generation: int, query: tuple, need_status: bool, selected_item: dict) -> None:  # noqa: C901, PLR0912
         view, pipeline, search, status, revision, cursor, selected, reading = query
-        snapshot = page = detail = None
+        snapshot = page = detail = trace_page = None
         error = detail_error = ""
         try:
             if view == "deployments" or need_status:
                 snapshot = self.client.status()
-            if view == "executions" and pipeline and not need_status:
-                page = self.client.executions(
-                    pipeline,
-                    search=search,
-                    status=None if status == "all" else status,
-                    revision=revision or None,
-                    cursor=cursor,
-                )
-                ids = [item["execution_id"] for item in page["executions"]]
-                selected = selected if selected in ids or (selected and reading) else (ids[0] if ids else None)
-                if selected:
+            if view == "executions" and not need_status:
+                # Independent sources: an operator denial must not hide owner-scoped history.
+                try:
+                    trace_page = self.client.traces()
+                except DashboardError as failure:
+                    error = str(failure)
+                deployments = [
+                    item["name"]
+                    for item in self._deployments()
+                    if item.get("execution_enumeration")
+                    and (pipeline is None or item["name"] == pipeline)
+                    and (not isinstance(cursor, dict) or item["name"] in cursor)
+                ]
+                collected: dict[str, Any] = {
+                    "executions": [],
+                    "has_more": False,
+                    "next_cursor": None,
+                    "skipped_controls": 0,
+                }
+                cursors = {}
+                for name in deployments:
                     try:
-                        detail = self.client.detail(pipeline, selected)
+                        batch = self.client.executions(
+                            name,
+                            search=search,
+                            status=None if status == "all" else status,
+                            revision=revision or None,
+                            cursor=cursor.get(name) if isinstance(cursor, dict) else cursor,
+                        )
+                    except DashboardError as failure:
+                        error = "; ".join(part for part in (error, str(failure)) if part)
+                        collected["executions"].extend(
+                            row for row in self.page.get("executions", []) if row["deployment"] == name
+                        )
+                        previous = self.page.get("next_cursor")
+                        previous = previous.get(name) if isinstance(previous, dict) else previous
+                        if previous:
+                            cursors[name] = previous
+                        continue
+                    for row in batch["executions"]:
+                        item = {**row, "deployment": name}
+                        item["_key"] = (
+                            item["execution_id"] if pipeline else json.dumps(["durable", name, item["execution_id"]])
+                        )
+                        collected["executions"].append(item)
+                    collected["skipped_controls"] += batch.get("skipped_controls", 0)
+                    if batch["has_more"]:
+                        cursors[name] = batch["next_cursor"]
+                collected["has_more"] = bool(cursors)
+                collected["next_cursor"] = cursors.get(pipeline) if pipeline else cursors or None
+                page = collected
+                ids = [item["_key"] for item in page["executions"]]
+                # Local trace selections are resolved by the merged table, never by durable detail routes.
+                if selected not in ids and not (selected and reading) and not selected_item.get("_trace"):
+                    selected = ids[0] if ids else None
+                summary = next((item for item in page["executions"] if item["_key"] == selected), selected_item)
+                if selected and summary and not summary.get("_trace"):
+                    try:
+                        detail = self.client.detail(summary["deployment"], summary["execution_id"])
                     except DashboardError as failure:
                         detail_error = str(failure)
             if view == "traces":
                 page = self.client.traces()
         except DashboardError as failure:
-            error = str(failure)
+            error = "; ".join(part for part in (error, str(failure)) if part)
         finally:
             if self.is_running:
                 self.call_from_thread(
-                    self._apply_refresh, generation, query, snapshot, page, selected, detail, error, detail_error
+                    self._apply_refresh,
+                    generation,
+                    query,
+                    snapshot,
+                    page,
+                    selected,
+                    detail,
+                    error,
+                    detail_error,
+                    trace_page,
                 )
 
     def _apply_refresh(  # noqa: PLR0913, PLR0912, C901
@@ -506,6 +564,7 @@ class DashboardApp(App):
         detail: dict | None,
         error: str,
         detail_error: str,
+        trace_page: dict | None = None,
     ) -> None:
         self.in_flight = False
         if not self.is_running:
@@ -518,24 +577,21 @@ class DashboardApp(App):
             self.error = error
             self.failures += 1
             self._widget("#message").update(Text(error + ". Retaining last snapshot; retrying."))
-            self._show_detail()
         else:
             self.error = ""
             self.failures = 0
             self.last_good = time.monotonic()
+        if snapshot is not None or page is not None or trace_page is not None:
+            if trace_page is not None:
+                self.trace_page = trace_page
             if snapshot is not None:
                 self.snapshot = snapshot
                 deployments = self._deployments()
-                durable = [
-                    (literal(item["name"]), item["name"]) for item in deployments if item["execution_mode"] == "durable"
-                ]
+                options_list = [(literal(item["name"]), item["name"]) for item in deployments]
                 options = self._widget("#deployment-filter")
                 self.updating = True
-                options.set_options(durable)
-                if self.pipeline is None and durable:
-                    self.pipeline = durable[0][1]
-                if self.pipeline in [value for _, value in durable]:
-                    options.value = self.pipeline
+                options.set_options(options_list)
+                options.value = self.pipeline if self.pipeline in [value for _, value in options_list] else Select.NULL
                 self.updating = False
             if page is not None and self.view == "traces":
                 self.trace_page = page
@@ -543,21 +599,22 @@ class DashboardApp(App):
             if page is not None and self.view == "executions":
                 self.page = page
                 self.selected["executions"] = selected
-                summary = next((item for item in page["executions"] if item["execution_id"] == selected), {})
-                if not summary and self.details.get("execution_id") == selected:
+                summary = next((item for item in page["executions"] if item["_key"] == selected), {})
+                if not summary and self.details.get("_key") == selected:
                     summary = self.details
                 if detail is not None:
                     self.details = {**summary, **detail}
-                    if selected not in [item["execution_id"] for item in page["executions"]]:
+                    if selected not in [item["_key"] for item in page["executions"]]:
                         self.details["detail_message"] = "Selected execution is outside this page/filter."
                 elif detail_error:
-                    previous = self.details if self.details.get("execution_id") == selected else {}
+                    previous = self.details if self.details.get("_key") == selected else {}
                     self.details = {**summary, **previous, "detail_message": detail_error + ". Detail snapshot stale."}
                 else:
                     self.details = summary
             self._update_table()
             if snapshot is not None and self.view == "executions" and page is None:
                 self._invalidate()
+        self._show_detail()
         self.next_poll = time.monotonic() + min(30.0, self.interval * (2 ** min(self.failures, 4)))
         self._header()
 
@@ -576,7 +633,49 @@ class DashboardApp(App):
         ]
 
     def _can_enumerate(self) -> bool:
-        return any(item["name"] == self.pipeline and item.get("execution_enumeration") for item in self._deployments())
+        return any(
+            (self.pipeline is None or item["name"] == self.pipeline) and item.get("execution_enumeration")
+            for item in self._deployments()
+        )
+
+    def _execution_rows(self) -> list[dict[str, Any]]:
+        rows = list(self.page.get("executions", []))
+        if self.cursor is not None or self._widget("#revision-filter").value:
+            return rows
+        for trace in self.trace_page.get("traces", []):
+            tags = trace_tags(trace)
+            if tags.get("hayhooks.durable.execution_id") or tags.get("hayhooks.openai.execution_mode") == "durable":
+                continue
+            if self.pipeline is not None and trace["entrypoint"] != self.pipeline:
+                continue
+            if not any(
+                span["name"]
+                in {
+                    "hayhooks.pipeline.run",
+                    "hayhooks.openai.run",
+                    "hayhooks.mcp.run_pipeline_tool",
+                    "hayhooks.a2a.run_agent",
+                }
+                for span in all_spans(trace)
+            ):
+                continue
+            state = trace_state(trace)
+            if (
+                self._widget("#status-filter").value not in ("all", state)
+                or self.searches["executions"].lower() not in trace["trace_id"].lower()
+            ):
+                continue
+            rows.append(
+                {
+                    "_key": json.dumps(["trace", trace["trace_id"]]),
+                    "execution_id": trace["trace_id"],
+                    "deployment": trace["entrypoint"] or "—",
+                    "status": state,
+                    "_trace": trace,
+                    "updated_at": started_at(trace["start_time_ms"] + trace["duration_ms"]),
+                }
+            )
+        return sorted(rows, key=lambda item: item.get("created_at", item["updated_at"]), reverse=True)
 
     def _update_table(self, *, recolor: bool = False) -> None:  # noqa: C901, PLR0912, PLR0915
         if not hasattr(self, "main_screen"):
@@ -586,9 +685,9 @@ class DashboardApp(App):
         if traces:
             rows, message = self._trace_rows()
         elif execution:
-            rows = self.page.get("executions", []) if self._can_enumerate() else []
+            rows = self._execution_rows()
             message = (
-                f"{literal(self.pipeline)}  ·  {len(rows)} on this page  ·  Stored kind / revision"
+                f"{literal(self.pipeline or 'All deployments')} · {len(rows)} runs · Recent process + durable history"
                 if rows
                 else "No filter matches on this bounded page; try Next."
                 if self.page.get("has_more")
@@ -596,15 +695,12 @@ class DashboardApp(App):
                 if self.searches["executions"]
                 or self._widget("#status-filter").value != "all"
                 or self._widget("#revision-filter").value
-                else "No indexed executions yet."
+                else "No executions yet. Run a pipeline to see it here."
             )
-            if not self._can_enumerate():
-                message = (
-                    "Select a durable deployment. Enable HAYHOOKS_MONITORING_ENABLED=true "
-                    "on every writer and configure authenticated access."
-                )
-            elif not self.page:
+            if not self.page and not self.trace_page:
                 message = "Loading execution page…"
+            if self.trace_page.get("has_more"):
+                message += " Recent sample capped."
             if self.page.get("skipped_controls"):
                 message += " Invalid controls skipped; collection may be incomplete."
         else:
@@ -628,7 +724,7 @@ class DashboardApp(App):
         if not self.error:
             self._widget("#message").update(Text(message))
         table = self._widget("#rows")
-        key_field = "trace_id" if traces else "execution_id" if execution else "name"
+        key_field = "trace_id" if traces else "_key" if execution else "name"
         wanted = {item[key_field]: item for item in rows}
         was_updating = self.updating
         self.updating = True
@@ -653,12 +749,14 @@ class DashboardApp(App):
                 if traces
                 else [
                     item["execution_id"],
-                    item.get("kind", "unknown"),
-                    item.get("revision", ""),
+                    item.get("deployment", "—"),
+                    "request-bound" if item.get("_trace") else "durable",
                     item["status"]
                     + (" · cancel pending" if item.get("cancellation_pending") else "")
                     + (" · retry" if item.get("available_at") else ""),
-                    item.get("attempt", 0),
+                    ("live" if item["_trace"]["root_span"]["running"] else duration(item["_trace"]["duration_ms"]))
+                    if item.get("_trace")
+                    else "—",
                     item.get("updated_at", "")[:19],
                 ]
                 if execution
@@ -681,7 +779,7 @@ class DashboardApp(App):
             table.sort(key=lambda cells: positions[id(cells[0])])
         selected = self.selected[self.view]
         keep_reading = self._reading_detail() and (
-            self.details.get("execution_id") == selected or self.view == "traces"
+            self.details.get("_key") == selected or self.view == "traces" or isinstance(self.screen, TraceScreen)
         )
         if selected not in wanted and not keep_reading:
             selected = next(iter(wanted), None)
@@ -757,14 +855,19 @@ class DashboardApp(App):
             "Responding process · Enter Span tree · c Clear locally"
         )
         if not self.trace_page:
-            message = "Loading local traces… Enable --with-tracing and configure authenticated operator access."
+            message = "Loading local traces… Monitoring is enabled by default; authenticate for operator access."
         return rows, message
 
     def _selected_detail(self) -> Text:
         selected = self.selected[self.view]
         item = self.items.get(selected, {}) if selected is not None else {}
-        if self.view == "executions" and self.details.get("execution_id") == selected:
+        if self.view == "executions" and self.details.get("_key") == selected:
             item = self.details
+        if item.get("_trace"):
+            item = item["_trace"]
+            return trace_detail(
+                item, self.current_theme, self.trace_page.get("config", {}).get("slow_component_ms", 1000)
+            )
         if self.view == "traces" and item:
             return trace_detail(
                 item, self.current_theme, self.trace_page.get("config", {}).get("slow_component_ms", 1000)
@@ -779,8 +882,10 @@ class DashboardApp(App):
         content = self._selected_detail()
         self._widget("#detail").update(content)
         if isinstance(self.screen, TraceScreen):
-            selected = self.selected["traces"]
+            selected = self.selected[self.view]
             trace = self.items.get(selected) if selected is not None else None
+            if trace and self.view == "executions":
+                trace = trace.get("_trace")
             warning = (
                 self.error + ". Inspector snapshot stale."
                 if self.error
@@ -819,9 +924,11 @@ class DashboardApp(App):
     def open_detail(self) -> None:
         if not self.items:
             return
-        if self.view == "traces":
-            selected = self.selected["traces"]
+        if self.view == "traces" or self.items.get(self.selected[self.view] or "", {}).get("_trace"):
+            selected = self.selected[self.view]
             trace = self.items.get(selected) if selected is not None else None
+            if trace and self.view == "executions":
+                trace = trace["_trace"]
             if trace:
                 self.push_screen(TraceScreen(trace, self.trace_page.get("config", {}).get("slow_component_ms", 1000)))
         elif self.size.width >= WIDE_TERMINAL:
@@ -852,9 +959,10 @@ class DashboardApp(App):
         if self.updating or not hasattr(self, "main_screen"):
             return
         if event.select.id == "deployment-filter":
-            if event.value in (Select.NULL, self.pipeline):
+            value = None if event.value is Select.NULL else str(event.value)
+            if value == self.pipeline:
                 return
-            self.pipeline = str(event.value)
+            self.pipeline = value
         if self.view == "executions":
             self._reset_page()
         else:

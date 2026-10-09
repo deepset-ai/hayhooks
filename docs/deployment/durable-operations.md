@@ -429,10 +429,12 @@ so each restart resumes further along.
 
 ## Execution monitoring
 
-Enable `HAYHOOKS_MONITORING_ENABLED=true` or `hayhooks run --with-monitoring`
-on every replica writing a monitored deployment. This enables control indexing
-and `GET /{name}/executions`; it does not start a terminal UI or the React tracing
-dashboard. Connect separately using `hayhooks dashboard` with `hayhooks[tui]`.
+The main Hayhooks host enables control indexing and `GET /{name}/executions`
+by default. Every writing replica must index submissions for full coverage.
+Use `HAYHOOKS_MONITORING_ENABLED=false` or `hayhooks run --without-monitoring`
+to opt out. Connect separately using `hayhooks dashboard` with `hayhooks[tui]`.
+Its Executions tab combines this stored history with recent request-bound runs
+from the local trace buffer; ordinary history is lost on eviction or restart.
 
 Coverage begins with new submissions from indexing-enabled writers. Earlier
 submissions remain inspectable by ID, including idempotent replays, but are not
@@ -464,9 +466,12 @@ filters the index before returning IDs, cursors or pagination metadata. The oper
 dependency never bypasses an owner-scoped deployment. Cross-owner operator aggregation
 is not provided.
 
-For an unscoped wrapper, override `durable_monitoring_access` using your host's
-verified authentication middleware or FastAPI dependencies. It must return **exactly
-`True`**; the inherited implementation denies access. Existing inspect/cancel/resume
+For an unscoped wrapper, the inherited `durable_monitoring_access` uses the
+same operator credential as `/traces`: a private same-user credential for local
+POSIX hosts, or `HAYHOOKS_TRACING_TOKEN` / trusted `request.state.tracing_operator`.
+Without authenticated operator access, it denies the collection request.
+You can override it using your host's verified FastAPI dependency; it must return
+**exactly `True`**. Existing inspect/cancel/resume
 routes retain their existing ID/owner policy.
 
 This complete bearer-token integration uses FastAPI's existing security dependency

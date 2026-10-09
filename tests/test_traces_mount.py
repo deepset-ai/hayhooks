@@ -6,7 +6,7 @@ from hayhooks.server.routers.traces import require_tracing_access
 from hayhooks.settings import settings
 
 
-def test_trace_api_is_opt_in_and_browser_dashboard_is_gone(monkeypatch):
+def test_trace_api_can_be_disabled_and_browser_dashboard_is_gone(monkeypatch):
     monkeypatch.setattr(settings, "tracing_enabled", False)
     client = TestClient(create_app())
     assert client.get("/traces").status_code == 404
@@ -16,6 +16,7 @@ def test_trace_api_is_opt_in_and_browser_dashboard_is_gone(monkeypatch):
 
 def test_trace_snapshot_requires_operator_access(monkeypatch):
     monkeypatch.setattr(settings, "tracing_enabled", True)
+    monkeypatch.setattr(settings, "host", "0.0.0.0")
     app = create_app()
     client = TestClient(app)
     assert client.get("/traces").status_code == 403
