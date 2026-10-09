@@ -134,7 +134,7 @@ that external services were probed. Workers describe the responding process;
 store/revision counts are labeled separately.
 
 Use up/down to select rows, left/right to scroll wide tables, Tab/Shift+Tab to move focus, Enter for details, Esc
-to return, `/` to search, `e` for recent ordinary runs and durable executions,
+to return, `/` to search, `d` for Deployments, `e` for Executions and `v` for Traces,
 Space to pause, `r` to refresh, `?` for help, and `q` or Ctrl+C to exit. Text
 inputs keep ordinary shortcut characters as text; Ctrl+C always exits. Mouse
 selection and scrolling are supported. Details appear alongside the list on

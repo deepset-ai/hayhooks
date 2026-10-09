@@ -37,7 +37,9 @@ Tab / Shift+Tab   Move focus
 Enter        Read selected item details
 Esc          Return from details/help or leave search
 /            Search deployment names or indexed execution IDs
+d            Deployments tab
 e            Recent runs and stored durable executions
+v            Traces tab
 Space        Pause / resume refresh
 r            Refresh now
 [ / ]        Previous / next page
@@ -50,7 +52,6 @@ Search and filters stay in place when returning from details.
 Execution pages scan at most 200 candidates; a sparse page may have a next page.
 All deployments: up to 50 durable executions per deployment on each page.
 Recent request-bound runs appear on page 1 and disappear after buffer eviction/restart.
-v                  Traces tab
 c                  Hide the currently buffered traces locally (Traces tab)
 Traces: filter entrypoint/kind/state, sort newest/slowest, Enter for span tree.
 Span tree: arrows select, Enter expands/collapses, Tab scrollable tags/errors.
@@ -199,12 +200,13 @@ class DashboardApp(App):
         Binding("space", "pause", "Pause", key_display="Space", priority=True),
         Binding("r", "refresh_now", "Refresh"),
         Binding("question_mark", "help", "Help"),
+        Binding("d", "view('deployments')", "Deployments", show=False),
         Binding("e", "executions", "Executions"),
         Binding("left_square_bracket", "previous", "Prev", show=False),
         Binding("right_square_bracket", "next", "Next", show=False),
         Binding("escape", "escape", "Back", show=False),
         Binding("t", "theme", "Theme"),
-        Binding("v", "traces", "Traces", show=False),
+        Binding("v", "view('traces')", "Traces", show=False),
         Binding("c", "clear_traces", "Clear locally", show=False),
     ]
 
@@ -269,9 +271,9 @@ class DashboardApp(App):
             yield Static(Text("HAYHOOKS\nTerminal monitor", style="bold"), id="brand")
             yield Static("Connecting…", id="connection", markup=False)
         yield Tabs(
-            Tab("Deployments", id="deployments"),
-            Tab("Executions", id="executions"),
-            Tab("Traces", id="traces"),
+            Tab("Deployments (d)", id="deployments"),
+            Tab("Executions (e)", id="executions"),
+            Tab("Traces (v)", id="traces"),
             id="views",
         )
         with Horizontal(id="filters"):
@@ -1026,10 +1028,10 @@ class DashboardApp(App):
         if isinstance(self.screen, TraceScreen):
             self.screen.update_trace(self.screen.trace, force=True)
 
-    def action_traces(self) -> None:
+    def action_view(self, view: str) -> None:
         while self.screen is not self.main_screen:
             self.pop_screen()
-        self._widget("#views").active = "traces"
+        self._widget("#views").active = view
         self._widget("#rows").focus()
 
     def action_clear_traces(self) -> None:
@@ -1038,10 +1040,7 @@ class DashboardApp(App):
             self._update_table()
 
     def action_executions(self) -> None:
-        while self.screen is not self.main_screen:
-            self.pop_screen()
-        self._widget("#views").active = "executions"
-        self._widget("#rows").focus()
+        self.action_view("executions")
 
     @on(Button.Pressed, "#next")
     def action_next(self) -> None:

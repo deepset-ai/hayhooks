@@ -399,3 +399,21 @@ async def test_trace_denial_keeps_owner_history_and_store_failure_keeps_recent_r
                 break
         assert app.error and len(app.items) == 3
         assert all(row.get("_trace") for row in app.items.values())
+
+
+@pytest.mark.parametrize("size", [(80, 24), (120, 36)])
+async def test_all_tab_hotkeys_return_from_details_and_preserve_filter_typing(size):
+    app = DashboardApp(TraceClient(), interval=100)
+    async with app.run_test(size=size) as pilot:
+        await settled(app, pilot)
+        for key, view in (("v", "traces"), ("e", "executions"), ("d", "deployments")):
+            app.action_help()
+            await pilot.pause()
+            await pilot.press(key)
+            await pilot.pause()
+            assert app.screen is app.main_screen
+            assert app.view == view
+            assert app.focused is app._widget("#rows")
+        await pilot.press("slash", "d", "e", "v")
+        assert app.view == "deployments"
+        assert app._widget("#search").value == "dev"
