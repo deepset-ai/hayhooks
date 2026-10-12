@@ -464,27 +464,27 @@ class DashboardApp(App):
             return
         self.in_flight = True
         selected = self.selected["executions"]
-        self._fetch(
-            self.generation, self._query(), not bool(self.snapshot), self.items.get(selected or "", self.details)
-        )
+        self._fetch(self.generation, self._query(), self.items.get(selected or "", self.details))
 
     @work(thread=True, exit_on_error=False)
-    def _fetch(self, generation: int, query: tuple, need_status: bool, selected_item: dict) -> None:  # noqa: C901, PLR0912
+    def _fetch(self, generation: int, query: tuple, selected_item: dict) -> None:  # noqa: C901, PLR0912, PLR0915
         view, pipeline, search, status, revision, cursor, selected, reading = query
         snapshot = page = detail = trace_page = None
         error = detail_error = ""
         try:
-            if view == "deployments" or need_status:
+            try:
                 snapshot = self.client.status()
-            if view == "executions" and not need_status:
+            except DashboardError as failure:
+                error = str(failure)
+            if view == "executions":
                 # Independent sources: an operator denial must not hide owner-scoped history.
                 try:
                     trace_page = self.client.traces()
                 except DashboardError as failure:
-                    error = str(failure)
+                    error = "; ".join(part for part in (error, str(failure)) if part)
                 deployments = [
                     item["name"]
-                    for item in self._deployments()
+                    for item in self._deployments(snapshot)
                     if item.get("execution_enumeration")
                     and (pipeline is None or item["name"] == pipeline)
                     and (not isinstance(cursor, dict) or item["name"] in cursor)
@@ -556,7 +556,7 @@ class DashboardApp(App):
                     trace_page,
                 )
 
-    def _apply_refresh(  # noqa: PLR0913, PLR0912, C901
+    def _apply_refresh(  # noqa: PLR0913, PLR0912, PLR0915, C901
         self,
         generation: int,
         query: tuple,
@@ -587,14 +587,18 @@ class DashboardApp(App):
             if trace_page is not None:
                 self.trace_page = trace_page
             if snapshot is not None:
+                previous_names = [item["name"] for item in self._deployments()]
                 self.snapshot = snapshot
                 deployments = self._deployments()
-                options_list = [(literal(item["name"]), item["name"]) for item in deployments]
-                options = self._widget("#deployment-filter")
-                self.updating = True
-                options.set_options(options_list)
-                options.value = self.pipeline if self.pipeline in [value for _, value in options_list] else Select.NULL
-                self.updating = False
+                names = [item["name"] for item in deployments]
+                if names != previous_names:
+                    options = self._widget("#deployment-filter")
+                    with self.prevent(Select.Changed):
+                        options.set_options([(literal(name), name) for name in names])
+                        options.value = self.pipeline if self.pipeline in names else Select.NULL
+                    if self.pipeline is not None and self.pipeline not in names:
+                        self.pipeline = None
+                        self._reset_page()
             if page is not None and self.view == "traces":
                 self.trace_page = page
                 self.hidden_traces.intersection_update(item["trace_id"] for item in page["traces"])
@@ -620,9 +624,10 @@ class DashboardApp(App):
         self.next_poll = time.monotonic() + min(30.0, self.interval * (2 ** min(self.failures, 4)))
         self._header()
 
-    def _deployments(self) -> list[dict[str, Any]]:
-        if "deployments" in self.snapshot:
-            return self.snapshot["deployments"]
+    def _deployments(self, snapshot: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        snapshot = self.snapshot if snapshot is None else snapshot
+        if "deployments" in snapshot:
+            return snapshot["deployments"]
         return [
             {
                 "name": name,
@@ -631,7 +636,7 @@ class DashboardApp(App):
                 "state": "Registered",
                 "description": "Older server: typed deployment summaries unavailable",
             }
-            for name in self.snapshot.get("pipelines", [])
+            for name in snapshot.get("pipelines", [])
         ]
 
     def _can_enumerate(self) -> bool:

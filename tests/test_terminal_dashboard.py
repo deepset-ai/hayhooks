@@ -36,6 +36,7 @@ class FakeClient:
 
     def __init__(self):
         self.calls = []
+        self.snapshot = copy.deepcopy(SNAPSHOT)
         self.rows = copy.deepcopy(EXECUTIONS)
         self.failure = False
         self.block = None
@@ -51,7 +52,7 @@ class FakeClient:
             self.block.wait(2)
         if self.failure:
             raise DashboardError("Connection unavailable")
-        return copy.deepcopy(SNAPSHOT)
+        return copy.deepcopy(self.snapshot)
 
     def executions(self, pipeline, **params):
         self.calls.append(("GET", pipeline, params))
@@ -280,7 +281,7 @@ async def test_empty_disabled_stale_and_light_layouts(size):
         await pilot.pause()
         assert not app.items
         assert "No deployments match" in app._widget("#message").content.plain
-        app.snapshot["deployments"][0]["execution_enumeration"] = False
+        client.snapshot["deployments"][0]["execution_enumeration"] = False
         app.action_executions()
         await settled(app, pilot)
         assert "No executions yet" in app._widget("#message").content.plain
@@ -446,3 +447,42 @@ async def test_all_deployments_page_independently_and_isolate_collection_denials
         await settled(app, pilot)
         assert len(app.items) == 50
         assert {row["deployment"] for row in app.items.values()} == {"second"}
+
+
+@pytest.mark.parametrize("view", ["executions", "traces"])
+async def test_refresh_updates_health_and_deployments_in_every_view(monkeypatch, view):
+    client = FakeClient()
+    client.rows = client.rows[:1]
+    snapshot = copy.deepcopy(SNAPSHOT)
+    monkeypatch.setattr(client, "status", lambda: copy.deepcopy(snapshot))
+    app = DashboardApp(client, interval=100)
+    async with app.run_test() as pilot:
+        await settled(app, pilot)
+        app.action_view(view)
+        await settled(app, pilot)
+        snapshot["status"] = "Up!"
+        snapshot["pipelines"].append("new-jobs")
+        snapshot["deployments"].append(dict(snapshot["deployments"][0], name="new-jobs", state="Healthy"))
+        client.calls.clear()
+        app.action_refresh_now()
+        await settled(app, pilot)
+        assert app.snapshot["status"] == "Up!"
+        assert "Connected" in app._widget("#connection").render().plain
+        if view == "executions":
+            assert any(call[1] == "new-jobs" for call in client.calls)
+            assert {row["deployment"] for row in app.items.values()} == {"agent", "new-jobs"}
+        else:
+            assert "new-jobs" in app.trace_entrypoints
+
+        def unavailable_status():
+            raise DashboardError("Status temporarily unavailable")
+
+        monkeypatch.setattr(client, "status", unavailable_status)
+        client.calls.clear()
+        app.action_refresh_now()
+        await settled(app, pilot)
+        assert app.error == "Status temporarily unavailable"
+        assert app.snapshot["status"] == "Up!"
+        assert any(call[1] == "traces" for call in client.calls)
+        if view == "executions":
+            assert any(call[1] == "new-jobs" for call in client.calls)
