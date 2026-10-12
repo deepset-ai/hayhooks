@@ -30,6 +30,7 @@ from hayhooks.durable.engine import (
     InvalidExecutionTransitionError,
     PayloadKind,
     ReleaseClaim,
+    ScheduleRetry,
     initial_control,
 )
 from hayhooks.durable.models import PersistedError, decode_json
@@ -424,7 +425,10 @@ async def test_cancellation_wins_the_result_race(deployment_factory) -> None:
     assert PayloadKind.RESULT not in stored.payloads
 
 
-async def test_retry_delay_and_application_budget(deployment_factory, log_records) -> None:
+@pytest.mark.parametrize("terminal_confirmation_delay", [0, 0.02])
+async def test_retry_delay_and_application_budget(
+    deployment_factory, log_records, monkeypatch, terminal_confirmation_delay
+) -> None:
     attempts = 0
     first_attempt = asyncio.Event()
 
@@ -447,6 +451,16 @@ async def test_retry_delay_and_application_budget(deployment_factory, log_record
             operational_backoff_max_seconds=0.01,
         ),
     )
+    transition = deployment.store.transition
+
+    async def delayed_transition(run_id, command):
+        plan = await transition(run_id, command)
+        if isinstance(command, ScheduleRetry) and plan.next_control.terminal:
+            # The saved terminal state can be observed before the worker resumes to log it.
+            await asyncio.sleep(terminal_confirmation_delay)
+        return plan
+
+    monkeypatch.setattr(deployment.store, "transition", delayed_transition)
     submitted = await deployment.submit({"value": 1})
     await asyncio.wait_for(first_attempt.wait(), timeout=1)
     queued = await wait_for_execution(
@@ -470,6 +484,7 @@ async def test_retry_delay_and_application_budget(deployment_factory, log_record
         "application_retries_exhausted",
         False,
     )
+    await wait_for_health(deployment, lambda health: health["active_executions"] == 0)
     retry_logs = [record for record in log_records if record["extra"].get("retry_message") == "again"]
     assert any(record["message"] == "Durable execution scheduled an application retry" for record in retry_logs)
     assert any(
