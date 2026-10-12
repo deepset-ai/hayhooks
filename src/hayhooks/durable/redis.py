@@ -8,7 +8,7 @@ import hashlib
 import math
 import random
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import fields, replace
 from itertools import chain
@@ -1103,7 +1103,7 @@ def _changes_nothing(plan: TransitionPlan, current: ExecutionControl, *, lease_m
 
 
 @contextmanager
-def _redis_errors() -> Iterator[None]:
+def _redis_errors() -> Generator[None, None, None]:
     try:
         yield
     except RedisError as error:

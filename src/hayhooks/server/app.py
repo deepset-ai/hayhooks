@@ -2,7 +2,7 @@ import asyncio
 import os
 import socket
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack
 from contextvars import Context, copy_context
@@ -277,7 +277,7 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Capture the running loop so synchronous span recording can wake SSE
     # subscribers via call_soon_threadsafe.
     broadcaster = get_trace_stream_broadcaster()
