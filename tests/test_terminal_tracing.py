@@ -9,7 +9,7 @@ pytest.importorskip("textual")
 from textual.widgets import Select, Static, Tree
 
 from hayhooks.tui.app import DashboardApp
-from hayhooks.tui.traces import TraceScreen, trace_state
+from hayhooks.tui.traces import TraceScreen, slowest_component, trace_state
 from tests.test_terminal_dashboard import FakeClient, settled
 
 
@@ -46,6 +46,34 @@ def sample_trace(trace_id="trace-one", *, state="completed", start=1700000000000
             "children": [child],
         },
     }
+
+
+@pytest.mark.parametrize(
+    "spans, expected",
+    [
+        ([], None),
+        ([("haystack.component.run", True, 5000)], None),
+        ([("hayhooks.pipeline.run", False, 5000)], None),
+        (
+            [
+                ("haystack.component.run", False, 500),
+                ("haystack.component.run", False, 1500),
+                ("haystack.component.run", True, 5000),
+                ("hayhooks.pipeline.run", False, 10000),
+            ],
+            1,
+        ),
+        ([("haystack.component.run", False, 1500), ("haystack.component.run", False, 1500)], 0),
+    ],
+)
+def test_slowest_component(spans, expected):
+    trace = sample_trace()
+    children = [
+        {"name": name, "running": running, "duration_ms": duration, "children": []}
+        for name, running, duration in spans
+    ]
+    trace["root_span"]["children"] = children
+    assert slowest_component(trace) is (None if expected is None else children[expected])
 
 
 class TraceClient(FakeClient):

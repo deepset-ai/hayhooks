@@ -1,6 +1,7 @@
 """Trace presentation using Textual's native tree and scroll widgets."""
 
 from datetime import datetime, timezone
+from operator import itemgetter
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -70,7 +71,7 @@ def all_spans(trace: dict[str, Any]) -> list[dict[str, Any]]:
 def slowest_component(trace: dict[str, Any]) -> dict[str, Any] | None:
     return max(
         (span for span in all_spans(trace) if span["name"] == "haystack.component.run" and not span["running"]),
-        key=lambda span: span["duration_ms"],
+        key=itemgetter("duration_ms"),
         default=None,
     )
 

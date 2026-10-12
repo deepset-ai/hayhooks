@@ -107,10 +107,14 @@ def _resolve_otel_tracer_class() -> type[Any] | None:
 
 
 with LazyImport(_LAZY_IMPORT_HINT) as otlp_http_exporter_import:
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as OTLPHTTPSpanExporter  # ty: ignore[unresolved-import]
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # ty: ignore[unresolved-import]
+        OTLPSpanExporter as OTLPHTTPSpanExporter,
+    )
 
 with LazyImport(_LAZY_IMPORT_HINT) as otlp_grpc_exporter_import:
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as OTLPGRPCSpanExporter  # ty: ignore[unresolved-import]
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # ty: ignore[unresolved-import]
+        OTLPSpanExporter as OTLPGRPCSpanExporter,
+    )
 
 
 def _span_correlation_data(span: Span | None) -> dict[str, str]:

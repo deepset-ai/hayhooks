@@ -1,6 +1,6 @@
 import inspect
 from collections.abc import AsyncGenerator, Callable, Generator
-from typing import Any, Literal, cast, get_origin
+from typing import Any, Literal, get_origin
 
 import docstring_parser
 from docstring_parser.common import Docstring
@@ -57,7 +57,7 @@ def deployment_type(wrapper: BasePipelineWrapper) -> Literal["agent", "pipeline"
         raise ValueError("deployment_type must be agent, pipeline, unknown or None")  # noqa: EM101
     # Durable types must describe the actual runner, never an ordinary wrapper's hint.
     if hint is not None and not (wrapper._is_run_durable_implemented or wrapper._is_run_durable_async_implemented):
-        return cast(Literal["agent", "pipeline", "unknown"], hint)
+        return hint
     if isinstance(wrapper.pipeline, (Pipeline, AsyncPipeline)):
         return "pipeline"
     try:
