@@ -11,11 +11,11 @@ the 8 October migration below supersedes the separate browser tracing dashboard:
 
 - The existing React tracing dashboard lives under `dashboard/`. It is a separate feature and remains available.
 - There is no Textual dependency, `tui` extra, or terminal dashboard command in the current checkout. Rebuilding does not assume that earlier implementation files can be recovered.
-- [`GET /status`](../../src/hayhooks/server/routers/status.py) returns deployment names, durable mode, and cached durable health. It can return HTTP 200 with `status: Degraded`.
-- [`DurableDeployment.health()`](../../src/hayhooks/durable/runtime.py) exposes local worker state and bounded store counts.
-- [`create_durable_router()`](../../src/hayhooks/durable/fastapi.py) already provides inspect, cancel, resume, and stream routes for known execution IDs. There is no execution collection route.
-- [`ExecutionStore`](../../src/hayhooks/durable/store.py) has control reads and operational counts, but no listing method. Both Memory and Redis stores need execution discovery support.
-- [`Registry metadata`](../../src/hayhooks/server/pipelines/models.py) and [`wrapper method flags`](../../src/hayhooks/server/utils/base_pipeline_wrapper.py) provide descriptions and API capabilities, but ordinary wrapper metadata does not identify agent type reliably.
+- [`GET /status`](https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/server/routers/status.py) returns deployment names, durable mode, and cached durable health. It can return HTTP 200 with `status: Degraded`.
+- [`DurableDeployment.health()`](https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/durable/runtime.py) exposes local worker state and bounded store counts.
+- [`create_durable_router()`](https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/durable/fastapi.py) already provides inspect, cancel, resume, and stream routes for known execution IDs. There is no execution collection route.
+- [`ExecutionStore`](https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/durable/store.py) has control reads and operational counts, but no listing method. Both Memory and Redis stores need execution discovery support.
+- [`Registry metadata`](https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/server/pipelines/models.py) and [`wrapper method flags`](https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/server/utils/base_pipeline_wrapper.py) provide descriptions and API capabilities, but ordinary wrapper metadata does not identify agent type reliably.
 
 ## Scope and opt in
 
@@ -87,7 +87,7 @@ Support deployment/type filters and execution status filters. Search deployment 
 
 Start with Textual's built-in [DataTable](https://textual.textualize.io/widgets/data_table/), tabs, inputs, selects, scrolling containers, and footer. Use stable row keys so updates preserve selection. Updating health or adding an execution must not reset search focus, scroll position, or the item being read.
 
-Make the dashboard attractive through clear hierarchy, aligned columns, deliberate spacing, readable detail grouping, and restrained use of Hayhooks' existing [palette](../../src/hayhooks/colors.py). Use color for selection and state, always paired with text. Provide readable light and dark themes. Avoid flashing rows, decorative animation, oversized metric cards, and excessive borders. Pause and stale indicators should be easy to spot without dominating the screen.
+Make the dashboard attractive through clear hierarchy, aligned columns, deliberate spacing, readable detail grouping, and restrained use of Hayhooks' existing [palette](https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/colors.py). Use color for selection and state, always paired with text. Provide readable light and dark themes. Avoid flashing rows, decorative animation, oversized metric cards, and excessive borders. Pause and stale indicators should be easy to spot without dominating the screen.
 
 ## Honest type and health information
 
@@ -241,24 +241,14 @@ the plan remains outside navigation.
 
 ### Visual review artifacts
 
-Eighteen SVG captures are retained in `docs/assets/terminal-dashboard/`.
-Each state was reviewed at 80x24, 120x36 and 160x48: deployment overview, execution
-list, selected details, light theme, empty filter results, and a stale connection
-error retaining the last snapshot. The review led to compact detail rows,
-contextual focus hints, preserving details outside the current page, and
-recoloring unchanged rows when switching themes.
+Deployment overview, execution list, details, light theme, empty results and stale
+connections were reviewed at 80x24, 120x36 and 160x48. The review led to compact
+rows, contextual focus hints, preserving details outside the current page, and
+recoloring rows when switching themes. The PNG previews below are retained;
+repeated SVG qualification captures were removed during PR cleanup.
 
-| State | 80x24 | 120x36 | 160x48 |
-| --- | --- | --- | --- |
-| Deployments | [Capture](../assets/terminal-dashboard/deployments-80x24.svg) | [Capture](../assets/terminal-dashboard/deployments-120x36.svg) | [Capture](../assets/terminal-dashboard/deployments-160x48.svg) |
-| Executions | [Capture](../assets/terminal-dashboard/executions-80x24.svg) | [Capture](../assets/terminal-dashboard/executions-120x36.svg) | [Capture](../assets/terminal-dashboard/executions-160x48.svg) |
-| Details | [Capture](../assets/terminal-dashboard/details-80x24.svg) | [Capture](../assets/terminal-dashboard/details-120x36.svg) | [Capture](../assets/terminal-dashboard/details-160x48.svg) |
-| Light theme | [Capture](../assets/terminal-dashboard/light-80x24.svg) | [Capture](../assets/terminal-dashboard/light-120x36.svg) | [Capture](../assets/terminal-dashboard/light-160x48.svg) |
-| Empty | [Capture](../assets/terminal-dashboard/empty-80x24.svg) | [Capture](../assets/terminal-dashboard/empty-120x36.svg) | [Capture](../assets/terminal-dashboard/empty-160x48.svg) |
-| Stale/error | [Capture](../assets/terminal-dashboard/stale-80x24.svg) | [Capture](../assets/terminal-dashboard/stale-120x36.svg) | [Capture](../assets/terminal-dashboard/stale-160x48.svg) |
-
-These are synthetic qualification fixtures, not production data. Temporary
-qualification servers and browser tabs were stopped after review.
+All captures used synthetic fixtures. Temporary qualification servers and
+browser tabs were stopped after review.
 
 ## Visual refinement — 7 October 2026
 
@@ -279,9 +269,8 @@ the footer. No project dependencies were added.
   bundled styles and headless theme checks on **Python 3.10 and 3.14**.
 - A real terminal exercised execution browsing, details, theme switching and
   pause. Exit code was 0, with the alternate terminal screen restored.
-- The eighteen state captures above were refreshed and reviewed. Six additional
-  realistic synthetic overview/execution captures cover all three sizes. Raster
-  previews are retained for convenient review:
+- Overview and execution views were reviewed at all three sizes. Raster previews
+  are retained for convenient review:
   [Deployment overview](../assets/terminal-dashboard/overview-120x36.png) and
   [Execution inspector](../assets/terminal-dashboard/browse-160x48.png).
 
@@ -353,21 +342,9 @@ process sample is distinct from durable execution history or persistent OTLP dat
 
 ### Trace review artifacts
 
-Twenty-one additional SVG captures in `docs/assets/terminal-dashboard/` cover
-traces, light traces, spans, light spans, errors, empty filters and stale snapshots
-at all three sizes. They use synthetic fixtures, not production data.
-
-| State | 80x24 | 120x36 | 160x48 |
-| --- | --- | --- | --- |
-| Traces | [Capture](../assets/terminal-dashboard/traces-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-160x48.svg) |
-| Light traces | [Capture](../assets/terminal-dashboard/traces-light-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-light-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-light-160x48.svg) |
-| Span inspector | [Capture](../assets/terminal-dashboard/spans-80x24.svg) | [Capture](../assets/terminal-dashboard/spans-120x36.svg) | [Capture](../assets/terminal-dashboard/spans-160x48.svg) |
-| Light spans | [Capture](../assets/terminal-dashboard/spans-light-80x24.svg) | [Capture](../assets/terminal-dashboard/spans-light-120x36.svg) | [Capture](../assets/terminal-dashboard/spans-light-160x48.svg) |
-| Errors | [Capture](../assets/terminal-dashboard/traces-error-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-error-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-error-160x48.svg) |
-| Empty | [Capture](../assets/terminal-dashboard/traces-empty-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-empty-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-empty-160x48.svg) |
-| Stale | [Capture](../assets/terminal-dashboard/traces-stale-80x24.svg) | [Capture](../assets/terminal-dashboard/traces-stale-120x36.svg) | [Capture](../assets/terminal-dashboard/traces-stale-160x48.svg) |
-
-Raster previews: [Trace list](../assets/terminal-dashboard/traces-120x36.png)
+Traces, light traces, spans, light spans, errors, empty filters and stale snapshots
+were reviewed at all three sizes using synthetic fixtures. Repeated SVG captures
+were removed during PR cleanup. Retained previews: [Trace list](../assets/terminal-dashboard/traces-120x36.png)
 and [Span inspector](../assets/terminal-dashboard/spans-160x48.png).
 Temporary qualification servers and browser tabs were stopped after review.
 

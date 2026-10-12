@@ -58,7 +58,7 @@ Publish pipelines as [A2A](https://a2a-protocol.org) agents ([guide](docs/featur
 <td valign="top">
 
 📈 **Tracing and dashboard**<br>
-OpenTelemetry spans (`hayhooks[tracing]`) for deploy, run, and durable attempts, with trace/span inspection in `hayhooks dashboard --traces` (enable the authenticated API with `--with-tracing`).
+OpenTelemetry spans (`hayhooks[tracing]`) for deploy, run, and durable attempts, with trace/span inspection in `hayhooks dashboard --traces`. Authenticated local monitoring is enabled by default.
 
 </td>
 </tr>
