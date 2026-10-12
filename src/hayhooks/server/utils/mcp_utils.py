@@ -1,6 +1,6 @@
 import json
 import traceback
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any
@@ -351,7 +351,7 @@ def create_starlette_app(server: "Server", *, debug: bool = False, json_response
         await session_manager.handle_request(scope, receive, send)
 
     @asynccontextmanager
-    async def lifespan(app: Starlette) -> AsyncIterator[None]:  # noqa: ARG001
+    async def lifespan(app: Starlette) -> AsyncGenerator[None, None]:  # noqa: ARG001
         async with session_manager.run():
             log.info("Hayhooks MCP server started")
             try:

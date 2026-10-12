@@ -36,13 +36,10 @@ with LazyImport(_HAYSTACK_ERROR) as _haystack_import:
 
 
 def _agent_checkpoint(state: State, *, final: bool = False) -> dict[str, JsonValue]:
-    return cast(
-        dict[str, JsonValue],
-        {
-            "state": cast(Any, state).to_dict(skip_keys=["tools", "hook_context"]),
-            "phase": _AGENT_FINAL if final else None,
-        },
-    )
+    return {
+        "state": cast(Any, state).to_dict(skip_keys=["tools", "hook_context"]),
+        "phase": _AGENT_FINAL if final else None,
+    }
 
 
 def _restore_agent_state(context: DurableContext, state: State) -> None:

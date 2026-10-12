@@ -9,7 +9,7 @@ import random
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Coroutine, Iterator, Mapping, MutableSet
+from collections.abc import Callable, Coroutine, Generator, Mapping, MutableSet
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -612,7 +612,7 @@ def current_durable_context() -> DurableContext | None:
 
 
 @contextmanager
-def durable_context_scope(context: DurableContext) -> Iterator[None]:
+def durable_context_scope(context: DurableContext) -> Generator[None, None, None]:
     token = _active_context.set(context)
     try:
         yield

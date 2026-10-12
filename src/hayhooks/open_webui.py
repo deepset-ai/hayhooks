@@ -42,7 +42,8 @@ class OpenWebUIEvent(PipelineEvent):
     WebUI interface.
     """
 
-    data: StatusEventData | MessageEventData | NotificationEventData | dict[str, Any]
+    # Pydantic validates the extended payload union; keep the base event schema unchanged.
+    data: StatusEventData | MessageEventData | NotificationEventData | dict[str, Any]  # ty: ignore[invalid-attribute-override]
 
 
 def create_chat_completion_event(data: dict[str, Any]) -> OpenWebUIEvent:

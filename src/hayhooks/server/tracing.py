@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 import traceback
-from collections.abc import AsyncGenerator, Callable, Generator, Iterator, Mapping
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token, copy_context
 from functools import wraps
@@ -107,14 +107,10 @@ def _resolve_otel_tracer_class() -> type[Any] | None:
 
 
 with LazyImport(_LAZY_IMPORT_HINT) as otlp_http_exporter_import:
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # ty: ignore[unresolved-import]
-        OTLPSpanExporter as OTLPHTTPSpanExporter,
-    )
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as OTLPHTTPSpanExporter  # ty: ignore[unresolved-import]
 
 with LazyImport(_LAZY_IMPORT_HINT) as otlp_grpc_exporter_import:
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # ty: ignore[unresolved-import]
-        OTLPSpanExporter as OTLPGRPCSpanExporter,
-    )
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as OTLPGRPCSpanExporter  # ty: ignore[unresolved-import]
 
 
 def _span_correlation_data(span: Span | None) -> dict[str, str]:
@@ -172,7 +168,7 @@ def _mirror_trace_context(
     parent_span: Span | None,
     trace_context: Any,
     current_parent_span: Any,
-) -> Iterator[Span]:
+) -> Generator[Span, None, None]:
     parent_span_id = _span_correlation_data(parent_span).get("span_id")
     if parent_span_id is None:
         parent_span_id = _span_correlation_data(current_parent_span()).get("span_id")
@@ -237,7 +233,7 @@ class _LiveBufferProxyTracer(Tracer):
         operation_name: str,
         tags: dict[str, Any] | None = None,
         parent_span: Span | None = None,
-    ) -> Iterator[Span]:
+    ) -> Generator[Span, None, None]:
         span_tags = dict(tags or {})
         with _mirror_trace_context(
             operation_name=operation_name,
@@ -261,7 +257,7 @@ class _LiveBufferNullTracer(NullTracer):
         operation_name: str,
         tags: dict[str, Any] | None = None,
         parent_span: Span | None = None,
-    ) -> Iterator[Span]:
+    ) -> Generator[Span, None, None]:
         span_tags = dict(tags or {})
         with _mirror_trace_context(
             operation_name=operation_name,
@@ -770,7 +766,7 @@ def trace_operation(
     operation_name: str,
     *,
     tags: Mapping[str, Any] | None = None,
-) -> Iterator[Any]:
+) -> Generator[Any, None, None]:
     """
     Wrap a block in a Haystack span and attach standard Hayhooks attributes.
 
