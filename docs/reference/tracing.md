@@ -11,7 +11,7 @@ pip install "hayhooks[tracing]"
 ```
 
 This installs the OpenTelemetry SDK, OTLP exporters, and FastAPI/Starlette instrumentors used by Hayhooks.
-Dashboard frontend source files are bundled in Hayhooks wheels for local runtime builds.
+The terminal UI uses the separate `hayhooks[tui]` extra. Local trace inspection works without an external exporter.
 
 ## Quick Start (OTLP)
 
@@ -61,158 +61,148 @@ docker run --rm -d \
 
 Open Jaeger at `http://localhost:16686` and use the same `OTEL_*` variables shown above.
 
-## Live Dashboard
+## Terminal trace inspection
 
-Hayhooks includes a built-in trace dashboard at `/dashboard` that provides real-time visibility into pipeline operations.
-
-![Tracing dashboard](../assets/tracing-dashboard-overview.png)
-
-### Features
-
-- **Live trace feed** — auto-refreshes (default every 2.5s, configurable via `HAYHOOKS_DASHBOARD_UI_POLL_MS`) with new-trace animations.
-- **Pipeline filter** — click a pipeline in the sidebar to filter traces; counts update per pipeline.
-- **Span waterfall** — expand any trace to see nested spans with duration bars, per-span pipeline badges, and
-  readable Haystack component labels on `haystack.component.run` spans.
-- **Slowest component signal** — highlights only the single slowest component span per trace when its duration is above the configured threshold.
-- **Kind badges** — each trace shows a kind badge (run, openai, deploy, undeploy, mcp, durable) for at-a-glance classification.
-- **Durable attempts** — in [durable mode](../features/durable-execution.md#durable-mode), each attempt of a durable
-  execution is its own `durable` card, with the execution ID and attempt number in its summary. An attempt that
-  suspends at a checkpoint, such as a wait for approval, is a successful trace tagged `checkpoint`, not a failure.
-  The dashboard observes durable work; inspect, resume, and cancel executions through their REST routes.
-- **Streaming indicator** — streaming requests get a visible STREAM badge beside the kind badge.
-- **Summary tags** — collapsed cards show transport and success/error status; expanded view shows all tags with tooltips and a copyable trace ID.
-- **Error detail** — failed traces display error type, message, and an expandable/copyable stack trace.
-- **Sort** — toggle between newest-first and slowest-first ordering.
-- **Stats** — pipeline trace count, failure count, average duration with sparkline, and last-trace time, all reflecting the active filter.
-- **Dark mode** — toggle between light and dark themes via the header button.
-- **Clear traces** — wipe the local trace buffer from the header.
-
-### Error Traces
-
-When a pipeline request fails, the dashboard highlights the affected trace with a red left border and a **failed** badge in place of the kind badge. Expand the trace to see:
-
-- **Error type and message** — shown at the top of the detail area in the error block.
-- **Stack trace** — expandable section with a copy button for sharing or debugging.
-
-![Failed trace detail](../assets/tracing-dashboard-failed.png)
-
-### Setup
-
-Enable and run the dashboard from CLI:
+Tracing and durable execution indexing are enabled by default. On a local POSIX
+machine, start the server and dashboard under the same OS account:
 
 ```bash
-hayhooks run --with-tracing-dashboard
-```
-
-The `--with-tracing-dashboard` flag enables dashboard mounting and builds the frontend at runtime from the
-packaged dashboard source files.
-
-To build the frontend at runtime, Node.js/npm must be available on the machine.
-
-If you prefer configuring via environment variables instead of CLI flags:
-
-```bash
-export HAYHOOKS_DASHBOARD_ENABLED=true
-cd dashboard
-npm install
-npm run build
-export HAYHOOKS_DASHBOARD_DIST_DIR="$(pwd)/dist"
+pip install "hayhooks[tui]"
 hayhooks run
+# In another terminal:
+hayhooks dashboard
+# e: recent ordinary runs + durable history; v: all process traces
 ```
 
-For frontend-specific workflows (local Vite dev server, lint/test/build commands), see the
-[dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
+No Node.js, npm build or browser is required. Local capture includes Hayhooks
+operations and Haystack component spans; `hayhooks[tracing]` is needed only for
+OpenTelemetry SDK/exporters and framework instrumentation. External exporters
+continue to work independently of the local trace API.
 
-### Trace Source
+The terminal trace view provides:
 
-The dashboard always reads traces from Hayhooks' in-process live trace buffer.
+- Recent trace feed, entrypoint/kind/state filters and trace/tag search.
+- Newest or slowest sorting, failure counts, and average **finished** duration
+  for the visible recent sample. Running roots remain live even after children finish.
+- Streaming indicators, trace IDs and timestamps, tags, error messages and
+  stack traces when `HAYHOOKS_SHOW_TRACEBACKS=true`.
+- An expandable span tree with component names, durations, offsets, a terminal
+  waterfall and the slowest completed component above the configured threshold.
+- Pause, manual refresh, themes, keyboard/mouse navigation and stale snapshot
+  retention. `c` hides the current traces **locally**; it never clears the server.
 
-- No dashboard-side Jaeger/SigNoz fetching is used.
-- No extra dashboard backend mode configuration is required.
-- You can still export traces to external backends via standard `OTEL_*` variables for observability tooling,
-  while the dashboard remains a local live view.
-- The in-memory buffer is capped (default: `200` traces). Configure retention size with:
+The list refreshes every two seconds by default (`--interval` changes this).
+Background requests use the same single worker as deployment and execution
+views. Each refresh replaces a bounded snapshot of at most 100 recent traces;
+server eviction, restart and clear are reflected without cursor backfill.
+Filters and statistics describe this sample, not all historical activity.
+Opening a trace keeps a selected span and expanded branches across updates.
+An inspector outside the current buffer/filter is explicitly marked as retained.
 
-```bash
-export HAYHOOKS_DASHBOARD_TRACE_BUFFER_CAPACITY=2000
+### Operator authorization
+
+Trace buffers include operations from every user handled by the responding
+process. Owner-scoped durable access does not authorize viewing the whole buffer.
+Local servers bound to `localhost`, `127.0.0.1` or `::1` automatically create a
+private operator credential at `~/.cache/hayhooks/dashboard-token` (or under
+`XDG_CACHE_HOME`). The directory and file must belong to the current user and
+have private permissions (700 and 600). Concurrent workers share this credential.
+The terminal discovers it only for those literal loopback hostnames, and never
+sends it automatically to remote hosts. Windows requires explicit credentials.
+
+All `/traces` requests still require operator authorization. Remote servers
+require an explicit `HAYHOOKS_TRACING_TOKEN` or verified host dependency. Set
+`HAYHOOKS_DASHBOARD_TOKEN` to the same token in the client terminal. Explicit
+credentials take precedence over local discovery. Treat the local file as an
+operator secret: it authorizes process-wide inspection, including other users'
+operations. Owner-scoped durable access alone does not authorize this buffer.
+Use `--without-tracing` / `HAYHOOKS_TRACING_ENABLED=false` to disable the API,
+and `--without-monitoring` / `HAYHOOKS_MONITORING_ENABLED=false` to disable
+durable indexing and collection routes.
+The terminal also supports its existing API-key headers with a custom host dependency.
+
+For an existing authentication system, override the dependency on your app:
+
+```python
+from hayhooks.server.app import create_app
+from hayhooks.server.routers.traces import require_tracing_access
+
+app = create_app()
+app.dependency_overrides[require_tracing_access] = require_operator
 ```
 
-Pipeline run traces include a `hayhooks.payload.values` tag. By default, this tag records payload shape metadata
-(`question=str(24)`, `top_k=int`, `filters=dict(3)`) instead of raw payload values. To include raw values during
-trusted local debugging, opt in explicitly:
+`require_operator` must verify credentials and raise HTTP 401/403 for unauthorized
+requests. Trusted authentication middleware may instead set
+`request.state.tracing_operator = True` after verification. Do not derive this
+flag directly from an unverified client header.
 
-```bash
-export HAYHOOKS_DASHBOARD_TRACE_INCLUDE_PAYLOAD_VALUES=true
-```
+### Scope and limits
 
-Common sensitive keys such as `api_key`, `token`, `authorization`, `password`, `secret`, and `credential` remain
-redacted even when raw-value capture is enabled.
+The buffer is bounded, in memory and process-local. It is separate from durable
+execution indexes and an external tracing backend. Trace durations measure spans;
+execution creation/update timestamps do not measure runtime duration.
 
-!!! warning "Dashboard with multiple workers"
-    Dashboard traces are stored in each worker process memory. If you run Hayhooks with multiple workers
-    (for example `hayhooks run --workers 2`), each worker keeps a separate trace buffer.
-    The dashboard may show only a subset of traces, and `POST /dashboard/api/traces/clear` only clears the
-    worker that served that request.
-    For a consistent dashboard view, run with a single worker (`--workers 1`).
+With multiple workers or replicas, each process has its own buffer. Use a single
+worker or a connection pinned to one process for consistent inspection. Use
+OTLP for persistent or fleet-wide history. Local clearing only affects the
+responding process. Payload values remain disabled by default; enable them only
+for trusted debugging because prompts, documents and other sensitive data can
+appear in tags.
 
-### Dashboard Tuning
-
-The dashboard UI behaviour is configurable via environment variables (`HAYHOOKS_DASHBOARD_UI_*`).
-All values are fetched by the frontend at page load from the `/dashboard/api/config` endpoint.
-
-| Variable | Default | Description |
-| --- | ---: | --- |
-| `HAYHOOKS_DASHBOARD_UI_POLL_MS` | `2500` | Polling interval (ms) between trace list refreshes |
-| `HAYHOOKS_DASHBOARD_UI_LIST_CAP` | `100` | Max traces kept in the browser list |
-| `HAYHOOKS_DASHBOARD_UI_FETCH_LIMIT` | `50` | Traces requested per poll |
-| `HAYHOOKS_DASHBOARD_UI_FRESH_MS` | `6000` | Duration (ms) a new trace keeps the "NEW" highlight |
-| `HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS` | `1000` | Threshold (ms) to flag the slowest component |
-
-For the full list of dashboard and tracing settings, see the
-[environment variables reference](environment-variables.md).
-
-#### Haystack component spans
-
-By default, the dashboard includes both Hayhooks operation spans (deploy/run/openai/mcp lifecycle) **and**
-Haystack component spans in the same trace trees. To show only Hayhooks operation spans, disable:
-
-```bash
-export HAYHOOKS_DASHBOARD_TRACE_INCLUDE_HAYSTACK_SPANS=false
-```
-
-This feature flag only affects what gets mirrored into the dashboard buffer; it does not change
-dashboard UI filtering/sorting behavior.
-It also works without configuring an external tracing backend (local capture mode).
-
-Run Hayhooks and open `http://localhost:1416/dashboard`.
-
-A demo script is available to generate representative traces across multiple pipelines:
-
-```bash
-bash scripts/demo_dashboard_traces.sh
-```
-
-The script deploys example pipelines, fires REST and OpenAI-compatible streaming/non-streaming requests, then
-undeploys — producing a mix of trace kinds, success/failure states, and streaming indicators for exploring
-the dashboard UI.
-
-### API Endpoints
-
-| Endpoint | Method | Description |
+| Setting | Default | Purpose |
 | --- | --- | --- |
-| `/dashboard/api/config` | GET | Fetch dashboard UI polling/list settings |
-| `/dashboard/api/entrypoints` | GET | List deployed pipeline names |
-| `/dashboard/api/traces` | GET | Fetch recent traces (supports `limit`, `since_ms`, and `after_seq` query params) |
-| `/dashboard/api/traces/clear` | POST | Clear the local trace buffer |
+| `HAYHOOKS_TRACING_ENABLED` | `true` | Mount the authenticated local trace API |
+| `HAYHOOKS_TRACING_TOKEN` | unset | Explicit operator bearer token; local POSIX hosts otherwise use a private credential |
+| `HAYHOOKS_TRACING_BUFFER_CAPACITY` | `200` | Maximum retained process traces |
+| `HAYHOOKS_TRACING_DEFAULT_LIMIT` | `25` | Default trace snapshot size |
+| `HAYHOOKS_TRACING_MAX_LIMIT` | `100` | Maximum trace snapshot size (also capped at 100 and buffer capacity) |
+| `HAYHOOKS_TRACING_SLOW_COMPONENT_MS` | `1000` | Minimum completed duration for slow-component highlighting |
+| `HAYHOOKS_TRACING_INCLUDE_HAYSTACK_SPANS` | `true` | Mirror Haystack components into the local buffer |
+| `HAYHOOKS_TRACING_INCLUDE_PAYLOAD_VALUES` | `false` | Include redacted raw request values in tags |
 
-`GET /dashboard/api/traces` returns:
+### Trace snapshot API
 
-- `traces`: normalized trace summaries for the requested page.
-- `next_after_seq`: cursor value to pass as `after_seq` on the next incremental request.
-- `has_more`: whether additional trace updates are available beyond the returned page.
+`GET /traces` is mounted only when local tracing is enabled and requires
+operator access. It accepts a positive `limit`, capped at 100, the configured
+maximum and buffer capacity. The response includes:
 
-The same cursor is also exposed in the `X-Hayhooks-Trace-Cursor` response header for clients that prefer header-based
-cursor handling.
+- `traces`: recent normalized traces, including running spans and their tree, tags and outcomes.
+- `has_more`: whether the bounded snapshot omits older traces.
+- `config`: `buffer_capacity`, `fetch_limit`, `slow_component_ms` and the process-local `scope`.
+
+Span trees stop at depth 64 (root depth zero). The total captured `span_count`
+is retained; the terminal shows visible versus total spans when descendants
+are omitted. This keeps deeply nested traces usable within the snapshot limits.
+
+Each terminal refresh reads one authoritative snapshot. There is no streaming
+subscription or cursor to recover after restarts or evictions. Entrypoint
+filters use `/status` and captured trace metadata; clearing the terminal list
+hides traces locally without deleting the server buffer.
+
+Generate representative deployment, REST and OpenAI traces with:
+
+```bash
+bash scripts/demo_traces.sh
+```
+
+### Migration from the browser dashboard
+
+The React dashboard, bundled web sources, static mount and runtime npm build
+have been removed. Replace `--with-tracing-dashboard` (including its old aliases)
+with `hayhooks run` (local tracing is enabled by default), and open
+`hayhooks dashboard --traces` instead of `/dashboard`.
+`--dashboard-path` is removed. The local tracing API is now just `GET /traces`,
+with inspection settings included in every snapshot. The separate config,
+entrypoints, stream and server-clear endpoints, cursor fields/header, and
+`since_ms`/`after_seq` parameters are removed. External clients must poll bounded
+snapshots instead of consuming SSE or incremental deltas.
+
+Rename `HAYHOOKS_DASHBOARD_TRACE_*` capture settings to `HAYHOOKS_TRACING_*`;
+`HAYHOOKS_DASHBOARD_UI_SLOW_COMPONENT_MIN_DURATION_MS` becomes
+`HAYHOOKS_TRACING_SLOW_COMPONENT_MS`. Trace stream/heartbeat settings, other
+`HAYHOOKS_DASHBOARD_UI_*` and static frontend settings are removed;
+`hayhooks dashboard --interval` controls terminal refreshes. The existing
+`HAYHOOKS_DASHBOARD_TOKEN` and API-key variables remain terminal client credentials.
 
 ## Notes
 

@@ -426,3 +426,94 @@ so each restart resumes further along.
 - Restart healthy replicas and allow lease expiry to drive fenced recovery.
 - Resume waiting work through its typed endpoint; do not edit checkpoint keys.
 - Cancel unwanted work through the API and wait for the terminal projection.
+
+## Execution monitoring
+
+The main Hayhooks host enables control indexing and `GET /{name}/executions`
+by default. Every writing replica must index submissions for full coverage.
+Use `HAYHOOKS_MONITORING_ENABLED=false` or `hayhooks run --without-monitoring`
+to opt out. Connect separately using `hayhooks dashboard` with `hayhooks[tui]`.
+Its Executions tab combines this stored history with recent request-bound runs
+from the local trace buffer; ordinary history is lost on eviction or restart.
+
+Coverage begins with new submissions from indexing-enabled writers. Earlier
+submissions remain inspectable by ID, including idempotent replays, but are not
+backfilled. Record the time all writers enable monitoring in your rollout notes;
+there is no global coverage-start timestamp or startup migration. Mixed writers
+produce an incomplete collection. Monitoring being enabled does not grant access.
+
+Entries are ordered by creation time with an execution ID tie-breaker, independent
+of mutable update times. Each owner has a separate index in the deployment's Redis
+hash slot. Cursors are bound to the owner and query. A newly inserted record before
+a cursor appears when returning to earlier pages or refreshing from page one.
+Controls determine stored kind/revision; an old revision is not replaced by the
+currently served revision.
+
+Collection reads inspect at most 200 control candidates and return at most 100
+summaries (50 by default). Selective filters or corrupt controls can yield a sparse
+page with `has_more=true`; follow `next_cursor`. `skipped_controls` warns of invalid
+controls in that owner's examined page. Listing reads no input, checkpoint, result,
+progress or chunk payloads. It does not change lifecycle, admission capacity, leases
+or retry budgets. Incremental expiry cleanup removes at most 100 terminal references
+per maintenance/read cycle, with bounded cleanup of missing candidates during reads.
+Old waiting/live executions are not trimmed. Terminal records remain discoverable
+while their controls remain inspectable. Memory storage and counts are process-local.
+
+### Monitoring authentication
+
+Owner-scoped wrappers reuse `durable_owner_id` for collection requests; authorization
+filters the index before returning IDs, cursors or pagination metadata. The operator
+dependency never bypasses an owner-scoped deployment. Cross-owner operator aggregation
+is not provided.
+
+For an unscoped wrapper, the inherited `durable_monitoring_access` uses the
+same operator credential as `/traces`: a private same-user credential for local
+POSIX hosts, or `HAYHOOKS_TRACING_TOKEN` / trusted `request.state.tracing_operator`.
+Without authenticated operator access, it denies the collection request.
+You can override it using your host's verified FastAPI dependency; it must return
+**exactly `True`**. Existing inspect/cancel/resume
+routes retain their existing ID/owner policy.
+
+This complete bearer-token integration uses FastAPI's existing security dependency
+and a host-managed operator token. Add it to the durable wrapper module, and set
+`MONITORING_OPERATOR_TOKEN` in the server's secret configuration:
+
+```python
+import hmac
+import os
+from typing import Annotated
+
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+
+def require_operator(
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))
+    ],
+) -> bool:
+    expected = os.environ.get("MONITORING_OPERATOR_TOKEN")
+    if not expected or credentials is None or not hmac.compare_digest(
+        credentials.credentials.encode(), expected.encode()
+    ):
+        raise HTTPException(401, detail="Monitoring authentication required")
+    return True
+
+
+# Inside your existing PipelineWrapper:
+def durable_monitoring_access(
+    self, allowed: Annotated[bool, Depends(require_operator)]
+) -> bool:
+    return allowed
+```
+
+Set `HAYHOOKS_DASHBOARD_TOKEN` to that token in the terminal client's environment.
+Serve it over HTTPS. A host with an existing user/permission system should substitute
+its own verified operator dependency for `require_operator`; do not trust an
+unverified user/role header. API-key deployments use the matching client header
+variables and their host's existing validation policy.
+
+Portable FastAPI hosts set both `StoreConfig(monitoring_enabled=True)` and
+`create_durable_router(..., monitoring_enabled=True, monitoring_dependency=require_operator)`.
+For owner-scoped hosts pass the existing `owner_id_dependency` instead. No extra
+monitoring account system or direct client Redis access is needed.

@@ -1,14 +1,12 @@
 import os
-import shutil
-import subprocess
 import sys
-from pathlib import Path
 from typing import Annotated
 
 import typer
 from fastapi import FastAPI
 
 from hayhooks.cli.a2a import a2a
+from hayhooks.cli.dashboard import dashboard
 from hayhooks.cli.mcp import mcp
 from hayhooks.cli.pipeline import pipeline
 from hayhooks.cli.theme import apply_typer_theme
@@ -20,57 +18,13 @@ hayhooks_cli = typer.Typer(name="hayhooks", rich_markup_mode="rich")
 hayhooks_cli.add_typer(pipeline, name="pipeline")
 hayhooks_cli.add_typer(mcp, name="mcp")
 hayhooks_cli.add_typer(a2a, name="a2a")
+hayhooks_cli.command()(dashboard)
 
 
 def _set_env(key: str, value: str | None) -> None:
     """Set an environment variable if the value is truthy, so worker child processes inherit it."""
     if value:
         os.environ[key] = value
-
-
-def _resolve_dashboard_source_dir(dashboard_dist_dir: str) -> Path | None:
-    """Find dashboard source directory containing package.json."""
-    configured_dist = Path(dashboard_dist_dir).expanduser()
-    candidates = [configured_dist.parent, *[parent / "dashboard" for parent in Path(__file__).resolve().parents]]
-    seen: set[Path] = set()
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if (resolved / "package.json").exists():
-            return resolved
-    return None
-
-
-def _build_dashboard_assets(source_dir: Path) -> Path:
-    """Build dashboard frontend assets from source directory."""
-    npm = shutil.which("npm")
-    if npm is None:
-        msg = "npm was not found in PATH. Install Node.js/npm or provide prebuilt dashboard assets."
-        raise RuntimeError(msg)
-
-    if not (source_dir / "node_modules").exists():
-        install_cmd = [npm, "ci", "--include=dev"] if (source_dir / "package-lock.json").exists() else [npm, "install"]
-        subprocess.run(install_cmd, cwd=source_dir, check=True)  # noqa: S603
-
-    subprocess.run([npm, "run", "build"], cwd=source_dir, check=True)  # noqa: S603
-    return source_dir / "dist"
-
-
-def _dashboard_assets_available(dashboard_dist_dir: str) -> bool:
-    """Return True when configured dashboard assets are available."""
-    configured_index = Path(dashboard_dist_dir).expanduser() / "index.html"
-    return configured_index.exists()
-
-
-def _prepare_tracing_dashboard_assets(dashboard_dist_dir: str) -> str | None:
-    """Build tracing dashboard assets when source is available."""
-    source_dir = _resolve_dashboard_source_dir(dashboard_dist_dir)
-    if source_dir is None:
-        return None
-    built_dist = _build_dashboard_assets(source_dir)
-    return str(built_dist)
 
 
 def get_app() -> FastAPI:
@@ -84,7 +38,7 @@ def get_app() -> FastAPI:
 
 
 @hayhooks_cli.command()
-def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def run(  # noqa: C901, PLR0913
     host: Annotated[str | None, typer.Option("--host", "-h", help="Host to run the server on")] = None,
     port: Annotated[int | None, typer.Option("--port", "-p", help="Port to run the server on")] = None,
     pipelines_dir: Annotated[
@@ -101,15 +55,16 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
     with_chainlit: Annotated[
         bool, typer.Option("--with-chainlit", help="Enable embedded Chainlit UI (requires hayhooks[chainlit])")
     ] = False,
-    with_tracing_dashboard: Annotated[
-        bool,
+    with_monitoring: Annotated[
+        bool | None,
         typer.Option(
-            "--with-tracing-dashboard",
-            "--with-dashboard",
-            "--tracing-dashboard",
-            help="Enable tracing dashboard UI and build dashboard assets when source is available",
+            "--with-monitoring/--without-monitoring", help="Durable execution enumeration (enabled by default)"
         ),
-    ] = False,
+    ] = None,
+    with_tracing: Annotated[
+        bool | None,
+        typer.Option("--with-tracing/--without-tracing", help="Local dashboard capture API (enabled by default)"),
+    ] = None,
     chainlit_path: Annotated[
         str | None, typer.Option("--chainlit-path", help="URL path for the Chainlit UI (default: /chat)")
     ] = None,
@@ -119,9 +74,6 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
             "--chainlit-custom-elements-dir",
             help="Directory with custom .jsx element files for the Chainlit UI",
         ),
-    ] = None,
-    dashboard_path: Annotated[
-        str | None, typer.Option("--dashboard-path", help="URL path for the tracing dashboard (default: /dashboard)")
     ] = None,
 ) -> None:
     """
@@ -156,6 +108,9 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
     settings.port = port
     settings.pipelines_dir = pipelines_dir
     settings.root_path = root_path
+    if with_monitoring is not None:
+        _set_env("HAYHOOKS_MONITORING_ENABLED", str(with_monitoring).lower())
+        settings.monitoring_enabled = with_monitoring
 
     if additional_python_path:
         _set_env("HAYHOOKS_ADDITIONAL_PYTHON_PATH", additional_python_path)
@@ -171,11 +126,6 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
         log.warning(
             "--chainlit-custom-elements-dir was provided but --with-chainlit is not set. "
             "Custom elements will not be loaded."
-        )
-
-    if dashboard_path and not with_tracing_dashboard:
-        log.warning(
-            "--dashboard-path was provided but --with-tracing-dashboard is not set. The UI will not be mounted."
         )
 
     if with_chainlit:
@@ -198,28 +148,9 @@ def run(  # noqa: C901, PLR0912, PLR0913, PLR0915
             _set_env("HAYHOOKS_CHAINLIT_CUSTOM_ELEMENTS_DIR", chainlit_custom_elements_dir)
             settings.chainlit_custom_elements_dir = chainlit_custom_elements_dir
 
-    if with_tracing_dashboard:
-        _set_env("HAYHOOKS_DASHBOARD_ENABLED", "true")
-        settings.dashboard_enabled = True
-
-        if dashboard_path:
-            _set_env("HAYHOOKS_DASHBOARD_PATH", dashboard_path)
-            settings.dashboard_path = dashboard_path
-
-        if _dashboard_assets_available(settings.dashboard_dist_dir):
-            log.info("Using prebuilt dashboard assets from: {}", settings.dashboard_dist_dir)
-        else:
-            try:
-                built_dashboard_dist = _prepare_tracing_dashboard_assets(settings.dashboard_dist_dir)
-                if built_dashboard_dist is not None:
-                    _set_env("HAYHOOKS_DASHBOARD_DIST_DIR", built_dashboard_dist)
-                    settings.dashboard_dist_dir = built_dashboard_dist
-            except (RuntimeError, subprocess.CalledProcessError) as exc:
-                log.error(
-                    "Failed to build tracing dashboard assets and no prebuilt assets were found: {}",
-                    exc,
-                )
-                raise typer.Exit(code=1) from exc
+    if with_tracing is not None:
+        _set_env("HAYHOOKS_TRACING_ENABLED", str(with_tracing).lower())
+        settings.tracing_enabled = with_tracing
 
     if workers > 1 or reload:
         # Multi-worker and auto-reload require a string import path so each

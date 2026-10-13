@@ -45,11 +45,15 @@ from hayhooks.durable.engine import (
 )
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
+    EXECUTION_CANDIDATE_LIMIT,
+    EXECUTION_CURSOR_STAMP_WIDTH,
     LEASE_COMMANDS,
     MAINTENANCE_BATCH_SIZE,
     MAINTENANCE_MAX_BATCHES,
     PUBLIC_PAYLOAD_KINDS,
     ChunkCursorExpiredError,
+    ControlPage,
+    ControlQuery,
     ExecutionAdmissionError,
     ExecutionContentionError,
     ExecutionIdempotencyConflictError,
@@ -62,6 +66,8 @@ from hayhooks.durable.store import (
     SubmissionResult,
     bind_store_command,
     chunk_read_count,
+    creation_member,
+    monitoring_scope,
     parse_chunk_cursor,
     runnable_score,
     validate_lease_duration,
@@ -262,6 +268,10 @@ if limit > 0 and tonumber(counts[1] or '0') >= limit then
 end
 -- Validate the runnable index type before the first write, since scripts have no rollback.
 redis.call('ZCARD', KEYS[4])
+if #KEYS > 5 then
+  redis.call('ZCARD', KEYS[6])
+  redis.call('ZCARD', KEYS[7])
+end
 local stamp = string.format('%d', redis_now_ms())
 redis.call('HSET', KEYS[1], 'run_id', ARGV[4], 'binding', ARGV[5])
 redis.call('HSET', KEYS[2], 'created_at_ms', stamp, 'updated_at_ms', stamp, unpack(ARGV, 7))
@@ -270,7 +280,29 @@ redis.call('SET', KEYS[3], ARGV[3])
 redis.call('ZADD', KEYS[4], ARGV[6] ~= '' and ARGV[6] or stamp, ARGV[4])
 redis.call('HINCRBY', KEYS[5], 'nonterminal', 1)
 redis.call('HINCRBY', KEYS[5], ARGV[2], 1)
+if #KEYS > 5 then
+  redis.call('ZADD', KEYS[6], 0, string.format('%020d', tonumber(stamp)) .. ':' .. ARGV[4])
+end
 return {1, stamp}
+"""
+
+# KEYS: expiry, followed by pairs of owner index and control. ARGV: now, expiry member, creation member...
+_CLEAN_MONITORING_LUA = """
+redis.call('ZCARD', KEYS[1])
+for index = 2, #KEYS, 2 do
+  redis.call('ZCARD', KEYS[index])
+end
+for index = 2, #KEYS, 2 do
+  local expiry = ARGV[index]
+  local member = ARGV[index + 1]
+  if redis.call('EXISTS', KEYS[index + 1]) == 0 then
+    redis.call('ZREM', KEYS[index], member)
+    redis.call('ZREM', KEYS[1], expiry)
+  else
+    redis.call('ZADD', KEYS[1], tonumber(ARGV[1]) + 1000, expiry)
+  end
+end
+return 1
 """
 
 
@@ -308,6 +340,15 @@ class RedisKeys:
     @property
     def capacity(self) -> str:
         return f"{self.base}:capacity"
+
+    def executions(self, scope: str) -> str:
+        if not re.fullmatch(r"[0-9a-f]{64}", scope):
+            raise ValueError("invalid monitoring scope")
+        return f"{self.base}:executions:{scope}"
+
+    @property
+    def execution_expiry(self) -> str:
+        return f"{self.base}:execution-expiry"
 
     def control(self, run_id: str) -> str:
         return f"{self._execution(run_id)}:control"
@@ -438,6 +479,7 @@ class RedisExecutionStore:
         self._apply_script = redis.register_script(_NOW_LUA + _OWNED_LUA + _APPLY_LUA)
         self._heartbeat_script = redis.register_script(_NOW_LUA + _OWNED_LUA + _HEARTBEAT_LUA)
         self._append_chunks_script = redis.register_script(_NOW_LUA + _OWNED_LUA + _APPEND_CHUNKS_LUA)
+        self._clean_monitoring_script = redis.register_script(_CLEAN_MONITORING_LUA)
 
     async def initialize(self) -> None:
         with _redis_errors():
@@ -465,6 +507,8 @@ class RedisExecutionStore:
             self.keys.runnable_revision(control.definition_revision),
             self.keys.capacity,
         ]
+        if self.config.monitoring_enabled:
+            keys.extend((self.keys.executions(monitoring_scope(control.owner_id)), self.keys.execution_expiry))
         args = [
             self.config.max_nonterminal_executions,
             RedisKeys.revision_nonterminal_field(control.definition_revision),
@@ -510,6 +554,75 @@ class RedisExecutionStore:
                 pipe.hgetall(self.keys.control(run_id))
                 (values,) = await pipe.execute(raise_on_error=False)
             return self._control(values, run_id)
+
+    async def list_controls(self, query: ControlQuery) -> ControlPage:
+        if not self.config.monitoring_enabled:
+            raise ExecutionStoreError("execution monitoring is disabled")
+        with _redis_errors():
+            await self._cleanup_monitoring()
+            index = self.keys.executions(query.scope)
+            members = await self.redis.zrangebylex(
+                index, f"({query.after()}" if query.after() else "-", "+", 0, EXECUTION_CANDIDATE_LIMIT + 1
+            )
+            # Invalid index members cannot be issued as cursors. Fail closed on index corruption.
+            candidates = []
+            for raw in members:
+                try:
+                    member = _text(raw)
+                    ControlQuery(
+                        owner_id=query.owner_id,
+                        cursor=query.encode_cursor(member),
+                        status=query.status,
+                        revision=query.revision,
+                        search=query.search,
+                    )
+                    candidates.append(member)
+                except (ValueError, UnicodeError, TypeError) as error:
+                    raise ExecutionStoreCorruptionError("invalid execution index member") from error
+            async with self.redis.pipeline(transaction=False) as pipe:
+                for member in candidates[:EXECUTION_CANDIDATE_LIMIT]:
+                    pipe.hgetall(self.keys.control(member.split(":", 1)[1]))
+                values = await pipe.execute(raise_on_error=False)
+            controls = []
+            skipped = examined = 0
+            for member, raw_control in zip(candidates, values, strict=False):
+                examined += 1
+                try:
+                    control = self._control(raw_control, member.split(":", 1)[1])
+                except _UndecodableControlError:
+                    skipped += 1
+                    continue
+                if control is None:
+                    await self.redis.zrem(index, member)
+                elif creation_member(control) != member or control.owner_id != query.owner_id:
+                    skipped += 1
+                elif query.matches(control):
+                    controls.append(control)
+                    if len(controls) == query.limit:
+                        break
+            more = examined < len(candidates)
+            cursor = query.encode_cursor(candidates[examined - 1]) if more and examined else None
+            return ControlPage(tuple(controls), cursor, more, skipped)
+
+    async def _cleanup_monitoring(self) -> None:
+        entries, now_ms = await self._scan(self.keys.execution_expiry, MAINTENANCE_BATCH_SIZE)
+        keys = [self.keys.execution_expiry]
+        args: list[Any] = [now_ms]
+        for raw_member, score in entries:
+            if _index_score_ms(score, "execution expiry") > now_ms:
+                continue
+            try:
+                expiry = _text(raw_member)
+                scope, member = expiry.split(":", 1)
+                stamp, run_id = member.split(":", 1)
+                if len(stamp) != EXECUTION_CURSOR_STAMP_WIDTH or not stamp.isascii() or not stamp.isdigit():
+                    raise ValueError
+                keys.extend((self.keys.executions(scope), self.keys.control(run_id)))
+                args.extend((expiry, member))
+            except (ValueError, TypeError, UnicodeError) as error:
+                raise ExecutionStoreCorruptionError("invalid execution expiry member") from error
+        if len(keys) > 1:
+            await self._clean_monitoring_script(keys=keys, args=args)
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
         with _redis_errors():
@@ -565,7 +678,7 @@ class RedisExecutionStore:
             entries, now = await pipe.execute()
         return entries, _milliseconds(now)
 
-    async def maintain(
+    async def maintain(  # noqa: PLR0912
         self,
         *,
         max_run_attempts: int,
@@ -573,6 +686,8 @@ class RedisExecutionStore:
     ) -> int:
         requeued = 0
         with _redis_errors():
+            if self.config.monitoring_enabled:
+                await self._cleanup_monitoring()
             for _ in range(MAINTENANCE_MAX_BATCHES):
                 entries, now_ms = await self._scan(self.keys.lease_expiry, MAINTENANCE_BATCH_SIZE)
                 due: list[tuple[Any, str, int, int]] = []
@@ -897,6 +1012,15 @@ class RedisExecutionStore:
             )
 
         if became_terminal(current, plan):
+            if self.config.monitoring_enabled:
+                commands.append(
+                    (
+                        "ZADD",
+                        self.keys.execution_expiry,
+                        control.updated_at_ms + self.config.terminal_ttl_seconds * 1_000,
+                        f"{monitoring_scope(control.owner_id)}:{creation_member(control)}",
+                    )
+                )
             chunks_key = self.keys.chunks(run_id)
             commands.append(("HINCRBY", self.keys.capacity, "nonterminal", -1))
             commands.append(

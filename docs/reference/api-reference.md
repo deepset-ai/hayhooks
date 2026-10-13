@@ -165,6 +165,12 @@ Execute a deployed pipeline.
 }
 ```
 
+The status response also includes typed `deployments` and
+`capabilities.execution_enumeration`, preserving the existing fields. Each
+deployment reports its independent type/mode/state, description, capabilities,
+served revision, scoped durable health and whether it supports enumeration.
+Request-bound wrappers are `Loaded`; this does not certify external services.
+
 ### Durable Execution
 
 `create_durable_router(deployment, ...)` adds these typed routes under the
@@ -174,6 +180,7 @@ durable wrapper, at `/{pipeline_name}`:
 | Method | Route | Result |
 |---|---|---|
 | `POST` | `/{prefix}/run-durable` | Submit and return `202`, `Location`, execution ID, and links |
+| `GET` | `/{prefix}/executions` | Authenticated, bounded execution discovery, only with monitoring enabled |
 | `GET` | `/{prefix}/executions/{execution_id}` | Inspect the authoritative execution projection |
 | `POST` | `/{prefix}/executions/{execution_id}/cancel` | Request cooperative cancellation |
 | `POST` | `/{prefix}/executions/{execution_id}/resume` | Validate resume input and requeue waiting work |
@@ -221,6 +228,31 @@ immediately. When history has expired, a fresh stream gets only the terminal
 event; a resumed cursor gets `gap` followed by the terminal event. See
 [Durable Execution](../features/durable-execution.md) for semantics and
 ownership modes.
+
+#### Execution Collection
+
+`GET /{prefix}/executions` exists only with monitoring enabled on the router
+and store. In the main server, use `HAYHOOKS_MONITORING_ENABLED=true` or
+`hayhooks run --with-monitoring`. Owner-scoped wrappers reuse `durable_owner_id`;
+unscoped collections require explicit authenticated operator access through
+`durable_monitoring_access`. The default denies access. Existing item routes
+retain their owner/ID policies.
+
+Accepted query parameters are `limit` (1–100, default 50), `cursor` (the returned
+opaque cursor), `status` (an engine lifecycle status), `revision` (exact stored
+revision) and `search` (case-insensitive ID substring, up to 128 characters).
+Responses contain `executions`, `next_cursor`, `has_more` and `skipped_controls`.
+Each summary exposes only ID, deployment, stored kind/revision, status, attempt,
+creation/update timestamps, cancellation pending and retry availability.
+No owner, lease, fence, idempotency material or payload is included.
+
+Pages examine at most 200 candidates. A sparse page can have a next cursor;
+there is no exact filtered total. Cursors are validated and scoped to the owner
+and filters. Invalid queries answer 422, denied access answers 401/403,
+disabled/unsupported collections answer 404, and unavailable stores answer 503.
+Earlier unindexed submissions stay inspectable by ID and are not backfilled.
+See [Monitoring API](../features/durable-execution.md#monitoring-api) and
+[authentication/retention](../deployment/durable-operations.md#execution-monitoring).
 
 ### OpenAI Compatibility
 

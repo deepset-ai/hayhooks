@@ -19,9 +19,7 @@ def set_default_settings():
     settings.disable_ssl = False
     settings.pipelines_dir = "dummy_pipelines"
     settings.root_path = "/"
-    settings.dashboard_enabled = False
-    settings.dashboard_path = "/dashboard"
-    settings.dashboard_dist_dir = "dashboard/dist"
+    settings.tracing_enabled = False
 
 
 def test_run_command_with_reload(monkeypatch):
@@ -107,33 +105,22 @@ def test_run_command_single_worker(monkeypatch):
     assert kwargs.get("port") == 1416
 
 
-def test_run_command_with_tracing_dashboard_flag(monkeypatch, tmp_path):
+def test_run_command_with_tracing_flag(monkeypatch):
+    import os
     import uvicorn
 
     calls = []
-    build_inputs = []
-    built_dist_dir = tmp_path / "built-dashboard-dist"
-
-    def fake_uvicorn_run(*args, **kwargs):
-        calls.append((args, kwargs))
-
-    def fake_prepare_tracing_dashboard_assets(dashboard_dist_dir: str) -> str:
-        build_inputs.append(dashboard_dist_dir)
-        return str(built_dist_dir)
-
-    monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
-    monkeypatch.setattr(base_module, "_prepare_tracing_dashboard_assets", fake_prepare_tracing_dashboard_assets)
-    monkeypatch.setattr(base_module, "_dashboard_assets_available", lambda _dir: False)
-
-    result = runner.invoke(
-        hayhooks_cli,
-        ["run", "--host", "localhost", "--port", "1416", "--reload", "--with-tracing-dashboard"],
-    )
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
+    result = runner.invoke(hayhooks_cli, ["run", "--reload", "--with-tracing"])
     assert result.exit_code == 0, result.output
-    assert calls, "uvicorn.run was not called"
-    assert build_inputs == ["dashboard/dist"]
-    assert settings.dashboard_enabled is True
-    assert settings.dashboard_dist_dir == str(built_dist_dir)
+    assert calls and settings.tracing_enabled is True
+    assert os.environ["HAYHOOKS_TRACING_ENABLED"] == "true"
+
+
+@pytest.mark.parametrize("option", ["--with-tracing-dashboard", "--with-dashboard", "--tracing-dashboard", "--dashboard-path"])
+def test_removed_browser_options_are_rejected(option):
+    result = runner.invoke(hayhooks_cli, ["run", option])
+    assert result.exit_code == 2
 
 
 def test_a2a_run_debug_enables_tracebacks(monkeypatch):
@@ -305,3 +292,37 @@ def test_run_command_refuses_workers_in_durable_mode(monkeypatch, caplog):
     assert result.exit_code == 1
     assert "--workers 2 is not supported" in caplog.text
     assert "replicas" in caplog.text
+
+
+def test_run_with_monitoring_propagates_server_setting_and_environment(monkeypatch):
+    import os
+    from unittest.mock import Mock
+    from typer.testing import CliRunner
+    from hayhooks.cli import hayhooks_cli
+    from hayhooks.settings import settings
+
+    monkeypatch.setattr(settings, "monitoring_enabled", False)
+    monkeypatch.delenv("HAYHOOKS_MONITORING_ENABLED", raising=False)
+    monkeypatch.setattr("hayhooks.cli.base.get_app", Mock())
+    monkeypatch.setattr("hayhooks.server.app.run_app", Mock())
+    result = CliRunner().invoke(hayhooks_cli, ["run", "--with-monitoring"])
+    assert result.exit_code == 0, result.output
+    assert settings.monitoring_enabled is True
+    assert os.environ["HAYHOOKS_MONITORING_ENABLED"] == "true"
+
+
+@pytest.mark.parametrize("setting,flag,variable", [
+    ("tracing_enabled", "--without-tracing", "HAYHOOKS_TRACING_ENABLED"),
+    ("monitoring_enabled", "--without-monitoring", "HAYHOOKS_MONITORING_ENABLED"),
+])
+def test_monitoring_opt_out_propagates_to_reloaded_workers(monkeypatch, setting, flag, variable):
+    import os
+    import uvicorn
+
+    monkeypatch.setattr(settings, setting, True)
+    monkeypatch.setenv(variable, "true")
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    result = runner.invoke(hayhooks_cli, ["run", "--reload", flag])
+    assert result.exit_code == 0, result.output
+    assert getattr(settings, setting) is False
+    assert os.environ[variable] == "false"

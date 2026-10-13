@@ -41,6 +41,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tui = [
+  "textual>=8.2.8,<9",
+]
 mcp = [
   "mcp>=1.8.0,<2 ; python_version >= '3.10'",
 ]
@@ -84,19 +87,6 @@ exclude = [
   "/uv.lock",
 ]
 
-[tool.hatch.build.targets.wheel.force-include]
-# Bundle dashboard source files so --with-tracing-dashboard can build locally at runtime.
-"dashboard/index.html" = "hayhooks/dashboard/index.html"
-"dashboard/components.json" = "hayhooks/dashboard/components.json"
-"dashboard/eslint.config.js" = "hayhooks/dashboard/eslint.config.js"
-"dashboard/package-lock.json" = "hayhooks/dashboard/package-lock.json"
-"dashboard/package.json" = "hayhooks/dashboard/package.json"
-"dashboard/public" = "hayhooks/dashboard/public"
-"dashboard/src" = "hayhooks/dashboard/src"
-"dashboard/tsconfig.app.json" = "hayhooks/dashboard/tsconfig.app.json"
-"dashboard/tsconfig.json" = "hayhooks/dashboard/tsconfig.json"
-"dashboard/tsconfig.node.json" = "hayhooks/dashboard/tsconfig.node.json"
-"dashboard/vite.config.ts" = "hayhooks/dashboard/vite.config.ts"
 
 [tool.hatch.envs.default]
 installer = "uv"
@@ -125,7 +115,7 @@ build = "mkdocs build {args}"
 deploy = "mkdocs gh-deploy --remote-name origin --force --no-history -m \"Deploy docs via automation\" {args}"
 
 [tool.hatch.envs.test]
-features = ["mcp", "a2a"]
+features = ["mcp", "a2a", "tui"]
 extra-dependencies = [
   # By default, we test against Haystack v2. The `tests-haystack-v3` CI job covers Haystack v3.
   "haystack-ai>=2,<3",

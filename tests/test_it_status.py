@@ -39,3 +39,42 @@ def test_status_no_pipelines(client, status_pipeline):
     assert status_response.status_code == 200
     assert "pipelines" in status_response.json()
     assert len(status_response.json()["pipelines"]) == 0
+
+
+def test_typed_status_distinguishes_loaded_unknown_and_pipeline(client):
+    from haystack import Pipeline
+    from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+
+    class Wrapper(BasePipelineWrapper):
+        def setup(self):
+            pass
+
+    custom = Wrapper()
+    custom._is_run_chat_completion_implemented = True
+    registry.add("custom_chat", custom)
+    pipeline = Wrapper()
+    pipeline.pipeline = Pipeline()
+    pipeline._is_run_api_implemented = True
+    registry.add("rag", pipeline)
+    with client:
+        body = client.get("/status").json()
+    rows = {row["name"]: row for row in body["deployments"]}
+    assert rows["custom_chat"]["type"] == "unknown"
+    assert rows["rag"]["type"] == "pipeline"
+    assert {row["state"] for row in rows.values()} == {"Loaded"}
+    assert {row["execution_mode"] for row in rows.values()} == {"request-bound"}
+    assert "chat_completion" in rows["custom_chat"]["capabilities"]
+    assert body["capabilities"]["execution_enumeration"]
+
+
+def test_invalid_type_hint_is_rejected():
+    from hayhooks.server.pipelines.models import create_pipeline_metadata
+    from hayhooks.server.utils.base_pipeline_wrapper import BasePipelineWrapper
+
+    class Wrapper(BasePipelineWrapper):
+        deployment_type = "made-up"
+        def setup(self):
+            pass
+
+    with pytest.raises(ValueError, match="deployment_type"):
+        create_pipeline_metadata("custom", Wrapper())

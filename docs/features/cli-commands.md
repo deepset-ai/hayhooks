@@ -68,28 +68,18 @@ hayhooks run --additional-python-path ./custom_code
 # Reload on changes (development)
 hayhooks run --reload
 
-# Enable tracing dashboard UI (auto-builds dashboard frontend locally at runtime)
-hayhooks run --with-tracing-dashboard
-
-# Equivalent aliases
-hayhooks run --with-dashboard
-hayhooks run --tracing-dashboard
+# Disable local trace inspection if it is not needed
+hayhooks run --without-tracing
 ```
 
-!!! warning "Tracing dashboard with multiple workers"
-    The built-in tracing dashboard reads from an in-process buffer.
-    With `hayhooks run --workers >1`, each worker has a separate trace buffer, so dashboard results can be partial
-    and clear operations are worker-local.
-    For a consistent dashboard view, use `--workers 1`.
+Trace inspection reads a process-local buffer. With multiple workers, use a
+connection pinned to one process or an external OTLP backend for aggregate history.
 
 !!! warning "Durable mode uses one worker per process"
     `hayhooks run --workers N` with `N > 1` exits with an error in durable mode.
     Scale with replicas that share Redis, and do not place a durable-mode app
     under another multi-worker supervisor such as `uvicorn --workers` or
     gunicorn.
-
-For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm run lint`, `npm run build`), see the
-[dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
 
 #### Options for `run`
 
@@ -102,10 +92,89 @@ For frontend-specific dashboard commands (`npm run dev`, `npm run test`, `npm ru
 | `--additional-python-path` | | Additional Python path | `None` |
 | `--root-path` | | Root path for API | `/` |
 | `--reload` | | Reload on code changes (development) | `false` |
-| `--with-tracing-dashboard` | | Enable tracing dashboard UI and auto-build dashboard assets locally at runtime | `false` |
-| `--dashboard-path` | | URL path for tracing dashboard (requires `--with-tracing-dashboard`) | `/dashboard` |
+| `--with-monitoring/--without-monitoring` | | Authenticated durable execution indexing and collection routes | Enabled by settings (`true`) |
+| `--with-tracing/--without-tracing` | | Authenticated local trace API for terminal inspection | Enabled by settings (`true`) |
 
-`--with-dashboard` and `--tracing-dashboard` are aliases for `--with-tracing-dashboard`.
+### dashboard
+
+Browse deployments, ordinary and durable executions, and recent process traces using GET requests only:
+
+```bash
+pip install 'hayhooks[tui]'
+hayhooks dashboard
+hayhooks dashboard --url https://example.com/hayhooks --pipeline research_agent
+hayhooks dashboard --traces
+hayhooks dashboard --interval 5
+hayhooks dashboard --once --json
+```
+
+`--traces` opens Traces initially; with `--once --json`, it adds a bounded
+`tracing` snapshot alongside status.
+
+`--url` preserves reverse-proxy path prefixes. The default URL follows the
+existing host/port/HTTPS settings. TLS verification stays enabled, including
+when `HAYHOOKS_DISABLE_SSL` is set; use `REQUESTS_CA_BUNDLE` for a private CA.
+The client uses 3-second connection and 5-second read timeouts. Polling defaults
+to two seconds and backs off up to 30 seconds after failures.
+
+Local POSIX servers and clients under the same OS account automatically share a
+private operator credential; see [local authentication](../reference/tracing.md#operator-authorization).
+Explicit credentials come from `HAYHOOKS_DASHBOARD_TOKEN` (bearer token) or
+`HAYHOOKS_DASHBOARD_API_KEY` (`X-API-Key`, override its name with
+`HAYHOOKS_DASHBOARD_API_KEY_HEADER`). Keep credentials out of URLs.
+[Monitoring authentication](../deployment/durable-operations.md#monitoring-authentication)
+shows the supported FastAPI dependency integration.
+
+Deployments show the direct Haystack target's type, execution mode, description,
+API capabilities and durable health. Custom wrappers can declare
+`deployment_type = "agent"`, `"pipeline"`, or `"unknown"`; other values fail
+validation. A chat endpoint or MCP/A2A eligibility does not establish agent
+identity or prove a protocol server is running. `Loaded` means registered, not
+that external services were probed. Workers describe the responding process;
+store/revision counts are labeled separately.
+
+Use up/down to select rows, left/right to scroll wide tables, Tab/Shift+Tab to move focus, Enter for details, Esc
+to return, `/` to search, `d` for Deployments, `e` for Executions and `v` for Traces,
+Space to pause, `r` to refresh, `?` for help, and `q` or Ctrl+C to exit. Text
+inputs keep ordinary shortcut characters as text; Ctrl+C always exits. Mouse
+selection and scrolling are supported. Details appear alongside the list on
+wide terminals and on a separate screen below 110 columns. `t` toggles themes. `v` opens Traces, where entrypoint/kind/state filters,
+newest/slowest sorting and span trees are available. `c` hides current traces
+locally. See [tracing setup and operator authorization](../reference/tracing.md#terminal-trace-inspection).
+
+The dashboard uses a charcoal blue dark palette and a warm light palette. Short
+terminals condense spacing to leave room for rows; wide terminals group metadata,
+process health and store counts in an inspector pane. Long IDs and revisions use
+ellipses in the table; details preserve their full values and timestamps.
+
+Deployment searches and type filters apply to the complete deployment snapshot.
+Executions show all deployments by default. Ordinary REST, OpenAI, MCP and A2A runs
+come from the bounded recent process trace buffer; durable executions come from
+their indexed store. Durable attempts are not duplicated as ordinary runs.
+Choose a deployment to narrow the view. ID searches and status filters apply to
+both sources; revision filters apply only to stored durable history. Durable
+searches query the index beyond the visible page; ordinary searches cover only
+the recent sample. Next/Previous buttons (or `]`/`[`) navigate durable pages of
+up to 50 rows per deployment. Recent ordinary runs appear on page 1 only.
+A sparse durable page can have a next page. Durable kind, revision and attempt
+remain available in details; Enter on an ordinary run opens its span tree.
+Waiting, progress and errors are shown only for the selected item, bounded and
+rendered as literal text. Public results are discarded. Actual trace durations are shown for ordinary runs; durable creation/update
+timestamps are not treated as runtime duration.
+
+Capture and durable indexing are enabled by default, with authentication required.
+They do not launch the terminal UI. Ordinary history is process-local and disappears
+on buffer eviction or server restart; durable retention follows the execution store.
+Multiple server workers have separate trace samples. All writing replicas must
+index submissions for complete durable coverage.
+See [index coverage and retention](../deployment/durable-operations.md#execution-monitoring).
+
+`--once` prints one JSON status snapshot without Textual; `--json` requires
+`--once`. Adding `--pipeline NAME` also includes that deployment's execution page.
+Stdout contains JSON only. Errors go to stderr with exit code 1; a degraded server
+returns its structured snapshot and exits 1. Interactive failures retain the last
+good snapshot with stale/age indicators. Pausing stops polling and rejects in-flight
+updates; resuming refreshes the view.
 
 ### mcp run
 

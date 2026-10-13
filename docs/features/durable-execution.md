@@ -151,7 +151,7 @@ with an owner ID.
 | Startup | `HAYHOOKS_STARTUP_DEPLOY_*` strategy; failing pipelines are skipped, but a durable wrapper stops startup because it requires durable mode | Sequential, and any failure stops startup |
 | Source directory | Deployments may write to it | Never written, including automatic bytecode |
 
-Ordinary run, OpenAI-compatible, streaming, file, dashboard, and Chainlit
+Ordinary run, OpenAI-compatible, streaming, file, tracing, and Chainlit
 endpoints behave the same in both modes. `GET /status` reports `durable_mode`,
 so clients can tell which kind of server they are talking to.
 
@@ -172,7 +172,7 @@ fails, so a typo never becomes a silently missing pipeline:
   other files are ignored.
 - Names are the file stem or directory name, restricted to letters, digits,
   `_`, and `-`. Two definitions with the same name, or a name whose routes a
-  server route or mount would shadow (such as `status` or the dashboard path),
+  server route or mount would shadow (such as `status`),
   fail startup.
 - `files_to_ignore_patterns` and the startup deployment strategy settings do
   not apply.
@@ -212,7 +212,7 @@ Serve production pipelines from an immutable image or a read-only, versioned
 mount.
 
 Run one durable-mode app per process. The import root, the bytecode policy,
-and the dashboard trace stream are process-wide, so building a second app in
+and the trace buffer are process-wide, so building a second app in
 the same process replaces the first app's pipeline modules.
 `hayhooks run --workers N` exits with an error when `N > 1` in durable mode.
 Scale with replicas that share Redis, and do not use another multi-worker
@@ -482,7 +482,7 @@ Unlike `get()`, it allows a revision mismatch by default. `submit()` raises
 
 Without an owner dependency, the router uses bearer-ID access: possession of a
 random execution ID grants access. Execution IDs appear in logs and in the
-tracing dashboard as `hayhooks.durable.execution_id`, so restrict access to
+terminal trace inspector as `hayhooks.durable.execution_id`, so restrict access to
 both. A multi-user host should pass an
 `owner_id_dependency` to `create_durable_router`. The host authenticates the request and returns a stable
 user or tenant ID. The router scopes execution access and idempotency to that ID
@@ -624,3 +624,37 @@ recovery timing, monitoring, and incident response.
 
 Long-running A2A execution, A2A task persistence, push delivery, and A2A resume
 are not supported in this release. Existing A2A execution remains request-bound.
+
+## Monitoring API
+
+With `HAYHOOKS_MONITORING_ENABLED=true`, the main server additionally exposes
+`GET /{name}/executions`. Portable hosts opt in on both the store configuration
+and `create_durable_router`. Owner-scoped collections reuse the owner dependency;
+unscoped collections deny access unless an authenticated operator dependency
+explicitly authorizes the request. See
+[authentication and coverage](../deployment/durable-operations.md#execution-monitoring).
+
+| Query | Behavior |
+| --- | --- |
+| `limit` | 1–100, default 50 |
+| `cursor` | Validated opaque cursor from the previous page, bound to owner and filters |
+| `status` | queued, running, waiting, completed, failed, canceled |
+| `revision` | Exact stored revision |
+| `search` | Case-insensitive substring of the indexed execution ID, up to 128 characters |
+
+The response has `executions`, `next_cursor`, `has_more`, and `skipped_controls`.
+Each summary includes `execution_id`, `deployment`, stored `kind`/`revision`,
+`status`, `attempt`, UTC `created_at`/`updated_at`, `cancellation_pending` and
+`available_at` (retry timing). It includes no owners, leases, fences, idempotency
+material or application payloads. There is no exact filtered total. A bounded,
+sparse page may still have a next cursor. Monitoring-disabled collection routes
+answer 404; denied access answers 401/403; malformed queries answer 422; store
+unavailability answers 503. Existing selected-execution inspection stays scoped
+and includes public results; the terminal client discards those results.
+
+`GET /status` additively includes typed `deployments` and
+`capabilities.execution_enumeration`. Existing `pipelines`, `durable_mode` and
+`durable` fields and bounded health caching remain available. A degraded body
+can still return HTTP 200. Deployment summaries label worker/store scopes and
+MCP/A2A eligibility. They do not claim fleet worker totals or external service
+health for an ordinary loaded wrapper.

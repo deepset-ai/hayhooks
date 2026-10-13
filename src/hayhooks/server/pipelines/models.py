@@ -1,6 +1,6 @@
 import inspect
 from collections.abc import AsyncGenerator, Callable, Generator
-from typing import Any, get_origin
+from typing import Any, Literal, get_origin
 
 import docstring_parser
 from docstring_parser.common import Docstring
@@ -29,13 +29,42 @@ def create_pipeline_metadata(pipeline_name: str, pipeline_wrapper: BasePipelineW
         docstring = docstring_parser.parse(inspect.getdoc(run_method) or "")
         description = docstring.short_description or ""
         request_model = create_request_model_from_callable(run_method, f"{pipeline_name}Run", docstring)
+    elif pipeline_wrapper._is_run_durable_implemented or pipeline_wrapper._is_run_durable_async_implemented:
+        durable_method = (
+            pipeline_wrapper.run_durable_async
+            if pipeline_wrapper._is_run_durable_async_implemented
+            else pipeline_wrapper.run_durable
+        )
+        description = docstring_parser.parse(inspect.getdoc(durable_method) or "").short_description or ""
     return {
         "description": description,
         "request_model": request_model,
         "skip_mcp": pipeline_wrapper.skip_mcp,
         "skip_a2a": pipeline_wrapper.skip_a2a,
         "a2a_card": pipeline_wrapper.a2a_card,
+        "deployment_type": deployment_type(pipeline_wrapper),
     }
+
+
+def deployment_type(wrapper: BasePipelineWrapper) -> Literal["agent", "pipeline", "unknown"]:
+    """Classify only the direct target or a validated explicit hint."""
+    from haystack import Pipeline
+
+    from hayhooks.server.utils.haystack_compat import AsyncPipeline
+
+    hint = wrapper.deployment_type
+    if hint is not None and (not isinstance(hint, str) or hint not in {"agent", "pipeline", "unknown"}):
+        raise ValueError("deployment_type must be agent, pipeline, unknown or None")  # noqa: EM101
+    # Durable types must describe the actual runner, never an ordinary wrapper's hint.
+    if hint is not None and not (wrapper._is_run_durable_implemented or wrapper._is_run_durable_async_implemented):
+        return hint
+    if isinstance(wrapper.pipeline, (Pipeline, AsyncPipeline)):
+        return "pipeline"
+    try:
+        from haystack.components.agents import Agent
+    except ImportError:
+        return "unknown"
+    return "agent" if isinstance(wrapper.pipeline, Agent) else "unknown"
 
 
 def create_request_model_from_callable(func: Callable, model_name: str, docstring: Docstring) -> type[BaseModel]:

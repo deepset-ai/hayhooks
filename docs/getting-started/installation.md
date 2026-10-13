@@ -49,10 +49,20 @@ This guide covers how to install Hayhooks and its dependencies.
     Includes OpenTelemetry SDK, OTLP exporter support, and FastAPI/Starlette instrumentors so Hayhooks can emit
     request-level traces alongside Haystack span instrumentation. Hayhooks also auto-bootstraps OTLP tracing
     when an OTLP endpoint is configured via `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
-    It also ships the dashboard frontend source so `hayhooks run --with-tracing-dashboard` can build and mount
-    `/dashboard` locally at runtime.
-    For dashboard frontend local development commands, see the
-    [dashboard frontend README](https://github.com/deepset-ai/hayhooks/blob/main/dashboard/README.md).
+    Local trace inspection is available in the terminal dashboard without Node.js
+    or an external tracing backend. See [terminal tracing](../reference/tracing.md#terminal-trace-inspection).
+
+=== "With Terminal Dashboard"
+
+    ```bash
+    pip install 'hayhooks[tui]'
+    hayhooks dashboard
+    ```
+
+    Adds Textual for the read-only terminal dashboard on Python 3.10–3.14.
+    Server startup and ordinary CLI commands do not require Textual.
+    [Dashboard commands](../features/cli-commands.md#dashboard) describe authentication,
+    snapshots, navigation, and default local monitoring.
 
 === "With Durable Execution"
 

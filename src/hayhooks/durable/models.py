@@ -15,7 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypeAliasType
 
-from hayhooks.durable.engine import MAX_CANCELLATION_REASON_LENGTH, ExecutionStatus, PayloadKind, bounded_text
+from hayhooks.durable.engine import (
+    MAX_CANCELLATION_REASON_LENGTH,
+    ExecutionControl,
+    ExecutionStatus,
+    PayloadKind,
+    bounded_text,
+)
 from hayhooks.durable.store import StoredExecution, validate_payload_size, validate_stored_execution
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -95,6 +101,47 @@ class ExecutionResult(BaseModel):
     created_at: datetime
     updated_at: datetime
     links: dict[str, str] = Field(default_factory=dict)
+
+
+class ExecutionSummary(BaseModel):
+    """Explicit allowlist: no owner, lease, fence, idempotency or payload data."""
+
+    execution_id: str
+    deployment: str
+    kind: str
+    revision: str
+    status: ExecutionStatus
+    attempt: int
+    created_at: datetime
+    updated_at: datetime
+    cancellation_pending: bool
+    available_at: datetime | None
+
+
+class ExecutionPage(BaseModel):
+    executions: list[ExecutionSummary]
+    next_cursor: str | None
+    has_more: bool
+    skipped_controls: int = 0
+
+
+def summarize_execution(control: ExecutionControl) -> ExecutionSummary:
+    return ExecutionSummary(
+        execution_id=control.run_id,
+        deployment=control.deployment,
+        kind=control.kind,
+        revision=control.definition_revision,
+        status=control.status,
+        attempt=control.run_attempt,
+        created_at=datetime.fromtimestamp(control.created_at_ms / 1000, timezone.utc),
+        updated_at=datetime.fromtimestamp(control.updated_at_ms / 1000, timezone.utc),
+        cancellation_pending=control.cancel_requested_at_ms is not None and not control.terminal,
+        available_at=(
+            datetime.fromtimestamp(control.available_at_ms / 1000, timezone.utc)
+            if control.available_at_ms is not None
+            else None
+        ),
+    )
 
 
 def encode_json(value: object, *, max_bytes: int, canonical: bool = False) -> bytes:

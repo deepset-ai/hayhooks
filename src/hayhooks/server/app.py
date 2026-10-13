@@ -1,4 +1,3 @@
-import asyncio
 import os
 import socket
 import sys
@@ -22,19 +21,19 @@ from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
-from fastapi.staticfiles import StaticFiles
 from starlette.routing import Match, Mount, compile_path
 
+from hayhooks.dashboard_auth import LOCAL_HOSTS, local_dashboard_token
 from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.logger import RequestIdMiddleware, intercept_stdlib_logging, log, log_elapsed
 from hayhooks.server.pipelines.loader import build_immutable_host
 from hayhooks.server.pipelines.registry import ImmutablePipelineRegistry, PipelineRegistry, registry
 from hayhooks.server.routers import (
     create_openai_router,
-    dashboard_router,
     deploy_router,
     draw_router,
     status_router,
+    traces_router,
     undeploy_router,
 )
 from hayhooks.server.tracing import (
@@ -57,7 +56,6 @@ from hayhooks.server.utils.deploy_utils import (
     rebuild_openapi,
     require_live_deployment,
 )
-from hayhooks.server.utils.live_trace_stream import get_trace_stream_broadcaster
 from hayhooks.server.utils.models import PreparedPipeline
 from hayhooks.server.utils.module_loader import durable_owner_dependency, inspect_durable_runner
 from hayhooks.settings import APP_DESCRIPTION, APP_TITLE, StartupDeployStrategy, check_cors_settings, settings
@@ -278,34 +276,27 @@ def deploy_pipelines(app: FastAPI, pipelines_dir: PathLike | str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # Capture the running loop so synchronous span recording can wake SSE
-    # subscribers via call_soon_threadsafe.
-    broadcaster = get_trace_stream_broadcaster()
-    broadcaster.set_loop(asyncio.get_running_loop())
+    runtime = app.state.durable_runtime
     try:
-        runtime = app.state.durable_runtime
-        try:
-            if not app.state.durable_mode and settings.pipelines_dir:
-                deploy_pipelines(app, settings.pipelines_dir)
-            if runtime is not None:
-                await runtime.start()
-            yield
-        finally:
-            if runtime is not None:
-                try:
-                    # Uvicorn drains or cancels open requests, SSE streams included, before lifespan shutdown;
-                    # closing ends any stream still waiting, so none outlives its viewer client.
-                    await runtime.close()
-                finally:
-                    # ponytail: retained threads can delay graceful shutdown past the grace period;
-                    # process isolation is the upgrade path for an enforceable execution deadline.
-                    await runtime.wait_drained()
-                    # Reached only after drainage: retained work keeps Redis until it no longer owns claims.
-                    async with AsyncExitStack() as clients:
-                        for client in app.state.durable_redis_clients:
-                            clients.push_async_callback(client.aclose)
+        if not app.state.durable_mode and settings.pipelines_dir:
+            deploy_pipelines(app, settings.pipelines_dir)
+        if runtime is not None:
+            await runtime.start()
+        yield
     finally:
-        broadcaster.clear_loop()
+        if runtime is not None:
+            try:
+                # Uvicorn drains or cancels open requests, SSE streams included, before lifespan shutdown;
+                # closing ends any stream still waiting, so none outlives its viewer client.
+                await runtime.close()
+            finally:
+                # ponytail: retained threads can delay graceful shutdown past the grace period;
+                # process isolation is the upgrade path for an enforceable execution deadline.
+                await runtime.wait_drained()
+                # Reached only after drainage: retained work keeps Redis until it no longer owns claims.
+                async with AsyncExitStack() as clients:
+                    for client in app.state.durable_redis_clients:
+                        clients.push_async_callback(client.aclose)
 
 
 @lru_cache(maxsize=1)
@@ -380,6 +371,18 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
     app.state.durable_runtime = None
     app.state.durable_redis_clients = ()
     app.state.durable_health = None
+    app.state.monitoring_enabled = settings.monitoring_enabled
+    app.state.dashboard_token = None
+    if (
+        settings.host in LOCAL_HOSTS
+        and not settings.tracing_token
+        and (settings.monitoring_enabled or settings.tracing_enabled)
+    ):
+        try:
+            app.state.dashboard_token = local_dashboard_token(create=True)
+        except (OSError, ValueError):
+            log.warning("Private dashboard credentials unavailable; configure a tracing token or operator dependency.")
+    app.state.durable_store = settings.durable_store
 
     app.add_middleware(RequestIdMiddleware)
 
@@ -404,9 +407,8 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
         app.include_router(deploy_router)
         app.include_router(undeploy_router)
     app.include_router(create_openai_router(pipeline_registry))
-    app.include_router(dashboard_router, prefix=settings.dashboard_path)
-
-    _mount_dashboard_ui(app)
+    if settings.tracing_enabled:
+        app.include_router(traces_router, prefix="/traces")
 
     # Mount Chainlit UI if enabled
     if settings.chainlit_enabled:
@@ -469,6 +471,7 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         max_progress_event_bytes=settings.durable_max_progress_event_bytes,
         max_stream_chunks=settings.durable_max_stream_chunks,
         max_stream_chunk_bytes=settings.durable_max_stream_chunk_bytes,
+        monitoring_enabled=settings.monitoring_enabled,
     )
     runtime_config = RuntimeConfig(
         worker_concurrency=settings.durable_worker_concurrency,
@@ -526,7 +529,12 @@ def _add_durable_deployments(app: FastAPI, durable_wrappers: dict[str, BasePipel
         except Exception as error:
             msg = f"Failed to build the durable deployment of pipeline '{name}': {error}"
             raise PipelineModeError(msg) from error
-        router = create_durable_router(deployment, owner_id_dependency=durable_owner_dependency(wrapper))
+        router = create_durable_router(
+            deployment,
+            owner_id_dependency=durable_owner_dependency(wrapper),
+            monitoring_enabled=settings.monitoring_enabled,
+            monitoring_dependency=wrapper.durable_monitoring_access,
+        )
         if conflicts := [
             route.path
             for route in router.routes
@@ -634,34 +642,3 @@ def _mount_chainlit_ui(app: FastAPI) -> None:
             import traceback
 
             log.error(traceback.format_exc())
-
-
-def _mount_dashboard_ui(app: FastAPI) -> None:
-    """
-    Mount dashboard static files if enabled and available.
-
-    Args:
-        app: FastAPI application instance
-    """
-    if not settings.dashboard_enabled:
-        return
-
-    dashboard_dist_dir = _resolve_dashboard_dist_dir()
-    if dashboard_dist_dir is None:
-        return
-
-    app.mount(
-        settings.dashboard_path,
-        StaticFiles(directory=str(dashboard_dist_dir), html=True),
-        name="dashboard-ui",
-    )
-
-
-def _resolve_dashboard_dist_dir() -> Path | None:
-    """Resolve configured dashboard dist directory when available."""
-    configured_dist_dir = Path(settings.dashboard_dist_dir).expanduser()
-    if configured_dist_dir.exists() and configured_dist_dir.is_dir():
-        return configured_dist_dir
-
-    log.warning("Dashboard UI enabled but dist dir was not found: '{}'", configured_dist_dir)
-    return None

@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Generator
-from typing import Any
+from typing import Annotated, Any
 
+from fastapi import Depends
 from pydantic import BaseModel
 from starlette.requests import Request
 
+from hayhooks.dashboard_auth import require_tracing_access
 from hayhooks.durable.context import DurableContext
 
 
@@ -37,6 +39,7 @@ class BasePipelineWrapper(ABC):
     # Opt in to detached durable execution with an immutable deployment revision.
     durable_revision: str | None = None
     durable_resume_model: type[BaseModel] | None = None
+    deployment_type: str | None = None
 
     def __init__(self):
         self.pipeline = None
@@ -109,6 +112,11 @@ class BasePipelineWrapper(ABC):
         del request
         message = "durable_owner_id not implemented"
         raise NotImplementedError(message)
+
+    def durable_monitoring_access(self, access: Annotated[None, Depends(require_tracing_access)]) -> bool:
+        """Authenticate an unscoped collection through the host's operator dependency."""
+        del access
+        return True
 
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
         """

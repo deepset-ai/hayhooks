@@ -50,7 +50,7 @@ Write a small Python wrapper around your Pipeline or Agent, and Hayhooks turns i
 
     ---
 
-    OpenTelemetry spans (`hayhooks[tracing]`) for deploy, run, and durable attempts, with a live `/dashboard` via `--with-tracing-dashboard`.
+    OpenTelemetry spans (`hayhooks[tracing]`) for deploy, run, and durable attempts, with trace/span inspection in `hayhooks dashboard --traces` (local capture is enabled by default).
 
 </div>
 

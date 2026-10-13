@@ -16,6 +16,7 @@ from hayhooks.server.app import create_app
 from hayhooks.server.exceptions import PipelineModeError
 from hayhooks.server.pipelines.loader import REGISTRY_ROOT, load_pipeline_registry
 from hayhooks.server.pipelines.registry import registry
+from hayhooks.server.routers.traces import require_tracing_access
 from hayhooks.server.utils import deploy_utils
 from hayhooks.server.utils.models import PreparedPipeline
 from hayhooks.server.utils.yaml_pipeline_wrapper import YAMLPipelineWrapper
@@ -31,7 +32,8 @@ def _registry_modules() -> set[str]:
 
 
 @pytest.fixture
-def immutable_app(durable_pipelines_dir: Path) -> FastAPI:
+def immutable_app(durable_pipelines_dir: Path, monkeypatch) -> FastAPI:
+    monkeypatch.setattr(settings, "tracing_enabled", True)
     samples = Path(__file__).parent / "test_files/files"
     write_tree(
         durable_pipelines_dir,
@@ -50,7 +52,9 @@ def immutable_app(durable_pipelines_dir: Path) -> FastAPI:
         },
     )
     registry.clear()
-    return create_app()
+    app = create_app()
+    app.dependency_overrides[require_tracing_access] = lambda: None
+    return app
 
 
 def test_immutable_server_serves_fixed_pipelines_without_deployment_routes(
@@ -70,7 +74,7 @@ def test_immutable_server_serves_fixed_pipelines_without_deployment_routes(
         assert completion["choices"][0]["message"]["content"] == "hello from chat"
         names = ["calc", "chat", "double", "image", "stream", "upload"]
         assert sorted(model["id"] for model in client.get("/models").json()["data"]) == names
-        assert client.get("/dashboard/api/entrypoints").json() == {"entrypoints": names}
+        assert client.get("/traces").status_code == 200
         assert client.get("/status/double").status_code == 200
 
         status = client.get("/status").json()
@@ -184,35 +188,27 @@ def test_startup_helpers_do_not_create_a_missing_directory(
 
 
 @pytest.mark.parametrize(
-    ("files", "dashboard_path", "match"),
+    ("files", "mount_path", "match"),
     [
-        pytest.param(
-            {"status/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/dashboard", r"\['status'\] conflict", id="status"
-        ),
-        pytest.param({"draw/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/dashboard", r"\['draw'\] conflict", id="draw"),
-        pytest.param(
-            {"dashboard/pipeline_wrapper.py": ORDINARY_WRAPPER},
-            "/dashboard",
-            r"\['dashboard'\] conflict",
-            id="dashboard",
-        ),
+        pytest.param({"status/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/chat", r"\['status'\] conflict", id="status"),
+        pytest.param({"draw/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/chat", r"\['draw'\] conflict", id="draw"),
         pytest.param(
             {"ops/pipeline_wrapper.py": ORDINARY_WRAPPER}, "/ops", r"\['ops'\] conflict", id="configured-mount"
         ),
         pytest.param(
             {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER.replace("self.pipeline = Pipeline()", "self.pipeline = None")},
-            "/dashboard",
+            "/chat",
             "durable deployment of pipeline 'jobs'",
             id="durable-adapter",
         ),
     ],
 )
 def test_host_construction_failures_fail_startup_and_unload_modules(
-    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str], dashboard_path: str, match: str
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str], mount_path: str, match: str
 ) -> None:
-    for setting, value in (("dashboard_enabled", True), ("dashboard_path", dashboard_path)):
-        monkeypatch.setattr(settings, setting, value)
-    monkeypatch.setattr(settings, "dashboard_dist_dir", str(durable_pipelines_dir.parent))
+    monkeypatch.setattr(settings, "tracing_enabled", True)
+    monkeypatch.setattr(settings, "chainlit_enabled", True)
+    monkeypatch.setattr(server_app, "_mount_chainlit_ui", lambda app: app.mount(mount_path, FastAPI()))
     # "v1" shares a first path segment with /v1/models without matching its run path, so it loads.
     write_tree(durable_pipelines_dir, {**files, "v1.yml": CALC_YAML})
 
@@ -224,7 +220,7 @@ def test_host_construction_failures_fail_startup_and_unload_modules(
 
 @pytest.mark.skipif(not HAYSTACK_V3, reason="durable adapters require Haystack 3.1+")
 @pytest.mark.parametrize(
-    "dashboard_path",
+    "mount_path",
     [
         "/jobs/run-durable",
         "/jobs/executions",
@@ -232,13 +228,12 @@ def test_host_construction_failures_fail_startup_and_unload_modules(
     ],
 )
 def test_durable_routes_cannot_be_shadowed_by_nested_mounts(
-    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, dashboard_path: str
+    durable_pipelines_dir: Path, monkeypatch: pytest.MonkeyPatch, mount_path: str
 ) -> None:
     write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
     monkeypatch.setattr(settings, "durable_store", "memory")
-    monkeypatch.setattr(settings, "dashboard_enabled", True)
-    monkeypatch.setattr(settings, "dashboard_path", dashboard_path)
-    monkeypatch.setattr(settings, "dashboard_dist_dir", str(durable_pipelines_dir.parent))
+    monkeypatch.setattr(settings, "chainlit_enabled", True)
+    monkeypatch.setattr(server_app, "_mount_chainlit_ui", lambda app: app.mount(mount_path, FastAPI()))
 
     with pytest.raises(PipelineModeError, match="conflict"):
         create_app()
@@ -252,9 +247,8 @@ def test_durable_routes_can_share_a_prefix_with_an_unrelated_mount(
 ) -> None:
     write_tree(durable_pipelines_dir, {"jobs/pipeline_wrapper.py": DURABLE_WRAPPER})
     monkeypatch.setattr(settings, "durable_store", "memory")
-    monkeypatch.setattr(settings, "dashboard_enabled", True)
-    monkeypatch.setattr(settings, "dashboard_path", "/jobs/monitor")
-    monkeypatch.setattr(settings, "dashboard_dist_dir", str(durable_pipelines_dir.parent))
+    monkeypatch.setattr(settings, "chainlit_enabled", True)
+    monkeypatch.setattr(server_app, "_mount_chainlit_ui", lambda app: app.mount("/jobs/monitor", FastAPI()))
 
     with TestClient(create_app()) as client:
         response = client.post("/jobs/run-durable", json={"value": 2})

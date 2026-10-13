@@ -116,7 +116,7 @@ jobs:
           hatch -e test env run -- uv pip install --upgrade "haystack-ai>=3.1,<4"
 
       - name: Run Redis integration tests
-        run: hatch run test:integration tests/test_it_durable_redis.py tests/test_it_durable_redis_process.py tests/test_it_durable_mode.py
+        run: hatch run test:integration tests/test_it_durable_redis.py tests/test_it_durable_redis_process.py tests/test_it_durable_mode.py tests/test_durable_monitoring.py
 
   linting:
     runs-on: ubuntu-slim
@@ -135,32 +135,3 @@ jobs:
 
       - name: Ty - check types
         run: hatch run test:types
-
-  dashboard-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
-        id: changes
-        with:
-          filters: |
-            dashboard:
-              - "dashboard/**"
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        if: steps.changes.outputs.dashboard == 'true'
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
-
-      - name: Install dashboard dependencies
-        if: steps.changes.outputs.dashboard == 'true'
-        working-directory: dashboard
-        run: npm ci
-
-      - name: Run dashboard frontend tests
-        if: steps.changes.outputs.dashboard == 'true'
-        working-directory: dashboard
-        run: npm run test
