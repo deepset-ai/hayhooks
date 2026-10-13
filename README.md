@@ -11,13 +11,40 @@
 [![Docker image release](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml)
 [![Tests](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml)
 
-[**Documentation**](https://deepset-ai.github.io/hayhooks/) · [Quick start](#quick-start) · [Durable execution](#durable-execution) · [Examples](docs/examples/overview.md)
+[**Documentation**](https://deepset-ai.github.io/hayhooks/) · [Quick start](#quick-start) · [Dashboard](#terminal-dashboard) · [Durable execution](#durable-execution)
 
 </div>
 
 ---
 
 Write a small Python wrapper around your Pipeline or Agent, and Hayhooks turns it into typed endpoints, streaming chat backends, and agent-to-agent tools. When the work outlives a request, a restart, or a deploy, run it as a **durable execution**: checkpointed in Redis, resumable on any replica, and able to wait for a human.
+
+## Terminal dashboard
+
+**From deployment health to the slowest component. All in your terminal.**
+
+Browse deployments, follow ordinary and durable executions, and open a trace to see where time went. Live refresh, search, filters, and a span waterfall keep the details close to the work.
+
+[![Hayhooks terminal dashboard showing recent executions and the selected run](docs/assets/terminal-dashboard/browse-160x48.png)](https://deepset-ai.github.io/hayhooks/features/terminal-dashboard/)
+
+*The actual terminal UI, shown with demo runs.*
+
+```bash
+pip install "hayhooks[tui]"
+hayhooks run
+# In a second terminal, under the same OS account:
+hayhooks dashboard
+```
+
+| Deployments · `d` | Executions · `e` | Traces · `v` |
+| --- | --- | --- |
+| Pipeline and agent metadata, capabilities, and durable health | Recent ordinary runs and paginated durable history | Component timing, errors, and expandable span trees |
+
+Local capture is enabled by default. The dashboard is read-only; the terminal UI needs no browser or external tracing backend. Ordinary history is a bounded sample from the responding process; durable history lives in its execution store.
+
+[**Explore the dashboard →**](https://deepset-ai.github.io/hayhooks/features/terminal-dashboard/) · [Connect to a remote server](https://deepset-ai.github.io/hayhooks/features/terminal-dashboard/#connect-to-a-remote-server)
+
+## Serve your pipelines and agents
 
 <table>
 <tr>
@@ -57,8 +84,8 @@ Publish pipelines as [A2A](https://a2a-protocol.org) agents ([guide](docs/featur
 </td>
 <td valign="top">
 
-📈 **Tracing and dashboard**<br>
-OpenTelemetry spans (`hayhooks[tracing]`) for deploy, run, and durable attempts, with trace/span inspection in `hayhooks dashboard --traces`. Authenticated local monitoring is enabled by default.
+📈 **Local tracing and OTLP export**<br>
+Inspect Hayhooks operations and Haystack components in the terminal dashboard. Add `hayhooks[tracing]` to export spans to an external OpenTelemetry backend.
 
 </td>
 </tr>
@@ -167,6 +194,8 @@ curl -X POST http://localhost:1416/chat/completions \
 ```
 
 Or chat with it in the [embedded Chainlit UI](docs/features/chainlit-integration.md) (`hayhooks run --with-chainlit`) or [integrate it with Open WebUI](docs/features/openwebui-integration.md)!
+
+Open `hayhooks dashboard` in another terminal to follow your runs. Install the `tui` extra first; press `e` for executions or `v` for traces.
 
 ## Durable execution
 
@@ -278,6 +307,7 @@ Stop the server mid-run and start it again: the run continues from its last chec
 - [Quick Start Guide](docs/getting-started/quick-start.md) - Get started with Hayhooks
 - [Installation](docs/getting-started/installation.md) - Install Hayhooks and dependencies
 - [Configuration](docs/getting-started/configuration.md) - Configure Hayhooks for your needs
+- [Terminal Dashboard](docs/features/terminal-dashboard.md) - Inspect deployments, executions, and component traces
 - [Durable Execution](docs/features/durable-execution.md) - Run Pipelines and Agents beyond the request
 - [Examples](docs/examples/overview.md) - Explore example implementations
 

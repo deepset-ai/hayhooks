@@ -79,6 +79,17 @@ Run your pipeline via the API:
       --param 'question="What is Haystack?"'
     ```
 
+### 5. Inspect the run
+
+Install the optional terminal UI and open it in a second terminal under the same OS account:
+
+```bash
+pip install "hayhooks[tui]"
+hayhooks dashboard
+```
+
+Press `e` for executions or `v` for traces, then Enter for details. Local capture is enabled by default, so the run you just made appears while it remains in the server's recent buffer. See the [dashboard guide](../features/terminal-dashboard.md) for screenshots, navigation, and remote connections.
+
 ## Quick Start with Docker Compose
 
 For the fastest setup with Open WebUI integration, see [Quick Start with Docker Compose](quick-start-docker.md).
@@ -86,4 +97,5 @@ For the fastest setup with Open WebUI integration, see [Quick Start with Docker 
 ## Next Steps
 
 - [Pipeline Deployment](../concepts/pipeline-deployment.md) - Learn deployment methods
+- [Terminal Dashboard](../features/terminal-dashboard.md) - Follow executions and inspect component timing
 - [Examples](../examples/overview.md) - Explore example implementations

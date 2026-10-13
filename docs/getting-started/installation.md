@@ -2,6 +2,11 @@
 
 This guide covers how to install Hayhooks and its dependencies.
 
+Want to serve pipelines and inspect their runs from the terminal? Install
+`pip install "hayhooks[tui]"`, start `hayhooks run`, then open `hayhooks dashboard`
+in another terminal. The [dashboard guide](../features/terminal-dashboard.md)
+walks through the three views and authentication.
+
 ## System Requirements
 
 - Python 3.10+
@@ -61,8 +66,8 @@ This guide covers how to install Hayhooks and its dependencies.
 
     Adds Textual for the read-only terminal dashboard on Python 3.10–3.14.
     Server startup and ordinary CLI commands do not require Textual.
-    [Dashboard commands](../features/cli-commands.md#dashboard) describe authentication,
-    snapshots, navigation, and default local monitoring.
+    See the [dashboard guide](../features/terminal-dashboard.md) for screenshots,
+    local setup, keyboard navigation, and remote connections.
 
 === "With Durable Execution"
 

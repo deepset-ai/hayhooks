@@ -97,6 +97,9 @@ connection pinned to one process or an external OTLP backend for aggregate histo
 
 ### dashboard
 
+For a visual tour, first-run setup, and remote connections, see the
+[terminal dashboard guide](terminal-dashboard.md).
+
 Browse deployments, ordinary and durable executions, and recent process traces using GET requests only:
 
 ```bash
@@ -148,7 +151,7 @@ process health and store counts in an inspector pane. Long IDs and revisions use
 ellipses in the table; details preserve their full values and timestamps.
 
 Deployment searches and type filters apply to the complete deployment snapshot.
-Executions show all deployments by default. Ordinary REST, OpenAI, MCP and A2A runs
+Executions show all deployments by default. Ordinary runs
 come from the bounded recent process trace buffer; durable executions come from
 their indexed store. Durable attempts are not duplicated as ordinary runs.
 Choose a deployment to narrow the view. ID searches and status filters apply to
@@ -168,6 +171,10 @@ on buffer eviction or server restart; durable retention follows the execution st
 Multiple server workers have separate trace samples. All writing replicas must
 index submissions for complete durable coverage.
 See [index coverage and retention](../deployment/durable-operations.md#execution-monitoring).
+
+Standalone `hayhooks mcp run` and `hayhooks a2a run` servers do not expose the
+dashboard trace API. Their separate process buffers are not visible from a
+dashboard connected to the main HTTP server.
 
 `--once` prints one JSON status snapshot without Textual; `--json` requires
 `--once`. Adding `--pipeline NAME` also includes that deployment's execution page.
