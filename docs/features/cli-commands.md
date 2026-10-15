@@ -45,7 +45,7 @@ hayhooks --version
 
 ## Server Commands
 
-### run (HTTP vs CLI example)
+### run
 
 Start the Hayhooks server:
 
@@ -90,12 +90,18 @@ connection pinned to one process or an external OTLP backend for aggregate histo
 | `--workers` | | Number of worker processes; values above 1 are rejected in durable mode | `1` |
 | `--pipelines-dir` | | Directory for pipeline definitions | `./pipelines` |
 | `--additional-python-path` | | Additional Python path | `None` |
-| `--root-path` | | Root path for API | `/` |
-| `--reload` | | Reload on code changes (development) | `false` |
+| `--root-path` | | Root path for API | `""` |
+| `--reload` | `-r` | Reload on code changes (development) | `false` |
+| `--with-chainlit` | | Mount the embedded Chainlit UI | `false` |
+| `--chainlit-path` | | Chainlit mount path | `/chat` |
+| `--chainlit-custom-elements-dir` | | Directory of custom JSX elements | Unset |
 | `--with-monitoring/--without-monitoring` | | Authenticated durable execution indexing and collection routes | Enabled by settings (`true`) |
 | `--with-tracing/--without-tracing` | | Authenticated local trace API for terminal inspection | Enabled by settings (`true`) |
 
 ### dashboard
+
+For a visual tour, first-run setup, and remote connections, see the
+[terminal dashboard guide](terminal-dashboard.md).
 
 Browse deployments, ordinary and durable executions, and recent process traces using GET requests only:
 
@@ -148,7 +154,7 @@ process health and store counts in an inspector pane. Long IDs and revisions use
 ellipses in the table; details preserve their full values and timestamps.
 
 Deployment searches and type filters apply to the complete deployment snapshot.
-Executions show all deployments by default. Ordinary REST, OpenAI, MCP and A2A runs
+Executions show all deployments by default. Ordinary runs
 come from the bounded recent process trace buffer; durable executions come from
 their indexed store. Durable attempts are not duplicated as ordinary runs.
 Choose a deployment to narrow the view. ID searches and status filters apply to
@@ -168,6 +174,10 @@ on buffer eviction or server restart; durable retention follows the execution st
 Multiple server workers have separate trace samples. All writing replicas must
 index submissions for complete durable coverage.
 See [index coverage and retention](../deployment/durable-operations.md#execution-monitoring).
+
+Standalone `hayhooks mcp run` and `hayhooks a2a run` servers do not expose the
+dashboard trace API. Their separate process buffers are not visible from a
+dashboard connected to the main HTTP server.
 
 `--once` prints one JSON status snapshot without Textual; `--json` requires
 `--once`. Adding `--pipeline NAME` also includes that deployment's execution page.
@@ -221,7 +231,7 @@ hayhooks a2a run --host 0.0.0.0 --port 1418
 
 ## Pipeline Management Commands
 
-The deployment commands below (`deploy-files`, `deploy-yaml`, `deploy`, and `undeploy`) send requests to the target
+The deployment commands below (`deploy-files`, `deploy-yaml`, and `undeploy`) send requests to the target
 server and work against a server in the default, live-deployment mode. They stay available whatever the CLI's own
 `HAYHOOKS_DURABLE_MODE` setting is. A server in [durable mode](durable-execution.md#durable-mode) has no deployment
 endpoints, so these commands fail there with `Server error: Not Found`; change its pipelines directory and restart it
@@ -235,17 +245,11 @@ Deploy a pipeline from wrapper files:
 # Basic deployment
 hayhooks pipeline deploy-files -n my_pipeline ./path/to/pipeline
 
-# With custom name and description
-hayhooks pipeline deploy-files -n my_pipeline --description "My pipeline" ./path/to/pipeline
-
 # Overwrite existing pipeline
 hayhooks pipeline deploy-files -n my_pipeline --overwrite ./path/to/pipeline
 
 # Skip saving files to server
 hayhooks pipeline deploy-files -n my_pipeline --skip-saving-files ./path/to/pipeline
-
-# Skip MCP tool registration
-hayhooks pipeline deploy-files -n my_pipeline --skip-mcp ./path/to/pipeline
 ```
 
 #### Options for `pipeline deploy-files`
@@ -253,10 +257,11 @@ hayhooks pipeline deploy-files -n my_pipeline --skip-mcp ./path/to/pipeline
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
 | `--name` | `-n` | Pipeline name | Required |
-| `--description` | | Human-readable description | Pipeline name |
 | `--overwrite` | `-o` | Overwrite existing pipeline | `false` |
 | `--skip-saving-files` | | Don't save files to server | `false` |
-| `--skip-mcp` | | Skip MCP tool registration | `false` |
+
+Use a `run_api` or `run_api_async` docstring for the description, and set the
+wrapper class attribute `skip_mcp = True` to omit MCP tool registration.
 
 ### pipeline deploy-yaml
 
@@ -297,16 +302,7 @@ Undeploy a pipeline:
 ```bash
 # Undeploy by name
 hayhooks pipeline undeploy my_pipeline
-
-# Force undeploy (ignore errors)
-hayhooks pipeline undeploy my_pipeline --force
 ```
-
-#### Options for `pipeline undeploy`
-
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--force` | | Force undeploy (if needed) | `false` |
 
 ### pipeline run
 
@@ -314,19 +310,19 @@ Run a deployed pipeline:
 
 ```bash
 # Run with JSON parameters
-hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
+hayhooks pipeline run my_pipeline --param 'query=What is Haystack?'
 
 # Run with multiple parameters
-hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"' --param 'max_results=5'
+hayhooks pipeline run my_pipeline --param 'query=What is Haystack?' --param 'max_results=5'
 
 # Upload files
-hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Summarize this"'
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query=Summarize this'
 
 # Upload directory
-hayhooks pipeline run my_pipeline --dir ./documents --param 'query="Analyze all documents"'
+hayhooks pipeline run my_pipeline --dir ./documents --param 'query=Analyze all documents'
 
 # Upload multiple files
-hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare documents"'
+hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query=Compare documents'
 ```
 
 #### Options for `pipeline run`
@@ -335,7 +331,8 @@ hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query
 |--------|-------|-------------|---------|
 | `--file` | | Upload single file | None |
 | `--dir` | | Upload directory | None |
-| `--param` | | Pass parameters as JSON | None |
+| `--param` | `-p` | Pass `key=value`; arrays, objects, booleans, null, and numbers are parsed as JSON | None |
+| `--stream` | `-s` | Display a streaming `/run` response as it arrives; unavailable with file uploads | `false` |
 
 ## Status and Monitoring Commands
 
@@ -359,7 +356,8 @@ hayhooks status
 
 ## HTTP API Commands
 
-All CLI commands have corresponding HTTP API endpoints.
+Pipeline management and execution commands call the HTTP API. Server startup and
+the dashboard run locally.
 
 !!! tip "Interactive API Documentation"
     Explore and test all HTTP API endpoints interactively:
@@ -382,8 +380,10 @@ curl -X POST http://localhost:1416/deploy_files \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "my_pipeline",
-    "description": "My pipeline",
-    "files": [...],
+    "files": {
+      "pipeline_wrapper.py": "from hayhooks import BasePipelineWrapper\nclass PipelineWrapper(BasePipelineWrapper):\n    def setup(self): pass\n    def run_api(self, query: str) -> str: return query\n"
+    },
+    "save_files": true,
     "overwrite": false
   }'
 ```
@@ -409,7 +409,7 @@ curl -X POST http://localhost:1416/deploy-yaml \
 
 ```bash
 # CLI
-hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
+hayhooks pipeline run my_pipeline --param 'query=What is Haystack?'
 
 # HTTP API
 curl -X POST http://localhost:1416/my_pipeline/run \
@@ -461,8 +461,8 @@ LOG=INFO
    # Check file permissions
    ls -la ./path/to/pipeline
 
-   # Fix permissions if needed
-   chmod +x ./path/to/pipeline/pipeline_wrapper.py
+   # Grant the owner read access if needed
+   chmod u+r ./path/to/pipeline/pipeline_wrapper.py
    ```
 
 ### Debug Mode
@@ -492,7 +492,7 @@ hayhooks pipeline deploy-files -n chat_pipeline ./pipelines/chat
 hayhooks status
 
 # 4. Run pipeline
-hayhooks pipeline run chat_pipeline --param 'query="Hello!"'
+hayhooks pipeline run chat_pipeline --param 'query=Hello!'
 
 # 5. Check logs
 # Use your process manager or container logs
@@ -506,13 +506,11 @@ export HAYHOOKS_HOST=0.0.0.0
 export HAYHOOKS_PORT=1416
 export LOG=INFO
 
-# 2. Start a default-mode server with multiple workers
+# 2. Load the same pipeline definitions in every worker at startup
+export HAYHOOKS_PIPELINES_DIR=./pipelines
 hayhooks run --workers 4
 
-# 3. Deploy pipelines
-hayhooks pipeline deploy-files -n production_pipeline ./pipelines/production
-
-# 4. Monitor status
+# 3. In another terminal, monitor status
 hayhooks status
 ```
 

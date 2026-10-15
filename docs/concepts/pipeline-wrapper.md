@@ -16,7 +16,7 @@ The pipeline wrapper provides a flexible foundation for deploying Haystack pipel
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
-from haystack import Pipeline
+from hayhooks import Pipeline
 
 from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator, streaming_generator
 
@@ -27,7 +27,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
     def run_api(self, urls: list[str], question: str) -> str:
         result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
-        return result["llm"]["replies"][0]
+        return result["llm"]["replies"][0].text
 ```
 
 ## Request headers
@@ -88,7 +88,7 @@ Define your pipeline directly in code for maximum flexibility and control:
 
 ```python
 def setup(self) -> None:
-    from haystack import Pipeline
+    from hayhooks import Pipeline
     from haystack.components.fetchers import LinkContentFetcher
     from haystack.components.converters import HTMLToDocument
     from haystack.components.builders import ChatPromptBuilder
@@ -135,7 +135,7 @@ Load an existing YAML pipeline file:
 ```python
 def setup(self) -> None:
     from pathlib import Path
-    from haystack import Pipeline
+    from hayhooks import Pipeline
 
     pipeline_yaml = (Path(__file__).parent / "pipeline.yml").read_text()
     self.pipeline = Pipeline.loads(pipeline_yaml)
@@ -157,7 +157,7 @@ The `run_api()` method is called for each API request to the `{pipeline_name}/ru
 ```python
 def run_api(self, urls: list[str], question: str) -> str:
     result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
-    return result["llm"]["replies"][0]
+    return result["llm"]["replies"][0].text
 ```
 
 **Key features:**
@@ -324,7 +324,7 @@ The asynchronous version of `run_api()` for better performance under high load.
 ```python
 async def run_api_async(self, urls: list[str], question: str) -> str:
     result = await self.pipeline.run_async({"fetcher": {"urls": urls}, "prompt": {"query": question}})
-    return result["llm"]["replies"][0]
+    return result["llm"]["replies"][0].text
 ```
 
 **When to use `run_api_async`:**
@@ -351,7 +351,7 @@ Enable OpenAI-compatible chat endpoints for integration with chat interfaces.
 def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str | Generator:
     question = get_last_user_message(messages)
     result = self.pipeline.run({"prompt": {"query": question}})
-    return result["llm"]["replies"][0]
+    return result["llm"]["replies"][0].text
 ```
 
 **Fixed signature:**
@@ -391,6 +391,7 @@ By default, `async_streaming_generator` requires all streaming components to sup
 
 ```python
 async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
+    question = get_last_user_message(messages)
     # This will FAIL if the pipeline contains a sync-only component (no run_async)
     return async_streaming_generator(
         pipeline=self.pipeline,  # Pipeline with a sync-only component
@@ -454,7 +455,7 @@ allow_sync_streaming_callbacks=True
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from haystack import Pipeline
+from hayhooks import Pipeline
 from haystack.core.component import component
 from haystack.dataclasses import StreamingChunk
 from hayhooks import BasePipelineWrapper, get_last_user_message, async_streaming_generator
@@ -498,7 +499,7 @@ class SyncOnlyWrapper(BasePipelineWrapper):
 
 - Building new pipelines (recommended default)
 - You want to ensure all components are **async-compatible**
-- Performance is critical (pure async is **~1-2μs faster** per chunk)
+- You want to avoid bridging synchronous callbacks into the event loop
 - You're building a production system with controlled dependencies
 
 **Use `allow_sync_streaming_callbacks=True` when:**
@@ -511,7 +512,7 @@ class SyncOnlyWrapper(BasePipelineWrapper):
 ### Performance Considerations
 
 - **Pure async pipeline**: No overhead
-- **Hybrid mode (auto-detected)**: Minimal overhead (~1-2 microseconds per streaming chunk for sync components)
+- **Hybrid mode (auto-detected)**: Bridges synchronous callbacks into the async stream; measure overhead with your workload
 - **Network-bound operations**: The overhead is negligible compared to LLM generation time
 
 !!! success "Best Practice"
@@ -661,7 +662,9 @@ export HAYHOOKS_STREAMING_COMPONENTS="llm_1,llm_2"
 
 ### YAML Pipeline Streaming Configuration
 
-You can also specify streaming configuration in YAML pipeline definitions:
+For YAML loaded by a wrapper, pass `streaming_components` to the streaming helper.
+YAML-only deployments do not stream; a top-level YAML setting does not enable
+streaming by itself. The example below records the intended component selection:
 
 ```yaml
 components:
@@ -720,7 +723,9 @@ streaming_components:
 # streaming_components: all
 ```
 
-YAML configuration follows the same priority rules: YAML setting > environment variable > default.
+A wrapper must read this setting and pass it as the helper's
+`streaming_components` argument. That explicit argument overrides the environment
+variable and the default.
 
 See the [Multi-LLM Streaming Example](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/multi_llm_streaming) for a complete working implementation.
 
@@ -734,17 +739,14 @@ See the [Multi-LLM Streaming Example](https://github.com/deepset-ai/hayhooks/tre
 For streaming responses, pass `include_outputs_from` to `streaming_generator()` or `async_streaming_generator()`, and use the `on_pipeline_end` callback to access intermediate outputs. For example:
 
 ```python
-    def run_chat_completion(self, model: str, messages: List[dict], body: dict) -> Generator:
+    def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
         question = get_last_user_message(messages)
-
-        # Store retrieved documents for citations
-        self.retrieved_docs = []
 
         def on_pipeline_end(result: dict[str, Any]) -> None:
             # Access intermediate outputs here
             if "retriever" in result:
-                self.retrieved_docs = result["retriever"]["documents"]
-                # Use for citations, logging, analytics, etc.
+                retrieved_docs = result["retriever"]["documents"]
+                log.info("Retrieved {} sources", len(retrieved_docs))
 
         return streaming_generator(
             pipeline=self.pipeline,
@@ -762,15 +764,16 @@ For streaming responses, pass `include_outputs_from` to `streaming_generator()` 
 The same pattern works with async streaming:
 
 ```python
-async def run_chat_completion_async(self, model: str, messages: List[dict], body: dict) -> AsyncGenerator:
+async def run_chat_completion_async(self, model: str, messages: list[dict], body: dict) -> AsyncGenerator:
     question = get_last_user_message(messages)
 
     def on_pipeline_end(result: dict[str, Any]) -> None:
         if "retriever" in result:
-            self.retrieved_docs = result["retriever"]["documents"]
+            retrieved_docs = result["retriever"]["documents"]
+            log.info("Retrieved {} sources", len(retrieved_docs))
 
     return async_streaming_generator(
-        pipeline=self.async_pipeline,
+        pipeline=self.pipeline,
         pipeline_run_args={
             "retriever": {"query": question},
             "prompt_builder": {"query": question}
@@ -798,7 +801,7 @@ Same pattern for async:
 
 ```python
 async def run_api_async(self, query: str) -> dict:
-    result = await self.async_pipeline.run_async(
+    result = await self.pipeline.run_async(
         data={"retriever": {"query": query}},
         include_outputs_from={"retriever"}
     )
@@ -836,9 +839,12 @@ def on_reasoning(
     return text
 
 def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Generator:
+    from haystack.dataclasses import ChatMessage
+
+    chat_messages = [ChatMessage.from_openai_dict_format(message) for message in messages]
     return streaming_generator(
         pipeline=self.pipeline,
-        pipeline_run_args={"messages": messages},
+        pipeline_run_args={"messages": chat_messages},
         on_reasoning=on_reasoning,
     )
 ```
@@ -948,7 +954,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
         try:
             result = self.pipeline.run({"prompt": {"query": query}})
-            return result["llm"]["replies"][0]
+            return result["llm"]["replies"][0].text
         except Exception as e:
             log.error("Pipeline execution failed: {}", e)
             raise HTTPException(status_code=500, detail="Pipeline execution failed")
@@ -967,7 +973,7 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         ...
 
-    def run_api(self, ...) -> str:
+    def run_api(self, query: str) -> str:
         ...
 ```
 
@@ -988,7 +994,7 @@ def run_api(self, urls: list[str], question: str) -> str:
         Answer to the question based on the website content
     """
     result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
-    return result["llm"]["replies"][0]
+    return result["llm"]["replies"][0].text
 ```
 
 ## Examples

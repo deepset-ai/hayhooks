@@ -4,173 +4,152 @@
 
 # Hayhooks
 
-**Serve [Haystack](https://haystack.deepset.ai/) Pipelines and Agents as production APIs:<br>REST, OpenAI-compatible chat, MCP, A2A, and durable executions that survive restarts.**
+**Serve [Haystack](https://haystack.deepset.ai/) pipelines and agents as APIs.**
+
+REST APIs, OpenAI-compatible chat, MCP tools, and A2A agents, with durable execution and built-in tracing.
 
 [![PyPI - Version](https://img.shields.io/pypi/v/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hayhooks.svg)](https://pypi.org/project/hayhooks)
 [![Docker image release](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/docker.yml)
 [![Tests](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml/badge.svg)](https://github.com/deepset-ai/hayhooks/actions/workflows/tests.yml)
 
-[**Documentation**](https://deepset-ai.github.io/hayhooks/) · [Quick start](#quick-start) · [Durable execution](#durable-execution) · [Examples](docs/examples/overview.md)
+[**Documentation**](https://deepset-ai.github.io/hayhooks/) · [Quick start](#quick-start) · [Dashboard](#terminal-dashboard) · [Durable execution](#durable-execution)
 
 </div>
 
----
+## Serve your pipelines and agents
 
-Write a small Python wrapper around your Pipeline or Agent, and Hayhooks turns it into typed endpoints, streaming chat backends, and agent-to-agent tools. When the work outlives a request, a restart, or a deploy, run it as a **durable execution**: checkpointed in Redis, resumable on any replica, and able to wait for a human.
+Write a Python wrapper around your pipeline or agent. Choose the interfaces and runtime features you need:
 
-<table>
-<tr>
-<td width="50%" valign="top">
+- **REST APIs.** Deploy Python wrappers or YAML pipelines as typed, validated endpoints with OpenAPI docs, file uploads, and custom routes.
+- **[OpenAI-compatible APIs](docs/features/openai-compatibility.md).** Serve streaming Chat Completions and Responses endpoints. Connect [Open WebUI](docs/features/openwebui-integration.md) or use the embedded [Chainlit UI](docs/features/chainlit-integration.md).
+- **[MCP support](docs/features/mcp-support.md).** Run an MCP server that exposes pipelines and agents as tools for Cursor, Claude Desktop, and other Model Context Protocol clients.
+- **[A2A support](docs/features/a2a-support.md).** Expose chat-capable pipelines and agents through the Agent2Agent protocol, with generated agent cards for discovery and task delegation.
+- **[Durable execution](#durable-execution).** Checkpoint long-running work in Redis, wait for human approval, retry failures, and recover after restarts.
+- **[Tracing and observability](docs/reference/tracing.md).** Inspect executions and component traces in the terminal dashboard, or export spans to an OpenTelemetry backend with `hayhooks[tracing]`.
 
-📦 **REST APIs from Python**<br>
-Every wrapper or YAML pipeline becomes typed, validated endpoints with OpenAPI docs, file uploads, and custom routes.
+## Terminal dashboard
 
-</td>
-<td width="50%" valign="top">
+Inspect deployments, follow executions, and find slow components in your terminal.
 
-♻️ **Durable executions**<br>
-Checkpoints, retries, human approval, cancellation, and restart recovery for long-running Pipelines and Agents. [Learn more](#durable-execution)
+[![Hayhooks terminal dashboard showing five deployments and a selected research agent's status](docs/assets/terminal-dashboard/overview-120x36.png)](docs/assets/terminal-dashboard/overview-120x36.png)
 
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-💬 **OpenAI-compatible chat**<br>
-Streaming `/chat/completions` and `/responses` backends for [Open WebUI](docs/features/openwebui-integration.md), or an embedded [Chainlit](docs/features/chainlit-integration.md) UI with `--with-chainlit`.
-
-</td>
-<td valign="top">
-
-🛠️ **MCP server**<br>
-Each pipeline becomes an [MCP tool](docs/features/mcp-support.md) in [Cursor](https://cursor.com), [Claude Desktop](https://claude.ai/download), or any MCP client, which can also deploy and run pipelines through chat.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-🤝 **A2A protocol**<br>
-Publish pipelines as [A2A](https://a2a-protocol.org) agents ([guide](docs/features/a2a-support.md)) with auto-generated agent cards, so other agents can delegate tasks to them.
-
-</td>
-<td valign="top">
-
-📈 **Tracing and dashboard**<br>
-OpenTelemetry spans (`hayhooks[tracing]`) for deploy, run, and durable attempts, with trace/span inspection in `hayhooks dashboard --traces`. Authenticated local monitoring is enabled by default.
-
-</td>
-</tr>
-</table>
+*Actual terminal UI with demo data.* [Explore the dashboard](docs/features/terminal-dashboard.md).
 
 ## Quick start
 
-### 1. Install Hayhooks
+Serve a Haystack agent through a typed HTTP endpoint. You need Python 3.10 through 3.14 and an OpenAI API key.
+
+### Install and start
+
+In your Python environment, install Hayhooks and set the API key before starting the server:
 
 ```bash
-# Install Hayhooks
 pip install hayhooks
-```
-
-### 2. Start Hayhooks
-
-```bash
+export OPENAI_API_KEY="your-api-key"
 hayhooks run
 ```
 
-### 3. Create a simple agent
+Leave the server running. Use a second terminal for the following commands.
 
-Create a minimal agent wrapper with streaming chat support and a simple HTTP POST API:
+### Create an agent
+
+Create a directory named `my_agent_dir` and save this as `my_agent_dir/pipeline_wrapper.py`:
 
 ```python
-from typing import AsyncGenerator
 from haystack.components.agents import Agent
-from haystack.dataclasses import ChatMessage
-from haystack.tools import Tool
 from haystack.components.generators.chat import OpenAIChatGenerator
-from hayhooks import BasePipelineWrapper, async_streaming_generator
+from haystack.dataclasses import ChatMessage
 
+from hayhooks import BasePipelineWrapper
 
-# Define a Haystack Tool that provides weather information for a given location.
-def weather_function(location):
-    return f"The weather in {location} is sunny."
-
-weather_tool = Tool(
-    name="weather_tool",
-    description="Provides weather information for a given location.",
-    parameters={
-        "type": "object",
-        "properties": {"location": {"type": "string"}},
-        "required": ["location"],
-    },
-    function=weather_function,
-)
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        self.agent = Agent(
+        self.pipeline = Agent(
             chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
-            system_prompt="You're a helpful agent",
-            tools=[weather_tool],
         )
 
-    # This will create a POST /my_agent/run endpoint
-    # `question` will be the input argument and will be auto-validated by a Pydantic model
     async def run_api_async(self, question: str) -> str:
-        result = await self.agent.run_async(messages=[ChatMessage.from_user(question)])
+        result = await self.pipeline.run_async(messages=[ChatMessage.from_user(question)])
         return result["last_message"].text
-
-    # This will create an OpenAI-compatible /chat/completions endpoint
-    async def run_chat_completion_async(
-        self, model: str, messages: list[dict], body: dict
-    ) -> AsyncGenerator[str, None]:
-        chat_messages = [
-            ChatMessage.from_openai_dict_format(message) for message in messages
-        ]
-
-        return async_streaming_generator(
-            pipeline=self.agent,
-            pipeline_run_args={
-                "messages": chat_messages,
-            },
-        )
 ```
 
-Save as `my_agent_dir/pipeline_wrapper.py`.
+Hayhooks uses the method's type hints to validate requests and generate the API schema.
 
-### 4. Deploy it
+### Deploy and run
 
 ```bash
 hayhooks pipeline deploy-files -n my_agent ./my_agent_dir
-```
-
-### 5. Run it
-
-Call the HTTP POST API (`/my_agent/run`):
-
-```bash
-curl -X POST http://localhost:1416/my_agent/run \
+curl http://localhost:1416/my_agent/run \
   -H 'Content-Type: application/json' \
   -d '{"question": "What can you do?"}'
 ```
 
-Call the OpenAI-compatible chat completion API (streaming enabled):
+The response contains the agent's answer. Open [the API docs](http://localhost:1416/docs) to inspect and try the endpoint.
+
+<details>
+<summary><strong>Add streaming chat</strong></summary>
+
+Add these imports at the top of `pipeline_wrapper.py`:
+
+```python
+from collections.abc import AsyncGenerator
+from hayhooks import async_streaming_generator
+```
+
+Add this method inside `PipelineWrapper`:
+
+```python
+    async def run_chat_completion_async(
+        self, model: str, messages: list[dict], body: dict
+    ) -> AsyncGenerator[str, None]:
+        return async_streaming_generator(
+            pipeline=self.pipeline,
+            pipeline_run_args={
+                "messages": [ChatMessage.from_openai_dict_format(m) for m in messages],
+            },
+        )
+```
+
+Redeploy the wrapper, then request a streamed response:
 
 ```bash
-curl -X POST http://localhost:1416/chat/completions \
+hayhooks pipeline deploy-files -n my_agent ./my_agent_dir --overwrite
+curl -N http://localhost:1416/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "my_agent",
-    "messages": [{"role": "user", "content": "What can you do?"}]
+    "messages": [{"role": "user", "content": "What can you do?"}],
+    "stream": true
   }'
 ```
 
-Or chat with it in the [embedded Chainlit UI](docs/features/chainlit-integration.md) (`hayhooks run --with-chainlit`) or [integrate it with Open WebUI](docs/features/openwebui-integration.md)!
+The response arrives as server-sent events. Connect [Open WebUI](docs/features/openwebui-integration.md) or use the [embedded Chainlit UI](docs/features/chainlit-integration.md) to chat with the agent.
+
+</details>
+
+<details>
+<summary><strong>Inspect your run in the dashboard</strong></summary>
+
+On macOS or Linux, open the dashboard in the second terminal under the same OS account as the server:
+
+```bash
+pip install "hayhooks[tui]"
+hayhooks dashboard
+```
+
+Press `e` for executions or `v` for traces, then Enter for details. Local capture is enabled by default. Recent ordinary runs remain available until the server restarts or the buffer evicts them.
+
+For Windows or remote access, follow the [dashboard connection guide](docs/features/terminal-dashboard.md#connect-to-a-remote-server). To export spans to an external OpenTelemetry backend, see [tracing and OpenTelemetry](docs/reference/tracing.md).
+
+</details>
 
 ## Durable execution
 
-Some work does not fit in a request: an Agent that researches for ten minutes, a Pipeline that must wait for a reviewer, a job that must not start over because you deployed. Durable execution runs a Pipeline or Agent detached from the request, checkpoints it in Redis, and resumes it from the last checkpoint on any replica.
+Run work beyond the lifetime of a request. Hayhooks checkpoints pipelines and agents in Redis so another worker can resume after a restart.
+
+Suspend a run for human approval, retry failures, or reconnect to its output stream from any replica.
 
 ```mermaid
 stateDiagram-v2
@@ -185,17 +164,10 @@ stateDiagram-v2
     running --> canceled
 ```
 
-| | |
-|---|---|
-| **Detached runs** | Submit returns `202 Accepted` with links to inspect, resume, cancel, and stream |
-| **Restart recovery** | A crashed or redeployed worker's run is reclaimed and continues from its last checkpoint |
-| **Pipeline and Agent checkpoints** | Completed components are not run again; Agent loops continue after their last tool call |
-| **Human in the loop** | Suspend with a public wait reason and continue with typed, validated resume input |
-| **Retries and cancellation** | Separate budgets for crashes and application retries; cooperative cancellation |
-| **Live output** | Reattachable SSE streams (`Last-Event-ID`) that any replica can serve |
-| **Multi-replica safety** | Leases and fencing stop a stale worker from committing after another took over |
+<details>
+<summary><strong>Run an agent with human approval</strong></summary>
 
-A durable wrapper sets a revision and implements `run_durable_async`. This Agent waits for approval, then researches with its tools:
+This example waits for approval before calling a demo search tool. Save the wrapper as `pipelines/research_agent/pipeline_wrapper.py`.
 
 ```python
 from haystack.components.agents import Agent
@@ -226,15 +198,15 @@ class Report(BaseModel):
 
 
 class PipelineWrapper(BasePipelineWrapper):
-    durable_revision = "research-agent-v1"  # in-flight work stays pinned to this revision
+    durable_revision = "research-agent-v1"  # compatibility key for persisted inputs and checkpoints
     durable_resume_model = Approval  # typed input for human-in-the-loop waits
 
     def setup(self) -> None:
-        generator = OpenAIResponsesChatGenerator(model="gpt-6-luna", generation_kwargs={"reasoning": {"effort": "high"}})
+        generator = OpenAIResponsesChatGenerator(model="gpt-4o-mini")
         self.pipeline = Agent(chat_generator=generator, tools=[search])
 
     async def run_durable_async(self, context: DurableContext, task: Task) -> Report:
-        # Wait for a human. The wait lives in Redis, so it survives restarts and deploys.
+        # Persist the wait in Redis so a worker serving this revision can resume it.
         if not context.state.get("approved"):
             decision = context.resume_input  # consumed on first read
             if decision is None:
@@ -248,36 +220,51 @@ class PipelineWrapper(BasePipelineWrapper):
         return Report(answer=result["last_message"].text)
 ```
 
-Install the extra, start Redis, and serve the pipelines directory in durable mode:
+Stop the quick-start server if it is still running. Install the extra, start Redis, and serve the pipelines directory in durable mode:
 
 ```bash
 pip install "hayhooks[durable]"
 docker run -d -p 6379:6379 redis
-# Save the wrapper as ./pipelines/research_agent/pipeline_wrapper.py
+export OPENAI_API_KEY="your-api-key"
 HAYHOOKS_DURABLE_MODE=true hayhooks run --pipelines-dir ./pipelines
 ```
 
-The durable extra installs `redis>=5.0.1,<9`.
-
-Submit, approve, and follow the run:
+In a second terminal, submit the run:
 
 ```bash
 curl -i http://localhost:1416/research_agent/run-durable \
   -H 'Content-Type: application/json' -d '{"question": "What does Hayhooks do?"}'
+```
 
+The server returns `202 Accepted` with the execution ID and links. Replace `EXECUTION_ID` below with that ID and check the run's status:
+
+```bash
+curl http://localhost:1416/research_agent/executions/EXECUTION_ID
+```
+
+When the status is `waiting`, you can test recovery: stop the server and start it again with the same command. The wait survives the restart.
+
+Recovery requires a worker serving the same revision. When deploying an incompatible change, keep the old revision running until its work finishes. See [revision compatibility](docs/features/durable-execution.md#revisions).
+
+Approve the run and follow its output:
+
+```bash
 curl -X POST http://localhost:1416/research_agent/executions/EXECUTION_ID/resume \
   -H 'Content-Type: application/json' -d '{"approved": true}'
 
 curl -N http://localhost:1416/research_agent/executions/EXECUTION_ID/stream
 ```
 
-Stop the server mid-run and start it again: the run continues from its last checkpoint. Not using the Hayhooks server? The same engine [embeds in any FastAPI app](docs/examples/durable-fastapi.md). Read the [durable execution guide](docs/features/durable-execution.md) and the [operations guide](docs/deployment/durable-operations.md) for the full contract.
+</details>
+
+Read the [durable execution guide](docs/features/durable-execution.md) for checkpoint behavior and the [operations guide](docs/deployment/durable-operations.md) for deployment and recovery. The same engine also [embeds in any FastAPI app](docs/examples/durable-fastapi.md).
 
 ## Next steps
 
 - [Quick Start Guide](docs/getting-started/quick-start.md) - Get started with Hayhooks
 - [Installation](docs/getting-started/installation.md) - Install Hayhooks and dependencies
 - [Configuration](docs/getting-started/configuration.md) - Configure Hayhooks for your needs
+- [Terminal Dashboard](docs/features/terminal-dashboard.md) - Inspect deployments, executions, and component traces
 - [Durable Execution](docs/features/durable-execution.md) - Run Pipelines and Agents beyond the request
 - [Examples](docs/examples/overview.md) - Explore example implementations
 

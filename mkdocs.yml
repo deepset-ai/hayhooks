@@ -1,5 +1,5 @@
 site_name: Hayhooks
-site_description: Deploy and serve Haystack Pipelines and Agents as REST APIs
+site_description: Serve Haystack Pipelines and Agents, run durable work, and inspect executions in your terminal.
 site_author: deepset
 site_url: https://deepset-ai.github.io/hayhooks
 
@@ -19,6 +19,7 @@ nav:
     - YAML Pipeline Deployment: concepts/yaml-pipeline-deployment.md
     - Agent Deployment: concepts/agent-deployment.md
   - Features:
+    - Terminal Dashboard: features/terminal-dashboard.md
     - Durable Execution: features/durable-execution.md
     - OpenAI Compatibility: features/openai-compatibility.md
     - MCP Support: features/mcp-support.md
@@ -69,7 +70,7 @@ theme:
     - content.code.annotate
     - toc.integrate
   font:
-    text: Inter
+    text: Plus Jakarta Sans
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -110,6 +111,7 @@ plugins:
           - concepts/agent-deployment.md: Learn how to deploy Haystack Agents with Hayhooks.
           - concepts/yaml-pipeline-deployment.md: Define and deploy Haystack Pipelines from YAML.
         Features:
+          - features/terminal-dashboard.md: Browse deployments, executions, and component traces in the terminal dashboard.
           - features/durable-execution.md: Run checkpointed Pipeline and Agent work beyond request lifetime.
           - features/openai-compatibility.md: Use Hayhooks with OpenAI-compatible clients.
           - features/mcp-support.md: Using Hayhooks as an MCP Server for Haystack Pipelines and Agents.

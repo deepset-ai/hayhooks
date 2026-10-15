@@ -10,7 +10,10 @@ http://localhost:1416
 
 ## Authentication
 
-Currently, Hayhooks does not include built-in authentication. Consider implementing:
+Hayhooks does not enable global authentication for management and execution
+endpoints by default. Trace inspection and execution collections require
+operator or owner authorization; durable item routes follow their owner policy.
+For general endpoint protection, use:
 
 - Reverse proxy authentication
 - Network-level security
@@ -47,8 +50,9 @@ POST /deploy_files
 
 ```json
 {
-  "status": "success",
-  "message": "Pipeline deployed successfully"
+  "name": "pipeline_name",
+  "success": true,
+  "endpoint": "/pipeline_name/run"
 }
 ```
 
@@ -58,14 +62,14 @@ POST /deploy_files
 POST /undeploy/{pipeline_name}
 ```
 
-Remove a deployed pipeline.
+Remove a deployed pipeline, its routes, and its saved files.
 
 **Response:**
 
 ```json
 {
-  "status": "success",
-  "message": "Pipeline undeployed successfully"
+  "success": true,
+  "name": "pipeline_name"
 }
 ```
 
@@ -139,6 +143,12 @@ Durable health is at most one second old, and concurrent probes share one read.
 If that read exceeds one second, the deployment reports `"healthy": false` and
 `"operational_error": "TimeoutError"`, and the top-level status is `Degraded`.
 
+The status response also includes typed `deployments` and
+`capabilities.execution_enumeration`, preserving the existing fields. Each
+deployment reports its independent type/mode/state, description, capabilities,
+served revision, scoped durable health and whether it supports enumeration.
+Request-bound wrappers are `Loaded`; this does not certify external services.
+
 ### Pipeline Execution
 
 #### Run Pipeline
@@ -164,12 +174,6 @@ Execute a deployed pipeline.
   "result": "The capital of France is Paris."
 }
 ```
-
-The status response also includes typed `deployments` and
-`capabilities.execution_enumeration`, preserving the existing fields. Each
-deployment reports its independent type/mode/state, description, capabilities,
-served revision, scoped durable health and whether it supports enumeration.
-Request-bound wrappers are `Loaded`; this does not certify external services.
 
 ### Durable Execution
 
@@ -254,6 +258,11 @@ Earlier unindexed submissions stay inspectable by ID and are not backfilled.
 See [Monitoring API](../features/durable-execution.md#monitoring-api) and
 [authentication/retention](../deployment/durable-operations.md#execution-monitoring).
 
+### Pipeline diagrams
+
+`GET /draw/{pipeline_name}` returns a PNG for a deployed Haystack target that
+supports `draw()`. A missing target returns `404`.
+
 ### OpenAI Compatibility
 
 #### Chat Completion
@@ -306,6 +315,15 @@ OpenAI-compatible chat completion endpoint.
 }
 ```
 
+#### Responses, files, and models
+
+- `POST /v1/responses` (alias `/responses`): calls `run_response` or `run_response_async`.
+- `POST /v1/files` (alias `/files`): calls a wrapper's `run_file_upload` hook when configured.
+- `GET /v1/models` (alias `/models`): lists deployed models.
+
+See [OpenAI Compatibility](../features/openai-compatibility.md) for request formats,
+streaming behavior, and file storage.
+
 #### Streaming Chat Completion
 
 Use the same endpoints with `"stream": true`. Hayhooks streams chunks in OpenAI-compatible format.
@@ -336,20 +354,23 @@ Get the complete OpenAPI specification for programmatic access or tooling integr
 
 ### Error Response Format
 
+Management and ordinary execution endpoints use FastAPI error responses:
+
 ```json
 {
-  "error": {
-    "message": "Error description",
-    "type": "invalid_request_error",
-    "code": 400
-  }
+  "detail": "Error description"
 }
 ```
+
+Request validation failures return HTTP `422` with a list of field errors in
+`detail`. OpenAI-compatible routes use their own compatibility-layer error format.
 
 ### Common Error Codes
 
 - **400 Bad Request**: Invalid request parameters
 - **404 Not Found**: Pipeline or endpoint not found
+- **409 Conflict**: Pipeline already exists or a durable operation conflicts
+- **422 Unprocessable Entity**: Request or pipeline definition failed validation
 - **500 Internal Server Error**: Server-side error
 
 ## Rate Limiting
@@ -387,7 +408,7 @@ Currently, Hayhooks does not include built-in rate limiting. Consider implementi
 === "Hayhooks CLI"
 
     ```bash
-    hayhooks pipeline run chat_pipeline --param 'query="Hello!"'
+    hayhooks pipeline run chat_pipeline --param 'query=Hello!'
     ```
 
 ### OpenAI-Compatible Chat Completion

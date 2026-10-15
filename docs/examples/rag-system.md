@@ -18,11 +18,15 @@ cd examples/rag_indexing_query
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3) Launch Hayhooks (in a separate terminal if you prefer)
+# 3) Start Elasticsearch and wait for http://localhost:9200 to respond
+docker compose up -d
+
+# 4) Set your Hugging Face token and launch Hayhooks
+export HF_API_TOKEN="your-hugging-face-token"
 hayhooks run
 
-# 4) Launch Elasticsearch
-docker compose up
+# Continue in a second terminal, in this example directory,
+# with the same virtual environment activated.
 
 # 5) Deploy the pipelines
 hayhooks pipeline deploy-files -n indexing indexing_pipeline
@@ -32,7 +36,7 @@ hayhooks pipeline deploy-files -n query query_pipeline
 hayhooks pipeline run indexing --dir files_to_index
 
 # 7) Ask a question
-hayhooks pipeline run query --param 'question="is this recipe vegan?"'
+hayhooks pipeline run query --param 'question=is this recipe vegan?'
 
 # Optional: check API docs
 # http://localhost:1416/docs

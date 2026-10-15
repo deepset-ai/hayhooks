@@ -17,6 +17,7 @@ To return a file from your pipeline, return a FastAPI `Response` (or any subclas
 
 ```python
 from fastapi.responses import FileResponse
+from hayhooks import BasePipelineWrapper
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
@@ -181,11 +182,19 @@ class PipelineWrapper(BasePipelineWrapper):
         )
 ```
 
+Clone the repository and run these commands from its root. Use a Hugging Face
+token with access to the selected inference provider.
+
 Deploy and test:
 
 ```bash
-# Deploy
-hayhooks run --pipelines-dir examples/pipeline_wrappers/image_generation
+# Install dependencies and start the server in one terminal
+pip install hayhooks huggingface_hub
+export HF_TOKEN="your-hugging-face-token"
+hayhooks run
+
+# In another terminal, from the repository root, deploy the example
+hayhooks pipeline deploy-files -n image_generation examples/pipeline_wrappers/image_generation
 
 # Generate an image
 curl -X POST "http://localhost:1416/image_generation/run" \

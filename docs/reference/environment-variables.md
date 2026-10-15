@@ -40,6 +40,11 @@ Hayhooks can be configured via environment variables. Most app settings use the 
 - Default: `false`
 - Description: Disable SSL verification for CLI calls
 
+### HAYHOOKS_FILES_TO_IGNORE_PATTERNS
+
+- Default: `["*.pyc", "*.pyo", "*.pyd", "__pycache__", "*.so", "*.egg", "*.egg-info"]`
+- Description: File-name patterns skipped when reading wrapper files for live deployment. Set a JSON array. Durable-mode startup does not use this setting.
+
 ### HAYHOOKS_SHOW_TRACEBACKS
 
 - Default: `false`

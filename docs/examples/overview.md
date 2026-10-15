@@ -56,8 +56,8 @@ docker compose up -d
 
 This will:
 
-- Start Hayhooks on port `1416` (API) and `1417` (MCP server)
-- Auto-deploy all pipeline wrappers from `examples/pipeline_wrappers/`
+- Start the HTTP server on port `1416`. The Compose file publishes port `1417`, but does not start an MCP server
+- Attempt to auto-deploy wrappers from `examples/pipeline_wrappers/`. Examples that need additional packages, credentials, or services can fail to load; inspect the logs and `/status`
 - Install required dependencies like `trafilatura`
 
 Check deployed pipelines:

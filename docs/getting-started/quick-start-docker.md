@@ -15,14 +15,16 @@ cd hayhooks-open-webui-docker-compose
 
 ### 2. Start the Services
 
+Set the model API key before starting the containers:
+
 ```bash
-docker-compose up -d
+export OPENAI_API_KEY="your-openai-api-key"
+docker compose up --build -d
 ```
 
 This will start:
 
 - Hayhooks server on port 1416
-- Hayhooks MCP server on port 1417
 - Open WebUI on port 3000
 
 ### 3. Access the Services
@@ -30,6 +32,9 @@ This will start:
 - **Hayhooks API**: <http://localhost:1416>
 - **Open WebUI**: <http://localhost:3000>
 - **Hayhooks API Documentation**: <http://localhost:1416/docs>
+
+The repository auto-deploys `chat_with_website_streaming` at startup. The Compose
+file starts only the HTTP server; MCP requires a separate server.
 
 ### 4. Deploy Example Pipelines
 
@@ -43,7 +48,7 @@ Then deploy example pipelines:
 
 ```bash
 # Deploy a sample pipeline
-hayhooks pipeline deploy-files -n chat_with_website pipelines/chat_with_website_streaming
+hayhooks pipeline deploy-files -n chat_with_website --overwrite pipelines/chat_with_website_streaming
 ```
 
 !!! tip "Alternative: Deploy via API"
@@ -83,7 +88,7 @@ The Docker Compose setup comes pre-configured to integrate Hayhooks with Open We
 Deploy a pipeline that supports chat completion:
 
 ```bash
-hayhooks pipeline deploy-files -n chat_with_website pipelines/chat_with_website_streaming
+hayhooks pipeline deploy-files -n chat_with_website --overwrite pipelines/chat_with_website_streaming
 ```
 
 Alternatively, use the [API endpoints](../reference/api-reference.md#pipeline-management) (`POST /deploy_files` or `POST /deploy-yaml`).
@@ -98,7 +103,7 @@ Alternatively, use the [API endpoints](../reference/api-reference.md#pipeline-ma
 
 ### Common Issues
 
-1. **Port Conflicts**: Ensure ports 1416, 1417, and 3000 are available
+1. **Port Conflicts**: Ensure ports 1416 and 3000 are available
 2. **Permission Issues**: Make sure Docker has proper permissions
 3. **Network Issues**: Check that containers can communicate with each other
 
@@ -108,18 +113,18 @@ Check logs for troubleshooting:
 
 ```bash
 # Hayhooks logs
-docker-compose logs -f hayhooks
+docker compose logs -f hayhooks
 
 # Open WebUI logs
-docker-compose logs -f openwebui
+docker compose logs -f open-webui
 ```
 
 ### Cleanup
 
-To stop and remove all containers:
+To stop and remove the containers while preserving Open WebUI data:
 
 ```bash
-docker-compose down -v
+docker compose down
 ```
 
 ## Next Steps

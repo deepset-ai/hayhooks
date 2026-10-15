@@ -7,6 +7,12 @@ Patterns for async pipelines in Hayhooks: streaming responses, concurrency, and 
 - Async wrapper: [async_question_answer](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/async_question_answer)
 - See main docs for async `run_api_async` and `run_chat_completion_async`
 
+## Prerequisites
+
+Clone the Hayhooks repository and run these commands from its root. Install
+`hayhooks`, set `OPENAI_API_KEY` in the server environment, and start
+`hayhooks run` in another terminal.
+
 ## Deploy (example)
 
 ```bash
@@ -18,10 +24,11 @@ hayhooks pipeline deploy-files -n async-question-answer examples/pipeline_wrappe
 - OpenAI-compatible chat (async streaming):
 
 ```bash
-curl -X POST http://localhost:1416/v1/chat/completions \
+curl -N http://localhost:1416/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "async-question-answer",
+    "stream": true,
     "messages": [{"role": "user", "content": "Tell me a joke about programming"}]
   }'
 ```

@@ -2,9 +2,14 @@
 
 This guide covers how to install Hayhooks and its dependencies.
 
+Want to serve pipelines and inspect their runs from the terminal? Install
+`pip install "hayhooks[tui]"`, start `hayhooks run`, then open `hayhooks dashboard`
+in another terminal. The [dashboard guide](../features/terminal-dashboard.md)
+walks through the three views and authentication.
+
 ## System Requirements
 
-- Python 3.10+
+- Python 3.10 through 3.14
 - Operating System: Linux, macOS, or Windows
 - Memory: Minimum 512MB RAM, 2GB+ recommended
 - Storage: Minimum 100MB free space
@@ -22,13 +27,10 @@ This guide covers how to install Hayhooks and its dependencies.
 === "With MCP Support"
 
     ```bash
-    pip install hayhooks[mcp]
+    pip install "hayhooks[mcp]"
     ```
 
     Includes all standard features plus [MCP Server](../features/mcp-support.md) support for integration with AI development tools like Cursor and Claude Desktop.
-
-    !!! warning "Python 3.10+ Required"
-        You'll need to run at least Python 3.10+ to use the MCP Server.
 
 === "With A2A Support"
 
@@ -61,8 +63,8 @@ This guide covers how to install Hayhooks and its dependencies.
 
     Adds Textual for the read-only terminal dashboard on Python 3.10–3.14.
     Server startup and ordinary CLI commands do not require Textual.
-    [Dashboard commands](../features/cli-commands.md#dashboard) describe authentication,
-    snapshots, navigation, and default local monitoring.
+    See the [dashboard guide](../features/terminal-dashboard.md) for screenshots,
+    local setup, keyboard navigation, and remote connections.
 
 === "With Durable Execution"
 

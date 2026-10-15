@@ -63,6 +63,9 @@ Open Jaeger at `http://localhost:16686` and use the same `OTEL_*` variables show
 
 ## Terminal trace inspection
 
+See the [terminal dashboard guide](../features/terminal-dashboard.md) for a visual
+tour, keyboard navigation, and local or remote connection setup.
+
 Tracing and durable execution indexing are enabled by default. On a local POSIX
 machine, start the server and dashboard under the same OS account:
 

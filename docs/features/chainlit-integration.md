@@ -130,7 +130,10 @@ class PipelineWrapper(BasePipelineWrapper):
 
 ### 2. Run Hayhooks with UI
 
+Set the model API key in the server environment:
+
 ```bash
+export OPENAI_API_KEY="your-openai-api-key"
 hayhooks run --with-chainlit --pipelines-dir ./pipelines
 ```
 
@@ -226,7 +229,7 @@ my_elements/
 from hayhooks.chainlit_events import create_custom_element_event
 
 def on_tool_call_end(self, tool_name, arguments, result, error):
-    return [create_custom_element_event(name="StockChart", props={"symbol": "AAPL", ...})]
+    return [create_custom_element_event(name="StockChart", props={"symbol": "AAPL"})]
 ```
 
 ### JSX Requirements

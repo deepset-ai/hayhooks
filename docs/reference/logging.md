@@ -97,7 +97,7 @@ The `log` object in Hayhooks is a [Loguru](https://loguru.readthedocs.io/) logge
 ### Basic Usage
 
 ```python
-from hayhooks import log
+from hayhooks import BasePipelineWrapper, log
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
@@ -105,11 +105,11 @@ class PipelineWrapper(BasePipelineWrapper):
         # ... setup code
 
     def run_api(self, query: str) -> str:
-        log.debug("Processing query: {query}")
+        log.debug("Processing query: {}", query)
         try:
             result = self.pipeline.run({"prompt": {"query": query}})
             log.info("Pipeline execution completed successfully")
-            return result["llm"]["replies"][0]
+            return result["llm"]["replies"][0].text
         except Exception as e:
             log.error("Pipeline execution failed: {}", e)
             raise
@@ -119,7 +119,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
 ```python
 import time
-from hayhooks import log
+from hayhooks import BasePipelineWrapper, log
 
 class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, query: str) -> str:
@@ -130,7 +130,7 @@ class PipelineWrapper(BasePipelineWrapper):
         execution_time = time.time() - start_time
         log.info("Pipeline executed in {} seconds", round(execution_time, 2))
 
-        return result["llm"]["replies"][0]
+        return result["llm"]["replies"][0].text
 ```
 
 For more advanced logging patterns (structured logging, custom sinks, formatting, etc.), refer to the [Loguru documentation](https://loguru.readthedocs.io/).

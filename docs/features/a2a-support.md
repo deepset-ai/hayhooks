@@ -15,14 +15,14 @@ The Hayhooks A2A Server:
 
 ## Requirements
 
-- Install with `pip install hayhooks[a2a]` (uses the official [a2a-sdk](https://github.com/a2aproject/a2a-python))
+- Install with `pip install "hayhooks[a2a]"` (uses the official [a2a-sdk](https://github.com/a2aproject/a2a-python))
 
 ## Getting Started
 
 ### Install with A2A Support
 
 ```bash
-pip install hayhooks[a2a]
+pip install "hayhooks[a2a]"
 ```
 
 ### Start the A2A Server
