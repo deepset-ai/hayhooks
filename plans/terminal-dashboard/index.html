@@ -1,0 +1,2607 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Serve Haystack Pipelines and Agents, run durable work, and inspect executions in your terminal.">
+      
+      
+        <meta name="author" content="deepset">
+      
+      
+        <link rel="canonical" href="https://deepset-ai.github.io/hayhooks/plans/terminal-dashboard/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Hayhooks terminal dashboard rebuild plan - Hayhooks</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Plus+Jakarta+Sans:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Plus Jakarta Sans";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#hayhooks-terminal-dashboard-rebuild-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Hayhooks" class="md-header__button md-logo" aria-label="Hayhooks" data-md-component="logo">
+      
+  <img src="../../assets/haystack-icon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Hayhooks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Hayhooks terminal dashboard rebuild plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/deepset-ai/hayhooks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deepset-ai/hayhooks
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/quick-start/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concepts/pipeline-deployment/" class="md-tabs__link">
+          
+  
+  
+  Core Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../features/terminal-dashboard/" class="md-tabs__link">
+          
+  
+  
+  Features
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/running-pipelines/" class="md-tabs__link">
+          
+  
+  
+  Advanced Usage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/development-best-practices/" class="md-tabs__link">
+          
+  
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/deployment_guidelines/" class="md-tabs__link">
+          
+  
+  
+  Deployment
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../examples/overview/" class="md-tabs__link">
+          
+  
+  
+  Examples
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/api-reference/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../about/license/" class="md-tabs__link">
+          
+  
+  
+  About
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Hayhooks" class="md-nav__button md-logo" aria-label="Hayhooks" data-md-component="logo">
+      
+  <img src="../../assets/haystack-icon.png" alt="logo">
+
+    </a>
+    Hayhooks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/deepset-ai/hayhooks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    deepset-ai/hayhooks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start-docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start with Docker Compose
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Core Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/pipeline-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/pipeline-wrapper/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PipelineWrapper
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/yaml-pipeline-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    YAML Pipeline Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/agent-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/terminal-dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/durable-execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Durable Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/openai-compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAI Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/a2a-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A2A Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/chainlit-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chainlit Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/openwebui-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Open WebUI Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/file-upload-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    File Upload Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/file-response-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    File Response Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cli-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Usage
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Advanced Usage
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced/running-pipelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running Pipelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced/advanced-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced/code-sharing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Sharing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/development-best-practices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Best Practices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/production-best-practices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production Best Practices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deployment
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/deployment_guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/durable-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Durable Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/durable-fastapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standalone FastAPI Durable Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/chat-with-website/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chat with Website
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/rag-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RAG System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/async-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Async Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/openwebui-events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Open WebUI Events
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tracing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    About
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    About
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about/license/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    License
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="hayhooks-terminal-dashboard-rebuild-plan">Hayhooks terminal dashboard rebuild plan<a class="headerlink" href="#hayhooks-terminal-dashboard-rebuild-plan" title="Permanent link">&para;</a></h1>
+<p>Build an opt-in, browsable, read-only terminal dashboard with Textual. It should help Hayhooks developers and operators inspect deployments, distinguish Agents from Pipelines, and investigate durable executions without leaving the terminal. Navigation and presentation should feel polished while runtime state remains accurate and clearly scoped.</p>
+<p>This carries forward the decisions agreed in the dashboard conversation: Textual, an optional <code>hayhooks[tui]</code> extra, a separate <code>hayhooks dashboard</code> command, keyboard and mouse browsing, deployment and execution views, and progressive detail disclosure. A passive Rich display is no longer the target.</p>
+<h2 id="historical-baseline">Historical baseline<a class="headerlink" href="#historical-baseline" title="Permanent link">&para;</a></h2>
+<p>Verified on 7 October 2026 against <code>ec83936c</code>. This baseline is historical;
+the 8 October migration below supersedes the separate browser tracing dashboard:</p>
+<ul>
+<li>The existing React tracing dashboard lives under <code>dashboard/</code>. It is a separate feature and remains available.</li>
+<li>There is no Textual dependency, <code>tui</code> extra, or terminal dashboard command in the current checkout. Rebuilding does not assume that earlier implementation files can be recovered.</li>
+<li><a href="https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/server/routers/status.py"><code>GET /status</code></a> returns deployment names, durable mode, and cached durable health. It can return HTTP 200 with <code>status: Degraded</code>.</li>
+<li><a href="https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/durable/runtime.py"><code>DurableDeployment.health()</code></a> exposes local worker state and bounded store counts.</li>
+<li><a href="https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/durable/fastapi.py"><code>create_durable_router()</code></a> already provides inspect, cancel, resume, and stream routes for known execution IDs. There is no execution collection route.</li>
+<li><a href="https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/durable/store.py"><code>ExecutionStore</code></a> has control reads and operational counts, but no listing method. Both Memory and Redis stores need execution discovery support.</li>
+<li><a href="https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/server/pipelines/models.py"><code>Registry metadata</code></a> and <a href="https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/server/utils/base_pipeline_wrapper.py"><code>wrapper method flags</code></a> provide descriptions and API capabilities, but ordinary wrapper metadata does not identify agent type reliably.</li>
+</ul>
+<h2 id="scope-and-opt-in">Scope and opt in<a class="headerlink" href="#scope-and-opt-in" title="Permanent link">&para;</a></h2>
+<p>The first complete release includes deployment browsing, durable health, paginated execution browsing, search and filters, execution details, and resilient live refresh. The client performs GET requests only. It does not deploy, undeploy, submit, cancel, resume, clear traces, or modify Redis execution state directly.</p>
+<p>Installation and commands below are proposed interfaces:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'hayhooks[tui]'</span>
+
+<span class="c1"># Connect to the default HTTP server.</span>
+hayhooks<span class="w"> </span>dashboard
+
+<span class="c1"># Connect through a reverse proxy with a path prefix.</span>
+hayhooks<span class="w"> </span>dashboard<span class="w"> </span>--url<span class="w"> </span>https://example.com/hayhooks
+
+<span class="c1"># Start with a deployment selected.</span>
+hayhooks<span class="w"> </span>dashboard<span class="w"> </span>--pipeline<span class="w"> </span>research_agent
+
+<span class="c1"># Export a single snapshot without starting the interactive UI.</span>
+hayhooks<span class="w"> </span>dashboard<span class="w"> </span>--once<span class="w"> </span>--json
+</code></pre></div>
+<p>Keep Textual imports inside the interactive command path. Ordinary CLI commands and server startup must work without the extra. Verify the chosen Textual release against Hayhooks' supported Python versions and package constraints during implementation. Do not add Node.js, a second HTTP library, or a custom widget framework.</p>
+<p>Add a separate server setting, provisionally <code>HAYHOOKS_MONITORING_ENABLED</code> and <code>hayhooks run --with-monitoring</code>, for execution indexing and enumeration. It defaults to false. Deployment overview works without it; the Executions view explains how to enable monitoring when the server does not advertise enumeration support. This flag does not start a terminal UI or enable the browser tracing dashboard.</p>
+<h2 id="browsing-and-presentation">Browsing and presentation<a class="headerlink" href="#browsing-and-presentation" title="Permanent link">&para;</a></h2>
+<p>Use two main views, <strong>Deployments</strong> and <strong>Executions</strong>, with a compact connection header and a contextual shortcut footer. Details sit beside the selected row on wide terminals and open as a separate screen on narrow terminals. The data below is illustrative:</p>
+<div class="highlight"><pre><span></span><code>Hayhooks   localhost:1416   Healthy   Updated 2s ago
+Deployments | Executions
+
+Name             Type       Execution       State
+research_agent   Agent      Durable         Healthy
+rag_query        Pipeline   Request-bound   Loaded
+custom_chat      Unknown    Request-bound   Loaded
+
+Selected: research_agent
+Revision v3   Local active 2   Worker slots 4/4
+Store nonterminal 12   Revision runnable 5   Accepting yes
+
+Tab Focus   Enter Details   / Search   Space Pause   ? Help
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>View</th>
+<th>List information</th>
+<th>Selected item details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Deployments</td>
+<td>Name, type, execution mode, state</td>
+<td>Description, API capabilities, revision, durable admission, local workers and draining work, store counts and errors</td>
+</tr>
+<tr>
+<td>Executions</td>
+<td>ID, deployment, type, revision, status, attempt, last update</td>
+<td>Full ID, timestamps, progress, waiting information, cancellation pending, bounded error details, retry timing where available</td>
+</tr>
+</tbody>
+</table>
+<p>Initially browse executions for one selected durable deployment. Keep its selection when switching views. Users can select a different deployment, including one chosen through <code>--pipeline</code>; do not introduce a global cross-deployment merge service for the first release.</p>
+<p>Support deployment/type filters and execution status filters. Search deployment names and execution IDs. Execution queries must search the indexed collection, not silently search only the visible page. If a particular filter is local to loaded rows, label that limit explicitly. Offer explicit next/previous page navigation and restore filters when returning from details.</p>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arrow keys</td>
+<td>Move within a list or scroll focused details</td>
+</tr>
+<tr>
+<td>Tab and Shift+Tab</td>
+<td>Move focus between controls and panes</td>
+</tr>
+<tr>
+<td>Enter</td>
+<td>Open the selected item's details</td>
+</tr>
+<tr>
+<td>Esc</td>
+<td>Close help/details or leave search and restore prior focus</td>
+</tr>
+<tr>
+<td><code>/</code></td>
+<td>Focus search</td>
+</tr>
+<tr>
+<td>Space</td>
+<td>Pause/resume refresh outside text inputs</td>
+</tr>
+<tr>
+<td><code>r</code></td>
+<td>Request a refresh outside text inputs</td>
+</tr>
+<tr>
+<td><code>?</code></td>
+<td>Show shortcut help outside text inputs</td>
+</tr>
+<tr>
+<td><code>q</code> or Ctrl+C</td>
+<td>Exit and restore the terminal; typing <code>q</code> in search remains text</td>
+</tr>
+<tr>
+<td>Mouse click and wheel</td>
+<td>Select rows and scroll without requiring the mouse</td>
+</tr>
+</tbody>
+</table>
+<p>Start with Textual's built-in <a href="https://textual.textualize.io/widgets/data_table/">DataTable</a>, tabs, inputs, selects, scrolling containers, and footer. Use stable row keys so updates preserve selection. Updating health or adding an execution must not reset search focus, scroll position, or the item being read.</p>
+<p>Make the dashboard attractive through clear hierarchy, aligned columns, deliberate spacing, readable detail grouping, and restrained use of Hayhooks' existing <a href="https://github.com/deepset-ai/hayhooks/blob/main/src/hayhooks/colors.py">palette</a>. Use color for selection and state, always paired with text. Provide readable light and dark themes. Avoid flashing rows, decorative animation, oversized metric cards, and excessive borders. Pause and stale indicators should be easy to spot without dominating the screen.</p>
+<h2 id="honest-type-and-health-information">Honest type and health information<a class="headerlink" href="#honest-type-and-health-information" title="Permanent link">&para;</a></h2>
+<p>Keep these fields independent:</p>
+<ul>
+<li><strong>Type:</strong> agent, pipeline, or unknown. Durable deployments reuse their existing <code>ExecutionKind</code>. Recognized ordinary wrapper targets can be classified conservatively; custom wrappers may supply an explicit validated metadata hint. Do not recursively inspect arbitrary object graphs or infer agent type from names, chat endpoints, or A2A exposure.</li>
+<li><strong>Execution mode:</strong> durable or request-bound. A server in durable mode can still contain ordinary wrappers; derive this per deployment.</li>
+<li><strong>Capabilities:</strong> run API, chat completion, Responses, and file upload, based on existing wrapper flags. MCP/A2A eligibility is distinct from proving that a separate protocol server is running.</li>
+<li><strong>Deployment state:</strong> ordinary wrappers are <code>Loaded</code>; durable health can be <code>Healthy</code> or <code>Degraded</code>. Loaded does not certify external LLM, database, or tool health.</li>
+</ul>
+<p>Worker slots, active executions, maintenance, and draining work describe the responding process. Redis-backed counts describe the shared store and sometimes only the served revision; Memory counts are process-local. Label these scopes. A load-balanced URL does not provide a fleet-wide worker total.</p>
+<p>Do not rename <code>revision_runnable</code> to running or ready: it includes queued delayed retries. Do not derive exact waiting, failed, or completed totals from one page of results. Retain the engine's statuses: queued, running, waiting, completed, failed, and canceled. Delayed retry and cancellation pending are annotations, not new lifecycle states. Distinguish elapsed age from actual runtime duration when start/finish timestamps are unavailable.</p>
+<h2 id="api-and-store-changes">API and store changes<a class="headerlink" href="#api-and-store-changes" title="Permanent link">&para;</a></h2>
+<p>Extend <code>/status</code> additively with typed deployment summaries and a small capability indicator for execution enumeration. Preserve the existing <code>pipelines</code>, <code>durable_mode</code>, and <code>durable</code> fields and the current health cache/timeout behavior. Build summaries from the app's registry rather than creating a parallel deployment registry.</p>
+<p>Add <code>GET /{pipeline_name}/executions</code> alongside the existing durable routes only when monitoring is enabled. Start with a default page size of 50 and a maximum of 100. Accept a validated cursor and supported status/revision/ID filters. Return <code>executions</code>, <code>next_cursor</code>, and <code>has_more</code>; do not promise a costly exact filtered total.</p>
+<p>Execution summaries contain control metadata: execution ID, deployment, stored kind and revision, status, attempt, creation/update times, cancellation pending, and retry availability where relevant. Never serialize raw <code>ExecutionControl</code>; it also contains owner, lease, fence, and idempotency material. Listing must not fetch inputs, checkpoints, results, progress payloads, or chunk histories.</p>
+<p>Details reuse the existing authorized inspect endpoint. It includes public result data; the client should not render or retain results automatically. Waiting/progress/error content may also contain application data, so keep it behind item selection, bound presentation, and avoid logging response bodies. Treat all server text as untrusted literal text and neutralize terminal control sequences.</p>
+<h3 id="execution-index">Execution index<a class="headerlink" href="#execution-index" title="Permanent link">&para;</a></h3>
+<p>Extend the existing store contract with a bounded control-list operation. Implement equivalent semantics in Memory and Redis. Keep index entries in the deployment's existing Redis hash slot, use stable creation ordering with an execution ID tie-breaker, and return cursors that do not depend on mutable update times.</p>
+<p>Index new submissions atomically with the existing submission write, including correct behavior for idempotent replays. Retain discoverability for all indexed live executions, especially old waiting executions, and retain terminal entries only while their controls remain inspectable. TTL-aware, incremental cleanup must prevent expired references from accumulating indefinitely. Bound candidate reads and cleanup work even when a page contains expired or corrupt controls or filters are selective; advance the cursor honestly if a bounded page is sparse.</p>
+<p>Do not use Redis <code>KEYS</code>, scan the whole keyspace on refresh, or infer the collection from runnable/lease indexes: those omit waiting and terminal executions. Do not trim old live executions merely to cap recent history. Monitoring reads must not change execution status, capacity, leases, or retry budgets.</p>
+<p>All replicas writing the monitored deployment must enable indexing. Earlier submissions remain inspectable by ID but are not automatically backfilled. Document the start of monitoring coverage and keep startup free of an unbounded migration. Test index key validation before extending Lua writes because script failures do not roll back prior writes.</p>
+<h3 id="authorization">Authorization<a class="headerlink" href="#authorization" title="Permanent link">&para;</a></h3>
+<p>Reuse each wrapper's durable owner dependency for owner-scoped collection access. Filter before returning IDs or summaries; cursors and pagination metadata must not expose another owner's records. Keep the existing inspect/resume/cancel authorization behavior intact.</p>
+<p>An unscoped deployment currently uses possession of a random execution ID as access. Enumeration changes that boundary. Require an explicit authenticated monitoring/operator dependency for unscoped collection access and fail closed when it is absent; do not equate the monitoring enable flag with authentication. Reuse the host's authentication middleware/dependencies rather than adding a new account system. Broader access across owners requires an explicit operator policy; it must never silently bypass owner scoping.</p>
+<p>The client accepts existing bearer/API-key credentials through environment/configuration, keeps TLS verification enabled, and does not print credentials. Document one supported authentication integration before release. The exact host dependency wiring must be settled before implementing the collection route.</p>
+<h2 id="refresh-and-failure-behavior">Refresh and failure behavior<a class="headerlink" href="#refresh-and-failure-behavior" title="Permanent link">&para;</a></h2>
+<p>Poll every two seconds initially, with a configurable positive interval and explicit connection/read timeouts. Use Textual's <a href="https://textual.textualize.io/guide/workers/">thread workers</a> with Requests so network I/O does not freeze navigation. Keep at most one refresh cycle in flight, fetch only the active view/page and selected detail, and discard responses from obsolete selections or filters. Applying a thread result must happen on the UI thread.</p>
+<p>The existing CLI <code>make_request()</code> prints errors and aborts the command, so it cannot be called unchanged inside the TUI. Reuse URL/TLS conventions and add the smallest non-printing request path that returns data or an error for display. Preserve reverse-proxy path prefixes when joining URLs. Avoid changing unrelated CLI error behavior.</p>
+<p>On timeouts or disconnections, retain the last good snapshot, show its age, mark it stale, and retry with bounded backoff. Distinguish authentication failure, unsupported API/disabled monitoring, server degradation, no executions, no filter matches, expired execution, and an unavailable store. Never present an unavailable service as an empty collection.</p>
+<p>Pausing freezes visible data and stops automatic polling; resuming refreshes it. Refresh responses cannot overwrite a paused view. Leaving the app closes client resources and restores the terminal. <code>--once --json</code> prints only structured JSON on stdout, uses stderr for errors, and reports unavailable snapshots with a nonzero exit code.</p>
+<h2 id="implementation-milestones">Implementation milestones<a class="headerlink" href="#implementation-milestones" title="Permanent link">&para;</a></h2>
+<h3 id="1-deployment-browsing">1 Deployment browsing<a class="headerlink" href="#1-deployment-browsing" title="Permanent link">&para;</a></h3>
+<p>Add the optional extra and lazy CLI command, typed deployment metadata, connection handling, the Textual shell, browsable deployment table/details, responsive layout, refresh/pause, and stale states. Include missing-extra guidance and the snapshot command. Ordinary and durable deployments must both work against a single HTTP server.</p>
+<p>This is an independently useful milestone, but it does not complete execution browsing. Before starting new work, inspect the checkout for matching functionality and reuse any recovered files.</p>
+<h3 id="2-execution-discovery-and-inspection">2 Execution discovery and inspection<a class="headerlink" href="#2-execution-discovery-and-inspection" title="Permanent link">&para;</a></h3>
+<p>Implement and test the authorization contract, monitoring setting, store listing/index, collection route, bounded pagination, and retention cleanup. Then connect the execution view, server filters, search, details, revision visibility, and disabled-monitoring guidance. Read existing retained executions from their pinned revision; never substitute the deployment's current kind/revision for stored values.</p>
+<h3 id="3-visual-and-behavioral-qualification">3 Visual and behavioral qualification<a class="headerlink" href="#3-visual-and-behavioral-qualification" title="Permanent link">&para;</a></h3>
+<p>Polish focus, density, themes, narrow screens, and calm updates. Run headless keyboard/mouse/resize checks, inspect rendered screenshots, and launch the app in a real terminal against representative Hayhooks deployments. Validate wheel installation with and without the extra, document authentication and index coverage, and complete the focused CI checks.</p>
+<p>The first complete release requires all three milestones. Do not claim a cool dashboard solely because it launches or a screenshot looks good.</p>
+<h2 id="acceptance-checks">Acceptance checks<a class="headerlink" href="#acceptance-checks" title="Permanent link">&para;</a></h2>
+<p>Use the repository's existing pytest infrastructure and Textual's <a href="https://textual.textualize.io/guide/testing/">headless testing and Pilot</a>. Keep tests focused on behavior and failure boundaries.</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Required evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Packaging</td>
+<td>Core CLI/server work without Textual; missing extra has clear guidance; built wheel includes required styles/assets; supported Python environments install successfully</td>
+</tr>
+<tr>
+<td>Browsing</td>
+<td>Keyboard-only path from deployment to execution details and back; mouse selection; search/filter/page navigation; text entry does not trigger global shortcuts</td>
+</tr>
+<tr>
+<td>Updates</td>
+<td>Selection, focus, filters, and scrolling survive refresh; slow/obsolete replies cannot replace a newer selection; pause/resume behaves as described</td>
+</tr>
+<tr>
+<td>Layout</td>
+<td>Review Deployments, Executions, details, empty, stale, and error states at 80x24, 120x36, and 160x48; IDs and important errors remain reachable; resize restores the selected item</td>
+</tr>
+<tr>
+<td>Appearance</td>
+<td>Light/dark contrast, readable focus and status text, aligned columns, no clipping of controls, and calm updates; save representative screenshots for review</td>
+</tr>
+<tr>
+<td>Truthfulness</td>
+<td>Degraded body with HTTP 200; unknown wrapper types; loaded versus healthy; process/store/revision scopes; runnable is not running; unavailable is not empty</td>
+</tr>
+<tr>
+<td>Store</td>
+<td>Memory/Redis contract parity; submissions and idempotent replay; timestamp ties and concurrent insertion; waiting and old revisions; terminal TTL and bounded cleanup; corrupt controls and malformed cursors</td>
+</tr>
+<tr>
+<td>Authorization</td>
+<td>Cross-owner IDs never leak; anonymous unscoped enumeration fails; authorized operator access is explicit; detail access stays scoped; secrets/markup/control sequences are not emitted unsafely</td>
+</tr>
+<tr>
+<td>Integration</td>
+<td>Real request-bound Pipeline, Agent, and custom wrapper; Redis durable executions through queued/running/waiting/completed/failed/canceled; restart/reconnect and expiry</td>
+</tr>
+<tr>
+<td>Read only</td>
+<td>Recorded client traffic contains GET only; refresh leaves lifecycle, admission capacity, checkpoints, leases, and retry counters unchanged</td>
+</tr>
+</tbody>
+</table>
+<p>After those checks pass, review the actual terminal interface for discoverability, information density, and whether an execution can be investigated without losing the operator's place. Fix concrete findings before calling the dashboard finished.</p>
+<h2 id="file-locations-and-recovery-record">File locations and recovery record<a class="headerlink" href="#file-locations-and-recovery-record" title="Permanent link">&para;</a></h2>
+<p>Start with <code>src/hayhooks/cli/dashboard.py</code> for command wiring, a small <code>src/hayhooks/tui/</code> package for the app and styles, and minimal edits to the existing status, metadata, durable router, store, settings, and server setup files. Reuse the current test modules for backend contracts and add a focused TUI test module. Do not create a generic SDK, registry, state manager, or rendering abstraction for this feature.</p>
+<p>Update <code>docs/features/cli-commands.md</code>, the durable operations/API/environment references, and installation guidance when each behavior exists. Keep this plan outside generated documentation navigation until it becomes user documentation.</p>
+<p>Record completed milestones here with commit hashes and check results, and retain visual review artifacts at a documented location. Make small reviewable commits at milestone boundaries. A later implementation session can resume from the latest recorded commit instead of reconstructing progress from chat history. This plan does not itself recover lost edits or implement the dashboard.</p>
+<h2 id="completed-implementation-7-october-2026">Completed implementation — 7 October 2026<a class="headerlink" href="#completed-implementation-7-october-2026" title="Permanent link">&para;</a></h2>
+<p>All three milestones are complete. The implementation is additive, monitoring
+defaults to disabled, and the terminal client sends GET requests only.</p>
+<table>
+<thead>
+<tr>
+<th>Milestone</th>
+<th>Commits</th>
+<th>Delivered behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Deployment browsing</td>
+<td><code>ec9bea41</code>, <code>be71bd2d</code></td>
+<td>Typed status summaries, optional Textual extra, lazy CLI command, JSON snapshot, responsive deployment browsing, pause and stale handling</td>
+</tr>
+<tr>
+<td>Execution discovery and inspection</td>
+<td><code>ec9bea41</code>, <code>be71bd2d</code></td>
+<td>Owner-scoped Memory/Redis indexes, explicit operator authorization, bounded collection API, server search/filters, cursor pagination and selected execution details</td>
+</tr>
+<tr>
+<td>Visual and behavioral qualification</td>
+<td><code>c5798fd5</code>, <code>3e99fd0a</code>, <code>d5e58f22</code>, <code>d564dd06</code></td>
+<td>Shutdown race guard, theme recoloring, invalid health validation, failure checks, reviewed screenshots and complete installation/API/authentication documentation</td>
+</tr>
+</tbody>
+</table>
+<p>The latest implementation/documentation commit is <strong><code>d564dd06</code></strong>. The commit
+containing this recovery record follows it; no implementation changes are pending.</p>
+<h3 id="validation-evidence">Validation evidence<a class="headerlink" href="#validation-evidence" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Full unit run: <code>.venv/bin/pytest -q -m 'not integration'</code> — <strong>1,330 passed,
+  4 skipped, 129 deselected, 3 expected failures</strong>. This environment used Haystack
+  3.3.0 and Textual 8.2.8.</li>
+<li>Default Hatch environment with Haystack 2.31.0:
+  <code>hatch run test:unit tests/test_terminal_dashboard.py tests/test_durable_monitoring.py tests/test_it_status.py tests/test_cli.py</code>
+  — <strong>56 passed, 8 integration cases deselected</strong>.</li>
+<li>Real Redis suite: <code>tests/test_it_durable_redis.py</code>,
+  <code>tests/test_it_durable_redis_process.py</code>, <code>tests/test_it_durable_mode.py</code>, and
+  <code>tests/test_durable_monitoring.py</code> with <code>HAYHOOKS_TEST_REDIS_URL</code> pointing at a
+  dedicated local Redis — <strong>129 passed</strong>. Includes lifecycle, restart/recovery,
+  index parity, replay, owner isolation, sparse pages, corruption and expiry.</li>
+<li>The focused TUI module has <strong>21 passing cases</strong>, including keyboard/mouse
+  browsing, resize, filtering/paging, selection/focus/scroll preservation,
+  obsolete replies, single-worker polling, pause, reconnect, expired selected
+  details, theme contrast, shutdown and safe connection failures.</li>
+<li>Built-wheel installations succeeded on <strong>Python 3.10, 3.11, 3.12, 3.13 and
+  3.14</strong>, both core-only and with <code>[tui]</code>. Core CLI/server startup, missing-extra
+  guidance and JSON snapshots worked without Textual. Installed extras included
+  styles and passed an 80x24 headless app/theme smoke check.</li>
+<li>A real terminal connected to one HTTP server containing a request-bound
+  Pipeline, a real Haystack Agent using a local mock generator, a custom wrapper,
+  and a Redis durable deployment. Execution browsing, details and pause worked;
+  quitting returned exit code 0 and restored the terminal. Fixture setup submitted
+  executions separately; recorded dashboard requests were GET only. Automated
+  runtime checks cover queued/running/waiting/completed/failed/canceled and verify
+  that enumeration leaves lifecycle, capacity and private execution data unchanged.</li>
+<li><code>ruff check src/hayhooks</code>, <code>ruff format --check src/hayhooks</code>, the focused type
+  check of changed dashboard/store/router modules, and <code>git diff --check</code> passed.
+  Documentation built with <code>hatch run docs:build</code>.</li>
+</ul>
+<p>Full <code>ty check src/hayhooks</code> still reports <strong>10 existing diagnostics</strong>, reproduced
+against a clean archive of baseline <code>ec83936c</code>; they concern existing engine,
+registry and A2A types. The final unit run used protobuf 6.33.6 because a2a-sdk
+1.1.2 accesses <code>FieldDescriptor.label</code>, removed in protobuf 7.36.2. No unrelated
+dependency pin or A2A change was introduced. Documentation build warnings concern
+this plan's pre-existing links to source files outside the documentation tree;
+the plan remains outside navigation.</p>
+<h3 id="visual-review-artifacts">Visual review artifacts<a class="headerlink" href="#visual-review-artifacts" title="Permanent link">&para;</a></h3>
+<p>Deployment overview, execution list, details, light theme, empty results and stale
+connections were reviewed at 80x24, 120x36 and 160x48. The review led to compact
+rows, contextual focus hints, preserving details outside the current page, and
+recoloring rows when switching themes. The PNG previews below are retained;
+repeated SVG qualification captures were removed during PR cleanup.</p>
+<p>All captures used synthetic fixtures. Temporary qualification servers and
+browser tabs were stopped after review.</p>
+<h2 id="visual-refinement-7-october-2026">Visual refinement — 7 October 2026<a class="headerlink" href="#visual-refinement-7-october-2026" title="Permanent link">&para;</a></h2>
+<p>Commit <strong><code>cfbfc5a9</code></strong> refines the terminal interface using the requested
+high-end visual design guidance within Textual's native widgets. A quieter
+charcoal blue / warm light palette, inset masthead, compact controls, subdued
+selection and grouped inspector establish clearer hierarchy. Short terminals
+condense spacing; full execution IDs and timestamps remain in details while
+table IDs and revisions show explicit ellipses. Theme switching is visible in
+the footer. No project dependencies were added.</p>
+<ul>
+<li>Focused dashboard, CLI and status checks: <strong>41 passed</strong>, including <strong>24 TUI
+  cases</strong>. Compact selector navigation and full-ID inspection pass at 80x24,
+  120x36 and 160x48.</li>
+<li>TUI Ruff, formatting, type checks and <code>git diff --check</code> passed. Documentation
+  built successfully with the same pre-existing source-link warnings.</li>
+<li>The final wheel passed core-only CLI/server, missing-extra, JSON snapshot,
+  bundled styles and headless theme checks on <strong>Python 3.10 and 3.14</strong>.</li>
+<li>A real terminal exercised execution browsing, details, theme switching and
+  pause. Exit code was 0, with the alternate terminal screen restored.</li>
+<li>Overview and execution views were reviewed at all three sizes. Raster previews
+  are retained for convenient review:
+  <a href="../../assets/terminal-dashboard/overview-120x36.png">Deployment overview</a> and
+  <a href="../../assets/terminal-dashboard/browse-160x48.png">Execution inspector</a>.</li>
+</ul>
+<p>The earlier full backend/Redis qualification remains recorded above; this
+follow-up changes terminal presentation and its focused checks.</p>
+<h2 id="deferred-features">Deferred features<a class="headerlink" href="#deferred-features" title="Permanent link">&para;</a></h2>
+<p>Defer execution controls, live token streams, charts, cross-server/fleet aggregation, cross-deployment execution merging, persistent dashboard preferences, and automatic historical backfill. Add selected-execution SSE only if polling proves insufficient; reuse the existing endpoint and cursor behavior when that need arises. Request-bound execution history also needs its own observation source, so do not invent it from durable records or present process-local traces as a complete history.</p>
+<h2 id="terminal-tracing-migration-8-october-2026">Terminal tracing migration — 8 October 2026<a class="headerlink" href="#terminal-tracing-migration-8-october-2026" title="Permanent link">&para;</a></h2>
+<p>Commits <strong><code>dd6211e7</code></strong> (browser removal and authenticated trace API) and
+<strong><code>fccf4b44</code></strong> (terminal views, documentation and reviewed artifacts) complete
+this migration. The recovery record follows those implementation commits.</p>
+<p>The requested migration replaces the React tracing dashboard with a third native
+<strong>Traces</strong> tab in <code>hayhooks dashboard</code>. The browser sources, npm build/test job,
+static asset packaging/mounting, web-only settings and old CLI flags are removed.
+The existing bounded trace buffer, Haystack component capture, durable attempt
+traces and optional OTLP export remain in use. No project dependencies were added.</p>
+<p>The terminal now offers entrypoint/kind/state filters, trace/tag search,
+newest/slowest sorting, failure counts, finished-duration averages, streaming
+indicators, tags/errors and a native expandable span tree with timing offsets,
+waterfall bars and slow-component highlighting. Keyboard navigation, light/dark
+themes, compact layouts, pause, local clearing and stale snapshots work across
+80x24, 120x36 and 160x48. Expanded branches, selected spans and scroll positions
+survive trace updates; inspecting an evicted/filtered trace explicitly labels
+its retained snapshot. Returning from help restores inspector focus.</p>
+<p>Enable the API with <code>hayhooks run --with-tracing</code> and open it using
+<code>hayhooks dashboard --traces</code>. See <a href="../../reference/tracing/">operator setup and migration</a>.
+All <code>/traces</code> routes require a private bearer token or a host-provided verified
+operator dependency. These traces can include every user served by one process;
+owner-scoped durable authorization alone does not grant access. The terminal
+performs GET requests only, fetching at most 100 recent traces per refresh on
+its existing background worker. Clearing hides traces locally. This bounded
+process sample is distinct from durable execution history or persistent OTLP data.</p>
+<h3 id="qualification">Qualification<a class="headerlink" href="#qualification" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Final unit run: <strong>1,346 passed, 4 skipped, 129 deselected, 3 expected failures</strong>.
+  Command: <code>PYTHONPATH=/tmp/hayhooks-tracing-protobuf6:.:src .venv/bin/pytest -q -m 'not integration'</code>.
+  The temporary target supplies protobuf 6.33.6 for the previously documented
+  A2A/protobuf 7 incompatibility. Project dependency constraints and the existing
+  environment were not changed. This run used Haystack 3.3.0 and Textual 8.2.8.</li>
+<li>The <strong>38 terminal cases</strong> passed, including 14 trace cases covering all three
+  sizes, search/filter/sort, navigation, live root semantics, malformed metadata,
+  local clearing, pause, eviction, themes, help/focus and JSON snapshots.
+  Trace API checks cover disabled mounting, removed browser paths, default denial,
+  bearer credentials, operator overrides and every protected route.</li>
+<li>Final wheel smoke checks on <strong>Python 3.10 and 3.14</strong> cover core-only CLI/server
+  startup, missing-extra guidance, JSON trace snapshots without Textual, bundled
+  styles and an installed native trace inspector/tree/theme. The wheel contains
+  no React dashboard files.</li>
+<li>A real local HTTP server captured successful and failed real Haystack Pipeline
+  runs with component spans. Unauthorized access returned 401. A real terminal
+  browsed the span tree, changed theme, cleared locally and exited with code 0;
+  the alternate screen was restored. A six-trace fixture had a median snapshot
+  round trip of <strong>1.74 ms</strong> across ten local requests; this is a small fixture
+  observation, not a production performance claim.</li>
+<li>Source Ruff/format checks, focused type checks of TUI/CLI/settings/trace router,
+  <code>git diff --check</code> and the documentation build passed. The previously recorded
+  full-source type diagnostics and documentation source-link warnings remain.
+  Redis store/runtime behavior is unchanged; the earlier Redis qualification
+  above remains the recorded evidence, rather than a new Redis run.</li>
+</ul>
+<h3 id="trace-review-artifacts">Trace review artifacts<a class="headerlink" href="#trace-review-artifacts" title="Permanent link">&para;</a></h3>
+<p>Traces, light traces, spans, light spans, errors, empty filters and stale snapshots
+were reviewed at all three sizes using synthetic fixtures. Repeated SVG captures
+were removed during PR cleanup. Retained previews: <a href="../../assets/terminal-dashboard/traces-120x36.png">Trace list</a>
+and <a href="../../assets/terminal-dashboard/spans-160x48.png">Span inspector</a>.
+Temporary qualification servers and browser tabs were stopped after review.</p>
+<h2 id="tracing-simplification-9-october-2026">Tracing simplification — 9 October 2026<a class="headerlink" href="#tracing-simplification-9-october-2026" title="Permanent link">&para;</a></h2>
+<p>Local tracing now exposes one authenticated <code>GET /traces</code> snapshot, with current
+inspection settings included. SSE, cursor replay, the separate config/entrypoint
+routes, server clearing, stream settings and broadcaster lifecycle wiring are
+removed. Terminal filters, local clearing, live spans and OTLP remain available.
+Operation traces reuse the existing span-capture helper. This removes <strong>400
+implementation lines</strong>, without dependencies or changes to the terminal layout.</p>
+<p>Qualification: <strong>1,349 unit tests passed, 4 skipped, 129 deselected and 3 expected
+failures</strong>, using the same isolated protobuf 6.33.6 target documented above.
+Source lint/format and focused type checks passed. The documentation build
+retains its existing source-link warnings. A real local HTTP server verified
+operator authentication, nested component capture and CLI JSON export; it was
+stopped afterwards. Redis and the Python-version wheel matrix were not rerun.
+External trace consumers must migrate to snapshots; see the
+<a href="../../reference/tracing/#trace-snapshot-api">API migration</a>.</p>
+<h3 id="final-review-fixes">Final review fixes<a class="headerlink" href="#final-review-fixes" title="Permanent link">&para;</a></h3>
+<p>The agent review found two refresh failures: deeply nested span trees exceeded
+client validation, and sanitized IDs broke row sorting. Trees now stop at depth
+64 while retaining total span counts and disclosing omitted spans; sorting uses
+stored cell identity independently of displayed labels. Regression tests failed
+before the fixes. All <strong>71 focused cases</strong> and <strong>1,354 unit tests</strong> passed with
+the isolated protobuf target (4 skipped, 129 deselected, 3 expected failures).
+Source lint/format, focused types and docs passed; the agent's follow-up found
+both issues resolved with no new actionable finding. No Redis or wheel matrix rerun.</p>
+<h2 id="default-capture-and-mixed-executions-9-october-2026">Default capture and mixed executions — 9 October 2026<a class="headerlink" href="#default-capture-and-mixed-executions-9-october-2026" title="Permanent link">&para;</a></h2>
+<p>This supersedes the earlier opt-in and durable-only execution scope. The main
+host now enables local trace inspection and durable indexing by default, with
+explicit CLI/environment opt-outs. The Executions tab combines recent ordinary
+REST/OpenAI/MCP/A2A runs with indexed durable history across deployments.
+Durable attempts are not duplicated. Deployment, ID and status filters work for
+both sources; revision filters and subsequent pages apply to durable history.
+Each durable deployment contributes at most 50 summaries per page. Recent
+ordinary runs are a bounded responding-process sample, lost on eviction/restart.</p>
+<p>Local POSIX servers and same-user clients automatically share a private operator
+credential. Explicit credentials, verified middleware and FastAPI dependency
+overrides remain supported; owner-scoped collections retain their owner policy.
+Automatic credentials are never sent to remote URLs or environment proxies.
+Unsafe/unavailable local credentials do not prevent server startup and leave
+operator access denied. Each unavailable collection retains its own previous
+rows while other collections and the trace sample continue to refresh.</p>
+<p>Qualification: <strong>1,372 unit tests passed, 4 skipped, 129 deselected, 3 expected
+failures</strong>, with the isolated protobuf 6.33.6 target described above. Source
+lint/format, focused types and docs passed (existing source-link warnings remain).
+The agent review's authentication, proxy and source-isolation findings were
+fixed and verified. A temporary real HTTP server exercised automatic credentials,
+ordinary and durable runs, and the combined terminal view at 80×24 and 120×36;
+it was stopped afterward. SVG captures remain in
+<code>/tmp/hayhooks-default-dashboard-captures/</code>. The user's running server on port
+1416 was not restarted. Redis integration and the wheel/Python matrix were not rerun.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/deepset-ai/hayhooks" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://hub.docker.com/r/deepset/hayhooks" target="_blank" rel="noopener" title="hub.docker.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M349.9 236.3h-66.1v-59.4h66.1zm0-204.3h-66.1v60.7h66.1zm78.2 144.8H362v59.4h66.1zm-156.3-72.1h-66.1v60.1h66.1zm78.1 0h-66.1v60.1h66.1zm276.8 100c-14.4-9.7-47.6-13.2-73.1-8.4-3.3-24-16.7-44.9-41.1-63.7l-14-9.3-9.3 14c-18.4 27.8-23.4 73.6-3.7 103.8-8.7 4.7-25.8 11.1-48.4 10.7H2.4c-8.7 50.8 5.8 116.8 44 162.1 37.1 43.9 92.7 66.2 165.4 66.2 157.4 0 273.9-72.5 328.4-204.2 21.4.4 67.6.1 91.3-45.2 1.5-2.5 6.6-13.2 8.5-17.1zm-511.1-27.9h-66v59.4h66.1v-59.4zm78.1 0h-66.1v59.4h66.1zm78.1 0h-66.1v59.4h66.1zm-78.1-72.1h-66.1v60.1h66.1z"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://twitter.com/deepset_ai" target="_blank" rel="noopener" title="twitter.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M459.4 151.7c.3 4.5.3 9.1.3 13.6 0 138.7-105.6 298.6-298.6 298.6-59.5 0-114.7-17.2-161.1-47.1 8.4 1 16.6 1.3 25.3 1.3 49.1 0 94.2-16.6 130.3-44.8-46.1-1-84.8-31.2-98.1-72.8 6.5 1 13 1.6 19.8 1.6 9.4 0 18.8-1.3 27.6-3.6-48.1-9.7-84.1-52-84.1-103v-1.3c14 7.8 30.2 12.7 47.4 13.3-28.3-18.8-46.8-51-46.8-87.4 0-19.5 5.2-37.4 14.3-53C87.4 130.8 165 172.4 252.1 176.9c-1.6-7.8-2.6-15.9-2.6-24C249.5 95.1 296.3 48 354.4 48c30.2 0 57.5 12.7 76.7 33.1 23.7-4.5 46.5-13.3 66.6-25.3-7.8 24.4-24.4 44.8-46.1 57.8 21.1-2.3 41.6-8.1 60.4-16.2-14.3 20.8-32.2 39.3-52.6 54.3"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.instant", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "toc.integrate"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
