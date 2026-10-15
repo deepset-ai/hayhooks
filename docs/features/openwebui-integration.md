@@ -212,7 +212,7 @@ Here’s how you can define and use `on_pipeline_end`:
 ```python
 def on_pipeline_end(result: dict):
     """Called after the pipeline completes. Can format or summarize results."""
-    documents = result.get("documents", [])
+    documents = result.get("retriever", {}).get("documents", [])
     references_str = "\n\n### All Sources:\n"
     if documents:
         for idx, doc in enumerate(documents):
@@ -224,6 +224,7 @@ class PipelineWrapper(BasePipelineWrapper):
         return streaming_generator(
             pipeline=self.pipeline,
             pipeline_run_args={"messages": messages},
+            include_outputs_from={"retriever"},
             on_pipeline_end=on_pipeline_end,
         )
 ```
@@ -281,7 +282,7 @@ Here's a complete example for a website chat pipeline:
 
 ```python
 from typing import AsyncGenerator
-from haystack import Pipeline
+from hayhooks import Pipeline
 from haystack.components.fetchers import LinkContentFetcher
 from haystack.components.converters import HTMLToDocument
 from haystack.components.builders import ChatPromptBuilder
@@ -308,7 +309,7 @@ class PipelineWrapper(BasePipelineWrapper):
         self.pipeline.add_component("converter", converter)
         self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
         self.pipeline.add_component("llm", llm)
-        self.pipeline.connect("fetcher.content", "converter")
+        self.pipeline.connect("fetcher.streams", "converter.sources")
         self.pipeline.connect("converter.documents", "chat_prompt_builder.documents")
         self.pipeline.connect("chat_prompt_builder.prompt", "llm.messages")
 

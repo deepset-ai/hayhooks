@@ -14,14 +14,14 @@ The Hayhooks MCP Server:
 ## Requirements
 
 - Python 3.10+ for MCP support
-- Install with `pip install hayhooks[mcp]`
+- Install with `pip install "hayhooks[mcp]"`
 
 ## Getting Started
 
 ### Install with MCP Support
 
 ```bash
-pip install hayhooks[mcp]
+pip install "hayhooks[mcp]"
 ```
 
 ### Start MCP Server
@@ -45,22 +45,48 @@ HAYHOOKS_MCP_PORT=1417         # MCP server port
 
 ### Streamable HTTP (Recommended) {#streamable-http-transport}
 
-The preferred transport for modern MCP clients:
+With the server running, save this as `mcp_client.py` and run `python mcp_client.py` in a second terminal:
 
 ```python
-import mcp
+import asyncio
 
-client = mcp.Client("http://localhost:1417/mcp")
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+
+async def main():
+    async with streamablehttp_client("http://localhost:1417/mcp") as (read, write, _):
+        async with ClientSession(read, write) as client:
+            await client.initialize()
+            result = await client.call_tool("get_all_pipeline_statuses")
+            print(result.model_dump_json(indent=2))
+
+
+asyncio.run(main())
 ```
+
+The response lists pipeline names in a text content block. If none are deployed, only the heading appears.
 
 ### Server-Sent Events (SSE) {#sse-transport}
 
-Legacy transport maintained for backward compatibility:
+For clients that require the legacy SSE transport, use this complete script instead:
 
 ```python
-import mcp
+import asyncio
 
-client = mcp.Client("http://localhost:1417/sse")
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+
+
+async def main():
+    async with sse_client("http://localhost:1417/sse") as (read, write):
+        async with ClientSession(read, write) as client:
+            await client.initialize()
+            result = await client.call_tool("get_all_pipeline_statuses")
+            print(result.model_dump_json(indent=2))
+
+
+asyncio.run(main())
 ```
 
 ## Core MCP Tools
@@ -69,6 +95,8 @@ Hayhooks provides core tools for managing pipelines. With `HAYHOOKS_DURABLE_MODE
 pipelines once at startup like the main server's [durable mode](durable-execution.md#durable-mode): `deploy_pipeline`
 and `undeploy_pipeline` are neither listed nor callable, no pipeline may be named after a core tool, and a durable
 wrapper fails startup, since only the main HTTP server runs durable workers.
+
+Run the following calls inside the initialized `ClientSession` block above. Replace example pipeline names and file contents with your own.
 
 ### get_all_pipeline_statuses
 
@@ -88,15 +116,18 @@ result = await client.call_tool("get_pipeline_status", {"pipeline_name": "my_pip
 
 ### deploy_pipeline
 
-Deploy a pipeline from files:
+After creating the wrapper in the [quick start](../getting-started/quick-start.md), deploy it to the MCP server as `my_pipeline`:
+
+Set `OPENAI_API_KEY` in the MCP server's environment before starting it. Run the client from the directory containing `my_agent_dir`.
 
 ```python
+from pathlib import Path
+
 result = await client.call_tool("deploy_pipeline", {
     "name": "my_pipeline",
-    "files": [
-        {"name": "pipeline_wrapper.py", "content": "..."},
-        {"name": "pipeline.yml", "content": "..."}
-    ],
+    "files": {
+        "pipeline_wrapper.py": Path("my_agent_dir/pipeline_wrapper.py").read_text(),
+    },
     "save_files": True,
     "overwrite": False
 })
@@ -159,7 +190,7 @@ class PipelineWrapper(BasePipelineWrapper):
         Ask a question about one or more websites using a Haystack pipeline.
         """
         result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
-        return result["llm"]["replies"][0]
+        return result["llm"]["replies"][0].text
 ```
 
 ### YAML Pipeline as MCP Tool
@@ -179,7 +210,7 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         ...
 
-    def run_api(self, ...) -> str:
+    def run_api(self, query: str) -> str:
         ...
 ```
 
@@ -207,42 +238,35 @@ For more information about MCP in Cursor, see the [Cursor MCP Documentation](htt
 
 Configure Claude Desktop to connect to Hayhooks MCP Server:
 
-!!! info "Claude Desktop Tiers"
-    === "Free Tier"
-        Use [supergateway](https://github.com/supercorp-ai/supergateway) to bridge the connection
+For a local Hayhooks HTTP server, configure a stdio bridge in Claude Desktop's
+MCP configuration. This requires Node.js and `npx`:
 
-        ```json
-        {
-          "mcpServers": {
-            "hayhooks": {
-              "command": "npx",
-              "args": ["-y", "supergateway", "--streamableHttp", "http://localhost:1417/mcp"]
-            }
-          }
-        }
-        ```
+```json
+{
+  "mcpServers": {
+    "hayhooks": {
+      "command": "npx",
+      "args": ["-y", "supergateway", "--streamableHttp", "http://localhost:1417/mcp"]
+    }
+  }
+}
+```
 
-    === "Pro/Max/Teams/Enterprise"
-        Direct connection via Streamable HTTP or SSE
-
-        ```json
-        {
-          "mcpServers": {
-            "hayhooks": {
-              "url": "http://localhost:1417/mcp"
-            }
-          }
-        }
-        ```
+See the [Supergateway transport documentation](https://github.com/supercorp-ai/supergateway)
+and [Claude Desktop local MCP setup](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
 
 ## Development Workflow
 
 **Basic workflow:**
 
-1. Start Hayhooks server: `hayhooks run`
-2. Start MCP server: `hayhooks mcp run` (in another terminal)
-3. Configure your IDE to connect to the MCP server
-4. Deploy and manage pipelines through your IDE using natural language
+1. Start the MCP server: `hayhooks mcp run`.
+2. Configure your IDE to connect to the MCP server.
+3. Deploy and manage pipelines through your IDE using the core tools.
+
+The HTTP and MCP servers are separate processes with separate in-memory
+registries. Starting `hayhooks run` is optional for MCP use. Deploying to its
+HTTP API does not update an already-running MCP server; load the same startup
+directory or deploy through MCP tools.
 
 ## Tracing MCP Operations
 
@@ -281,7 +305,7 @@ def run_api(self, urls: list[str], question: str) -> str:
         Answer to the question based on the website content
     """
     result = self.pipeline.run({"fetcher": {"urls": urls}, "prompt": {"query": question}})
-    return result["llm"]["replies"][0]
+    return result["llm"]["replies"][0].text
 ```
 
 ### Input Validation

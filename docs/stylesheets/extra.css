@@ -19,7 +19,7 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
     align-items: center;
     gap: 2.4rem;
-    padding: 3.6rem 0 4.8rem;
+    padding: 1.6rem 0 2.4rem;
 }
 
 .landing-eyebrow {
@@ -72,6 +72,10 @@
     color: var(--md-primary-bg-color);
 }
 
+[data-md-color-scheme="slate"] .md-typeset .landing-actions .md-button--primary {
+    color: var(--md-default-bg-color);
+}
+
 .md-typeset :is(.landing-actions, .landing-section) .md-button:hover {
     transform: translateY(-2px);
 }
@@ -108,7 +112,7 @@
 }
 
 .landing-section {
-    padding: 4.8rem 0;
+    padding: 2.4rem 0;
 }
 
 .md-typeset .landing-section h2 {

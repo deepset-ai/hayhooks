@@ -17,7 +17,7 @@ LOG=DEBUG HAYHOOKS_SHOW_TRACEBACKS=true hayhooks run
 ```
 
 !!! tip
-    `LOG=DEBUG` prints every incoming request, deploy event, and internal pipeline step. Switch back to `INFO` once you no longer need the extra output.
+    `LOG=DEBUG` enables additional Hayhooks diagnostics. Component-level output depends on the component and its logger configuration. Switch back to `INFO` once you no longer need the extra output.
 
 See [Environment Variables Reference](../reference/environment-variables.md) for all available settings.
 
@@ -43,7 +43,7 @@ hayhooks pipeline deploy-files -n my_pipeline --overwrite --skip-saving-files ./
 4. Repeat
 
 !!! info
-    `--overwrite` and `--skip-saving-files` work with both `deploy-files` and `deploy-yaml`. See [CLI Commands](../features/cli-commands.md) for the full flag reference.
+    `deploy-files` uses `--skip-saving-files`; `deploy-yaml` uses `--no-save-file`. Both support `--overwrite`. See [CLI Commands](../features/cli-commands.md) for the full flag reference.
 
 ## Auto-Reload on Code Changes
 
@@ -96,10 +96,22 @@ The Swagger UI at `http://localhost:1416/docs` is the quickest way to explore an
 **Deploy a pipeline:**
 
 ```bash
-curl -X POST http://localhost:1416/deploy-files \
-  -F "name=my_pipeline" \
-  -F "overwrite=true" \
-  -F "files=@./my_pipeline/pipeline_wrapper.py"
+python - <<'PYTHON'
+from pathlib import Path
+import requests
+
+response = requests.post(
+    "http://localhost:1416/deploy_files",
+    json={
+        "name": "my_pipeline",
+        "files": {"pipeline_wrapper.py": Path("my_pipeline/pipeline_wrapper.py").read_text()},
+        "overwrite": True,
+    },
+    timeout=120,
+)
+response.raise_for_status()
+print(response.json())
+PYTHON
 ```
 
 **Invoke a pipeline:**

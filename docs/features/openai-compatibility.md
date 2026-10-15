@@ -38,7 +38,7 @@ This requires `fastapi-openai-compat>=1.4.0`, which Hayhooks declares as a depen
 ```python
 from pathlib import Path
 from typing import Union, Generator
-from haystack import Pipeline
+from hayhooks import Pipeline
 from hayhooks import get_last_user_message, BasePipelineWrapper, log
 
 class PipelineWrapper(BasePipelineWrapper):
@@ -55,7 +55,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
         # Pipeline run, returns a string
         result = self.pipeline.run({"prompt": {"query": question}})
-        return result["llm"]["replies"][0]
+        return result["llm"]["replies"][0].text
 ```
 
 ### Async Chat Completion with Streaming
@@ -63,7 +63,9 @@ class PipelineWrapper(BasePipelineWrapper):
 ```python
 from collections.abc import AsyncGenerator
 
-from hayhooks import async_streaming_generator, get_last_user_message, log
+from pathlib import Path
+
+from hayhooks import BasePipelineWrapper, Pipeline, async_streaming_generator, get_last_user_message, log
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
@@ -259,7 +261,7 @@ class PipelineWrapper(BasePipelineWrapper):
     def run_response(self, model: str, input_items: list[dict], body: dict) -> str:
         question = get_last_user_input_text(input_items)
         result = self.pipeline.run({"prompt": {"query": question}})
-        return result["llm"]["replies"][0]
+        return result["llm"]["replies"][0].text
 ```
 
 ### Sync Streaming Response
@@ -350,7 +352,7 @@ async def _strip_tool_calls(gen: AsyncGenerator) -> AsyncGenerator:
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        self.agent = Agent(
+        self.pipeline = Agent(
             chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
             system_prompt="You are a helpful assistant that can read files.",
             tools=[read_file_tool],
@@ -359,7 +361,7 @@ class PipelineWrapper(BasePipelineWrapper):
     async def run_response_async(self, model: str, input_items: list[dict], body: dict) -> AsyncGenerator:
         messages = chat_messages_from_openai_response(input_items)
         gen = async_streaming_generator(
-            pipeline=self.agent,
+            pipeline=self.pipeline,
             pipeline_run_args={"messages": messages},
         )
         return _strip_tool_calls(gen)
@@ -462,7 +464,7 @@ client = OpenAIChatGenerator(
 
 # Use it like any OpenAI client
 result = client.run([ChatMessage.from_user("What is Haystack?")])
-print(result["replies"][0].content)
+print(result["replies"][0].text)
 ```
 
 This enables powerful use cases:
@@ -497,7 +499,7 @@ class SyncChatWrapper(BasePipelineWrapper):
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> str:
         question = get_last_user_message(messages)
         result = self.pipeline.run({"chat_prompt_builder": {"query": question}})
-        return result["llm"]["replies"][0].content
+        return result["llm"]["replies"][0].text
 ```
 
 ### Async Streaming Pipeline
@@ -505,7 +507,7 @@ class SyncChatWrapper(BasePipelineWrapper):
 ```python
 class AsyncStreamingWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        from haystack import Pipeline
+        from hayhooks import Pipeline
         from haystack.components.builders import ChatPromptBuilder
         from haystack.components.generators.chat import OpenAIChatGenerator
         from haystack.dataclasses import ChatMessage
@@ -538,8 +540,11 @@ def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> s
     max_tokens = body.get("max_tokens", 150)
     stream = body.get("stream", False)
 
+    question = get_last_user_message(messages)
+
     # Use them in your pipeline
     result = self.pipeline.run({
+        "prompt": {"query": question},
         "llm": {
             "generation_kwargs": {
                 "temperature": temperature,
@@ -547,7 +552,7 @@ def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> s
             }
         }
     })
-    return result["llm"]["replies"][0].content
+    return result["llm"]["replies"][0].text
 ```
 
 **Common parameters include:**

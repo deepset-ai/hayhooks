@@ -103,8 +103,12 @@ Once configured, import shared code in your wrappers:
 ```python
 # In your pipeline_wrapper.py
 from my_custom_lib import sum_two_numbers
+from hayhooks import BasePipelineWrapper
 
 class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pass
+
     def run_api(self, a: int, b: int) -> int:
         return sum_two_numbers(a, b)
 ```

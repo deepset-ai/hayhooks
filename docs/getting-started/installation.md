@@ -9,7 +9,7 @@ walks through the three views and authentication.
 
 ## System Requirements
 
-- Python 3.10+
+- Python 3.10 through 3.14
 - Operating System: Linux, macOS, or Windows
 - Memory: Minimum 512MB RAM, 2GB+ recommended
 - Storage: Minimum 100MB free space
@@ -27,13 +27,10 @@ walks through the three views and authentication.
 === "With MCP Support"
 
     ```bash
-    pip install hayhooks[mcp]
+    pip install "hayhooks[mcp]"
     ```
 
     Includes all standard features plus [MCP Server](../features/mcp-support.md) support for integration with AI development tools like Cursor and Claude Desktop.
-
-    !!! warning "Python 3.10+ Required"
-        You'll need to run at least Python 3.10+ to use the MCP Server.
 
 === "With A2A Support"
 

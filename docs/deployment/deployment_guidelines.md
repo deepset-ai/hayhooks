@@ -55,7 +55,7 @@ pipelines/
 See [YAML Pipeline Deployment](../concepts/yaml-pipeline-deployment.md) and [PipelineWrapper](../concepts/pipeline-wrapper.md) for file structure details.
 
 !!! tip "Development vs Production"
-    For local development, you can use CLI commands (`hayhooks pipeline deploy-files`) or API endpoints (`POST /deploy-files`). For production, always use `HAYHOOKS_PIPELINES_DIR`.
+    For local development, you can use CLI commands (`hayhooks pipeline deploy-files`) or API endpoints (`POST /deploy_files`). For production, always use `HAYHOOKS_PIPELINES_DIR`.
 
 ## Performance Tuning
 
@@ -106,7 +106,7 @@ Pipeline `run()` methods execute synchronously but are wrapped in `run_in_thread
 **CPU-bound pipelines** (embedding generation, heavy computation):
 
 - Limited by Python's Global Interpreter Lock (GIL)
-- Requests are queued and processed sequentially in a single worker
+- Threads can overlap work, but pure Python CPU work competes for the same GIL
 - Use multiple workers or horizontal scaling to improve throughput
 
 ### Startup Deploy Performance
@@ -145,6 +145,8 @@ export HAYHOOKS_DEPLOY_CONCURRENCY=parallel
 Implement async methods for better I/O-bound performance:
 
 ```python
+from pathlib import Path
+
 from hayhooks import BasePipelineWrapper, Pipeline
 
 class PipelineWrapper(BasePipelineWrapper):
@@ -155,7 +157,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
     async def run_api_async(self, query: str) -> str:
         result = await self.pipeline.run_async({"prompt": {"query": query}})
-        return result["llm"]["replies"][0]
+        return result["llm"]["replies"][0].text
 ```
 
 ### Streaming
@@ -195,7 +197,7 @@ hayhooks run
 ```
 
 !!! info "GIL Limitations"
-    Even with multiple workers, individual workers have GIL limitations. CPU-bound pipelines benefit more from horizontal scaling (multiple instances) than vertical scaling (multiple workers per instance).
+    Even with multiple workers, individual workers have GIL limitations. Both multiple worker processes and multiple instances can use more CPU cores. Choose between them based on memory use and deployment constraints.
 
 ## Docker Deployment
 

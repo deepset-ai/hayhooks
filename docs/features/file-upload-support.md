@@ -17,8 +17,12 @@ To accept file uploads in your pipeline, add a `files` parameter to your `run_ap
 
 ```python
 from fastapi import UploadFile
+from hayhooks import BasePipelineWrapper
 
 class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pass
+
     def run_api(self, files: list[UploadFile] | None = None, query: str = "") -> str:
         if not files:
             return "No files provided"
@@ -40,20 +44,20 @@ File uploads use `multipart/form-data` format:
 curl -X POST \
   http://localhost:1416/my_pipeline/run \
   -F 'files=@document.pdf' \
-  -F 'query="Summarize this document"'
+  -F 'query=Summarize this document'
 
 # Upload multiple files
 curl -X POST \
   http://localhost:1416/my_pipeline/run \
   -F 'files=@document1.pdf' \
   -F 'files=@document2.txt' \
-  -F 'query="Compare these documents"'
+  -F 'query=Compare these documents'
 
 # Upload with additional parameters
 curl -X POST \
   http://localhost:1416/my_pipeline/run \
   -F 'files=@document.pdf' \
-  -F 'query="Analyze this document"'
+  -F 'query=Analyze this document'
 ```
 
 ### Python Client Example
@@ -86,16 +90,16 @@ Hayhooks CLI supports file uploads:
 
 ```bash
 # Upload single file
-hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Summarize this"'
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query=Summarize this'
 
 # Upload directory
-hayhooks pipeline run my_pipeline --dir ./documents --param 'query="Analyze all documents"'
+hayhooks pipeline run my_pipeline --dir ./documents --param 'query=Analyze all documents'
 
 # Upload multiple files
-hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query="Compare documents"'
+hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt --param 'query=Compare documents'
 
 # Upload with parameters
-hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Analyze"'
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query=Analyze'
 ```
 
 ## Combining Files with Other Parameters
@@ -104,8 +108,12 @@ You can handle both files and parameters in the same request by adding them as a
 
 ```python
 from fastapi import UploadFile
+from hayhooks import BasePipelineWrapper
 
 class PipelineWrapper(BasePipelineWrapper):
+    def setup(self) -> None:
+        pass
+
     def run_api(
         self,
         files: list[UploadFile] | None = None,

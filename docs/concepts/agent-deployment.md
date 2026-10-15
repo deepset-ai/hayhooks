@@ -73,7 +73,7 @@ weather_tool = Tool(
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
-        self.agent = Agent(
+        self.pipeline = Agent(
             chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
             system_prompt="You're a helpful agent",
             tools=[weather_tool],
@@ -118,7 +118,7 @@ class PipelineWrapper(BasePipelineWrapper):
         return async_streaming_generator(
             on_tool_call_start=self.on_tool_call_start,
             on_tool_call_end=self.on_tool_call_end,
-            pipeline=self.agent,
+            pipeline=self.pipeline,
             pipeline_run_args={"messages": chat_messages},
         )
 ```

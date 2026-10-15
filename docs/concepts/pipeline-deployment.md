@@ -33,7 +33,9 @@ All pipeline wrappers inherit from `BasePipelineWrapper`:
 
 **`setup()`** is called once when the pipeline is deployed to initialize your pipeline instance and set up any required resources.
 
-**`run_api()`** is called for each API request to define your custom execution logic and return the pipeline result.
+Implement at least one execution method for the surface you need. `run_api()`
+handles ordinary REST requests, but a chat-only or durable-only wrapper does
+not need it.
 
 #### Optional Methods
 

@@ -1,6 +1,8 @@
 # YAML Pipeline Deployment
 
-Hayhooks supports deploying Haystack pipelines directly from YAML definitions. This approach builds request/response schemas automatically from the YAML-declared `inputs` and `outputs`.
+Hayhooks supports deploying Haystack pipelines directly from YAML definitions. The declared `inputs` define request fields, and `outputs` select the components
+whose results are returned. Hayhooks publishes the request schema and the generic
+component-result response schema in OpenAPI.
 
 ## Overview
 
@@ -79,7 +81,7 @@ outputs:
 ### Key Requirements
 
 1. **`inputs` Section**: Maps friendly names to pipeline component fields
-2. **`outputs` Section**: Maps pipeline outputs to response fields
+2. **`outputs` Section**: Identifies pipeline outputs to include in the result
 3. **Valid Components**: All components must be properly defined
 4. **Valid Connections**: All connections must reference existing components
 
@@ -197,11 +199,11 @@ inputs:
 
 ### Output Mapping
 
-The `outputs` section maps pipeline outputs to response fields:
+The `outputs` section names outputs whose components must be included in the result:
 
 ```yaml
 outputs:
-  # response_field: component.field
+  # output_name: component.field
   replies: llm.replies
   documents: fetcher.documents
 ```
@@ -210,7 +212,7 @@ outputs:
 
 - Use `component.field` syntax
 - Field must exist in the component
-- Response fields are serialized to JSON
+- Components referenced here are included in the `result` object
 - Complex objects are automatically serialized
 
 !!! success "Automatic `include_outputs_from` Derivation"
@@ -237,7 +239,6 @@ outputs:
 Once deployed, your pipeline is available at:
 
 - **Run Endpoint**: `/{pipeline_name}/run`
-- **Schema**: `/{pipeline_name}/schema`
 - **OpenAPI**: `/openapi.json`
 
 ### Example Request
@@ -254,46 +255,33 @@ curl -X POST \
 
 ### Example Response
 
+The response wraps Haystack's component-keyed result in `result`. Declared
+`outputs` select components through `include_outputs_from`; their friendly names
+do not rename fields in the JSON response. Chat replies are serialized
+`ChatMessage` objects.
+
 ```json
 {
-  "replies": ["Haystack is an open source framework..."],
-  "documents": [...],
-  "metadata": {...}
+  "result": {
+    "llm": {
+      "replies": [
+        {
+          "role": "assistant",
+          "content": [{"text": "Haystack is an open source framework."}],
+          "name": null,
+          "meta": {}
+        }
+      ]
+    }
+  }
 }
 ```
 
 ## Schema Generation
 
-Hayhooks automatically generates:
-
-### Request Schema
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "urls": {
-      "type": "array",
-      "items": {"type": "string"}
-    },
-    "query": {"type": "string"}
-  },
-  "required": ["urls", "query"]
-}
-```
-
-### Response Schema
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "replies": {"type": "array"},
-    "documents": {"type": "array"},
-    "metadata": {"type": "object"}
-  }
-}
-```
+Hayhooks derives the request schema from the declared `inputs` and their
+component socket types. The response schema contains a `result` object with
+component outputs. Inspect both in `/openapi.json` or the interactive `/docs`.
 
 ## Obtaining YAML from Existing Pipelines
 

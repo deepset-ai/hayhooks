@@ -34,6 +34,10 @@ Pass options directly to `hayhooks run`:
 hayhooks run --host 0.0.0.0 --port 1416 --pipelines-dir ./pipelines
 ```
 
+Hayhooks loads `.env` from the current directory or a parent directory. Files named
+`.env.development` or `.env.production` are not loaded automatically. Copy the
+selected configuration to `.env`, or inject its variables before starting the server.
+
 ## Common Configuration Options
 
 The most frequently used options:

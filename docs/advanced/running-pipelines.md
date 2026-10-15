@@ -7,7 +7,7 @@ Execute deployed pipelines via CLI, HTTP API, or programmatically.
 === "HayhooksCLI"
 
     ```bash
-    hayhooks pipeline run my_pipeline --param 'query="What is Haystack?"'
+    hayhooks pipeline run my_pipeline --param 'query=What is Haystack?'
     ```
 
 === "Hayhooks HTTP API"
@@ -69,7 +69,7 @@ For more CLI examples, see [CLI Commands](../features/cli-commands.md).
 
 ```bash
 # Single file
-hayhooks pipeline run my_pipeline --file document.pdf --param 'query="Summarize"'
+hayhooks pipeline run my_pipeline --file document.pdf --param 'query=Summarize'
 
 # Multiple files
 hayhooks pipeline run my_pipeline --file doc1.pdf --file doc2.txt
@@ -83,7 +83,7 @@ hayhooks pipeline run my_pipeline --dir ./documents
 ```bash
 curl -X POST http://localhost:1416/my_pipeline/run \
   -F 'files=@document.pdf' \
-  -F 'query="Summarize this document"'
+  -F 'query=Summarize this document'
 ```
 
 See [File Upload Support](../features/file-upload-support.md) for implementation details.
@@ -123,9 +123,18 @@ asyncio.run(main())
 
 ## Streaming
 
-Implement `run_chat_completion` or `run_chat_completion_async` in your wrapper. See [OpenAI Compatibility](../features/openai-compatibility.md) for details.
+For ordinary REST calls, return a generator from `run_api` or `run_api_async`
+and use `hayhooks pipeline run my_pipeline --stream`. See
+[streaming responses](../concepts/pipeline-wrapper.md#streaming-responses).
+For OpenAI clients, implement `run_chat_completion` or
+`run_chat_completion_async` and send `"stream": true` in the request. See
+[OpenAI Compatibility](../features/openai-compatibility.md).
 
 ## Error Handling & Retry Logic
+
+Use retries only when repeating the pipeline is safe. A failed HTTP response
+does not prove that execution had no side effects. For detached work, prefer
+[durable submissions with idempotency keys](../features/durable-execution.md#rest-sse-and-ownership).
 
 ```python
 import requests
@@ -151,14 +160,14 @@ def run_with_retry(pipeline_name, params, max_retries=3):
 Add logging to your pipeline wrappers:
 
 ```python
-from hayhooks import log
+from hayhooks import BasePipelineWrapper, log
 
 class PipelineWrapper(BasePipelineWrapper):
     def run_api(self, query: str) -> str:
         log.info("Processing query: {}", query)
         result = self.pipeline.run({"prompt": {"query": query}})
         log.info("Pipeline completed")
-        return result["llm"]["replies"][0]
+        return result["llm"]["replies"][0].text
 ```
 
 See [Logging Reference](../reference/logging.md) for details.

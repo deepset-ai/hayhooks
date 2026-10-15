@@ -7,6 +7,12 @@ Build a pipeline that answers questions about one or more websites. Uses fetchin
 - Wrapper example directory: [examples/pipeline_wrappers/chat_with_website_streaming](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_streaming)
 - See the main docs for `PipelineWrapper` basics and OpenAI compatibility
 
+## Prerequisites
+
+Clone the Hayhooks repository and run these commands from its root. Install
+`hayhooks` and `trafilatura`, set `OPENAI_API_KEY` in the server environment,
+and start `hayhooks run` in another terminal.
+
 ## Deploy
 
 ```bash
@@ -20,16 +26,17 @@ hayhooks pipeline deploy-files -n chat_with_website examples/pipeline_wrappers/c
 ```bash
 curl -X POST http://localhost:1416/chat_with_website/run \
   -H 'Content-Type: application/json' \
-  -d '{"query": "What is this website about?", "urls": ["https://python.org"]}'
+  -d '{"question": "What is this website about?", "urls": ["https://python.org"]}'
 ```
 
 - Chat (OpenAI-compatible), when `run_chat_completion`/`_async` is implemented:
 
 ```bash
-curl -X POST http://localhost:1416/v1/chat/completions \
+curl -N http://localhost:1416/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "chat_with_website",
+    "stream": true,
     "messages": [{"role": "user", "content": "Tell me about https://github.com"}]
   }'
 ```

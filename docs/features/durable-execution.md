@@ -12,6 +12,9 @@ pip install "hayhooks[durable]"
 docker compose -f examples/durable-compose.yaml up -d
 ```
 
+Run the Compose command from a clone of the Hayhooks repository. You can also
+use an existing compatible Redis or Valkey service.
+
 The durable extra installs `redis>=5.0.1,<9`. Durable execution requires
 Haystack 3.1 or newer. Use the memory store only for tests and local
 development; it does not survive process loss.

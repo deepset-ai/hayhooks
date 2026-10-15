@@ -107,7 +107,7 @@ class PipelineWrapper(BasePipelineWrapper):
 
     async def run_api_async(self, query: str) -> str:
         result = await self.pipeline.run_async({"prompt": {"query": query}})
-        return result["llm"]["replies"][0]
+        return result["llm"]["replies"][0].text
 ```
 
 See [Deployment Guidelines](../deployment/deployment_guidelines.md#async-pipelines) for more async examples.
@@ -133,7 +133,7 @@ Pipelines that perform heavy computation locally -- embedding generation, docume
 - **Move heavy initialization into `setup()`.** Loading models or building indexes in `setup()` runs once at startup. Doing it inside `run_api()` would repeat the cost on every request.
 
 !!! info
-    Even with multiple workers, each worker has its own GIL. For truly CPU-intensive workloads, horizontal scaling (more pods/containers) is more effective than vertical scaling (more workers in one process). See [Deployment Guidelines](../deployment/deployment_guidelines.md#horizontal-scaling) for details.
+    Even with multiple workers, each worker has its own GIL. Both multiple worker processes and multiple containers can use more CPU cores. Choose based on memory use and deployment constraints. See [Deployment Guidelines](../deployment/deployment_guidelines.md#horizontal-scaling) for details.
 
 ## Add Authentication
 

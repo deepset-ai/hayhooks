@@ -7,6 +7,12 @@ Send status updates and UI events to Open WebUI during streaming, and optionally
 - Event examples: [open_webui_agent_events](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_events), [open_webui_agent_on_tool_calls](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/open_webui_agent_on_tool_calls)
 - See the main docs → Open WebUI integration and event hooks
 
+## Prerequisites
+
+Clone the Hayhooks repository and run these commands from its root. Install
+`hayhooks`, set `OPENAI_API_KEY` in the server environment, and start
+`hayhooks run` in another terminal.
+
 ## Deploy (example)
 
 ```bash
@@ -18,10 +24,11 @@ hayhooks pipeline deploy-files -n agent_events examples/pipeline_wrappers/open_w
 - OpenAI-compatible chat (events stream to Open WebUI):
 
 ```bash
-curl -X POST http://localhost:1416/v1/chat/completions \
+curl -N http://localhost:1416/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "agent_events",
+    "stream": true,
     "messages": [{"role": "user", "content": "Tell me about machine learning"}]
   }'
 ```
