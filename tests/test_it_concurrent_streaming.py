@@ -26,8 +26,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="module")
-def async_streaming_pipeline():
+@pytest.fixture
+async def async_streaming_pipeline():
     pipeline = AsyncPipeline()
     pipeline.add_component("prompt_builder", ChatPromptBuilder())
     pipeline.add_component(
@@ -38,7 +38,13 @@ def async_streaming_pipeline():
         ),
     )
     pipeline.connect("prompt_builder.prompt", "llm.messages")
-    return pipeline
+    # OpenAI's pooled async connections belong to this test's event loop.
+    try:
+        yield pipeline
+    finally:
+        generator = pipeline.get_component("llm")
+        await generator.async_client.close()
+        generator.client.close()
 
 
 @pytest.fixture(scope="module")
