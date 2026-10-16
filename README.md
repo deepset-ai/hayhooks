@@ -58,16 +58,24 @@ Create a directory named `my_agent_dir` and save this as `my_agent_dir/pipeline_
 
 ```python
 from haystack.components.agents import Agent
-from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.components.generators.chat import OpenAIResponsesChatGenerator
 from haystack.dataclasses import ChatMessage
+from haystack.tools import tool
 
 from hayhooks import BasePipelineWrapper
+
+
+@tool
+def search(query: str) -> str:
+    """Search the knowledge base."""
+    return f"This is a demo tool."
 
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.pipeline = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            chat_generator=OpenAIResponsesChatGenerator(model="gpt-4o-mini"),
+            tools=[search],
         )
 
     async def run_api_async(self, question: str) -> str:
@@ -90,6 +98,8 @@ The response contains the agent's answer. Open [the API docs](http://localhost:1
 
 <details>
 <summary><strong>Add streaming chat</strong></summary>
+
+Implement `run_chat_completion_async` to expose the agent through the [OpenAI-compatible Chat Completions API](docs/features/openai-compatibility.md#async-chat-completion-with-streaming).
 
 Add these imports at the top of `pipeline_wrapper.py`:
 
