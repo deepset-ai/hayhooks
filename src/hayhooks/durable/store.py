@@ -15,7 +15,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger as log
 
@@ -46,6 +46,9 @@ from hayhooks.durable.engine import (
     submission_plan,
     validate_run_id,
 )
+
+if TYPE_CHECKING:
+    from hayhooks.durable.removal import RemovalScope, StoreRemovalSnapshot
 
 CHUNK_CURSOR_START = "0-0"
 MAINTENANCE_BATCH_SIZE = 100
@@ -307,6 +310,7 @@ class MemoryExecutionStore:
         self._terminal_expiry: list[tuple[int, str]] = []
         self._chunk_expiry: list[tuple[int, str]] = []
         self._nonterminal = 0
+        self._removal_fences: set[RemovalScope] = set()
         # ponytail: sorted lists cost O(n) per insertion/removal; use Redis for large monitored collections.
         self._execution_index: dict[str, list[str]] = {}
 
@@ -379,9 +383,13 @@ class MemoryExecutionStore:
         return ControlPage(tuple(controls), cursor, more)
 
     async def transition(self, run_id: str, command: ExecutionCommand) -> TransitionPlan:
+        from hayhooks.durable.removal import worker_scope
+
         current = self._controls.get(run_id)
         if current is None:
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
+        if isinstance(command, Claim) and worker_scope(command.worker_id) in self._removal_fences:
+            raise InvalidExecutionTransitionError("the worker ownership scope is fenced for removal")
         command = bind_store_command(command, max(self._clock(), current.updated_at_ms), self.config)
         plan = decide(current, command)
         validate_transition_plan(plan, self.config)
@@ -486,6 +494,49 @@ class MemoryExecutionStore:
                     timeout,
                 )
         return self._chunks_after(run_id, after)
+
+    async def owner_scope_fenced(self, scope: RemovalScope) -> bool:
+        return scope in self._removal_fences
+
+    async def fence_owner_scope(self, scope: RemovalScope) -> None:
+        """Permanently reject new claims for this scope, including other deployment instances."""
+        self._removal_fences.add(scope)
+
+    async def removal_snapshot(self, *, scope: RemovalScope | None = None) -> StoreRemovalSnapshot:
+        """Read namespace counts and inspect at most 200 live lease controls for scoped proof."""
+        from hayhooks.durable.removal import MAX_REMOVAL_LEASE_CONTROLS, StoreRemovalSnapshot, worker_scope
+
+        now = self._clock()
+        live = [(key, deadline) for key, deadline in self._lease_expiry.items() if deadline > now]
+        blockers = []
+        owned = 0
+        if scope is not None:
+            if len(live) > MAX_REMOVAL_LEASE_CONTROLS:
+                blockers.append("lease_probe_saturated")
+            else:
+                for (run_id, fence), deadline in live:
+                    control = self._controls.get(run_id)
+                    if (
+                        control is None
+                        or control.status is not ExecutionStatus.RUNNING
+                        or control.fence != fence
+                        or control.lease_expires_at_ms != deadline
+                        or control.lease_owner is None
+                    ):
+                        blockers.append("lease_index_inconsistent")
+                        continue
+                    candidate = worker_scope(control.lease_owner)
+                    if candidate == scope:
+                        owned += 1
+                    elif scope.kind == "owner_family" and (candidate is None or candidate.kind != "owner_family"):
+                        blockers.append("legacy_lease_ownership_unknown")
+        return StoreRemovalSnapshot(
+            now,
+            self._nonterminal,
+            len(live),
+            None if scope is None or blockers else owned,
+            tuple(sorted(set(blockers))),
+        )
 
     async def operational_counts(self, *, revision: str) -> dict[str, int]:
         self._cleanup_terminal(self._clock())

@@ -12,7 +12,7 @@ import secrets
 import sys
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -46,6 +46,7 @@ from hayhooks.durable.engine import (
     Fail,
     InvalidExecutionTransitionError,
     PayloadKind,
+    ReleaseClaim,
     RequestCancellation,
     Resume,
     ScheduleRetry,
@@ -61,6 +62,7 @@ from hayhooks.durable.models import (
     encode_json,
     operation_fingerprint,
 )
+from hayhooks.durable.removal import RemovalProof, RemovalScope, RemovalStore, StoreRemovalSnapshot
 from hayhooks.durable.store import (
     ExecutionAdmissionError,
     ExecutionProgressCorruptionError,
@@ -152,7 +154,7 @@ class DurableDeployment:
     stops it for good. Use a new instance for a new lifecycle.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(  # noqa: PLR0913, PLR0915
         self,
         name: str,
         revision: str,
@@ -165,6 +167,7 @@ class DurableDeployment:
         resume_model: type[BaseModel] | None = None,
         adapter: Any | None = None,
         config: RuntimeConfig | None = None,
+        owner_family: str | None = None,
     ) -> None:
         if not name or store.deployment != name:
             raise ValueError("deployment name must be non-empty and match its store")
@@ -224,6 +227,27 @@ class DurableDeployment:
         # Set by the first close(); repeated calls share its grace instead of starting a new one.
         self._shutdown_deadline: float | None = None
         self._worker_identity = secrets.token_hex(8)
+        if owner_family is not None:
+            if (
+                not isinstance(owner_family, str)
+                or not owner_family
+                or len(owner_family.encode()) > MAX_CONTROL_SCALAR_BYTES
+            ):
+                raise ValueError("owner_family must be non-empty bounded UTF-8 text")
+            family_digest = hashlib.sha256(b"hayhooks:owner-family:v1:" + owner_family.encode()).hexdigest()
+            self._removal_scope = RemovalScope("owner_family", family_digest)
+            self._worker_identity = f"hh1:{family_digest}:{self._worker_identity}"
+        else:
+            self._removal_scope = RemovalScope("deployment_instance", self._worker_identity)
+        self._removal_lock = asyncio.Lock()
+        self._removal_requested = False
+        self._removal_wake = asyncio.Event()
+        self._removal_proof: RemovalProof | None = None
+        self._removal_fence: asyncio.Task[None] | None = None
+        self._removal_probe: asyncio.Task[StoreRemovalSnapshot] | None = None
+        self._removal_probe_after_drain = False
+        self._pending_writes: set[asyncio.Future[Any]] = set()
+        self._ambiguous_calls: set[str] = set()
         self._workers: dict[int, asyncio.Task[None]] = {}
         self._claims: dict[asyncio.Task[None], _ClaimedExecution] = {}
         # Cancelled application work and engine threads that outlived their claim.
@@ -235,7 +259,7 @@ class DurableDeployment:
 
     @property
     def accepting(self) -> bool:
-        return self._state is _DeploymentState.ACTIVE
+        return self._state is _DeploymentState.ACTIVE and not self._removal_requested
 
     async def start(self) -> None:
         """Initialize storage and open admission and workers; repeated while active, it does nothing."""
@@ -249,6 +273,10 @@ class DurableDeployment:
             self._state = _DeploymentState.STARTING
             try:
                 await self.store.initialize()
+                if isinstance(self.store, RemovalStore) and await self.store.owner_scope_fenced(self._removal_scope):
+                    raise ExecutionAdmissionError("the worker ownership scope is fenced for removal")
+                if self._removal_requested:
+                    raise ExecutionAdmissionError("the deployment was fenced for removal during startup")
             except BaseException:
                 self._state = _DeploymentState.STOPPED
                 raise
@@ -267,6 +295,149 @@ class DurableDeployment:
         if self._maintenance_task is not None:
             self._maintenance_task.cancel()
             await asyncio.wait({self._maintenance_task})
+
+    async def quiesce_for_removal(self, timeout: float = 0.0) -> RemovalProof:
+        """
+        Fence engine writes and claiming, then return immutable removal evidence within ``timeout`` seconds.
+
+        This never cancels admitted work. Repeated calls continue settling it and retain a completed receipt.
+        Family scope also fences other supported claim writers sharing that trusted family. Ownership is
+        unknown beyond 200 live namespace leases, with legacy family ownership, or without store support.
+        The caller must separately settle writes and work outside this instance, including family peers.
+        """
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError("removal timeout must be finite and non-negative")
+        if self._removal_proof is not None:
+            return self._removal_proof
+        self._removal_requested = True
+        self._removal_wake.set()
+        self._state = _DeploymentState.STOPPED
+        self._wake_workers(len(self._idle_workers))
+        if self._removal_lock.locked():
+            return self._build_removal_proof(None, ["removal_observation_pending"])
+        async with self._removal_lock:
+            blockers: list[str] = []
+            snapshot = await self._settle_removal(asyncio.get_running_loop().time() + timeout, blockers)
+            proof = self._build_removal_proof(snapshot, blockers)
+            if proof.complete:
+                self._removal_proof = proof
+            return proof
+
+    async def _settle_removal(self, deadline: float, blockers: list[str]) -> StoreRemovalSnapshot | None:
+        if not isinstance(self.store, RemovalStore):
+            blockers.append("store_removal_unsupported")
+            return None
+        if self._removal_fence is None:
+            self._removal_fence = asyncio.create_task(self.store.fence_owner_scope(self._removal_scope))
+            _track(self._pending_writes, self._removal_fence)
+        loop = asyncio.get_running_loop()
+        await asyncio.wait({self._removal_fence}, timeout=max(0.0, deadline - loop.time()))
+        if not self._removal_fence.done():
+            blockers.append("owner_fence_pending")
+            return None
+        if self._removal_fence.cancelled() or self._removal_fence.exception() is not None:
+            blockers.append("owner_fence_unconfirmed")
+            self._removal_fence = None
+            return None
+        return await self._observe_removal(self.store.removal_snapshot, deadline, blockers)
+
+    async def _observe_removal(
+        self,
+        probe: Callable[..., Coroutine[Any, Any, StoreRemovalSnapshot]],
+        deadline: float,
+        blockers: list[str],
+    ) -> StoreRemovalSnapshot | None:
+        loop = asyncio.get_running_loop()
+        pending = self._removal_work()
+        observation = self._removal_probe
+        if observation is None:
+            observation = self._start_removal_probe(probe, after_drain=not pending)
+        await asyncio.wait({*pending, observation}, timeout=max(0.0, deadline - loop.time()))
+        if not self._removal_work() and not self._removal_probe_after_drain and observation.done():
+            observation = self._start_removal_probe(probe, after_drain=True)
+            await asyncio.wait({observation}, timeout=max(0.0, deadline - loop.time()))
+        if not observation.done():
+            blockers.append("store_probe_pending")
+            return None
+        try:
+            snapshot = observation.result()
+            if not self._removal_probe_after_drain:
+                blockers.append("store_probe_before_drain")
+            return snapshot
+        except (ExecutionStoreError, asyncio.CancelledError):
+            blockers.append("store_probe_unavailable")
+            return None
+        finally:
+            self._removal_probe = None
+
+    def _build_removal_proof(
+        self,
+        snapshot: StoreRemovalSnapshot | None,
+        blockers: list[str],
+    ) -> RemovalProof:
+        blockers.extend(self._ambiguous_calls)
+        pending_writes = sum(not task.done() for task in self._pending_writes)
+        workers = sum(not task.done() for task in self._workers.values())
+        active = self._active_claims + sum(not task.done() for task in {*self._draining_runs, *self._draining_threads})
+        maintenance = self._maintenance_task is not None and not self._maintenance_task.done()
+        owned = None if snapshot is None else snapshot.owned_leases
+        blockers.extend(
+            reason
+            for blocked, reason in (
+                (pending_writes, "engine_writes_pending"),
+                (workers, "worker_tasks_pending"),
+                (active, "local_work_active"),
+                (maintenance, "maintenance_pending"),
+                (owned is None, "owned_leases_unknown"),
+                (bool(owned), "owned_leases_active"),
+            )
+            if blocked
+        )
+        if snapshot is not None:
+            blockers.extend(snapshot.blockers)
+        return RemovalProof(
+            self.name,
+            self.revision,
+            self._removal_scope,
+            self._worker_identity,
+            not blockers and owned == 0,
+            pending_writes,
+            workers,
+            active,
+            owned,
+            snapshot,
+            tuple(sorted(set(blockers))),
+        )
+
+    def _start_removal_probe(
+        self, probe: Callable[..., Coroutine[Any, Any, StoreRemovalSnapshot]], *, after_drain: bool
+    ) -> asyncio.Task[StoreRemovalSnapshot]:
+        self._removal_probe_after_drain = after_drain
+        self._removal_probe = asyncio.create_task(probe(scope=self._removal_scope))
+        self._removal_probe.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+        return self._removal_probe
+
+    def _removal_work(self) -> set[asyncio.Future[Any]]:
+        pending = self._undrained() | self._draining_threads
+        if self._removal_probe is not None:
+            pending.discard(self._removal_probe)
+        return {task for task in pending if not task.done()}
+
+    async def _retain_write(self, operation: Coroutine[Any, Any, Any], *, admission: bool = False) -> Any:
+        if admission and self._removal_requested:
+            operation.close()
+            raise ExecutionAdmissionError(f"durable deployment '{self.name}' is fenced for removal")
+
+        async def write() -> Any:
+            try:
+                return await operation
+            except (ExecutionStoreError, asyncio.CancelledError):
+                self._ambiguous_calls.add("engine_write_unconfirmed")
+                raise
+
+        task = asyncio.create_task(write())
+        _track(self._pending_writes, task)
+        return await asyncio.shield(task)
 
     async def close(self) -> None:
         """
@@ -323,6 +494,19 @@ class DurableDeployment:
             await asyncio.wait(undrained)
 
     async def submit(
+        self,
+        payload: object,
+        *,
+        owner_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> SubmissionResult:
+        """Validate and durably admit one execution."""
+        return await self._retain_write(
+            self._submit(payload, owner_id=owner_id, idempotency_key=idempotency_key),
+            admission=True,
+        )
+
+    async def _submit(
         self,
         payload: object,
         *,
@@ -424,10 +608,38 @@ class DurableDeployment:
         reason: str | None = None,
     ) -> TransitionPlan:
         """Request cancellation without exposing owner mismatches."""
+        return await self._retain_write(
+            self._cancel(run_id, owner_id=owner_id, enforce_owner=enforce_owner, reason=reason),
+            admission=True,
+        )
+
+    async def _cancel(
+        self,
+        run_id: str,
+        *,
+        owner_id: str | None = None,
+        enforce_owner: bool = True,
+        reason: str | None = None,
+    ) -> TransitionPlan:
+        """Request cancellation without exposing owner mismatches."""
         await self.get_control(run_id, owner_id=owner_id, enforce_owner=enforce_owner)
         return await self.store.transition(run_id, RequestCancellation(now_ms=0, reason=reason))
 
     async def resume(
+        self,
+        run_id: str,
+        resume_input: object = None,
+        *,
+        owner_id: str | None = None,
+        enforce_owner: bool = True,
+    ) -> TransitionPlan:
+        """Validate resume input and atomically requeue a waiting execution."""
+        return await self._retain_write(
+            self._resume(run_id, resume_input, owner_id=owner_id, enforce_owner=enforce_owner),
+            admission=True,
+        )
+
+    async def _resume(
         self,
         run_id: str,
         resume_input: object = None,
@@ -535,7 +747,9 @@ class DurableDeployment:
         return checkpoint
 
     def _undrained(self) -> set[asyncio.Future[Any]]:
-        tracked: set[asyncio.Future[Any]] = {*self._workers.values(), *self._draining_runs}
+        tracked: set[asyncio.Future[Any]] = {*self._workers.values(), *self._draining_runs, *self._pending_writes}
+        if self._removal_probe is not None:
+            tracked.add(self._removal_probe)
         if self._maintenance_task is not None:
             tracked.add(self._maintenance_task)
         if not self.config.release_running_on_close:
@@ -578,20 +792,27 @@ class DurableDeployment:
     async def _maintenance(self) -> None:
         while self.accepting:
             try:
-                requeued = await self.store.maintain(
-                    max_run_attempts=self.config.max_run_attempts,
-                    attempts_error=self._attempts_error,
-                )
+                try:
+                    requeued = await self.store.maintain(
+                        max_run_attempts=self.config.max_run_attempts,
+                        attempts_error=self._attempts_error,
+                    )
+                except asyncio.CancelledError:
+                    self._ambiguous_calls.add("cancelled_maintenance_unconfirmed")
+                    raise
                 if requeued:
                     self._wake_workers(requeued)
             except asyncio.CancelledError:
                 raise
             except ExecutionStoreError as error:
+                self._ambiguous_calls.add("maintenance_unconfirmed")
                 self._maintenance_error_streak += 1
                 await self._backoff(error, self._maintenance_error_streak, "maintenance")
             else:
                 self._maintenance_error_streak = 0
-                await asyncio.sleep(self.config.maintenance_interval_seconds)
+                if self.accepting:
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(self._removal_wake.wait(), self.config.maintenance_interval_seconds)
 
     def _wake_workers(self, count: int = 1) -> None:
         """Wake up to ``count`` parked workers; workers still claiming notice the new generation."""
@@ -609,7 +830,15 @@ class DurableDeployment:
 
             self._active_claims += 1
             try:
-                await self._execute_claim(control, worker_id, confirmed_at=claimed_at)
+                if self._removal_requested:
+                    await self._retain_write(
+                        self.store.transition(
+                            control.run_id,
+                            ReleaseClaim(fence=control.fence, worker_id=worker_id),
+                        )
+                    )
+                else:
+                    await self._execute_claim(control, worker_id, confirmed_at=claimed_at)
             except asyncio.CancelledError:
                 raise
             except ExecutionLeaseLostError:
@@ -632,7 +861,11 @@ class DurableDeployment:
                     attempts_error=self._attempts_error,
                 )
             )
+        except asyncio.CancelledError:
+            self._ambiguous_calls.add("cancelled_claim_unconfirmed")
+            raise
         except ExecutionStoreError as error:
+            self._ambiguous_calls.add("claim_unconfirmed")
             await self._backoff_worker(worker_id, error, "claim")
             return None
         self._worker_store_error_streaks[worker_id] = 0
@@ -750,6 +983,8 @@ class DurableDeployment:
             worker_id,
             self.config.lease_duration_ms,
             confirmed_at=confirmed_at,
+            pending_writes=self._pending_writes,
+            ambiguous_writes=self._ambiguous_calls,
             backoff=(
                 self.config.operational_backoff_min_seconds,
                 self.config.operational_backoff_max_seconds,
@@ -764,6 +999,9 @@ class DurableDeployment:
                 return
             prepared = await self._prepare_execution(stored, claim)
             if prepared is None:
+                return
+            if self._removal_requested:
+                await claim.release()
                 return
             context, request = prepared
             claim.require_owned()

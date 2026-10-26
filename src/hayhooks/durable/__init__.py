@@ -12,6 +12,7 @@ if TYPE_CHECKING:
         durable_streaming_callback,
     )
     from hayhooks.durable.fastapi import OwnerIdDependency, create_durable_router
+    from hayhooks.durable.removal import RemovalProof, RemovalScope, RemovalStore, StoreRemovalSnapshot
     from hayhooks.durable.runtime import DurableDeployment, DurableRuntime, RuntimeConfig
     from hayhooks.durable.store import ExecutionStore, MemoryExecutionStore, StoreConfig
 
@@ -23,8 +24,12 @@ __all__ = [
     "ExecutionStore",
     "MemoryExecutionStore",
     "OwnerIdDependency",
+    "RemovalProof",
+    "RemovalScope",
+    "RemovalStore",
     "RuntimeConfig",
     "StoreConfig",
+    "StoreRemovalSnapshot",
     "create_durable_router",
     "current_durable_context",
     "durable_context_scope",
@@ -39,6 +44,10 @@ _EXPORT_MODULES = {
     "ExecutionStore": "hayhooks.durable.store",
     "MemoryExecutionStore": "hayhooks.durable.store",
     "OwnerIdDependency": "hayhooks.durable.fastapi",
+    "RemovalProof": "hayhooks.durable.removal",
+    "RemovalScope": "hayhooks.durable.removal",
+    "RemovalStore": "hayhooks.durable.removal",
+    "StoreRemovalSnapshot": "hayhooks.durable.removal",
     "RuntimeConfig": "hayhooks.durable.runtime",
     "StoreConfig": "hayhooks.durable.store",
     "create_durable_router": "hayhooks.durable.fastapi",

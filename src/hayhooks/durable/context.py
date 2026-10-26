@@ -97,6 +97,8 @@ class _ClaimedExecution:
         *,
         confirmed_at: float,
         backoff: tuple[float, float] = (0.05, 5.0),
+        pending_writes: MutableSet[asyncio.Future[Any]] | None = None,
+        ambiguous_writes: MutableSet[str] | None = None,
     ) -> None:
         if control.status is not ExecutionStatus.RUNNING or control.lease_owner != worker_id:
             raise ValueError("a claimed execution requires its running control and lease owner")
@@ -119,6 +121,8 @@ class _ClaimedExecution:
         self._safe_duration = safe_duration
         self._confirmed_until = confirmed_at + safe_duration
         self._backoff = backoff
+        self._pending_writes = pending_writes
+        self._ambiguous_writes = ambiguous_writes
         self._transition_lock = asyncio.Lock()
         self._chunks: deque[bytes] = deque(maxlen=store.config.max_stream_chunks)
         self._chunks_buffered = asyncio.Event()
@@ -198,7 +202,7 @@ class _ClaimedExecution:
             while True:
                 confirmed_at = time.monotonic()
                 try:
-                    plan = await self.store.transition(self.control.run_id, command)
+                    plan = await self._retain_store_write(self.store.transition(self.control.run_id, command))
                     break
                 except ExecutionStoreCorruptionError:
                     raise
@@ -229,6 +233,28 @@ class _ClaimedExecution:
             self._confirmed_until = confirmed_at + self._safe_duration
             self._finished = self._finished or self.control.status is not ExecutionStatus.RUNNING
             return plan
+
+    async def _retain_store_write(self, operation: Coroutine[Any, Any, _T]) -> _T:
+        if self._pending_writes is None:
+            return await operation
+
+        async def write() -> _T:
+            try:
+                return await operation
+            except (ExecutionStoreError, asyncio.CancelledError):
+                if self._ambiguous_writes is not None:
+                    self._ambiguous_writes.add("engine_write_unconfirmed")
+                raise
+
+        task = asyncio.create_task(write())
+        _track(self._pending_writes, task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.cancel()
+            if self._ambiguous_writes is not None:
+                self._ambiguous_writes.add("engine_write_unconfirmed")
+            raise
 
     @property
     def owned(self) -> bool:
@@ -335,12 +361,14 @@ class _ClaimedExecution:
                 return
             chunks = tuple(self._chunks.popleft() for _ in range(len(self._chunks)))
             try:
-                await self.store.append_chunks(
-                    self.control.run_id,
-                    self.control.run_attempt,
-                    self.control.fence,
-                    self.worker_id,
-                    chunks,
+                await self._retain_store_write(
+                    self.store.append_chunks(
+                        self.control.run_id,
+                        self.control.run_attempt,
+                        self.control.fence,
+                        self.worker_id,
+                        chunks,
+                    )
                 )
             except ExecutionLeaseLostError:
                 self.mark_lost("the store rejected a display chunk after the lease was lost")

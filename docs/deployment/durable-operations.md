@@ -411,6 +411,50 @@ between `queued` and `running`; `attempt` increases with each handoff. Cancel it
 through the cancel endpoint, then add a checkpoint before its first long step
 so each restart resumes further along.
 
+## Prove an engine instance can be removed
+
+`quiesce()` closes submission admission and lets a claim already in flight
+finish. It does not provide removal evidence. A custom host can instead poll
+`await deployment.quiesce_for_removal(timeout=0.1)` for a frozen `RemovalProof`.
+The first call permanently closes submit, cancel, and resume writes on this
+instance. Running applications continue, and a claim returning after the fence
+is released without invoking the application. The method never cancels work.
+
+`proof.complete` requires stopped workers and maintenance, settled engine writes,
+no retained local applications or threads, and an atomic store observation with
+zero live leases for the ownership scope. The method returns blockers when its
+deadline expires. Repeated calls continue waiting and return the same receipt
+after completion. An unconfirmed mutating RPC permanently blocks a receipt for
+that instance. A store outage cannot prove zero ownership.
+
+By default, ownership covers the current deployment instance. A custom host can
+pass `owner_family=trusted_pod_uid` to `DurableDeployment` to include leases from
+previous or overlapping instances with the same host identity. The store keeps
+a permanent claim fence for that family. An instance using that identity cannot
+restart or acquire new claims after fencing. The identity must come from trusted
+host configuration, rather than request data. The receipt still covers only the
+calling instance's local work. The host must independently stop every other
+family process and settle its application and workspace writers before deleting
+the host. Lease expiry alone cannot prove those processes stopped.
+
+The memory and Redis stores implement the optional `RemovalStore` protocol.
+Its `removal_snapshot(scope=...)` reports atomic namespace counts and reads at
+most 200 live lease controls for ownership, without payloads or key scans. More
+live leases, inconsistent indexes, or legacy worker ownership in a family query
+make ownership unknown. A namespace query without a scope supplies counts for a
+consumer-free verifier. Counts do not provide local process or write-fence proof.
+Custom stores without the protocol keep their existing execution behavior and
+return an unsupported-store blocker for removal.
+
+Every claimant in the fenced scope must use this protocol. Earlier engine
+versions do not honor its fence. Finding no legacy leases does not prove that
+idle or disconnected old claimants have stopped. The host must establish that
+all its claim writers support the protocol before using a family receipt.
+
+Fences have no expiration. Keep them while an old supported claimant could
+return. Namespace cleanup and the host's exact identity, external admission,
+recovery handoff, and deletion acknowledgment remain the host's responsibility.
+
 ## Incident checklist
 
 - Stop new submissions before changing Redis or wrapper revisions.
