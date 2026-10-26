@@ -43,6 +43,7 @@ from hayhooks.durable.engine import (
     submission_plan,
     validate_run_id,
 )
+from hayhooks.durable.removal import MAX_REMOVAL_LEASE_CONTROLS, RemovalScope, StoreRemovalSnapshot, worker_scope
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     EXECUTION_CANDIDATE_LIMIT,
@@ -108,7 +109,7 @@ _MAX_COMMAND_VALUES = 1_000
 _CLAIM_CANDIDATES = 8
 
 # Refusals of the guarded apply script, which returns 1 once it commits.
-_STALE_SNAPSHOT, _LEASE_LOST, _CAPACITY_UNDERFLOW = 0, -1, -2
+_STALE_SNAPSHOT, _LEASE_LOST, _CAPACITY_UNDERFLOW, _OWNER_FENCED = 0, -1, -2, -3
 _SUBMITTED, _REPLAYED, _RUN_ID_TAKEN, _ADMISSION_FULL, _CAPACITY_INVALID = 1, 2, 3, 4, 5
 
 # A Redis command as (name, key, *arguments); scripts receive the key through KEYS.
@@ -182,7 +183,11 @@ local fields = {}
 for index = 1, #stored, 2 do
   fields[stored[index]] = stored[index + 1]
 end
-local cursor = 6
+local guard = tonumber(ARGV[6])
+if guard > 0 and redis.call('EXISTS', KEYS[guard]) == 1 then
+  return -3
+end
+local cursor = 7
 for _ = 1, size do
   if fields[ARGV[cursor]] ~= ARGV[cursor + 1] then
     return 0
@@ -240,6 +245,39 @@ while cursor <= #ARGV do
   cursor = cursor + 3 + count
 end
 return 1
+"""
+
+# KEYS: capacity, lease index, then the deployment base. ARGV: scope kind, identity, control limit.
+_REMOVAL_SNAPSHOT_LUA = """
+local now = redis_now_ms()
+local nonterminal = redis.call('HGET', KEYS[1], 'nonterminal') or '0'
+local total = redis.call('ZCOUNT', KEYS[2], '(' .. now, '+inf')
+local result = {now, nonterminal, total}
+if ARGV[1] == '' then
+  return result
+end
+if total > tonumber(ARGV[3]) then
+  result[4] = 'saturated'
+  return result
+end
+result[4] = 'complete'
+local leases = redis.call('ZRANGEBYSCORE', KEYS[2], '(' .. now, '+inf', 'WITHSCORES', 'LIMIT', 0, ARGV[3])
+for index = 1, #leases, 2 do
+  local run, fence = string.match(leases[index], '^([a-f0-9]+)|(%d+)$')
+  if not run or #run ~= 32 then
+    result[4] = 'inconsistent'
+    return result
+  end
+  local control = redis.call('HMGET', KEYS[3] .. ':exec:' .. run .. ':control',
+    'status', 'lease_owner', 'fence', 'lease_expires_at_ms')
+  if control[1] ~= 'running' or not control[2] or control[3] ~= fence
+      or tonumber(control[4]) ~= tonumber(leases[index + 1]) then
+    result[4] = 'inconsistent'
+    return result
+  end
+  result[#result + 1] = control[2]
+end
+return result
 """
 
 # KEYS: binding, control, input, revision runnable index, capacity.
@@ -336,6 +374,9 @@ class RedisKeys:
     @property
     def lease_expiry(self) -> str:
         return f"{self.base}:lease-expiry"
+
+    def removal_fence(self, scope: RemovalScope) -> str:
+        return f"{self.base}:removal-fence:v1:{scope.kind}:{scope.identity}"
 
     @property
     def capacity(self) -> str:
@@ -480,6 +521,7 @@ class RedisExecutionStore:
         self._heartbeat_script = redis.register_script(_NOW_LUA + _OWNED_LUA + _HEARTBEAT_LUA)
         self._append_chunks_script = redis.register_script(_NOW_LUA + _OWNED_LUA + _APPEND_CHUNKS_LUA)
         self._clean_monitoring_script = redis.register_script(_CLEAN_MONITORING_LUA)
+        self._removal_snapshot_script = redis.register_script(_NOW_LUA + _REMOVAL_SNAPSHOT_LUA)
 
     async def initialize(self) -> None:
         with _redis_errors():
@@ -802,6 +844,46 @@ class RedisExecutionStore:
             raise ChunkCursorExpiredError(after)
         return self._decode_chunks(run_id, streams[0][1] if streams else ())
 
+    async def owner_scope_fenced(self, scope: RemovalScope) -> bool:
+        with _redis_errors():
+            return bool(await self.redis.exists(self.keys.removal_fence(scope)))
+
+    async def fence_owner_scope(self, scope: RemovalScope) -> None:
+        """Permanently fence supported claim writers for one ownership scope."""
+        with _redis_errors():
+            await self.redis.set(self.keys.removal_fence(scope), b"1", nx=True)
+
+    async def removal_snapshot(self, *, scope: RemovalScope | None = None) -> StoreRemovalSnapshot:
+        """Read atomic namespace counts and at most 200 live lease controls, without payloads."""
+        with _redis_errors():
+            result = await self._removal_snapshot_script(
+                keys=[self.keys.capacity, self.keys.lease_expiry, self.keys.base],
+                args=[scope.kind if scope else "", scope.identity if scope else "", MAX_REMOVAL_LEASE_CONTROLS],
+            )
+        now, nonterminal, total, *ownership = result
+        blockers: tuple[str, ...] = ()
+        owned = None
+        if scope is not None:
+            status, *owners = ownership
+            status = _text(status)
+            if status != "complete":
+                blockers = ("lease_probe_saturated" if status == "saturated" else "lease_index_inconsistent",)
+            else:
+                candidates = [worker_scope(_text(owner)) for owner in owners]
+                if scope.kind == "owner_family" and any(
+                    candidate is None or candidate.kind != "owner_family" for candidate in candidates
+                ):
+                    blockers = ("legacy_lease_ownership_unknown",)
+                else:
+                    owned = candidates.count(scope)
+        return StoreRemovalSnapshot(
+            _nonnegative_int(now, "removal observation time"),
+            _nonnegative_int(nonterminal, "nonterminal"),
+            _nonnegative_int(total, "active leases"),
+            owned,
+            blockers,
+        )
+
     async def operational_counts(self, *, revision: str) -> dict[str, int]:
         with _redis_errors():
             async with self.redis.pipeline(transaction=False) as pipe:
@@ -907,10 +989,21 @@ class RedisExecutionStore:
                 commands = self._plan_commands(current, plan)
                 if became_terminal(current, plan):
                     released = RedisKeys.revision_nonterminal_field(current.definition_revision)
-            outcome = await self._commit(run_id, values, commands, owner=owner, released=released)
+            outcome = await self._commit(
+                run_id,
+                values,
+                commands,
+                owner=owner,
+                released=released,
+                claim_scope=worker_scope(command.worker_id) if isinstance(command, Claim) else None,
+            )
             if outcome == _STALE_SNAPSHOT:
                 await self._backoff(attempt)
                 continue
+            if outcome == _OWNER_FENCED:
+                if candidate_index is not None:
+                    return current, None
+                raise InvalidExecutionTransitionError("the worker ownership scope is fenced for removal")
             if outcome == _LEASE_LOST:
                 raise ExecutionLeaseLostError("execution is no longer owned by this worker fence")
             if outcome == _CAPACITY_UNDERFLOW:
@@ -954,9 +1047,12 @@ class RedisExecutionStore:
         *,
         owner: tuple[str, int] | None,
         released: str,
+        claim_scope: RemovalScope | None = None,
     ) -> int:
         """Run ``commands`` only if control still equals ``snapshot`` and every guard holds."""
         keys = [self.keys.control(run_id), self.keys.capacity]
+        if claim_scope is not None:
+            keys.append(self.keys.removal_fence(claim_scope))
         worker_id, fence = owner or ("", 0)
         args: list[Any] = [
             worker_id,
@@ -964,6 +1060,7 @@ class RedisExecutionStore:
             self.config.lease_commit_safety_ms,
             released,
             len(snapshot),
+            3 if claim_scope is not None else 0,
             *chain.from_iterable(snapshot.items()),
         ]
         for name, key, *arguments in commands:
