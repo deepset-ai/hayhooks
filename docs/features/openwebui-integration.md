@@ -302,7 +302,7 @@ class PipelineWrapper(BasePipelineWrapper):
         ]
         chat_prompt_builder = ChatPromptBuilder(template=template)
 
-        llm = OpenAIChatGenerator(model="gpt-4o")
+        llm = OpenAIChatGenerator(model="gpt-6-luna")
 
         self.pipeline = Pipeline()
         self.pipeline.add_component("fetcher", fetcher)

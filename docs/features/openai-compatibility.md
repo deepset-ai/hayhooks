@@ -353,7 +353,7 @@ async def _strip_tool_calls(gen: AsyncGenerator) -> AsyncGenerator:
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.pipeline = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            chat_generator=OpenAIChatGenerator(model="gpt-6-luna"),
             system_prompt="You are a helpful assistant that can read files.",
             tools=[read_file_tool],
         )
@@ -489,7 +489,7 @@ class SyncChatWrapper(BasePipelineWrapper):
 
         template = [ChatMessage.from_user("Answer: {{query}}")]
         chat_prompt_builder = ChatPromptBuilder(template=template)
-        llm = OpenAIChatGenerator(model="gpt-4o-mini")
+        llm = OpenAIChatGenerator(model="gpt-6-luna")
 
         self.pipeline = Pipeline()
         self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
@@ -514,7 +514,7 @@ class AsyncStreamingWrapper(BasePipelineWrapper):
 
         template = [ChatMessage.from_user("Answer: {{query}}")]
         chat_prompt_builder = ChatPromptBuilder(template=template)
-        llm = OpenAIChatGenerator(model="gpt-4o")
+        llm = OpenAIChatGenerator(model="gpt-6-luna")
 
         self.pipeline = Pipeline()
         self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)

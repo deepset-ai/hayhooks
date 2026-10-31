@@ -10,7 +10,7 @@ components:
       generation_kwargs: {}
       http_client_kwargs: null
       max_retries: null
-      model: gpt-4o-mini
+      model: gpt-6-luna
       organization: null
       streaming_callback: null
       timeout: null

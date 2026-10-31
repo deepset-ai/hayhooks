@@ -107,7 +107,7 @@ def setup(self) -> None:
         {% endmessage %}""",
         required_variables="*"
     )
-    llm = OpenAIChatGenerator(model="gpt-4o-mini")
+    llm = OpenAIChatGenerator(model="gpt-6-luna")
 
     # Build pipeline
     self.pipeline = Pipeline()
@@ -552,7 +552,7 @@ class MultiLLMWrapper(BasePipelineWrapper):
                 ]
             )
         )
-        self.pipeline.add_component("llm_1", OpenAIChatGenerator(model="gpt-4o-mini"))
+        self.pipeline.add_component("llm_1", OpenAIChatGenerator(model="gpt-6-luna"))
 
         # Second LLM - refines the answer using Jinja2 to access ChatMessage attributes
         self.pipeline.add_component(
@@ -566,7 +566,7 @@ class MultiLLMWrapper(BasePipelineWrapper):
                 ]
             )
         )
-        self.pipeline.add_component("llm_2", OpenAIChatGenerator(model="gpt-4o-mini"))
+        self.pipeline.add_component("llm_2", OpenAIChatGenerator(model="gpt-6-luna"))
 
         # Connect components - LLM 1's replies go directly to prompt_2
         self.pipeline.connect("prompt_1.prompt", "llm_1.messages")
