@@ -30,7 +30,7 @@ README.md                  # You are reading it
 
 ## Prerequisites
 
-- An `OPENAI_API_KEY` environment variable (the agent uses `gpt-4o-mini`)
+- An `OPENAI_API_KEY` environment variable (the agent uses `gpt-6-luna`)
 - No weather API key required, Open-Meteo is free and unauthenticated
 
 ## Quick start

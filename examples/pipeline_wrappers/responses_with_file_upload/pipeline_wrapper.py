@@ -26,7 +26,7 @@ from hayhooks import BasePipelineWrapper, async_streaming_generator, chat_messag
 
 _file_store: dict[str, dict] = {}
 
-AGENT_MODEL = "gpt-4.1-mini"
+AGENT_MODEL = "gpt-6-luna"
 
 
 def read_file(path: str) -> str:
