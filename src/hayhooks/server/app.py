@@ -403,7 +403,7 @@ def _build_app(pipeline_registry: PipelineRegistry) -> FastAPI:
     # Include all routers
     app.include_router(status_router)
     app.include_router(draw_router)
-    if not durable_mode:
+    if not durable_mode and settings.runtime_deploy_enabled:
         app.include_router(deploy_router)
         app.include_router(undeploy_router)
     app.include_router(create_openai_router(pipeline_registry))

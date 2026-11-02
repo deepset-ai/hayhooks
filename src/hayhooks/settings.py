@@ -102,6 +102,9 @@ class AppSettings(BaseSettings):
     # "parallel": allow concurrent deploy/undeploy (higher throughput, higher risk).
     deploy_concurrency: DeployConcurrencyPolicy = DeployConcurrencyPolicy.SERIALIZED
 
+    # Expose runtime deploy/undeploy through HTTP and MCP; startup loading is unaffected.
+    runtime_deploy_enabled: bool = True
+
     # Strategy for deploying pipelines at startup from HAYHOOKS_PIPELINES_DIR.
     # "sequential": deploy one pipeline at a time (original behavior).
     # "parallel" (default): prepare pipelines in parallel, then commit serially.

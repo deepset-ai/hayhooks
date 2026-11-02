@@ -233,10 +233,13 @@ async def _run_pipeline_tool(
         raise Exception(msg) from exc
 
 
-async def _reject_fixed_registry_mutation(
-    _pipeline_registry: PipelineRegistry, _arguments: dict[str, Any], _span: Any
+async def _reject_runtime_mutation(
+    pipeline_registry: PipelineRegistry, _arguments: dict[str, Any], _span: Any
 ) -> list["TextContent"]:
-    msg = "Pipelines cannot be deployed or undeployed in durable mode, where the pipeline set is fixed at startup"
+    if isinstance(pipeline_registry, ImmutablePipelineRegistry):
+        msg = "Pipelines cannot be deployed or undeployed in durable mode, where the pipeline set is fixed at startup"
+    else:
+        msg = "Runtime deployment is disabled (HAYHOOKS_RUNTIME_DEPLOY_ENABLED=false)"
     raise PipelineModeError(msg)
 
 
@@ -255,6 +258,7 @@ def create_mcp_server(name: str = "hayhooks-mcp-server", registry: PipelineRegis
     Create the MCP server exposing *registry*, the mutable singleton by default outside durable mode.
 
     An immutable registry is served with a tool list built once and without the deploy/undeploy tools.
+    Disabling runtime deployment also removes and rejects deploy/undeploy tools on mutable registries.
 
     Raises:
         PipelineModeError: If an immutable registry has a durable pipeline or a pipeline named after a core tool.
@@ -262,11 +266,16 @@ def create_mcp_server(name: str = "hayhooks-mcp-server", registry: PipelineRegis
     mcp_import.check()
 
     pipeline_registry = resolve_registry(registry)
-    handlers = _CORE_TOOL_HANDLERS
+    runtime_deploy_enabled = settings.runtime_deploy_enabled and not isinstance(
+        pipeline_registry, ImmutablePipelineRegistry
+    )
+    handlers = (
+        _CORE_TOOL_HANDLERS
+        if runtime_deploy_enabled
+        else {**_CORE_TOOL_HANDLERS, **dict.fromkeys(_MUTATING_CORE_TOOLS, _reject_runtime_mutation)}
+    )
     fixed_tools: list[Tool] | None = None
     if isinstance(pipeline_registry, ImmutablePipelineRegistry):
-        # Mutation tools are neither listed nor dispatched to deployment, so calls cannot reach pipeline tools either.
-        handlers = {**handlers, **dict.fromkeys(_MUTATING_CORE_TOOLS, _reject_fixed_registry_mutation)}
         fixed_tools = _fixed_tools(pipeline_registry)
 
     server: Server = Server(name)
@@ -285,7 +294,11 @@ def create_mcp_server(name: str = "hayhooks-mcp-server", registry: PipelineRegis
             if fixed_tools is not None:
                 return fixed_tools
             try:
-                core_tools = await list_core_tools()
+                core_tools = [
+                    tool
+                    for tool in await list_core_tools()
+                    if runtime_deploy_enabled or tool.name not in _MUTATING_CORE_TOOLS
+                ]
                 log.debug("Listing {} core tools", len(core_tools))
 
                 pipelines_tools = await list_pipelines_as_tools(pipeline_registry)
@@ -323,7 +336,7 @@ def create_mcp_server(name: str = "hayhooks-mcp-server", registry: PipelineRegis
                 log.opt(exception=True).error(msg)
                 raise Exception(msg) from exc
             finally:
-                if fixed_tools is None and name in _MUTATING_CORE_TOOLS:
+                if runtime_deploy_enabled and name in _MUTATING_CORE_TOOLS:
                     log.debug("Sending 'tools/list_changed' notification after deploy/undeploy")
                     await notify_client(server)
 

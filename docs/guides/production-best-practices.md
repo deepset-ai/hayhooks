@@ -53,7 +53,11 @@ In production, pipelines should be deployed at startup from a directory -- not v
 
 ```bash
 export HAYHOOKS_PIPELINES_DIR=/app/pipelines
+export HAYHOOKS_RUNTIME_DEPLOY_ENABLED=false
 ```
+
+This disables runtime deploy and undeploy through HTTP, CLI, and MCP while keeping startup loading
+and pipeline execution available. It does not require durable mode. Restart the server to apply it.
 
 **Why this matters:**
 
@@ -146,6 +150,9 @@ Hayhooks does not include built-in authentication. For production, you should ad
 !!! warning
     Without authentication, anyone who can reach your Hayhooks server can invoke pipelines and (if runtime deploy is enabled) deploy or undeploy them. At minimum, restrict network access to trusted sources.
 
+    Runtime deployment accepts executable code that runs with the server process's privileges.
+    If runtime deployment is needed, restrict its endpoints and MCP tools to trusted operators.
+
 ## Set Up Health Checks
 
 The `/status` endpoint always returns HTTP 200, so use it as a liveness check
@@ -231,6 +238,7 @@ For reference, a minimal production configuration:
 HAYHOOKS_HOST=0.0.0.0
 HAYHOOKS_PORT=1416
 HAYHOOKS_PIPELINES_DIR=/app/pipelines
+HAYHOOKS_RUNTIME_DEPLOY_ENABLED=false
 HAYHOOKS_SHOW_TRACEBACKS=false
 HAYHOOKS_CORS_ALLOW_ORIGINS=["https://app.example.com"]
 HAYHOOKS_CORS_ALLOW_CREDENTIALS=true

@@ -50,6 +50,17 @@ def test_env_var_prefix(monkeypatch):
     assert settings.port == 5678
 
 
+def test_runtime_deploy_enabled_default(monkeypatch):
+    monkeypatch.delenv("HAYHOOKS_RUNTIME_DEPLOY_ENABLED", raising=False)
+    assert AppSettings().runtime_deploy_enabled is True
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_runtime_deploy_enabled_env(monkeypatch, enabled):
+    monkeypatch.setenv("HAYHOOKS_RUNTIME_DEPLOY_ENABLED", str(enabled).lower())
+    assert AppSettings().runtime_deploy_enabled is enabled
+
+
 def test_cors():
     default_settings = AppSettings()
     assert default_settings.cors_allow_origins == ["*"]

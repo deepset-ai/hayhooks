@@ -23,7 +23,9 @@ For general endpoint protection, use:
 
 ### Pipeline Management
 
-The deploy and undeploy endpoints exist only in the default, live-deployment mode. A server in
+The deploy and undeploy endpoints exist only in the default, live-deployment mode with
+`HAYHOOKS_RUNTIME_DEPLOY_ENABLED=true` (the default). Set it to `false` to disable runtime deployment
+while continuing to load pipelines at startup; these endpoints then return `404`. A server in
 [durable mode](../features/durable-execution.md#durable-mode) does not register them, so they return `404`.
 
 #### Deploy Pipeline (files)
