@@ -326,6 +326,10 @@ def run_api(
 
 ### Authentication
 
+Set `HAYHOOKS_RUNTIME_DEPLOY_ENABLED=false` to remove and reject the `deploy_pipeline` and
+`undeploy_pipeline` tools. Pipelines still load at startup and can be called as tools. Runtime
+deployment is enabled by default; it accepts executable code and must be restricted to trusted operators.
+
 Currently, Hayhooks MCP server doesn't include built-in authentication. Consider:
 
 - Running behind a reverse proxy with authentication

@@ -81,6 +81,23 @@ export HAYHOOKS_STREAMING_COMPONENTS="llm_1,llm_2"
 export HAYHOOKS_STREAMING_COMPONENTS="llm_1, llm_2, llm_3"
 ```
 
+## Runtime Deployment
+
+### HAYHOOKS_RUNTIME_DEPLOY_ENABLED
+
+- Default: `true` (preserves existing behavior)
+- Description: Exposes runtime deploy and undeploy operations through HTTP and MCP. Set to `false`
+  to omit `/deploy_files`, `/deploy-yaml`, and `/undeploy/{pipeline_name}` (requests return `404`),
+  and remove and reject the MCP `deploy_pipeline` and `undeploy_pipeline` tools. CLI deployment
+  commands use the HTTP API and are also disabled. Pipelines still load from `HAYHOOKS_PIPELINES_DIR`
+  at startup and remain executable. This setting is read when each server is created; restart to
+  apply changes. Durable mode always disables runtime deployment, regardless of this setting.
+
+!!! warning
+    Runtime deployment accepts executable code that runs with the Hayhooks process's privileges.
+    When enabled, restrict deployment access to trusted operators through authentication or network controls.
+    Disabling runtime deployment does not authenticate pipeline execution endpoints.
+
 ## Deploy Performance
 
 These settings apply to live deployment. Durable mode ignores them: it loads the pipelines
