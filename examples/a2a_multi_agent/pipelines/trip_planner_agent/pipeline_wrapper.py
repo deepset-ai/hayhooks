@@ -133,7 +133,7 @@ class PipelineWrapper(BasePipelineWrapper):
             _format_tool_names(all_tools),
         )
         self.agent = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            chat_generator=OpenAIChatGenerator(model="gpt-6-luna"),
             system_prompt=(
                 "You are a trip planning assistant. To plan a day in a city, ALWAYS follow these steps:\n"
                 "1. Call ask_weather_agent to learn the current weather in the city.\n"

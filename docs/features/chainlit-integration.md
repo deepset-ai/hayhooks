@@ -111,7 +111,7 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.system_message = ChatMessage.from_system("You are a helpful assistant.")
         chat_prompt_builder = ChatPromptBuilder()
-        llm = OpenAIChatGenerator(model="gpt-4o-mini")
+        llm = OpenAIChatGenerator(model="gpt-6-luna")
 
         self.pipeline = Pipeline()
         self.pipeline.add_component("chat_prompt_builder", chat_prompt_builder)
