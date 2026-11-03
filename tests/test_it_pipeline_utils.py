@@ -1678,6 +1678,43 @@ async def test_async_streaming_generator_external_queue_interleaved(mocker, mock
 
 
 @pytest.mark.asyncio
+async def test_async_streaming_generator_external_queue_event_after_last_chunk(
+    mocker, mocked_pipeline_with_streaming_component
+):
+    pipeline = mocked_pipeline_with_streaming_component
+    mock_chunks = [StreamingChunk(content="chunk1")]
+    external_queue: asyncio.Queue = asyncio.Queue()
+    late_event = {"type": "late", "data": "added after the last chunk"}
+
+    async def mock_run_async(data):
+        callback = data.get("streaming_component", {}).get("streaming_callback")
+        if callback:
+            await callback(mock_chunks[0])
+        # The pipeline finishes right after this, with no chunk left to wake the stream up.
+        await external_queue.put(late_event)
+
+    pipeline.run_async = mocker.AsyncMock(side_effect=mock_run_async)
+
+    chunks = [chunk async for chunk in async_streaming_generator(pipeline, external_event_queue=external_queue)]
+
+    assert chunks == [mock_chunks[0], late_event]
+
+
+def test_stream_chunks_from_queue_sync_drains_external_event_before_done():
+    from hayhooks.server.pipelines.streaming import _stream_chunks_from_queue_sync
+
+    external_queue: Queue = Queue()
+    late_event = {"type": "late", "data": "added after the last chunk"}
+
+    class InternalQueue(Queue):
+        def get(self, block=True, timeout=None):
+            # The event lands after the external queue was drained and before the done signal is read.
+            external_queue.put(late_event)
+
+    assert list(_stream_chunks_from_queue_sync(InternalQueue(), external_queue)) == [late_event]
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(
     PIPELINE_HAS_RUN_ASYNC,
     reason="Haystack v2 only: a sync Pipeline (no run_async) forces hybrid sync streaming callbacks.",
