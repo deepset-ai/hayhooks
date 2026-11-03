@@ -129,7 +129,7 @@ async def _normalize_result(result: Any, *, stream_requested: bool) -> str | Gen
     """Normalize the wrapper's return value to what the OpenAI router expects."""
     if not stream_requested:
         if isinstance(result, Generator):
-            return _collect_sync_generator(result)
+            return await run_in_threadpool(_collect_sync_generator, result)
         if isinstance(result, AsyncGenerator):
             return await _collect_async_generator(result)
         return result
