@@ -1,0 +1,155 @@
+# Installation
+
+This guide covers how to install Hayhooks and its dependencies.
+
+Want to serve pipelines and inspect their runs from the terminal? Install `pip install "hayhooks[tui]"`, start `hayhooks run`, then open `hayhooks dashboard` in another terminal. The [dashboard guide](https://deepset-ai.github.io/hayhooks/features/terminal-dashboard/index.md) walks through the three views and authentication.
+
+## System Requirements
+
+- Python 3.10 through 3.14
+- Operating System: Linux, macOS, or Windows
+- Memory: Minimum 512MB RAM, 2GB+ recommended
+- Storage: Minimum 100MB free space
+
+## Install from PyPI
+
+```
+pip install hayhooks
+```
+
+This includes all core features for deploying and running pipelines.
+
+```
+pip install "hayhooks[mcp]"
+```
+
+Includes all standard features plus [MCP Server](https://deepset-ai.github.io/hayhooks/features/mcp-support/index.md) support for integration with AI development tools like Cursor and Claude Desktop.
+
+```
+pip install "hayhooks[a2a]"
+```
+
+Includes all standard features plus [A2A Server](https://deepset-ai.github.io/hayhooks/features/a2a-support/index.md) support, exposing deployed pipelines and agents over the [A2A protocol](https://a2a-protocol.org) so other agents can discover and delegate tasks to them.
+
+```
+pip install "hayhooks[tracing]"
+```
+
+Includes OpenTelemetry SDK, OTLP exporter support, and FastAPI/Starlette instrumentors so Hayhooks can emit request-level traces alongside Haystack span instrumentation. Hayhooks also auto-bootstraps OTLP tracing when an OTLP endpoint is configured via `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`. Local trace inspection is available in the terminal dashboard without Node.js or an external tracing backend. See [terminal tracing](https://deepset-ai.github.io/hayhooks/reference/tracing/#terminal-trace-inspection).
+
+```
+pip install 'hayhooks[tui]'
+hayhooks dashboard
+```
+
+Adds Textual for the read-only terminal dashboard on Python 3.10–3.14. Server startup and ordinary CLI commands do not require Textual. See the [dashboard guide](https://deepset-ai.github.io/hayhooks/features/terminal-dashboard/index.md) for screenshots, local setup, keyboard navigation, and remote connections.
+
+```
+pip install "hayhooks[durable]"
+```
+
+Includes the durable execution engine and `redis>=5.0.1,<9`. Production deployments use Redis; the process-local memory store is for development and tests.
+
+```
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+pip install -e .
+```
+
+Useful for development or testing the latest unreleased features.
+
+## Verify Installation
+
+After installation, verify that Hayhooks is installed correctly:
+
+```
+# Check version
+hayhooks --version
+
+# Show help
+hayhooks --help
+```
+
+## Development Installation
+
+If you want to contribute to Hayhooks, we recommend using [Hatch](https://hatch.pypa.io/), the project's build and environment management tool:
+
+```
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Install Hatch (if not already installed)
+pip install hatch
+
+# Run unit tests
+hatch run test:unit
+
+# Run integration tests
+hatch run test:integration
+
+# Run tests
+hatch run test:all
+
+# Format code
+hatch run fmt
+
+# Serve documentation locally
+hatch run docs:serve
+```
+
+Hatch automatically manages virtual environments and dependencies for you. See available commands in `pyproject.toml`.
+
+### Alternative: Manual Installation
+
+If you prefer manual setup:
+
+```
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Create a virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install in development mode
+pip install -e .
+```
+
+## Docker Installation
+
+### Using Docker Hub
+
+```
+# Pull the image corresponding to Hayhooks main branch
+docker pull deepset/hayhooks:main
+
+# Run Hayhooks
+docker run -p 1416:1416 deepset/hayhooks:main
+```
+
+You can inspect all available images on [Docker Hub](https://hub.docker.com/r/deepset/hayhooks/tags).
+
+### Building from Source
+
+```
+# Clone the repository
+git clone https://github.com/deepset-ai/hayhooks.git
+cd hayhooks
+
+# Build with Docker Buildx Bake (current platform) and load into Docker
+cd docker
+IMAGE_NAME=hayhooks IMAGE_TAG_SUFFIX=local docker buildx bake --load
+
+# Run the image
+docker run -p 1416:1416 hayhooks:local
+```
+
+## Next Steps
+
+After successful installation:
+
+- [Quick Start](https://deepset-ai.github.io/hayhooks/getting-started/quick-start/index.md) - Get started with basic usage
+- [Configuration](https://deepset-ai.github.io/hayhooks/getting-started/configuration/index.md) - Configure Hayhooks for your needs
+- [Examples](https://deepset-ai.github.io/hayhooks/examples/overview/index.md) - Explore example implementations
