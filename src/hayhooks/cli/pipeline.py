@@ -287,19 +287,16 @@ def _run_with_streaming(ctx: typer.Context, pipeline_name: str, params: dict[str
 
 def _run_regular(ctx: typer.Context, pipeline_name: str, params: dict[str, Any]) -> dict[str, Any]:
     """Execute pipeline in regular (non-streaming) mode."""
-    return cast(
-        dict[str, Any],
-        with_progress_spinner(
-            f"Running pipeline '{pipeline_name}'...",
-            make_request,
-            host=ctx.obj["host"],
-            port=ctx.obj["port"],
-            endpoint=f"{pipeline_name}/run",
-            method="POST",
-            json=params,
-            disable_ssl=ctx.obj["disable_ssl"],
-            use_https=ctx.obj["use_https"],
-        ),
+    return with_progress_spinner(
+        f"Running pipeline '{pipeline_name}'...",
+        make_request,
+        host=ctx.obj["host"],
+        port=ctx.obj["port"],
+        endpoint=f"{pipeline_name}/run",
+        method="POST",
+        json=params,
+        disable_ssl=ctx.obj["disable_ssl"],
+        use_https=ctx.obj["use_https"],
     )
 
 

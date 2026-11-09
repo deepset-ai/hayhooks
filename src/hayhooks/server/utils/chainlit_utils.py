@@ -28,7 +28,7 @@ def is_chainlit_available() -> bool:
         bool: True if Chainlit is installed, False otherwise.
     """
     try:
-        import chainlit  # noqa: F401  # ty: ignore[unresolved-import]
+        import chainlit  # noqa: F401  # ty: ignore[import-not-found]
 
         return True
     except ImportError:
@@ -120,7 +120,7 @@ def mount_chainlit_app(
         >>> mount_chainlit_app(app, path="/chat")
     """
     try:
-        from chainlit.utils import mount_chainlit  # ty: ignore[unresolved-import]
+        from chainlit.utils import mount_chainlit  # ty: ignore[import-not-found]
     except ImportError as e:
         msg = "Run 'pip install \"hayhooks[chainlit]\"' to install Chainlit UI support."
         raise ImportError(msg) from e
