@@ -72,21 +72,21 @@ _OTLP_PROTOCOL_ENV_KEYS = ("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_EXPORTER_
 _LOCAL_TRACE_STACK: ContextVar[tuple[tuple[str, str], ...]] = ContextVar("_hayhooks_local_trace_stack", default=())
 
 with LazyImport(_LAZY_IMPORT_HINT) as fastapi_tracing_import:
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # ty: ignore[unresolved-import]
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # ty: ignore[import-not-found]
 
 with LazyImport(_LAZY_IMPORT_HINT) as starlette_tracing_import:
-    from opentelemetry.instrumentation.starlette import StarletteInstrumentor  # ty: ignore[unresolved-import]
+    from opentelemetry.instrumentation.starlette import StarletteInstrumentor  # ty: ignore[import-not-found]
 
 with LazyImport(_LAZY_IMPORT_HINT) as otel_sdk_import:
-    from opentelemetry import trace as otel_trace  # ty: ignore[unresolved-import]
-    from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # ty: ignore[unresolved-import]
-    from opentelemetry.sdk.trace import TracerProvider  # ty: ignore[unresolved-import]
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # ty: ignore[unresolved-import]
+    from opentelemetry import trace as otel_trace  # ty: ignore[import-not-found]
+    from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # ty: ignore[import-not-found]
+    from opentelemetry.sdk.trace import TracerProvider  # ty: ignore[import-not-found]
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # ty: ignore[import-not-found]
 
 # In Haystack v3 the OpenTelemetryTracer moved out of core into the ``opentelemetry-haystack`` integration package
 # (installed by the ``tracing`` extra).
 with LazyImport(_LAZY_IMPORT_HINT) as otel_haystack_tracer_import:
-    from haystack_integrations.tracing.opentelemetry import OpenTelemetryTracer  # ty: ignore[unresolved-import]
+    from haystack_integrations.tracing.opentelemetry import OpenTelemetryTracer  # ty: ignore[import-not-found]
 
 
 # Returns type[Any] rather than type[Tracer]: both branches resolve the class dynamically,
@@ -107,10 +107,14 @@ def _resolve_otel_tracer_class() -> type[Any] | None:
 
 
 with LazyImport(_LAZY_IMPORT_HINT) as otlp_http_exporter_import:
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as OTLPHTTPSpanExporter  # ty: ignore[unresolved-import]
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # ty: ignore[import-not-found]
+        OTLPSpanExporter as OTLPHTTPSpanExporter,
+    )
 
 with LazyImport(_LAZY_IMPORT_HINT) as otlp_grpc_exporter_import:
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as OTLPGRPCSpanExporter  # ty: ignore[unresolved-import]
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # ty: ignore[import-not-found]
+        OTLPSpanExporter as OTLPGRPCSpanExporter,
+    )
 
 
 def _span_correlation_data(span: Span | None) -> dict[str, str]:
