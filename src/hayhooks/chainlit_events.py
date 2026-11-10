@@ -12,7 +12,7 @@ class ChainlitEvent(PipelineEvent):
     """
 
     # Pydantic validates Chainlit's dict-only payload; preserve that narrower schema.
-    data: dict[str, Any]  # ty: ignore[invalid-mutable-override]
+    data: dict[str, Any]  # ty: ignore[incompatible-mutable-override]
 
 
 def create_custom_element_event(name: str, props: dict[str, Any]) -> ChainlitEvent:
