@@ -43,8 +43,11 @@ async def async_streaming_pipeline():
         yield pipeline
     finally:
         generator = pipeline.get_component("llm")
-        await generator.async_client.close()
-        generator.client.close()
+        # Haystack 3 creates each client on first use, so a client the test never used is None.
+        if generator.async_client is not None:
+            await generator.async_client.close()
+        if generator.client is not None:
+            generator.client.close()
 
 
 @pytest.fixture(scope="module")
