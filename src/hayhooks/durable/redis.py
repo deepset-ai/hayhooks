@@ -46,7 +46,6 @@ from hayhooks.durable.engine import (
 from hayhooks.durable.store import (
     CHUNK_CURSOR_START,
     EXECUTION_CANDIDATE_LIMIT,
-    EXECUTION_CURSOR_STAMP_WIDTH,
     LEASE_COMMANDS,
     MAINTENANCE_BATCH_SIZE,
     MAINTENANCE_MAX_BATCHES,
@@ -64,6 +63,7 @@ from hayhooks.durable.store import (
     StoredExecution,
     StreamChunk,
     SubmissionResult,
+    _parse_creation_member,
     bind_store_command,
     chunk_read_count,
     creation_member,
@@ -561,21 +561,16 @@ class RedisExecutionStore:
         with _redis_errors():
             await self._cleanup_monitoring()
             index = self.keys.executions(query.scope)
+            after = query.after()
             members = await self.redis.zrangebylex(
-                index, f"({query.after()}" if query.after() else "-", "+", 0, EXECUTION_CANDIDATE_LIMIT + 1
+                index, f"({after}" if after else "-", "+", 0, EXECUTION_CANDIDATE_LIMIT + 1
             )
             # Invalid index members cannot be issued as cursors. Fail closed on index corruption.
             candidates = []
             for raw in members:
                 try:
                     member = _text(raw)
-                    ControlQuery(
-                        owner_id=query.owner_id,
-                        cursor=query.encode_cursor(member),
-                        status=query.status,
-                        revision=query.revision,
-                        search=query.search,
-                    )
+                    _parse_creation_member(member)
                     candidates.append(member)
                 except (ValueError, UnicodeError, TypeError) as error:
                     raise ExecutionStoreCorruptionError("invalid execution index member") from error
@@ -614,9 +609,7 @@ class RedisExecutionStore:
             try:
                 expiry = _text(raw_member)
                 scope, member = expiry.split(":", 1)
-                stamp, run_id = member.split(":", 1)
-                if len(stamp) != EXECUTION_CURSOR_STAMP_WIDTH or not stamp.isascii() or not stamp.isdigit():
-                    raise ValueError
+                run_id = _parse_creation_member(member)
                 keys.extend((self.keys.executions(scope), self.keys.control(run_id)))
                 args.extend((expiry, member))
             except (ValueError, TypeError, UnicodeError) as error:
@@ -930,7 +923,7 @@ class RedisExecutionStore:
 
     async def _heartbeat(self, run_id: str, command: Heartbeat) -> TransitionPlan:
         """Renew a lease inside the owned guard; only the deadline and its index change."""
-        bind_store_command(command, 0, self.config)
+        validate_lease_duration(command.lease_duration_ms, self.config)
         values = await self._heartbeat_script(
             keys=[self.keys.control(run_id), self.keys.lease_expiry],
             args=[

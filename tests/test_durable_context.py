@@ -137,7 +137,8 @@ async def test_progress_buffer_keeps_only_configured_history(context_factory) ->
     ]
 
 
-async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context_factory) -> None:
+@pytest.mark.parametrize("resume_input", [{"approved": True}, False, 0, "", [], {}, None])
+async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context_factory, resume_input) -> None:
     store, create = context_factory
     context, _ = await create()
     context.state["step"] = 1
@@ -158,7 +159,7 @@ async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context
     assert decode_json(waiting.payloads[PayloadKind.WAIT], max_bytes=4_096)["kind"] == "approval"
     assert len(waiting.progress) == 1
 
-    resumed_snapshot = snapshot.model_copy(update={"resume_input": {"approved": True}})
+    resumed_snapshot = snapshot.model_copy(update={"resume_input": resume_input})
     await store.transition(
         context.execution_id,
         Resume(
@@ -170,7 +171,11 @@ async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context
     )
     resumed, claim = await create(context.execution_id, submit=False)
     assert resumed.attempt == 2
-    assert resumed.resume_input == {"approved": True}
+    await resumed.checkpoint()
+    unconsumed = await store.read(context.execution_id)
+    assert unconsumed is not None
+    assert decode_checkpoint(unconsumed.payloads[PayloadKind.CHECKPOINT]).resume_input == resume_input
+    assert resumed.resume_input == resume_input
     assert resumed.resume_input is None
 
     persisted = await store.read(context.execution_id)
@@ -185,7 +190,7 @@ async def test_suspend_and_resume_persist_one_reconstructable_checkpoint(context
         ),
         decode_checkpoint(persisted.payloads[PayloadKind.CHECKPOINT]),
     )
-    assert reconstructed.resume_input == {"approved": True}
+    assert reconstructed.resume_input == resume_input
 
     await resumed.checkpoint()
     persisted = await store.read(context.execution_id)

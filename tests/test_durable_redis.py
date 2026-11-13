@@ -13,6 +13,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError
 from redis.retry import Retry
 
+from hayhooks.durable.engine import ExecutionStatus, Heartbeat, LeaseIndexUpdate, TransitionPlan
 from hayhooks.durable.redis import RedisExecutionStore, RedisKeys, decode_control, encode_control
 from hayhooks.durable.store import ExecutionStoreCorruptionError, ExecutionStoreError, StoreConfig, StreamChunk
 from tests.durable_store_contract import contract_control
@@ -136,6 +137,46 @@ def mock_redis() -> AsyncMock:
     redis = AsyncMock(connection_pool=None)
     redis.register_script = MagicMock()
     return redis
+
+
+@pytest.mark.parametrize("safety_ms", [0, 10, 1_500])
+@pytest.mark.parametrize("duration_offset", [-1, 0])
+async def test_heartbeat_rejects_duration_at_or_below_safety_before_redis(safety_ms: int, duration_offset: int) -> None:
+    store = RedisExecutionStore(mock_redis(), "jobs", config=StoreConfig(lease_commit_safety_ms=safety_ms))
+    script = AsyncMock()
+    store._heartbeat_script = script
+    command = Heartbeat(7, "worker", -123_456, safety_ms + duration_offset)
+
+    with pytest.raises(ValueError, match="lease duration must exceed the commit safety margin"):
+        await store.transition("run_1", command)
+
+    script.assert_not_awaited()
+
+
+@pytest.mark.parametrize("safety_ms", [0, 10, 1_500])
+@pytest.mark.parametrize("now_ms", [-123_456, 0, 9_876_543_210])
+async def test_heartbeat_uses_configured_safety_and_redis_control(safety_ms: int, now_ms: int) -> None:
+    store = RedisExecutionStore(mock_redis(), "jobs", config=StoreConfig(lease_commit_safety_ms=safety_ms))
+    control = replace(
+        contract_control("jobs"),
+        status=ExecutionStatus.RUNNING,
+        fence=7,
+        run_attempt=1,
+        lease_owner="worker",
+        lease_expires_at_ms=20_000,
+        updated_at_ms=10_000,
+    )
+    script = AsyncMock(return_value=[value for pair in encode_control(control).items() for value in pair])
+    store._heartbeat_script = script
+    command = Heartbeat(7, "worker", now_ms, safety_ms + 1, lease_commit_safety_ms=safety_ms + 10_000)
+
+    plan = await store.transition("run_1", command)
+
+    assert plan == TransitionPlan(control, lease_index_update=LeaseIndexUpdate(20_000, 7))
+    script.assert_awaited_once_with(
+        keys=[store.keys.control("run_1"), store.keys.lease_expiry],
+        args=["worker", 7, safety_ms, safety_ms + 1, RedisKeys.lease_member("run_1", 7)],
+    )
 
 
 async def test_redis_client_errors_are_normalized() -> None:

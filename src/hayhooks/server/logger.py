@@ -201,6 +201,6 @@ def log_elapsed(level: str = "DEBUG") -> Callable[[F], F]:
             )
             return result
 
-        return wrapper  # ty: ignore[invalid-return-type]
+        return wrapper  # ty: ignore[invalid-explicit-return]
 
     return decorator

@@ -18,7 +18,14 @@ from hayhooks.durable.engine import Claim, Complete, RequestCancellation, Suspen
 from hayhooks.durable.fastapi import create_durable_router
 from hayhooks.durable.redis import RedisExecutionStore
 from hayhooks.durable.runtime import DurableDeployment
-from hayhooks.durable.store import ControlQuery, MemoryExecutionStore, StoreConfig, ExecutionStoreError, creation_member, monitoring_scope
+from hayhooks.durable.store import (
+    ControlQuery,
+    ExecutionStoreCorruptionError,
+    ExecutionStoreError,
+    MemoryExecutionStore,
+    StoreConfig,
+    monitoring_scope,
+)
 from tests.durable_store_contract import contract_control
 
 
@@ -145,6 +152,62 @@ async def test_redis_corrupt_and_expired_controls_advance_cursor(monitored_store
 def test_malformed_cursor_is_rejected(cursor):
     with pytest.raises(ValueError):
         ControlQuery(cursor=cursor)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "missing_separator",
+        "0:run",
+        f"{'0' * 21}:run",
+        f"{chr(0x0660) * 20}:run",
+        f"{'0' * 20}:",
+        f"{'0' * 20}:bad:id",
+        f"{'0' * 20}:{'r' * 129}",
+    ],
+)
+async def test_malformed_members_preserve_boundary_errors(monitored_store, member):
+    query = ControlQuery(owner_id="owner")
+    with pytest.raises(ValueError, match=r"^invalid execution cursor for this owner and query$"):
+        replace(query, cursor=query.encode_cursor(member))
+
+    store = monitored_store
+    if not isinstance(store, RedisExecutionStore):
+        return
+    index = store.keys.executions(query.scope)
+    await store.redis.zadd(index, {member: 0})
+    with pytest.raises(ExecutionStoreCorruptionError, match=r"^invalid execution index member$"):
+        await store.list_controls(query)
+    assert await store.redis.zscore(index, member) == 0
+    await store.redis.zrem(index, member)
+
+    expiry = f"{query.scope}:{member}"
+    await store.redis.zadd(store.keys.execution_expiry, {expiry: 0})
+    with pytest.raises(ExecutionStoreCorruptionError, match=r"^invalid execution expiry member$"):
+        await store.list_controls(query)
+    assert await store.redis.zscore(store.keys.execution_expiry, expiry) == 0
+
+
+@pytest.mark.parametrize("member", [f"{'0' * 20}:r", f"{'9' * 20}:{'r' * 128}"])
+def test_existing_cursor_encoding_and_member_domain(member):
+    query = ControlQuery(owner_id="owner", status=ExecutionStatus.WAITING, revision="v1", search="r")
+    cursor = base64.urlsafe_b64encode(json.dumps([query.fingerprint, member]).encode()).decode()
+    assert query.encode_cursor(member) == cursor
+    assert replace(query, cursor=cursor).after() == member
+
+
+async def test_redis_rejects_malformed_lookahead_member(monitored_store):
+    store = monitored_store
+    if not isinstance(store, RedisExecutionStore):
+        return
+    query = ControlQuery(owner_id="owner", limit=1)
+    members = {f"{'0' * 20}:run_{index:03}": 0 for index in range(200)}
+    members[f"{'9' * 20}:bad:id"] = 0
+    index = store.keys.executions(query.scope)
+    await store.redis.zadd(index, members)
+    with pytest.raises(ExecutionStoreCorruptionError, match=r"^invalid execution index member$"):
+        await store.list_controls(query)
+    assert await store.redis.zcard(index) == 201
 
 
 class RequestModel(BaseModel):
