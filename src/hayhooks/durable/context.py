@@ -391,7 +391,6 @@ class DurableContext:
         self._checkpoint = checkpoint
         self._state = checkpoint.application_state.copy()
         self._resume_input = checkpoint.resume_input
-        self._resume_input_consumed = False
         self._operation_lock = asyncio.Lock()
         self._adapter = adapter
 
@@ -414,8 +413,8 @@ class DurableContext:
     @property
     def resume_input(self) -> JsonValue:
         """Consume the persisted resume value once in this local attempt."""
-        value = None if self._resume_input_consumed else self._resume_input
-        self._resume_input_consumed = True
+        value = self._resume_input
+        self._resume_input = None
         return value
 
     @property
@@ -580,7 +579,7 @@ class DurableContext:
                     self._checkpoint.adapter_checkpoint if adapter_checkpoint is None else adapter_checkpoint
                 ),
                 "application_state": dict(self._state if application_state is None else application_state),
-                "resume_input": None if self._resume_input_consumed else self._resume_input,
+                "resume_input": self._resume_input,
             }
         )
 

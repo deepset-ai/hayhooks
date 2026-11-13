@@ -165,6 +165,14 @@ def creation_member(control: ExecutionControl) -> str:
     return f"{control.created_at_ms:0{EXECUTION_CURSOR_STAMP_WIDTH}d}:{control.run_id}"
 
 
+def _parse_creation_member(member: str) -> str:
+    stamp, run_id = member.split(":", 1)
+    validate_run_id(run_id)
+    if len(stamp) != EXECUTION_CURSOR_STAMP_WIDTH or not stamp.isascii() or not stamp.isdigit():
+        raise ValueError
+    return run_id
+
+
 @dataclass(frozen=True, slots=True)
 class ControlQuery:
     """Bounded, owner-scoped creation pagination shared by both stores."""
@@ -202,14 +210,8 @@ class ControlQuery:
             fingerprint, member = json.loads(base64.b64decode(self.cursor, altchars=b"-_", validate=True))
             if not isinstance(fingerprint, str) or not isinstance(member, str):
                 raise ValueError
-            stamp, run_id = member.split(":", 1)
-            validate_run_id(run_id)
-            if (
-                fingerprint != self.fingerprint
-                or len(stamp) != EXECUTION_CURSOR_STAMP_WIDTH
-                or not stamp.isascii()
-                or not stamp.isdigit()
-            ):
+            _parse_creation_member(member)
+            if fingerprint != self.fingerprint:
                 raise ValueError
             return member
         except (ValueError, TypeError, UnicodeError) as error:
