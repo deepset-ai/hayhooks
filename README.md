@@ -74,7 +74,7 @@ def search(query: str) -> str:
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.pipeline = Agent(
-            chat_generator=OpenAIResponsesChatGenerator(model="gpt-4o-mini"),
+            chat_generator=OpenAIResponsesChatGenerator(model="gpt-6-luna"),
             tools=[search],
         )
 
@@ -212,7 +212,7 @@ class PipelineWrapper(BasePipelineWrapper):
     durable_resume_model = Approval  # typed input for human-in-the-loop waits
 
     def setup(self) -> None:
-        generator = OpenAIResponsesChatGenerator(model="gpt-4o-mini")
+        generator = OpenAIResponsesChatGenerator(model="gpt-6-luna")
         self.pipeline = Agent(chat_generator=generator, tools=[search])
 
     async def run_durable_async(self, context: DurableContext, task: Task) -> Report:

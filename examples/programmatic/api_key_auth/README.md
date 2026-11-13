@@ -32,7 +32,7 @@ At startup, Hayhooks auto-deploys the `weather_agent` pipeline from the `pipelin
 
 ## Prerequisites
 
-- An OpenAI API key (the agent uses `gpt-4o-mini`)
+- An OpenAI API key (the agent uses `gpt-6-luna`)
 - Install pinned dependencies: `pip install -r requirements.txt`
 
 ## Run
