@@ -43,13 +43,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=build-image /opt/venv /opt/venv
 
+# Run as a non-root user. The service executes user-supplied pipeline code, so
+# the process should not run as root. Both runtime-writable directories (the
+# pipelines dir, which the deploy endpoint writes to, and the additional Python
+# path for custom components) are chowned to the new user; /opt/venv stays
+# root-owned and read-only since PYTHONDONTWRITEBYTECODE is set and the app
+# does not install packages at runtime.
+RUN useradd --create-home --shell /usr/sbin/nologin hayhooks
 ARG pipelines_dir
-RUN mkdir -p "$pipelines_dir"
+RUN mkdir -p "$pipelines_dir" \
+    && chown -R hayhooks:hayhooks "$pipelines_dir"
 ENV HAYHOOKS_PIPELINES_DIR=$pipelines_dir
 
 ARG additional_python_path
-RUN mkdir -p "$additional_python_path"
+RUN mkdir -p "$additional_python_path" \
+    && chown -R hayhooks:hayhooks "$additional_python_path"
 ENV HAYHOOKS_ADDITIONAL_PYTHON_PATH=$additional_python_path
+
+USER hayhooks
 
 EXPOSE 1416
 
