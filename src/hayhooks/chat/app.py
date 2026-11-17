@@ -21,6 +21,7 @@ from hayhooks.tui.theme import apply_theme
 ROOMY_TERMINAL_HEIGHT = 32
 COMPACT_TERMINAL_HEIGHT = 24
 FULL_SHORTCUT_WIDTH = 80
+NARROW_TERMINAL_WIDTH = 60
 SHORTCUTS = "↵ send · Ctrl+J line · Esc stop · Ctrl+End latest · Ctrl+T theme · Ctrl+Q quit"
 INCOMPLETE_HISTORY = (
     "This incomplete turn is not included in the next request's history. Edit or copy the request before sending again."
@@ -55,17 +56,17 @@ class ToolCard(Collapsible):
             self.arguments,
             Static("RESULT", classes="detail-label"),
             self.output,
-            title=f"{self.label} · {self.state}",
+            title=f"{self.state} · {self.label}",
             classes="tool-card running",
         )
-        self.tooltip = f"Call {event.call_id} · Enter or click to expand"
+        self.tooltip = f"{self.label} · Call {event.call_id} · Enter or click to expand"
 
     def finish(self, event: ToolFinished) -> None:
         self.state = "Error" if event.error else "Success"
         self.output.load_text(event.result)
         self.remove_class("running")
         self.set_class(event.error, "error")
-        self.title = f"{self.label} · {self.state}"
+        self.title = f"{self.state} · {self.label}"
         if event.error:
             self.collapsed = False
 
@@ -74,7 +75,7 @@ class ToolCard(Collapsible):
             self.state = "Interrupted"
             self.remove_class("running")
             self.add_class("interrupted")
-            self.title = f"{self.label} · {self.state} · outcome unknown"
+            self.title = f"{self.state} · outcome unknown · {self.label}"
             self.output.load_text("No tool result was received. The operation's completion is unknown.")
 
 
@@ -97,6 +98,7 @@ class Turn:
 
 
 class ChatApp(App):
+    TITLE = "Hayhooks chat"
     CSS_PATH = "chat.tcss"
     BINDINGS: ClassVar = [
         Binding("escape", "stop", "Stop", priority=True),
@@ -143,13 +145,12 @@ class ChatApp(App):
             yield Static(f"{self.runner.pipeline} · {self.server_identity}", id="workspace", markup=False)
             with VerticalScroll(id="transcript"):
                 yield Markdown(
-                    "## What would you like to work on?\n\n"
-                    "Chat with your deployed Agent or pipeline. Its tools run on the server.",
+                    "Ask your deployed Agent or pipeline.\n\nTools run on the server.",
                     id="welcome",
                 )
-            yield Static("Ready", id="status", markup=False)
             yield MessageComposer(soft_wrap=True, id="composer", show_line_numbers=False)
             with Horizontal(id="actions"):
+                yield Static("Ready", id="status", markup=False)
                 yield Button("Send", id="send", compact=True)
                 yield Button("Stop", id="stop", disabled=True, compact=True)
             yield Static(SHORTCUTS, id="shortcuts", markup=False)
@@ -170,6 +171,12 @@ class ChatApp(App):
     def _update_layout(self, size: Size) -> None:
         self.screen.set_class(size.height >= ROOMY_TERMINAL_HEIGHT, "roomy")
         self.screen.set_class(size.height < COMPACT_TERMINAL_HEIGHT, "compact")
+        narrow = size.width < NARROW_TERMINAL_WIDTH
+        self.screen.set_class(narrow, "narrow")
+        workspace = self.query("#workspace")
+        if workspace:
+            separator = "\n" if narrow else " · "
+            workspace.first(Static).update(f"{self.runner.pipeline}{separator}{self.server_identity}")
         shortcuts = self.query("#shortcuts")
         if shortcuts:
             shortcuts.first(Static).update(

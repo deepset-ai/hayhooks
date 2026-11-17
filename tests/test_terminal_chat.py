@@ -232,13 +232,15 @@ async def test_live_terminal_resize_preserves_draft_tools_and_reader_scroll():
             assert composer.content_region.height >= 1
             assert composer.region.width >= width - 4
             assert transcript.region.height >= 4
-            assert transcript.region.bottom <= app.query_one("#status").region.y
+            assert transcript.region.bottom <= composer.region.y
             assert transcript.scroll_y == 0
             assert transcript.max_scroll_x == 0
             for identifier in ("composer", "send", "stop"):
                 widget = app.query_one("#" + identifier)
                 assert app.screen.region.contains_region(widget.region), (width, height, identifier, widget.region)
             assert app.query_one("#actions").region.y >= composer.region.bottom
+            assert app.query_one("#status").region.y == app.query_one("#send").region.y
+            assert app.query_one("#send").region.y == app.query_one("#stop").region.y
             assert card.output.region.height <= max(3, height // 3 + 1)
         card.output.focus()
         await pilot.press("pagedown", "pagedown")
@@ -436,9 +438,38 @@ async def test_compact_layout_keeps_transcript_space_and_safe_server_identity(th
         assert not app.query("Footer, #brand, #hint")
         for identifier in ("send", "stop"):
             assert app.query_one("#" + identifier).region.height == 1
+        await pilot.resize_terminal(40, 12)
+        await pilot.pause()
+        assert str(header.render()) == "test-agent\nhttps://localhost:1416"
+        assert header.region.height == 2
+        assert app.query_one("#transcript").region.height >= 4
+        assert app.query_one("#composer").region.width == 40
+        for identifier in ("send", "stop"):
+            assert app.screen.region.contains_region(app.query_one("#" + identifier).region)
         await pilot.resize_terminal(160, 48)
         await pilot.pause()
+        assert str(header.render()) == "test-agent · https://localhost:1416"
         assert app.query_one("#composer").region.height == 5
+
+
+async def test_collapsed_tool_row_keeps_state_visible_with_long_name():
+    app = ChatApp(BlockingRunner())
+    async with app.run_test(size=(40, 12)) as pilot:
+        card = ToolCard(ToolStarted("call", "Agent", "a_very_long_tool_name_that_will_be_truncated", "{}"))
+        await app.query_one("#transcript").mount(card)
+        await pilot.pause()
+        assert card.region.height == 1
+        assert card.title.startswith("Running · Agent")
+        assert "a_very_long_tool_name_that_will_be_truncated" in card.tooltip
+        card.finish(ToolFinished("call", "literal result"))
+        await pilot.pause()
+        assert card.region.height == 1
+        assert card.title.startswith("Success · Agent")
+        card.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not card.collapsed
+        assert card.output.text == "literal result"
 
 
 class RecoveringRunner(BlockingRunner):

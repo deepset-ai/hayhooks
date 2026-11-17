@@ -35,8 +35,8 @@ Press **Enter** or **Send** to send. **Ctrl+J** inserts a new line.
 **Shift+Enter** also inserts a new line when your terminal distinguishes it from Enter.
 You can draft another message while a response arrives.
 
-Tool cards show **Running**, **Success**, **Error**, or **Interrupted**.
-Click a card or focus its title with Tab and press Enter to inspect arguments and results.
+Collapsed tool rows show **Running**, **Success**, **Error**, or **Interrupted** on one line.
+Click a row or focus its title with Tab and press Enter to inspect arguments and results.
 Errors expand automatically. Tool results remain literal text, and long results support keyboard scrolling.
 
 Selecting transcript text, tool details, or composer text copies it automatically.
