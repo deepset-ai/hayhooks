@@ -6,6 +6,7 @@ import typer
 from fastapi import FastAPI
 
 from hayhooks.cli.a2a import a2a
+from hayhooks.cli.chat import chat
 from hayhooks.cli.dashboard import dashboard
 from hayhooks.cli.mcp import mcp
 from hayhooks.cli.pipeline import pipeline
@@ -19,6 +20,7 @@ hayhooks_cli.add_typer(pipeline, name="pipeline")
 hayhooks_cli.add_typer(mcp, name="mcp")
 hayhooks_cli.add_typer(a2a, name="a2a")
 hayhooks_cli.command()(dashboard)
+hayhooks_cli.command()(chat)
 
 
 def _set_env(key: str, value: str | None) -> None:

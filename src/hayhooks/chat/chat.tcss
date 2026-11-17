@@ -1,0 +1,28 @@
+Screen { background: $background; color: $text; }
+#chat { width: 1fr; }
+#workspace { height: 1; padding: 0 1; color: $text-muted; text-overflow: ellipsis; }
+#transcript { height: 1fr; padding: 0 1; scrollbar-size: 1 1; }
+#welcome { margin: 1 0; color: $text-muted; }
+.entry { height: auto; margin: 1 0 0 0; padding: 0 1; }
+.entry .role { height: 1; text-style: bold; color: $text-muted; }
+.entry Markdown { margin: 0; padding: 0; background: transparent; }
+.entry.you { background: $surface; }
+.entry.error .role { color: $error; }
+#status { height: 1; color: $text-muted; padding: 0 1; text-overflow: ellipsis; }
+#composer { height: 3; min-height: 3; border: round $panel; padding: 0 1; background: $surface; }
+#composer:focus { border: round $accent; }
+#actions { height: 1; align-horizontal: right; }
+#actions Button { min-width: 8; margin-left: 1; }
+#shortcuts { height: 1; padding: 0 1; color: $text-muted; text-overflow: ellipsis; }
+Screen.roomy #composer { height: 5; }
+Screen.compact #welcome { margin: 0; }
+.tool-card { height: auto; margin: 1 0 0 0; border: round $panel; padding: 0; background: $surface; }
+.tool-card.running { border: round $accent; }
+.tool-card.error { border: round $error; }
+.tool-card.error CollapsibleTitle { color: $error; text-style: bold; }
+.tool-card.interrupted CollapsibleTitle { color: $warning; }
+.tool-card CollapsibleTitle { width: 1fr; }
+.tool-card Contents { padding: 0 1 1 1; }
+.detail-label { color: $text-muted; margin-top: 1; height: 1; }
+.tool-card TextArea { height: auto; min-height: 3; max-height: 30vh; border: none; padding: 0 1; background: $background; }
+.tool-card TextArea:focus { border: round $accent; }
