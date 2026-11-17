@@ -339,7 +339,11 @@ async def test_v3_custom_hook_stop_can_complete_without_model_text(chat_client):
     def finish(state: State) -> None:
         state.set("stop_run", "custom_success")
 
-    client = chat_client(Agent(chat_generator=CompletionGenerator([]), hooks={"before_llm": [finish]}))
+    agent = Agent(chat_generator=CompletionGenerator([]), hooks={"before_llm": [finish]})
+    if "stop_run" not in agent.resolved_state_schema:
+        pytest.skip("Haystack does not support stopping an agent from a before_llm hook")
+
+    client = chat_client(agent)
     events = []
 
     assert await client.run("Hi", lambda _: None, emit=events.append) == ""
