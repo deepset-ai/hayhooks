@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 from urllib.parse import urlsplit
@@ -12,7 +13,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.geometry import Size
 from textual.message import Message
 from textual.widgets import Button, Collapsible, Markdown, Static, TextArea
-from textual.worker import Worker
+from textual.widgets.text_area import Selection
+from textual.worker import Worker, get_current_worker
 
 from hayhooks.chat.client import ChatClient, ChatError
 from hayhooks.chat.events import ChatEvent, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
@@ -44,13 +46,34 @@ class MessageComposer(TextArea):
         self.replace("\n", *self.selection, maintain_selection_offset=False)
 
 
+class ToolTextArea(TextArea):
+    _line_break = re.compile(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
+
+    def __init__(self, text: str, *, classes: str) -> None:
+        super().__init__(self._display_text(text), read_only=True, show_cursor=False, classes=classes)
+
+    def _display_text(self, text: str) -> str:
+        # TextArea uses a single newline style. Keep original offsets for literal copying.
+        self._original = text
+        self._line_starts = [0, *(match.end() for match in self._line_break.finditer(text))]
+        return self._line_break.sub("\n", text)
+
+    def load_text(self, text: str) -> None:
+        self.selection = Selection()
+        super().load_text(self._display_text(text))
+
+    @property
+    def selected_text(self) -> str:
+        (start_row, start_column), (end_row, end_column) = sorted(self.selection)
+        return self._original[self._line_starts[start_row] + start_column : self._line_starts[end_row] + end_column]
+
+
 class ToolCard(Collapsible):
     def __init__(self, event: ToolStarted) -> None:
-        self.call_id = event.call_id
         self.label = f"{event.actor} · {event.name}"
         self.state: Literal["Running", "Success", "Error", "Interrupted"] = "Running"
-        self.arguments = TextArea(event.arguments, read_only=True, show_cursor=False, classes="tool-input")
-        self.output = TextArea("Waiting for a result…", read_only=True, show_cursor=False, classes="tool-output")
+        self.arguments = ToolTextArea(event.arguments, classes="tool-input")
+        self.output = ToolTextArea("Waiting for a result…", classes="tool-output")
         super().__init__(
             Static("ARGUMENTS", classes="detail-label"),
             self.arguments,
@@ -121,11 +144,10 @@ class ChatApp(App):
             self.event = event
 
     class Finished(Message):
-        def __init__(self, turn: Turn, text: str, *, failed: bool = False) -> None:
+        def __init__(self, turn: Turn, error: str | None) -> None:
             super().__init__()
             self.turn = turn
-            self.text = text
-            self.failed = failed
+            self.error = error
 
     def __init__(self, runner: ChatClient) -> None:
         super().__init__()
@@ -133,10 +155,9 @@ class ChatApp(App):
         self.runner = runner
         self.turn: Turn | None = None
         self.quit_requested = False
-        self.responses: dict[str, ResponseView] = {}
+        self.responses: dict[tuple[str, str], ResponseView] = {}
         self.tool_cards: dict[str, ToolCard] = {}
-        self.dirty: set[str] = set()
-        self.last_controller_text: str | None = None
+        self.dirty: set[tuple[str, str]] = set()
         server = urlsplit(self.runner.server_url)
         self.server_identity = f"{server.scheme}://{server.netloc.rsplit('@', 1)[-1]}"
 
@@ -200,7 +221,7 @@ class ChatApp(App):
         transcript = self.query_one("#transcript", VerticalScroll)
         follow = transcript.is_vertical_scroll_end
         dirty, self.dirty = self.dirty, set()
-        responses = [self.responses[message_id] for message_id in dirty]
+        responses = [self.responses[key] for key in dirty]
         for response in responses:
             await response.markdown.update(response.text)
         if follow:
@@ -210,14 +231,13 @@ class ChatApp(App):
     @on(Button.Pressed, "#send")
     async def action_send(self) -> None:
         composer = self.query_one("#composer", TextArea)
-        prompt = composer.text.strip()
-        if self.turn is not None or not prompt:
+        prompt = composer.text
+        if self.turn is not None or not prompt.strip():
             return
         self.turn = Turn(prompt)
         self.responses = {}
         self.tool_cards = {}
         self.dirty.clear()
-        self.last_controller_text = None
         welcome = self.query("#welcome")
         if welcome:
             await welcome.remove()
@@ -226,10 +246,12 @@ class ChatApp(App):
         self.query_one("#send", Button).disabled = True
         self.query_one("#stop", Button).disabled = False
         self.query_one("#status", Static).update("Thinking")
-        self.turn.worker = self._run_turn(prompt, self.turn)
+        self._run_turn(self.turn)
 
     @work(exit_on_error=False)
-    async def _run_turn(self, prompt: str, turn: Turn) -> None:
+    async def _run_turn(self, turn: Turn) -> None:
+        turn.worker = get_current_worker()
+
         def progress(text: str) -> None:
             if turn.state != "stopped":
                 self.post_message(self.Progress(turn, text))
@@ -241,22 +263,18 @@ class ChatApp(App):
                 turn.finish("complete")
             self.post_message(self.Output(turn, event))
 
+        failure = None
         try:
-            result = await self.runner.run(prompt, progress, emit=emit)
+            if turn.state != "stopped":
+                await self.runner.run(turn.prompt, progress, emit=emit)
         except asyncio.CancelledError:
-            finished = self.Finished(turn, "Reception ended before the response completed.", failed=True)
+            failure = "Reception ended before the response completed."
         except ChatError as error:
-            finished = self.Finished(turn, str(error), failed=True)
+            failure = str(error)
         except Exception:
-            finished = self.Finished(
-                turn,
-                "Chat could not finish this request. Check the server logs and affected files before retrying.",
-                failed=True,
-            )
-        else:
-            finished = self.Finished(turn, result)
-        turn.finish("failed" if finished.failed else "complete")
-        self.post_message(finished)
+            failure = "Chat could not finish this request. Check the server logs and affected files before retrying."
+        turn.finish("failed" if failure is not None else "complete")
+        self.post_message(self.Finished(turn, failure))
 
     def on_chat_app_progress(self, message: Progress) -> None:
         if message.turn is self.turn and message.turn.state != "stopped":
@@ -267,13 +285,13 @@ class ChatApp(App):
             return
         event = message.event
         if isinstance(event, (ResponseDelta, ResponseComplete)):
-            if event.message_id not in self.responses:
-                self.responses[event.message_id] = ResponseView(await self._append(event.actor, ""), event.actor)
-            response = self.responses[event.message_id]
+            source = "message" if isinstance(event, ResponseComplete) and not event.final else "answer"
+            key = (source, event.message_id)
+            if key not in self.responses:
+                self.responses[key] = ResponseView(await self._append(event.actor, ""), event.actor)
+            response = self.responses[key]
             response.text = response.text + event.text if isinstance(event, ResponseDelta) else event.text
-            self.dirty.add(event.message_id)
-            if isinstance(event, ResponseComplete) and event.final:
-                self.last_controller_text = event.text
+            self.dirty.add(key)
         else:
             transcript = self.query_one("#transcript", VerticalScroll)
             follow = transcript.is_vertical_scroll_end
@@ -293,20 +311,18 @@ class ChatApp(App):
         stopped = message.turn.state == "stopped"
         for card in self.tool_cards.values():
             card.interrupt()
-        if stopped or message.failed:
+        if stopped or message.error is not None:
             for response in self.responses.values():
                 entry = response.markdown.parent
                 assert entry is not None
                 entry.query_one(".role", Static).update(f"{response.actor} · Incomplete")
-            reason = "Stopped receiving. Server work may still be running." if stopped else message.text
+            reason = "Stopped receiving. Server work may still be running." if stopped else message.error
             await self._append(
                 "Hayhooks" if stopped else "Error", f"Response incomplete. {reason}\n\n{INCOMPLETE_HISTORY}"
             )
             composer = self.query_one("#composer", TextArea)
             if not composer.text:
                 composer.load_text(message.turn.prompt)
-        elif message.text != self.last_controller_text:
-            await self._append("Agent", message.text)
         self.turn = None
         self.query_one("#send", Button).disabled = False
         self.query_one("#stop", Button).disabled = True

@@ -34,12 +34,14 @@ Connecting does not grant the deployment access to your terminal's local directo
 Press **Enter** or **Send** to send. **Ctrl+J** inserts a new line.
 **Shift+Enter** also inserts a new line when your terminal distinguishes it from Enter.
 You can draft another message while a response arrives.
+Sent and restored prompts retain their indentation and trailing whitespace.
 
 Collapsed tool rows show **Running**, **Success**, **Error**, or **Interrupted** on one line.
 Click a row or focus its title with Tab and press Enter to inspect arguments and results.
 Errors expand automatically. Tool results remain literal text, and long results support keyboard scrolling.
 
 Selecting transcript text, tool details, or composer text copies it automatically.
+Copied tool results retain their original line endings.
 **Ctrl+C** copies an existing selection. Empty selections and streamed updates leave the clipboard unchanged.
 Scroll up to read without being pulled back by new output. **Ctrl+End** returns to the latest output.
 **Ctrl+T** switches between dark and light themes.

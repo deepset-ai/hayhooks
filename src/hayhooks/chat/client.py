@@ -76,6 +76,28 @@ def _invalid_data() -> ChatError:
     return ChatError("The server sent invalid chat data", kind="protocol")
 
 
+async def _sse_lines(response: httpx.Response) -> AsyncIterator[str]:
+    """Yield SSE lines immediately on CR or LF, including when CRLF spans two chunks."""
+    response.encoding = "utf-8-sig"
+    pending: list[str] = []
+    skip_lf = False
+    async for chunk in response.aiter_text():
+        if not chunk:
+            continue
+        text = chunk.removeprefix("\n") if skip_lf else chunk
+        skip_lf = chunk.endswith("\r")
+        lines = re.split(r"\r\n|\r|\n", text)
+        tail = lines.pop()
+        for line in lines:
+            pending.append(line)
+            yield "".join(pending)
+            pending.clear()
+        if tail:
+            pending.append(tail)
+    if pending:
+        yield "".join(pending)
+
+
 async def _sse_data(lines: AsyncIterator[str]) -> AsyncIterator[str]:
     data: list[str] = []
     async for line in lines:
@@ -229,7 +251,7 @@ class ChatClient:
                     failure = self._error("protocol", message)
                     raise failure
                 progress(f"Connected · {self.pipeline}")
-                async for data in _sse_data(response.aiter_lines()):
+                async for data in _sse_data(_sse_lines(response)):
                     try:
                         frame = _decode(data, progress)
                     except ChatError as error:

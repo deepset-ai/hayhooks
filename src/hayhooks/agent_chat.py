@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
+from itertools import count
 from typing import Any, Literal
 
 import anyio
@@ -18,6 +20,18 @@ class _Call:
     call_id: str = ""
     name: str = ""
     parts: list[str] = field(default_factory=list)
+
+
+def _call_key(provider_id: str | None, name: str, arguments: str | dict[str, Any]) -> tuple[str, str, str] | None:
+    if not provider_id or not name:
+        return None
+    try:
+        values = json.loads(arguments) if isinstance(arguments, str) else arguments
+        if not isinstance(values, dict):
+            return None
+        return provider_id, name, json.dumps(values, sort_keys=True)
+    except (ValueError, TypeError, RecursionError):
+        return None
 
 
 def _text(value: Any) -> str:
@@ -73,7 +87,7 @@ def _completion_reason(
 async def _agent_events(  # noqa: C901, PLR0912
     agent: Agent, messages: list[ChatMessage], agent_inputs: dict[str, Any]
 ) -> AsyncGenerator[StreamingChunk | PipelineEvent, None]:
-    run_result = None
+    run_result: dict[str, Any] = {}
 
     def capture_result(result: dict[str, Any]) -> None:
         nonlocal run_result
@@ -83,15 +97,15 @@ async def _agent_events(  # noqa: C901, PLR0912
         agent, pipeline_run_args={"messages": messages, **agent_inputs}, on_pipeline_end=capture_result
     )
     calls: dict[int, _Call] = {}
-    started: set[str] = set()
+    pending_calls: dict[tuple[str, str, str], str] = {}
+    call_numbers = count(1)
     last_model_finish_reason = None
     after_tool_result = False
     try:
         async for item in source:
-            if isinstance(item, PipelineEvent):
-                yield item
-                continue
             if not isinstance(item, StreamingChunk):
+                if isinstance(item, PipelineEvent):
+                    yield item
                 continue
             if (
                 after_tool_result
@@ -109,26 +123,29 @@ async def _agent_events(  # noqa: C901, PLR0912
                 if delta.arguments:
                     call.parts.append(delta.arguments)
             if item.finish_reason == "tool_calls":
+                call_id_counts = Counter(call.call_id for call in calls.values())
                 for call in calls.values():
-                    if call.call_id and "agent:" + call.call_id not in started:
-                        call_id = "agent:" + call.call_id
-                        started.add(call_id)
+                    arguments = "".join(call.parts)
+                    if call_id_counts[call.call_id] == 1 and (key := _call_key(call.call_id, call.name, arguments)):
+                        call_id = f"agent:{next(call_numbers)}:{call.call_id}"
+                        pending_calls[key] = call_id
                         yield PipelineEvent(
                             type="hayhooks.tool_call",
                             data={
                                 "call_id": call_id,
                                 "actor": "Agent",
                                 "name": call.name,
-                                "arguments": "".join(call.parts),
+                                "arguments": arguments,
                             },
                         )
                 calls.clear()
             if result := item.tool_call_result:
+                calls.clear()
                 after_tool_result = True
                 origin = result.origin
-                call_id = "agent:" + (origin.id or f"result-{len(started)}")
-                if call_id not in started:
-                    started.add(call_id)
+                key = _call_key(origin.id, origin.tool_name, origin.arguments)
+                if key is None or (call_id := pending_calls.pop(key, None)) is None:
+                    call_id = f"agent:{next(call_numbers)}:{origin.id or 'result'}"
                     yield PipelineEvent(
                         type="hayhooks.tool_call",
                         data={
@@ -148,15 +165,8 @@ async def _agent_events(  # noqa: C901, PLR0912
                 )
             if item.content:
                 yield StreamingChunk(content=item.content)
-        finish = (
-            _completion_reason(agent, run_result, messages, last_model_finish_reason)
-            if run_result is not None
-            else None
-        )
-        if finish:
+        if finish := _completion_reason(agent, run_result, messages, last_model_finish_reason):
             yield StreamingChunk(content="", finish_reason=finish)
-        elif last_model_finish_reason in {"length", "content_filter"}:
-            yield StreamingChunk(content="", finish_reason=last_model_finish_reason)
     finally:
         with anyio.CancelScope(shield=True):
             await source.aclose()

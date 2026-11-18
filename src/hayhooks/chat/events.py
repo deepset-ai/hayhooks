@@ -1,19 +1,17 @@
 from dataclasses import dataclass
 
-Actor = str
-
 
 @dataclass(frozen=True)
 class ResponseDelta:
     message_id: str
-    actor: Actor
+    actor: str
     text: str
 
 
 @dataclass(frozen=True)
 class ResponseComplete:
     message_id: str
-    actor: Actor
+    actor: str
     text: str
     final: bool = False
 
@@ -21,7 +19,7 @@ class ResponseComplete:
 @dataclass(frozen=True)
 class ToolStarted:
     call_id: str
-    actor: Actor
+    actor: str
     name: str
     arguments: str
 
