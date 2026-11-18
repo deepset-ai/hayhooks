@@ -11,7 +11,7 @@ pytest.importorskip("textual")
 from textual import events
 from textual.widgets import Button, Markdown, Static, TextArea
 
-from hayhooks.chat.app import ChatApp, MessageComposer, ToolCard
+from hayhooks.chat.app import ChatApp, ToolCard
 from hayhooks.chat.client import ChatClient, ChatError
 from hayhooks.chat.events import ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
 from hayhooks.cli import hayhooks_cli
@@ -650,7 +650,7 @@ def mock_http(monkeypatch, handler):
 
 
 @pytest.mark.parametrize("key, character", [("escape", "\x1b"), ("ctrl+q", "\x11")])
-async def test_stop_or_quit_queued_with_submit_skips_request(monkeypatch, key, character):
+async def test_stop_or_quit_before_turn_worker_runs_skips_request(monkeypatch, key, character):
     requests = []
 
     def handler(request):
@@ -664,8 +664,9 @@ async def test_stop_or_quit_queued_with_submit_skips_request(monkeypatch, key, c
     async with app.run_test() as pilot:
         composer = app.query_one("#composer", TextArea)
         composer.load_text("Try this")
-        app.post_message(MessageComposer.Submitted())
-        app.post_message(events.Key(key, character))
+        await app.action_send()
+        # Dispatch the priority key binding before yielding to the newly scheduled worker.
+        await app.on_event(events.Key(key, character))
         await settle(app, pilot)
         assert requests == [] and client.history == []
         assert composer.text == "Try this"
