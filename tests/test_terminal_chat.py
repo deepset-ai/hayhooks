@@ -11,7 +11,7 @@ pytest.importorskip("textual")
 from textual import events
 from textual.widgets import Button, Markdown, Static, TextArea
 
-from hayhooks.chat.app import ChatApp, ToolCard
+from hayhooks.chat.app import ChatApp, MessageComposer, ToolCard
 from hayhooks.chat.client import ChatClient, ChatError
 from hayhooks.chat.events import ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
 from hayhooks.cli import hayhooks_cli
@@ -27,7 +27,7 @@ class BlockingRunner:
         self.closed = asyncio.Event()
         self.prompts = []
 
-    async def run(self, prompt, progress, *, emit=None):
+    async def run(self, prompt, progress, *, emit):
         self.prompts.append(prompt)
         self.entered.set()
         progress("Server · working")
@@ -36,7 +36,9 @@ class BlockingRunner:
         finally:
             await asyncio.sleep(0)
             self.closed.set()
-        return "## Result\n\n```python\nprint('hello')\n```\n\n" + "Long answer.\n\n" * 30
+        answer = "## Result\n\n```python\nprint('hello')\n```\n\n" + "Long answer.\n\n" * 30
+        emit(ResponseComplete("answer", "Agent", answer, final=True))
+        return answer
 
 
 async def settle(app, pilot):
@@ -172,6 +174,9 @@ async def test_enter_newline_live_deltas_and_expandable_full_tool_results():
         await pilot.press("f7")
         assert app.clipboard == success.arguments.text
         success.output.focus()
+        await pilot.press("down", "shift+down")
+        await pilot.pause()
+        assert success.output.scroll_y > 0 and not success.output.selected_text
         await pilot.press("f7")
         assert app.clipboard == runner.tool_output
         await pilot.press("ctrl+c")
@@ -343,10 +348,11 @@ async def test_stop_remains_incomplete_when_runner_suppresses_cancellation():
         assert composer.text == "Start"
 
 
-async def test_queued_stop_after_runner_returns_without_final_event_preserves_success():
+async def test_stop_queued_with_final_event_preserves_success():
     class ReturningRunner(BlockingRunner):
         async def run(self, prompt, progress, *, emit):
             app.post_message(events.Key("escape", "\x1b"))
+            emit(ResponseComplete("answer", "Agent", "Completed answer", final=True))
             return "Completed answer"
 
     app = ChatApp(ReturningRunner())
@@ -427,35 +433,57 @@ async def test_copy_on_select_chat_and_composer_after_mouse_release():
 
 
 @pytest.mark.parametrize("theme", ["hayhooks-dark", "hayhooks-light"])
-@pytest.mark.parametrize("editor_name", ["arguments", "output"])
-async def test_tool_selection_copies_after_mouse_release(theme, editor_name):
+@pytest.mark.parametrize(("editor_name", "separator"), [("arguments", "\r\n"), ("output", "\u2028")])
+async def test_tool_selection_copies_after_mouse_release(theme, editor_name, separator):
     app = ChatApp(BlockingRunner())
     async with app.run_test(size=(80, 24)) as pilot:
         app.theme = theme
         await app.query_one("#welcome").remove()
-        card = ToolCard(ToolStarted("call", "Agent", "read_file", "Select tool arguments."))
+        card = ToolCard(ToolStarted("call", "Agent", "read_file", "Select\r\ntool arguments.\n"))
         await app.query_one("#transcript").mount(card)
-        card.finish(ToolFinished("call", "Select tool result."))
+        card.finish(ToolFinished("call", "Select\u2028tool result.\u2029"))
         card.collapsed = False
         editor = getattr(card, editor_name)
         editor.focus()
         await pilot.pause()
-        app.copy_to_clipboard("previous clipboard")
         x = editor.content_region.x - editor.region.x
         y = editor.content_region.y - editor.region.y
-        await pilot.mouse_down(editor, offset=(x, y))
-        await pilot.hover(editor, offset=(x + 6, y))
-        await pilot.pause()
-        assert app.clipboard == "previous clipboard"
-        await pilot.mouse_up(editor, offset=(x + 6, y))
-        await pilot.pause()
-        assert editor.selected_text == "Select"
-        assert app.clipboard == "Select"
+        start, end = (x + 1, y), (x + 3, y + 1)
+        expected = f"elect{separator}too"
+        for first, last in ((start, end), (end, start)):
+            app.copy_to_clipboard("previous clipboard")
+            await pilot.mouse_down(editor, offset=first)
+            await pilot.hover(editor, offset=last)
+            await pilot.pause()
+            assert app.clipboard == "previous clipboard"
+            await pilot.mouse_up(editor, offset=last)
+            await pilot.pause()
+            assert editor.selected_text == app.clipboard == expected
+        app.copy_to_clipboard("previous clipboard")
         await pilot.press("ctrl+c")
-        assert app.is_running and not app.quit_requested
+        assert app.is_running and not app.quit_requested and app.clipboard == expected
         await pilot.click(editor, offset=(x + 6, y))
         assert not editor.selected_text
-        assert app.clipboard == "Select"
+        assert app.clipboard == expected
+        await pilot.press("ctrl+c")
+        assert not app.is_running
+
+
+async def test_tool_result_copies_original_line_endings():
+    app = ChatApp(BlockingRunner())
+    async with app.run_test() as pilot:
+        card = ToolCard(ToolStarted("call", "Agent", "read_file", "{}"))
+        await app.query_one("#transcript").mount(card)
+        card.collapsed = False
+        card.output.focus()
+        for raw in ("a\r\nb\r\n", "a\nb\n", "a\r\nb\nc\rd\ve\ff\x1cg\x1dh\x1ei\x85j\u2028k\u2029"):
+            card.finish(ToolFinished("call", raw))
+            assert not card.output.selected_text
+            await pilot.press("f7")
+            assert card.output.selected_text == app.clipboard == raw
+            app.copy_to_clipboard("previous clipboard")
+            await pilot.press("ctrl+c")
+            assert app.clipboard == raw and app.is_running
 
 
 @pytest.mark.parametrize("theme", ["hayhooks-dark", "hayhooks-light"])
@@ -542,7 +570,8 @@ async def test_incomplete_turn_preserves_output_tools_and_draft_then_recovers(dr
     app = ChatApp(runner)
     async with app.run_test(size=(80, 24)) as pilot:
         composer = app.query_one("#composer", TextArea)
-        composer.load_text("Read notes.txt")
+        prompt = "    print('Read notes.txt')  \n    print('Done')  \n"
+        composer.load_text(prompt)
         await pilot.press("enter")
         await pilot.pause(0.15)
         assert runner.entered.is_set()
@@ -555,8 +584,8 @@ async def test_incomplete_turn_preserves_output_tools_and_draft_then_recovers(dr
         else:
             runner.release.set()
         await settle(app, pilot)
-        assert composer.text == (draft or "Read notes.txt")
-        assert runner.prompts == ["Read notes.txt"]
+        assert composer.text == (draft or prompt)
+        assert runner.prompts == [prompt]
         assert success.state == "Success" and success.output.text == "Saved result [literal]"
         assert error.state == "Error" and not error.collapsed
         assert pending.state == "Interrupted" and "outcome unknown" in pending.title
@@ -571,7 +600,7 @@ async def test_incomplete_turn_preserves_output_tools_and_draft_then_recovers(dr
         composer.load_text("Try a different request")
         await pilot.press("enter")
         await settle(app, pilot)
-        assert runner.prompts == ["Read notes.txt", "Try a different request"]
+        assert runner.prompts == [prompt, "Try a different request"]
         assert any(widget.source == "Recovered answer" for widget in app.query(Markdown))
         assert success.output.text == "Saved result [literal]" and not error.collapsed
 
@@ -618,6 +647,77 @@ def mock_http(monkeypatch, handler):
     monkeypatch.setattr(
         httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs)
     )
+
+
+@pytest.mark.parametrize("key, character", [("escape", "\x1b"), ("ctrl+q", "\x11")])
+async def test_stop_or_quit_queued_with_submit_skips_request(monkeypatch, key, character):
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        answer = frame({"choices": [{"delta": {"content": "Done"}, "finish_reason": "stop"}]})
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=answer)
+
+    mock_http(monkeypatch, handler)
+    client = ChatClient("http://server", "agent")
+    app = ChatApp(client)
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", TextArea)
+        composer.load_text("Try this")
+        app.post_message(MessageComposer.Submitted())
+        app.post_message(events.Key(key, character))
+        await settle(app, pilot)
+        assert requests == [] and client.history == []
+        assert composer.text == "Try this"
+        assert not app.query_one("#send", Button).disabled
+        assert app.query_one("#stop", Button).disabled
+        if key == "ctrl+q":
+            assert app.quit_requested and not app.is_running
+            return
+        for blank in ("", " \t\n"):
+            composer.load_text(blank)
+            await pilot.press("enter")
+            assert requests == [] and composer.text == blank
+        composer.load_text("Next request")
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert [request["messages"] for request in requests] == [[{"role": "user", "content": "Next request"}]]
+        assert any(widget.source == "Done" for widget in app.query(Markdown))
+
+
+async def test_side_message_ids_cannot_replace_the_agent_answer(monkeypatch):
+    def side_message(message_id, actor, text):
+        data = {"message_id": message_id, "actor": actor, "text": text, "final": True}
+        return frame({"event": {"type": "hayhooks.message", "data": data}})
+
+    stream = EventStream(
+        [
+            side_message("answer", "Reviewer", "Checking"),
+            frame({"choices": [{"delta": {"content": "Main "}}]}),
+            side_message("answer", "Reviewer", "Review complete"),
+            side_message("message:answer", "Editor", "Another note"),
+            frame({"choices": [{"delta": {"content": "answer"}, "finish_reason": "stop"}]}),
+        ]
+    )
+    mock_http(
+        monkeypatch, lambda _request: httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
+    )
+    client = ChatClient("http://server", "agent")
+    app = ChatApp(client)
+    async with app.run_test() as pilot:
+        app.query_one("#composer", TextArea).load_text("Start")
+        await pilot.press("enter")
+        await settle(app, pilot)
+        rows = [
+            (str(entry.query_one(".role").render()), entry.query_one(Markdown).source) for entry in app.query(".entry")
+        ]
+        assert rows == [
+            ("You", "Start"),
+            ("Reviewer", "Review complete"),
+            ("Agent", "Main answer"),
+            ("Editor", "Another note"),
+        ]
+        assert client.history == [{"role": "user", "content": "Start"}, {"role": "assistant", "content": "Main answer"}]
 
 
 @pytest.mark.parametrize("key, character", [("escape", "\x1b"), ("ctrl+q", "\x11")])

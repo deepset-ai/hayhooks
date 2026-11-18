@@ -25,6 +25,7 @@ from hayhooks.server.pipelines.registry import _PipelineRegistry
 from hayhooks.server.routers.openai import create_openai_router
 from hayhooks.server.utils.deploy_utils import prepare_pipeline_files
 from hayhooks.server.utils.module_loader import create_pipeline_wrapper_instance
+from tests.test_agent_chat_completion import CompletionGenerator
 
 
 @component
@@ -106,7 +107,8 @@ async def test_ordinary_agent_tools_keep_results_errors_and_correlation(fails):
     events = [item for item in output if isinstance(item, PipelineEvent)]
     assert [event.type for event in events] == ["hayhooks.tool_call", "hayhooks.tool_result"]
     start, result = events
-    assert start.data["call_id"] == result.data["call_id"] == "agent:actual-call"
+    assert start.data["call_id"] == result.data["call_id"]
+    assert start.data["call_id"].endswith(":actual-call")
     assert start.data["name"] == "echo"
     assert json.loads(start.data["arguments"]) == {"text": "hello"}
     assert invoked == ["hello"]
@@ -121,7 +123,198 @@ async def test_ordinary_agent_tools_keep_results_errors_and_correlation(fails):
     assert [item.finish_reason for item in chunks if item.finish_reason] == ["stop"]
 
 
-async def test_fragmented_arguments_multiple_indices_and_missing_start(monkeypatch):
+@pytest.mark.parametrize("first_reason", ["tool_calls", "length", "content_filter"])
+@pytest.mark.parametrize("second_id", ["second-id", "first-id"])
+async def test_tool_calls_do_not_reuse_arguments_or_event_ids_between_model_invocations(first_reason, second_id):
+    provider_ids = ["first-id", second_id]
+    words = ["first", "second"]
+    replies = [
+        ChatMessage.from_assistant(
+            tool_calls=[ToolCall(tool_name="echo", arguments={"word": word}, id=call_id)],
+            meta={"finish_reason": reason},
+        )
+        for word, call_id, reason in zip(words, provider_ids, [first_reason, "tool_calls"], strict=True)
+    ]
+    replies.append(ChatMessage.from_assistant("Done", meta={"finish_reason": "stop"}))
+    agent = Agent(
+        chat_generator=CompletionGenerator(replies),
+        tools=[_tool(lambda word: word, properties={"word": {"type": "string"}})],
+    )
+
+    output = [item async for item in stream_agent_chat(agent, [ChatMessage.from_user("Echo twice")])]
+
+    events = [item for item in output if isinstance(item, PipelineEvent)]
+    assert [event.type for event in events] == ["hayhooks.tool_call", "hayhooks.tool_result"] * 2
+    starts, results = events[::2], events[1::2]
+    assert len({start.data["call_id"] for start in starts}) == 2
+    for start, result, word, provider_id in zip(starts, results, words, provider_ids, strict=True):
+        assert start.data["call_id"] == result.data["call_id"]
+        assert start.data["call_id"].endswith(":" + provider_id)
+        assert json.loads(start.data["arguments"]) == {"word": word}
+        assert result.data["result"] == word
+        assert result.data["error"] is False
+    assert [item.finish_reason for item in output if isinstance(item, StreamingChunk) and item.finish_reason] == [
+        "stop"
+    ]
+
+
+@component
+class PartialToolGenerator:
+    def __init__(self, calls, deltas):
+        self.calls = calls
+        self.deltas = deltas
+
+    @component.output_types(replies=list[ChatMessage])
+    def run(self, messages: list[ChatMessage], tools=None, streaming_callback=None):
+        return {"replies": [ChatMessage.from_assistant("Done", meta={"finish_reason": "stop"})]}
+
+    @component.output_types(replies=list[ChatMessage])
+    async def run_async(self, messages: list[ChatMessage], tools=None, streaming_callback=None):
+        if any(message.tool_call_results for message in messages):
+            await streaming_callback(StreamingChunk(content="Done", finish_reason="stop"))
+            return self.run(messages, tools, streaming_callback)
+        for delta in self.deltas:
+            await streaming_callback(StreamingChunk(content="", index=delta.index, tool_calls=[delta]))
+        await streaming_callback(StreamingChunk(content="", finish_reason="tool_calls"))
+        return {"replies": [ChatMessage.from_assistant(tool_calls=self.calls, meta={"finish_reason": "tool_calls"})]}
+
+
+@pytest.mark.parametrize("first_delta", ["with-id", "without-id", "omitted"])
+@pytest.mark.parametrize("reverse_results", [False, True])
+@pytest.mark.parametrize("different_names", [False, True])
+async def test_parallel_tool_calls_with_same_provider_id_have_matching_start_and_result(
+    first_delta, reverse_results, different_names
+):
+    if different_names:
+        first = ToolCall(tool_name="ping", arguments={}, id="same")
+        second = ToolCall(tool_name="echo", arguments={}, id="same")
+        second_arguments = "{}"
+    else:
+        first = ToolCall(tool_name="echo", arguments={"value": True, "suffix": "!"}, id="same")
+        second = ToolCall(tool_name="echo", arguments={"value": 1, "suffix": "!"}, id="same")
+        second_arguments = '{ "suffix": "!", "value": 1 }'
+    calls = [second, first] if reverse_results else [first, second]
+    deltas = []
+    for index, call in enumerate(calls):
+        if call is first and first_delta == "omitted":
+            continue
+        deltas.append(
+            ToolCallDelta(
+                index=index,
+                id=None if call is first and first_delta == "without-id" else call.id,
+                tool_name=call.tool_name,
+                arguments=second_arguments if call is second else json.dumps(call.arguments),
+            )
+        )
+    agent = Agent(
+        chat_generator=PartialToolGenerator(calls, deltas),
+        tools=[
+            _tool(lambda **args: json.dumps(["echo", args], sort_keys=True)),
+            _tool(lambda: json.dumps(["ping", {}]), name="ping"),
+        ],
+    )
+
+    events = [
+        item
+        async for item in stream_agent_chat(agent, [ChatMessage.from_user("Run both")])
+        if isinstance(item, PipelineEvent)
+    ]
+
+    assert len(events) == 4
+    if first_delta == "with-id":
+        assert [event.type for event in events] == ["hayhooks.tool_call", "hayhooks.tool_result"] * 2
+    else:
+        assert events[0].type == "hayhooks.tool_call"
+        assert events[0].data["name"] == second.tool_name
+        assert events[0].data["arguments"] == (second_arguments or "{}")
+    starts = {event.data["call_id"]: event.data for event in events if event.type == "hayhooks.tool_call"}
+    results = [event for event in events if event.type == "hayhooks.tool_result"]
+    assert len(starts) == len(results) == 2
+    for call, result in zip(calls, results, strict=True):
+        start = starts[result.data["call_id"]]
+        assert start["call_id"].endswith(":same")
+        expected = json.dumps([call.tool_name, call.arguments], sort_keys=True)
+        assert result.data["result"] == expected
+        assert json.dumps([start["name"], json.loads(start["arguments"] or "{}")], sort_keys=True) == expected
+        assert result.data["error"] is False
+
+
+async def test_omitted_streamed_arguments_use_completed_origin():
+    invoked = []
+
+    def echo(word):
+        invoked.append(word)
+        return word
+
+    call = ToolCall(tool_name="echo", arguments={"word": "first"}, id="ordinary-id")
+    delta = ToolCallDelta(index=0, id=call.id, tool_name=call.tool_name)
+    agent = Agent(chat_generator=PartialToolGenerator([call], [delta]), tools=[_tool(echo)])
+
+    events = [item async for item in stream_agent_chat(agent, []) if isinstance(item, PipelineEvent)]
+
+    assert invoked == ["first"]
+    assert [event.type for event in events] == ["hayhooks.tool_call", "hayhooks.tool_result"]
+    start, result = events
+    assert start.data["name"] == "echo"
+    assert json.loads(start.data["arguments"]) == {"word": "first"}
+    assert start.data["call_id"] == result.data["call_id"]
+    assert result.data["result"] == "first"
+    assert result.data["error"] is False
+
+
+async def test_malformed_streamed_arguments_use_completed_origin():
+    call = ToolCall(tool_name="echo", arguments={"word": "first"}, id="same")
+    delta = ToolCallDelta(index=0, id=call.id, tool_name=call.tool_name, arguments='{"word":')
+    agent = Agent(chat_generator=PartialToolGenerator([call], [delta]), tools=[_tool(lambda word: word)])
+
+    events = [item async for item in stream_agent_chat(agent, []) if isinstance(item, PipelineEvent)]
+
+    start, result = events
+    assert json.loads(start.data["arguments"]) == call.arguments
+    assert start.data["call_id"] == result.data["call_id"]
+    assert result.data["result"] == "first"
+
+
+@pytest.mark.parametrize("provider_id", ["reused", None])
+@pytest.mark.parametrize("unannounced_deltas", [False, True])
+async def test_result_only_tool_calls_have_unique_correlated_ids(monkeypatch, provider_id, unannounced_deltas):
+    async def source():
+        for word in ["first", "second"]:
+            if unannounced_deltas:
+                yield StreamingChunk(
+                    content="",
+                    index=0,
+                    tool_calls=[ToolCallDelta(index=0, id=provider_id, tool_name="echo", arguments='{"word":')],
+                    finish_reason="length",
+                )
+            yield StreamingChunk(
+                content="",
+                index=0,
+                tool_call_result=ToolCallResult(
+                    result={"word": word},
+                    origin=ToolCall(tool_name="echo", arguments={"word": word}, id=provider_id),
+                    error=False,
+                ),
+            )
+
+    monkeypatch.setattr("hayhooks.agent_chat.async_streaming_generator", lambda *_args, **_kwargs: source())
+    output = [item async for item in stream_agent_chat(Agent(chat_generator=ToolGenerator()), [])]
+
+    events = [item for item in output if isinstance(item, PipelineEvent)]
+    assert [event.type for event in events] == ["hayhooks.tool_call", "hayhooks.tool_result"] * 2
+    starts, results = events[::2], events[1::2]
+    assert len({start.data["call_id"] for start in starts}) == 2
+    for start, result, word in zip(starts, results, ["first", "second"], strict=True):
+        assert start.data["call_id"] == result.data["call_id"]
+        if provider_id:
+            assert start.data["call_id"].endswith(":" + provider_id)
+        assert start.data["name"] == "echo"
+        assert json.loads(start.data["arguments"]) == json.loads(result.data["result"]) == {"word": word}
+
+
+@pytest.mark.parametrize("second_id", ["real-18", "real-17"])
+@pytest.mark.parametrize("reverse_results", [False, True])
+async def test_fragmented_arguments_multiple_indices_and_missing_start(monkeypatch, second_id, reverse_results):
     closed = asyncio.Event()
 
     async def source():
@@ -130,11 +323,12 @@ async def test_fragmented_arguments_multiple_indices_and_missing_start(monkeypat
                 ToolCallDelta(index=0, id="real-17", tool_name="read_file", arguments='{"path":'),
                 ToolCallDelta(index=1, tool_name="read_file", arguments='{"path":"b.txt"}'),
                 ToolCallDelta(index=0, arguments='"a.txt"}'),
-                ToolCallDelta(index=1, id="real-18"),
+                ToolCallDelta(index=1, id=second_id),
             ]:
                 yield StreamingChunk(content="", index=0, tool_calls=[delta])
             yield StreamingChunk(content="", finish_reason="tool_calls")
-            for call_id, path in [("real-17", "a.txt"), ("real-18", "b.txt"), ("real-19", "c.txt")]:
+            results = [("real-17", "a.txt"), (second_id, "b.txt"), ("real-19", "c.txt")]
+            for call_id, path in reversed(results) if reverse_results else results:
                 yield StreamingChunk(
                     content="",
                     index=0,
@@ -150,6 +344,11 @@ async def test_fragmented_arguments_multiple_indices_and_missing_start(monkeypat
 
     monkeypatch.setattr("hayhooks.agent_chat.async_streaming_generator", lambda *_args, **_kwargs: source())
     output = [item async for item in stream_agent_chat(Agent(chat_generator=ToolGenerator()), [])]
+    events = [item for item in output if isinstance(item, PipelineEvent)]
+    if second_id == "real-17":
+        assert [event.type for event in events] == ["hayhooks.tool_call", "hayhooks.tool_result"] * 3
+    else:
+        assert [event.type for event in events[:2]] == ["hayhooks.tool_call"] * 2
     starts = {
         item.data["call_id"]: item.data
         for item in output
@@ -226,7 +425,8 @@ async def test_shared_agent_preserves_tools_toolsets_and_request_state(in_toolse
         events = [item for item in output if isinstance(item, PipelineEvent)]
         assert len(events) == 2
         assert json.loads(events[0].data["arguments"]) == {"label": label}
-        assert events[0].data["call_id"] == events[1].data["call_id"] == "agent:actual-call"
+        assert events[0].data["call_id"] == events[1].data["call_id"]
+        assert events[0].data["call_id"].endswith(":actual-call")
         assert events[1].data["result"] == f"{label}/state-{label}"
 
 

@@ -244,7 +244,8 @@ async def test_agent_marks_file_error_and_recovers(tools):
     output = [item async for item in stream_agent_chat(agent, [ChatMessage.from_user("Read missing.txt")])]
     events = [item for item in output if isinstance(item, PipelineEvent)]
     assert len(events) == 2
-    assert events[0].data["call_id"] == events[1].data["call_id"] == "agent:actual-call"
+    assert events[0].data["call_id"] == events[1].data["call_id"]
+    assert events[0].data["call_id"].endswith(":actual-call")
     assert events[1].data["error"] is True
     assert "missing.txt" in events[1].data["result"] and "Use list_files" in events[1].data["result"]
     assert "".join(item.content for item in output if isinstance(item, StreamingChunk)) == "Done"
@@ -286,7 +287,8 @@ async def test_deployed_example_loads_helper_and_streams_real_file_tools(monkeyp
             events = [frame["event"] for frame in frames if "event" in frame]
             assert len(events) == 2
             start, result = [event["data"] for event in events]
-            assert start["call_id"] == result["call_id"] == "agent:actual-call"
+            assert start["call_id"] == result["call_id"]
+            assert start["call_id"].endswith(":actual-call")
             assert start["name"] == name and json.loads(start["arguments"]) == arguments
             assert result["error"] is fails
             if name == "read_file":

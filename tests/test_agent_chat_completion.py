@@ -156,7 +156,8 @@ async def test_later_model_success_finishes_after_tool_result(chat_client, looku
         ResponseDelta,
         ResponseComplete,
     ]
-    assert events[1].call_id == events[2].call_id == "agent:lookup-1"
+    assert events[1].call_id == events[2].call_id
+    assert events[1].call_id.endswith(":lookup-1")
     assert events[2].result == "Found"
     assert events[-1].final is True
     assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Checking Done"}]

@@ -17,29 +17,29 @@ def choice(text=None, finish=None):
 
 
 class Stream(httpx.AsyncByteStream):
-    def __init__(self, frames, *, error=None, block=False):
+    def __init__(self, frames, *, error=None):
         self.frames = frames
         self.error = error
-        self.block = block
-        self.reading = asyncio.Event()
+        self.paused = asyncio.Event()
         self.closed = False
 
     async def __aiter__(self):
         for item in self.frames:
-            yield item
-        self.reading.set()
+            if isinstance(item, asyncio.Event):
+                self.paused.set()
+                await item.wait()
+            else:
+                yield item
         if self.error:
             raise self.error
-        if self.block:
-            await asyncio.Event().wait()
 
     async def aclose(self):
         self.closed = True
 
 
-def remote(monkeypatch, *, frames=(), error=None, block=False, status=200, payload=None, headers=None):  # noqa: PLR0913
+def remote(monkeypatch, *, frames=(), error=None, status=200, payload=None, headers=None):  # noqa: PLR0913
     requests = []
-    stream = Stream(frames, error=error, block=block)
+    stream = Stream(frames, error=error)
 
     def handle(request):
         requests.append(json.loads(request.content))
@@ -75,6 +75,82 @@ async def test_http_failure_classification_and_no_retry(monkeypatch, status, kin
 @pytest.mark.parametrize("terminal", [frame(choice("answer", "stop")), frame(choice("answer")) + b"data: [DONE]\n\n"])
 async def test_confirmed_completion_accepts_both_endpoint_markers(monkeypatch, terminal):
     client, requests, stream = remote(monkeypatch, frames=[terminal])
+    events = []
+    assert await client.run("Hi", lambda _: None, emit=events.append) == "answer"
+    assert events == [ResponseDelta("answer", "Agent", "answer"), ResponseComplete("answer", "Agent", "answer", True)]
+    assert stream.closed and len(requests) == 1
+    assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "answer"}]
+
+
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n", "\r"])
+@pytest.mark.parametrize("chunk_size", [1, 4096])
+async def test_unescaped_unicode_survives_chunked_chat_stream(monkeypatch, line_ending, chunk_size):
+    content = "Hello\u2028World\u2029Next\x85Line\ufeff\x0b\x0c\x1c\x1d\x1e"
+    payloads = [
+        choice(content),
+        {
+            "event": {
+                "type": "hayhooks.message",
+                "data": {"message_id": "side\u2028id", "actor": "Agent", "text": content},
+            }
+        },
+        {"event": {"type": "hayhooks.tool_result", "data": {"call_id": "tool\u2029id", "result": content}}},
+        choice(finish="stop"),
+    ]
+    wire = "".join("data: " + json.dumps(payload, ensure_ascii=False) + line_ending * 2 for payload in payloads)
+    wire = (wire + "data: [DONE]" + line_ending * 2).encode("utf-8-sig")
+    client, requests, stream = remote(
+        monkeypatch, frames=[wire[index : index + chunk_size] for index in range(0, len(wire), chunk_size)]
+    )
+    events = []
+    assert await client.run("Hi", lambda _: None, emit=events.append) == content
+    assert events == [
+        ResponseDelta("answer", "Agent", content),
+        ResponseComplete("side\u2028id", "Agent", content),
+        ToolFinished("tool\u2029id", content),
+        ResponseComplete("answer", "Agent", content, True),
+    ]
+    assert stream.closed and len(requests) == 1
+    assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": content}]
+
+
+@pytest.mark.parametrize(
+    ("chunks", "after_pause"),
+    [
+        ([b'data: {"choices":[{"delta":{"content":"answer"}}]}\r\r'], b"data: [DONE]"),
+        ([b'data: {"choices":[\r', b"", b'\ndata: {"delta":{"content":"answer"}}]}\r', b"\n\r"], b"\ndata: [DONE]"),
+    ],
+    ids=["cr", "split-crlf"],
+)
+async def test_complete_event_arrives_before_next_byte(monkeypatch, chunks, after_pause):
+    release = asyncio.Event()
+    client, _, stream = remote(monkeypatch, frames=[*chunks, release, after_pause])
+    events = []
+    task = asyncio.create_task(client.run("Hi", lambda _: None, emit=events.append))
+    try:
+        await asyncio.wait_for(stream.paused.wait(), 5)
+        assert events == [ResponseDelta("answer", "Agent", "answer")]
+    finally:
+        release.set()
+        answer = await task
+    assert answer == "answer" and stream.closed
+
+
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n", "\r"])
+@pytest.mark.parametrize("terminal", ["[DONE]", json.dumps(choice(finish="stop"))])
+async def test_multiline_data_and_unterminated_completion_marker(monkeypatch, line_ending, terminal):
+    wire = line_ending.join(
+        [
+            ": keepalive",
+            "event: message",
+            "id: ignored",
+            'data: {"choices": [',
+            'data:  {"delta": {"content": "answer"}}]}',
+            "",
+            "data: " + terminal,
+        ]
+    ).encode()
+    client, requests, stream = remote(monkeypatch, frames=[wire[index : index + 1] for index in range(len(wire))])
     events = []
     assert await client.run("Hi", lambda _: None, emit=events.append) == "answer"
     assert events == [ResponseDelta("answer", "Agent", "answer"), ResponseComplete("answer", "Agent", "answer", True)]
@@ -247,10 +323,10 @@ async def test_read_failure_after_stop_prevents_success(monkeypatch):
 
 
 async def test_cancellation_after_terminal_marker_still_discards_turn(monkeypatch):
-    client, requests, stream = remote(monkeypatch, frames=[frame(choice("Partial", "stop"))], block=True)
+    client, requests, stream = remote(monkeypatch, frames=[frame(choice("Partial", "stop")), asyncio.Event()])
     events = []
     task = asyncio.create_task(client.run("Hi", lambda _: None, emit=events.append))
-    await asyncio.wait_for(stream.reading.wait(), 1)
+    await asyncio.wait_for(stream.paused.wait(), 1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
