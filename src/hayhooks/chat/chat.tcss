@@ -9,8 +9,8 @@ Screen.narrow #workspace { height: 2; }
 .entry.assistant .role { color: $text; }
 .entry.error .role { color: $error; }
 .entry Markdown { margin: 0; padding: 0; background: transparent; }
-#composer { height: 3; min-height: 3; border: round $panel; padding: 0 1; background: $surface; }
-#composer:focus { border: round $accent; }
+#composer { height: 3; min-height: 3; border: solid $panel; padding: 0 1; background: $surface; }
+#composer:focus { border: solid $accent; }
 #actions { height: 1; padding: 0 1; }
 #status { width: 1fr; height: 1; color: $text-muted; text-overflow: ellipsis; }
 #actions Button { height: 1; min-width: 7; margin-left: 1; background: transparent; color: $text-muted; text-style: none; }
@@ -28,7 +28,7 @@ Screen.compact .entry { margin-top: 0; }
 .tool-card.error CollapsibleTitle { color: $error; text-style: bold; }
 .tool-card.interrupted CollapsibleTitle { color: $warning; }
 .tool-card CollapsibleTitle:focus { background: $panel; color: $text; }
-.tool-card Contents { padding: 0 1 1 1; background: $surface; }
+.tool-card Contents { border: solid $text-muted; padding: 0 1 1 1; background: $surface; }
 .detail-label { color: $text-muted; margin-top: 1; height: 1; }
 .tool-card TextArea { height: auto; min-height: 3; max-height: 30vh; border: none; padding: 0 1; background: $background; }
-.tool-card TextArea:focus { border: round $accent; }
+.tool-card TextArea:focus { border: solid $accent; }

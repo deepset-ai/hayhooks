@@ -257,8 +257,10 @@ async def test_live_terminal_resize_preserves_draft_tools_and_reader_scroll():
         assert app.query_one("#stop", Button).disabled
 
 
-async def test_tool_editors_reflow_wrapped_text_after_terminal_resize():
+@pytest.mark.parametrize("theme", ["hayhooks-dark", "hayhooks-light"])
+async def test_tool_editors_reflow_wrapped_text_after_terminal_resize(theme):
     app = ChatApp(BlockingRunner())
+    app.theme = theme
     async with app.run_test(size=(160, 48)) as pilot:
         text = "A long result wraps to match the available terminal width. " * 8
         card = ToolCard(ToolStarted("wrapped", "Agent", "read_file", text))
@@ -415,6 +417,45 @@ async def test_copy_on_select_chat_and_composer_after_mouse_release():
         await pilot.press("right")
         assert not composer.selected_text
         assert app.clipboard == "draft"
+        app.copy_to_clipboard("keyboard clipboard")
+        await pilot.press("home", *["shift+right"] * 5)
+        assert composer.selected_text == "draft"
+        assert app.clipboard == "draft"
+        await pilot.press("right")
+        assert not composer.selected_text
+        assert app.clipboard == "draft"
+
+
+@pytest.mark.parametrize("theme", ["hayhooks-dark", "hayhooks-light"])
+@pytest.mark.parametrize("editor_name", ["arguments", "output"])
+async def test_tool_selection_copies_after_mouse_release(theme, editor_name):
+    app = ChatApp(BlockingRunner())
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.theme = theme
+        await app.query_one("#welcome").remove()
+        card = ToolCard(ToolStarted("call", "Agent", "read_file", "Select tool arguments."))
+        await app.query_one("#transcript").mount(card)
+        card.finish(ToolFinished("call", "Select tool result."))
+        card.collapsed = False
+        editor = getattr(card, editor_name)
+        editor.focus()
+        await pilot.pause()
+        app.copy_to_clipboard("previous clipboard")
+        x = editor.content_region.x - editor.region.x
+        y = editor.content_region.y - editor.region.y
+        await pilot.mouse_down(editor, offset=(x, y))
+        await pilot.hover(editor, offset=(x + 6, y))
+        await pilot.pause()
+        assert app.clipboard == "previous clipboard"
+        await pilot.mouse_up(editor, offset=(x + 6, y))
+        await pilot.pause()
+        assert editor.selected_text == "Select"
+        assert app.clipboard == "Select"
+        await pilot.press("ctrl+c")
+        assert app.is_running and not app.quit_requested
+        await pilot.click(editor, offset=(x + 6, y))
+        assert not editor.selected_text
+        assert app.clipboard == "Select"
 
 
 @pytest.mark.parametrize("theme", ["hayhooks-dark", "hayhooks-light"])
