@@ -54,6 +54,17 @@ walks through the three views and authentication.
     Local trace inspection is available in the terminal dashboard without Node.js
     or an external tracing backend. See [terminal tracing](../reference/tracing.md#terminal-trace-inspection).
 
+=== "With Terminal Chat"
+
+    ```bash
+    pip install 'hayhooks[chat]'
+    hayhooks chat my-agent
+    ```
+
+    Adds Textual and httpx for chatting with a deployed Agent or pipeline.
+    Start the server and deploy a chat-capable wrapper before opening chat.
+    See the [terminal chat guide](../features/terminal-chat.md), including its filesystem Agent example.
+
 === "With Terminal Dashboard"
 
     ```bash
@@ -92,7 +103,7 @@ After installation, verify that Hayhooks is installed correctly:
 
 ```bash
 # Check version
-hayhooks --version
+python -m pip show hayhooks
 
 # Show help
 hayhooks --help

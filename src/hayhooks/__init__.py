@@ -20,6 +20,7 @@ _EXPORT_MODULES = {
     "default_on_pipeline_end": "hayhooks.callbacks",
     "default_on_tool_call_end": "hayhooks.callbacks",
     "default_on_tool_call_start": "hayhooks.callbacks",
+    "stream_agent_chat": "hayhooks.agent_chat",
     "get_input_files": "hayhooks.server.pipelines.utils",
     "get_last_user_input_text": "hayhooks.server.pipelines.utils",
     "get_last_user_message": "hayhooks.server.pipelines.utils",

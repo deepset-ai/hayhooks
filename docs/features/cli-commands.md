@@ -9,6 +9,7 @@ The Hayhooks CLI allows you to:
 - Start and manage the Hayhooks server
 - Deploy and undeploy pipelines
 - Run pipelines with custom inputs
+- Chat with deployed Agents and inspect their tool calls
 - Monitor server status and health
 - Manage MCP server operations
 
@@ -40,7 +41,7 @@ hayhooks pipeline --help
 Check the installed version:
 
 ```bash
-hayhooks --version
+python -m pip show hayhooks
 ```
 
 ## Server Commands
@@ -97,6 +98,23 @@ connection pinned to one process or an external OTLP backend for aggregate histo
 | `--chainlit-custom-elements-dir` | | Directory of custom JSX elements | Unset |
 | `--with-monitoring/--without-monitoring` | | Authenticated durable execution indexing and collection routes | Enabled by settings (`true`) |
 | `--with-tracing/--without-tracing` | | Authenticated local trace API for terminal inspection | Enabled by settings (`true`) |
+
+### chat
+
+Chat with a deployed Agent or pipeline and inspect streamed tool arguments and results:
+
+```bash
+pip install 'hayhooks[chat]'
+hayhooks chat my-agent
+```
+
+`my-agent` must be a deployed wrapper with a chat-completion handler.
+The command uses `HAYHOOKS_HOST`, `HAYHOOKS_PORT`, and the existing HTTPS settings.
+Models and tools run on the server. **Escape** stops receiving the current response;
+server work may continue. Conversation history lasts for the current process.
+
+See the [terminal chat guide](terminal-chat.md) for keyboard controls, error recovery,
+and a filesystem Agent example.
 
 ### dashboard
 

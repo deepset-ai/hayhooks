@@ -13,8 +13,10 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.types import Message, Receive, Scope, Send
 
 from hayhooks.durable.engine import ExecutionStatus
 from hayhooks.server.app import create_app
@@ -213,38 +215,59 @@ async def _read_execution(prefix: str, run_id: str):
         await redis.aclose()
 
 
-def test_retained_work_keeps_redis_until_drained_and_streams_end_first(redis_durable_mode: Path, redis_prefix: str):
+async def test_retained_work_keeps_redis_until_drained_and_streams_end_first(
+    redis_durable_mode: Path, redis_prefix: str
+) -> None:
     write_tree(redis_durable_mode, {"jobs/pipeline_wrapper.py": RETAINED_WRAPPER})
     app = create_app()
     wrapper_module = sys.modules[registry_module_name("jobs")]
-    client = TestClient(app)
-    client.__enter__()
-    run_id = client.post("/jobs/run-durable", json={"value": 7}).json()["execution_id"]
-    assert wrapper_module.started.wait(5)
+    stream_started = asyncio.Event()
 
-    stream_path = f"/jobs/executions/{run_id}/stream"
-    stream = _Background(lambda: _events.append(f"stream ended: {client.get(stream_path).text}"))
-    stream.start()
-    time.sleep(0.3)  # the stream is now blocked on the viewer client
-    shutdown = _Background(lambda: client.__exit__(None, None, None))
-    shutdown.start()
+    async def observe_stream(scope: Scope, receive: Receive, send: Send) -> None:
+        async def observe_body(message: Message) -> None:
+            await send(message)
+            if (
+                scope["path"].endswith("/stream")
+                and message["type"] == "http.response.body"
+                and message.get("body") == b": heartbeat\n\n"
+            ):
+                stream_started.set()
 
-    stream.join(5)
-    assert not stream.is_alive()
-    # Past the shutdown grace, the retained thread still owns its claim, so Redis stays open.
-    shutdown.join(1)
-    assert shutdown.is_alive()
-    assert len(_events) == 1
-    assert _events[0].startswith("stream ended")
-    assert "event: completed" not in _events[0]
+        await app(scope, receive, observe_body)
 
-    wrapper_module.release.set()
-    shutdown.join(10)
+    # TestClient teardown aborts open requests before it shuts down the application lifespan.
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+    stream = shutdown = None
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=observe_stream), base_url="http://test") as client:
+        try:
+            submitted = await client.post("/jobs/run-durable", json={"value": 7})
+            run_id = submitted.json()["execution_id"]
+            assert await asyncio.to_thread(wrapper_module.started.wait, 5)
 
-    assert not shutdown.is_alive()
-    assert shutdown.error is None
+            async def read_stream() -> None:
+                response = await client.get(f"/jobs/executions/{run_id}/stream")
+                _events.append(f"stream ended: {response.text}")
+
+            stream = asyncio.create_task(read_stream())
+            await asyncio.wait_for(stream_started.wait(), 5)
+            shutdown = asyncio.create_task(lifespan.__aexit__(None, None, None))
+            await asyncio.wait_for(asyncio.shield(stream), 5)
+            await asyncio.wait({shutdown}, timeout=1)
+            assert not shutdown.done()
+            assert len(_events) == 1
+            assert _events[0].startswith("stream ended")
+            assert "event: completed" not in _events[0]
+        finally:
+            wrapper_module.release.set()
+            if shutdown is None:
+                shutdown = asyncio.create_task(lifespan.__aexit__(None, None, None))
+            await asyncio.wait_for(asyncio.shield(shutdown), 10)
+            if stream is not None:
+                await asyncio.wait_for(asyncio.shield(stream), 5)
+
     assert _events[1:] == ["aclose", "aclose"]
-    stored = asyncio.run(_read_execution(redis_prefix, run_id))
+    stored = await _read_execution(redis_prefix, run_id)
     assert stored is not None
     assert stored.control.status is ExecutionStatus.COMPLETED
 

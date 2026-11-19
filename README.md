@@ -28,6 +28,17 @@ Write a Python wrapper around your pipeline or agent. Choose the interfaces and 
 - **[Durable execution](#durable-execution).** Checkpoint long-running work in Redis, wait for human approval, retry failures, and recover after restarts.
 - **[Tracing and observability](docs/reference/tracing.md).** Inspect executions and component traces in the terminal dashboard, or export spans to an OpenTelemetry backend with `hayhooks[tracing]`.
 
+## Terminal chat
+
+Chat directly with an Agent or pipeline deployed through a PipelineWrapper:
+
+```bash
+pip install 'hayhooks[chat]'
+hayhooks chat my-agent
+```
+
+[Connect to your deployed Agent](docs/features/terminal-chat.md) to verify its responses and inspect tool arguments and results. Try the [workspace Agent example](examples/pipeline_wrappers/terminal_chat_agent/README.md) to list, read, and write text files. Models and tools run on the server.
+
 ## Terminal dashboard
 
 Inspect deployments, follow executions, and find slow components in your terminal.
