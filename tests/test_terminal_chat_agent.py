@@ -123,6 +123,55 @@ async def test_ordinary_agent_tools_keep_results_errors_and_correlation(fails):
     assert [item.finish_reason for item in chunks if item.finish_reason] == ["stop"]
 
 
+@pytest.mark.parametrize("argument", ["normalized", None], ids=["rewrite", "drop"])
+async def test_before_tool_hook_reports_only_executed_call(argument):
+    hooks = pytest.importorskip("haystack.hooks")
+    from haystack.components.agents.state import State
+
+    @hooks.hook
+    def edit_call(state: State) -> None:
+        if argument is None:
+            state.data["messages"].pop()
+        else:
+            state.data["messages"][-1].tool_calls[0].arguments["text"] = argument
+
+    invoked = []
+
+    def echo(text):
+        invoked.append(text)
+        return text.upper()
+
+    proposed_call = ToolCall(tool_name="echo", arguments={"text": "original"}, id="actual-call")
+    agent = Agent(
+        chat_generator=CompletionGenerator(
+            [
+                ChatMessage.from_assistant(tool_calls=[proposed_call], meta={"finish_reason": "tool_calls"}),
+                ChatMessage.from_assistant("Done", meta={"finish_reason": "stop"}),
+            ]
+        ),
+        tools=[_tool(echo, properties={"text": {"type": "string"}})],
+        hooks={"before_tool": [edit_call]},
+    )
+
+    output = [item async for item in stream_agent_chat(agent, [ChatMessage.from_user("Check")])]
+    events = [item for item in output if isinstance(item, PipelineEvent)]
+    assert [item.finish_reason for item in output if isinstance(item, StreamingChunk) and item.finish_reason] == [
+        "stop"
+    ]
+    if argument is None:
+        assert invoked == []
+        assert events == []
+    else:
+        assert invoked == [argument]
+        assert [event.type for event in events] == ["hayhooks.tool_call", "hayhooks.tool_result"]
+        start, result = events
+        assert start.data["call_id"] == result.data["call_id"]
+        assert start.data["name"] == "echo"
+        assert json.loads(start.data["arguments"]) == {"text": argument}
+        assert result.data["result"] == argument.upper()
+        assert result.data["error"] is False
+
+
 @pytest.mark.parametrize("first_reason", ["tool_calls", "length", "content_filter"])
 @pytest.mark.parametrize("second_id", ["second-id", "first-id"])
 async def test_tool_calls_do_not_reuse_arguments_or_event_ids_between_model_invocations(first_reason, second_id):

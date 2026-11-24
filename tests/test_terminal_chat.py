@@ -297,37 +297,18 @@ async def test_tool_editors_reflow_wrapped_text_after_terminal_resize(theme):
         assert composer.region.height >= 5
 
 
-async def test_stop_drops_late_deltas_and_tool_results():
-    runner = StreamingRunner()
-    app = ChatApp(runner)
-    async with app.run_test() as pilot:
-        app.query_one("#composer", TextArea).load_text("Start")
-        await pilot.press("enter")
-        await pilot.pause(0.2)
-        stopped_turn = app.turn
-        await app.on_chat_app_output(
-            ChatApp.Output(stopped_turn, ResponseDelta("answer", "Agent", "received before Stop"))
-        )
-        app.action_stop()
-        app.post_message(ChatApp.Output(stopped_turn, ToolFinished("call-1", "late tool result", error=True)))
-        app.post_message(ChatApp.Output(stopped_turn, ToolStarted("late", "Agent", "late tool", "{}")))
-        runner.release.set()
-        await settle(app, pilot)
-        assert app.tool_cards["call-1"].output.text == runner.tool_output
-        assert "late" not in app.tool_cards
-        assert any(widget.source == "Early received before Stop" for widget in app.query(Markdown))
-        assert not any(widget.source == "Early reply" for widget in app.query(Markdown))
-        assert any("Stopped receiving." in widget.source for widget in app.query(Markdown))
-
-
 async def test_stop_remains_incomplete_when_runner_suppresses_cancellation():
     class CancellationSuppressingRunner(BlockingRunner):
         async def run(self, prompt, progress, *, emit):
             emit(ResponseDelta("answer", "Agent", "Partial answer"))
+            emit(ToolStarted("call-1", "Agent", "write_file", "{}"))
             self.entered.set()
             with suppress(asyncio.CancelledError):
                 await self.release.wait()
             progress("Late progress")
+            emit(ResponseDelta("answer", "Agent", "Late delta"))
+            emit(ToolFinished("call-1", "Late tool result"))
+            emit(ToolStarted("late", "Agent", "Late tool", "{}"))
             emit(ResponseComplete("answer", "Agent", "Late answer", final=True))
             return "Late answer"
 
@@ -343,7 +324,9 @@ async def test_stop_remains_incomplete_when_runner_suppresses_cancellation():
         await settle(app, pilot)
         transcript = "\n".join(widget.source for widget in app.query(Markdown))
         assert "Partial answer" in transcript
-        assert "Late answer" not in transcript
+        assert "Late delta" not in transcript and "Late answer" not in transcript
+        card = app.query_one(ToolCard)
+        assert card.state == "Interrupted" and "Late tool result" not in card.output.text
         assert "Stopped receiving." in transcript and "Response incomplete." in transcript
         assert composer.text == "Start"
 
@@ -647,6 +630,47 @@ def mock_http(monkeypatch, handler):
     monkeypatch.setattr(
         httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs)
     )
+
+
+async def test_stop_preserves_received_text_and_tool_result_queued_for_display(monkeypatch):
+    receive_result = asyncio.Event()
+    closed = asyncio.Event()
+
+    class FinishingToolStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            started = {"call_id": "call-1", "name": "write_file", "actor": "Agent", "arguments": "{}"}
+            yield frame({"event": {"type": "hayhooks.tool_call", "data": started}})
+            await receive_result.wait()
+            app.post_message(events.Key("escape", "\x1b"))
+            result = {"call_id": "call-1", "result": "Wrote the file.", "error": False}
+            yield frame({"event": {"type": "hayhooks.tool_result", "data": result}})
+            yield frame({"choices": [{"delta": {"content": "The write succeeded."}}]})
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            closed.set()
+
+    mock_http(
+        monkeypatch,
+        lambda _request: httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=FinishingToolStream()
+        ),
+    )
+    client = ChatClient("http://server", "agent")
+    app = ChatApp(client)
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", TextArea)
+        composer.load_text("Write a file")
+        await pilot.press("enter")
+        card = app.query_one(ToolCard)
+        assert card.state == "Running"
+        receive_result.set()
+        await settle(app, pilot)
+        assert closed.is_set()
+        assert card.state == "Success" and card.output.text == "Wrote the file."
+        transcript = "\n".join(widget.source for widget in app.query(Markdown))
+        assert "The write succeeded." in transcript and "Stopped receiving." in transcript
+        assert composer.text == "Write a file" and client.history == []
 
 
 @pytest.mark.parametrize("key, character", [("escape", "\x1b"), ("ctrl+q", "\x11")])
