@@ -21,8 +21,11 @@ class PipelineWrapper(BasePipelineWrapper):
         except ValueError as exc:
             message = "EXAMPLE_CHAT_WORKSPACE must name an existing, accessible server-side directory."
             raise ValueError(message) from exc
+        model = os.environ.get("EXAMPLE_AGENT_MODEL", "gpt-6-luna")
+        # GPT-6 Luna needs reasoning disabled for tool calls through Chat Completions.
+        generation_kwargs = {"reasoning_effort": "none"} if model == "gpt-6-luna" else None
         self.pipeline = Agent(
-            chat_generator=OpenAIChatGenerator(model=os.environ.get("EXAMPLE_AGENT_MODEL", "gpt-4.1-mini")),
+            chat_generator=OpenAIChatGenerator(model=model, generation_kwargs=generation_kwargs),
             tools=tools,
             system_prompt=(
                 "Help the user work with UTF-8 text files in the configured server workspace. "

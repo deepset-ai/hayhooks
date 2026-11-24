@@ -97,7 +97,7 @@ hayhooks chat workspace-agent
 
 Ask the Agent to list its files, read `note.txt`, write a summary to `summary.txt`, and read the summary back.
 Inspect the tool cards and the actual file in the server directory.
-Set `EXAMPLE_AGENT_MODEL` on the server to select the model. The example defaults to `gpt-4.1-mini`.
+Set `EXAMPLE_AGENT_MODEL` on the server to select the model. The example defaults to `gpt-6-luna`.
 
 Tools accept relative paths beneath `EXAMPLE_CHAT_WORKSPACE` and reject symlinks.
 Reads and write input are limited to 64 KiB of UTF-8 bytes. Listings show at most 200 immediate entries and report truncation.
@@ -117,7 +117,9 @@ from hayhooks import BasePipelineWrapper, stream_agent_chat
 
 class PipelineWrapper(BasePipelineWrapper):
 	def setup(self):
-		self.pipeline = Agent(chat_generator=OpenAIChatGenerator(model="gpt-4.1-mini"))
+		self.pipeline = Agent(
+			chat_generator=OpenAIChatGenerator(model="gpt-6-luna", generation_kwargs={"reasoning_effort": "none"})
+		)
 
 	async def run_chat_completion_async(self, model, messages, body):
 		return stream_agent_chat(

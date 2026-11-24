@@ -20,13 +20,12 @@ mkdir -p /tmp/hayhooks-chat-demo
 printf 'The launch review is on Friday.\n' > /tmp/hayhooks-chat-demo/notes.txt
 export EXAMPLE_CHAT_WORKSPACE=/tmp/hayhooks-chat-demo
 export OPENAI_API_KEY=your-api-key
-export EXAMPLE_AGENT_MODEL=gpt-4.1-mini
 hayhooks run
 ```
 
 `EXAMPLE_CHAT_WORKSPACE` is required and must name an existing server-side directory.
 The wrapper resolves it during setup, including configured directory aliases.
-`EXAMPLE_AGENT_MODEL` defaults to `gpt-4.1-mini`. The Agent uses at most ten steps per request.
+`EXAMPLE_AGENT_MODEL` defaults to `gpt-6-luna`. The Agent uses at most ten steps per request.
 
 In another terminal, deploy both Python files together and open chat.
 
