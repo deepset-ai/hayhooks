@@ -129,6 +129,7 @@ Register tools or Toolsets when you construct the Agent.
 Pass additional state inputs as keyword arguments to `stream_agent_chat`.
 Run-specific `tools` retain Haystack's semantics. The helper owns `streaming_callback` and rejects a conflicting override.
 It preserves the configured Agent and correlates streamed tool arguments and results by call ID.
+If the Agent uses a `before_tool` hook, tool cards appear when the tool results arrive because the hook can change which calls run.
 
 ## Emit tool cards from another wrapper
 

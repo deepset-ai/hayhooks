@@ -10,6 +10,7 @@ from typing import Any, Literal
 import anyio
 from haystack.components.agents import Agent
 from haystack.dataclasses import ChatMessage, ChatRole, StreamingChunk
+from haystack.dataclasses.streaming_chunk import ToolCallDelta
 
 from hayhooks.events import PipelineEvent
 from hayhooks.server.pipelines.utils import async_streaming_generator
@@ -20,6 +21,12 @@ class _Call:
     call_id: str = ""
     name: str = ""
     parts: list[str] = field(default_factory=list)
+
+    def add_delta(self, delta: ToolCallDelta) -> None:
+        self.call_id = delta.id or self.call_id
+        self.name = delta.tool_name or self.name
+        if delta.arguments:
+            self.parts.append(delta.arguments)
 
 
 def _call_key(provider_id: str | None, name: str, arguments: str | dict[str, Any]) -> tuple[str, str, str] | None:
@@ -96,6 +103,8 @@ async def _agent_events(  # noqa: C901, PLR0912
     source = async_streaming_generator(
         agent, pipeline_run_args={"messages": messages, **agent_inputs}, on_pipeline_end=capture_result
     )
+    # Haystack lets before_tool hooks replace or drop the model's proposed calls.
+    announce_pending_calls = not getattr(agent, "hooks", {}).get("before_tool")
     calls: dict[int, _Call] = {}
     pending_calls: dict[tuple[str, str, str], str] = {}
     call_numbers = count(1)
@@ -116,13 +125,10 @@ async def _agent_events(  # noqa: C901, PLR0912
                 after_tool_result = False
             if item.finish_reason and item.finish_reason != "tool_call_results" and not item.tool_call_result:
                 last_model_finish_reason = item.finish_reason
-            for delta in item.tool_calls or []:
-                call = calls.setdefault(delta.index, _Call())
-                call.call_id = delta.id or call.call_id
-                call.name = delta.tool_name or call.name
-                if delta.arguments:
-                    call.parts.append(delta.arguments)
-            if item.finish_reason == "tool_calls":
+            tool_deltas = item.tool_calls if announce_pending_calls else None
+            for delta in tool_deltas or []:
+                calls.setdefault(delta.index, _Call()).add_delta(delta)
+            if item.finish_reason == "tool_calls" and calls:
                 call_id_counts = Counter(call.call_id for call in calls.values())
                 for call in calls.values():
                     arguments = "".join(call.parts)

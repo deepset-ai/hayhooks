@@ -281,7 +281,7 @@ class ChatApp(App):
             self.query_one("#status", Static).update(message.text)
 
     async def on_chat_app_output(self, message: Output) -> None:
-        if message.turn is not self.turn or message.turn.state == "stopped":
+        if message.turn is not self.turn:
             return
         event = message.event
         if isinstance(event, (ResponseDelta, ResponseComplete)):
