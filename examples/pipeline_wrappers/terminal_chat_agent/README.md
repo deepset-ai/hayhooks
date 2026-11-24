@@ -1,7 +1,6 @@
 # Chat with files in a server workspace
 
 Deploy one Haystack Agent with `list_files`, `read_file`, and `write_file`, then use terminal chat to work with text files.
-The wrapper owns the Agent, its model, and its tools. `file_tools.py` also works with an ordinary Python Agent without terminal chat.
 
 Run these commands from the Hayhooks repository root.
 Install terminal chat in the Python environment where you run the client:
@@ -16,9 +15,9 @@ Create a dedicated demo directory owned by the server operator. Keep deployment 
 Set these variables in the environment that starts the Hayhooks server.
 
 ```sh
-mkdir -p /tmp/hayhooks-chat-demo
-printf 'The launch review is on Friday.\n' > /tmp/hayhooks-chat-demo/notes.txt
-export EXAMPLE_CHAT_WORKSPACE=/tmp/hayhooks-chat-demo
+export EXAMPLE_CHAT_WORKSPACE="$(mktemp -d)"
+printf '%s\n' 'Launch review: Monday, July 5, 2027.' \
+  'The US office is closed July 2 and July 5.' > "$EXAMPLE_CHAT_WORKSPACE/notes.txt"
 export OPENAI_API_KEY=your-api-key
 hayhooks run
 ```
@@ -38,13 +37,17 @@ hayhooks chat terminal-chat-agent
 Try these requests in order.
 
 1. "List the workspace files."
-2. "Read notes.txt."
+2. "Read notes.txt. Plan two reminders for the week before the review. Which dates work around the office closures?"
 3. "Write a short summary of notes.txt to summary.txt."
 4. "Read summary.txt back."
 
 Chat shows each tool's arguments, result, and failure status. Check the written file in the server workspace.
 To try error recovery, ask to read a missing file, then ask to read `notes.txt`.
 A failed tool returns an error to the Agent so it can explain the problem and continue.
+
+In `pipeline_wrapper.py`, `setup()` builds the Agent when you deploy the wrapper.
+For each chat request, `run_chat_completion_async()` converts the incoming messages to Haystack `ChatMessage` objects and passes them to `stream_agent_chat`.
+You can also use the tools from `file_tools.py` in other Agents.
 
 Use relative paths beneath the configured directory. Tools reject absolute paths, parent traversal, symlinks in requested paths, and nonregular file targets.
 `list_files` returns at most 200 immediate entries and states when it truncates the listing. It marks symlinks without following them.
