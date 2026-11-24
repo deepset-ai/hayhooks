@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 pytest.importorskip("textual")
 from textual import events
-from textual.widgets import Button, Markdown, Static, TextArea
+from textual.widgets import Button, Collapsible, Markdown, Static, TextArea
 
 from hayhooks.chat.app import ChatApp, ToolCard
 from hayhooks.chat.client import ChatClient, ChatError
@@ -859,6 +859,43 @@ async def test_remote_sse_to_eof_tools_and_completed_follow_up_history(monkeypat
         {"role": "user", "content": "Follow up"},
     ]
     assert requests[0]["model"] == "custom-agent" and requests[0]["stream"] is True
+
+
+async def test_reasoning_summary_can_expand_and_stays_out_of_history(monkeypatch):
+    summary = "Checked the **workspace** before answering."
+    stream = EventStream(
+        [
+            frame({"event": {"type": "hayhooks.reasoning_summary", "data": {"text": summary}}}),
+            frame(
+                {
+                    "choices": [
+                        {"delta": {"reasoning_content": "private", "content": "Found it."}, "finish_reason": "stop"}
+                    ]
+                }
+            ),
+        ]
+    )
+    mock_http(
+        monkeypatch,
+        lambda _request: httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream),
+    )
+    client = ChatClient("http://server", "agent")
+    app = ChatApp(client)
+    async with app.run_test() as pilot:
+        app.query_one("#composer", TextArea).load_text("Find the file")
+        await pilot.press("enter")
+        await settle(app, pilot)
+        card = app.query_one(Collapsible)
+        assert card.title == "Reasoning summary" and card.collapsed
+        card.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        assert not card.collapsed
+        assert card.query_one(Markdown).source == summary
+        assert [widget.source for widget in app.query(Markdown)] == ["Find the file", summary, "Found it."]
+        assert client.history == [
+            {"role": "user", "content": "Find the file"},
+            {"role": "assistant", "content": "Found it."},
+        ]
 
 
 @pytest.mark.parametrize("status", [404, 501])

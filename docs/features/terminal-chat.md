@@ -39,6 +39,7 @@ Sent and restored prompts retain their indentation and trailing whitespace.
 Collapsed tool rows show **Running**, **Success**, **Error**, or **Interrupted** on one line.
 Click a row or focus its title with Tab and press Enter to inspect arguments and results.
 Errors expand automatically. Tool results remain literal text, and long results support keyboard scrolling.
+When the provider sends a reasoning summary, expand its **Reasoning summary** row to read it.
 
 Selecting transcript text, tool details, or composer text copies it automatically.
 Copied tool results retain their original line endings.
@@ -67,7 +68,7 @@ Check the received tool results and affected files before repeating work.
 A tool error does not necessarily fail the turn. The Agent can recover and complete its answer while the error card remains visible.
 
 Conversation history lasts for the current process. Subsequent requests include completed user prompts and final assistant answers.
-Tool cards and side messages are display content and are not sent as conversation history.
+Tool cards, reasoning summaries, and side messages stay in the transcript and are excluded from conversation history.
 Failed and stopped turns stay visible but are omitted from subsequent requests.
 Include the relevant context in your next message and ask the Agent to verify the current state before acting again.
 There is no saved chat or playback command.
@@ -97,7 +98,8 @@ hayhooks chat workspace-agent
 
 Ask the Agent to list its files, read `note.txt`, write a summary to `summary.txt`, and read the summary back.
 Inspect the tool cards and the actual file in the server directory.
-Set `EXAMPLE_AGENT_MODEL` on the server to select the model. The example defaults to `gpt-6-luna`.
+Set `EXAMPLE_AGENT_MODEL` on the server to select a model that supports function calling through the OpenAI Responses API.
+The example defaults to `gpt-6-luna` and requests reasoning summaries with that model.
 
 Tools accept relative paths beneath `EXAMPLE_CHAT_WORKSPACE` and reject symlinks.
 Reads and write input are limited to 64 KiB of UTF-8 bytes. Listings show at most 200 immediate entries and report truncation.
@@ -111,14 +113,17 @@ Configure the Agent in your wrapper and adapt its stream with `stream_agent_chat
 
 ```python
 from haystack.components.agents import Agent
-from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.components.generators.chat import OpenAIResponsesChatGenerator
 from haystack.dataclasses import ChatMessage
 from hayhooks import BasePipelineWrapper, stream_agent_chat
 
 class PipelineWrapper(BasePipelineWrapper):
 	def setup(self):
 		self.pipeline = Agent(
-			chat_generator=OpenAIChatGenerator(model="gpt-6-luna", generation_kwargs={"reasoning_effort": "none"})
+			chat_generator=OpenAIResponsesChatGenerator(
+				model="gpt-6-luna",
+				generation_kwargs={"reasoning": {"effort": "low", "summary": "auto"}, "store": False},
+			)
 		)
 
 	async def run_chat_completion_async(self, model, messages, body):
@@ -131,6 +136,7 @@ Register tools or Toolsets when you construct the Agent.
 Pass additional state inputs as keyword arguments to `stream_agent_chat`.
 Run-specific `tools` retain Haystack's semantics. The helper owns `streaming_callback` and rejects a conflicting override.
 It preserves the configured Agent and correlates streamed tool arguments and results by call ID.
+It forwards completed reasoning summaries as they arrive from the Responses API.
 If the Agent uses a `before_tool` hook, tool cards appear when the tool results arrive because the hook can change which calls run.
 
 ## Emit tool cards from another wrapper
@@ -157,4 +163,4 @@ It is displayed separately and does not become conversation history.
 
 Only emit tool content intended for the client. Tool output is not a redacted diagnostic channel.
 Keep credentials and internal server diagnostics out of tool results.
-The terminal does not execute client-side tool requests or display model reasoning.
+The terminal displays provider-authored reasoning summaries only and keeps tool execution on the server.

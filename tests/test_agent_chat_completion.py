@@ -6,13 +6,13 @@ import pytest
 from fastapi import FastAPI
 from haystack import component
 from haystack.components.agents import Agent
-from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall
+from haystack.dataclasses import ChatMessage, ReasoningContent, StreamingChunk, ToolCall
 from haystack.dataclasses.streaming_chunk import ToolCallDelta
 from haystack.tools import Tool
 
 from hayhooks import BasePipelineWrapper, stream_agent_chat
 from hayhooks.chat.client import ChatClient, ChatError
-from hayhooks.chat.events import ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
+from hayhooks.chat.events import ReasoningSummary, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
 from hayhooks.server.pipelines.registry import _PipelineRegistry
 from hayhooks.server.routers.openai import create_openai_router
 from hayhooks.server.utils.module_loader import create_pipeline_wrapper_instance
@@ -20,9 +20,10 @@ from hayhooks.server.utils.module_loader import create_pipeline_wrapper_instance
 
 @component
 class CompletionGenerator:
-    def __init__(self, replies: list[ChatMessage]):
+    def __init__(self, replies: list[ChatMessage], leading_chunks: tuple[StreamingChunk, ...] = ()):
         self.replies = replies
         self.step = 0
+        self.leading_chunks = leading_chunks
 
     @component.output_types(replies=list[ChatMessage])
     def run(self, messages: list[ChatMessage], tools=None, streaming_callback=None):
@@ -32,6 +33,9 @@ class CompletionGenerator:
 
     @component.output_types(replies=list[ChatMessage])
     async def run_async(self, messages: list[ChatMessage], tools=None, streaming_callback=None):
+        if self.step == 0:
+            for chunk in self.leading_chunks:
+                await streaming_callback(chunk)
         result = self.run(messages, tools, streaming_callback)
         reply = result["replies"][0]
         if reply.text:
@@ -330,6 +334,48 @@ async def test_recovered_model_limit_without_final_stream_marker_succeeds(chat_c
     assert await client.run("Hi", lambda _: None, emit=events.append) == "Checking Done"
     assert events[-1] == ResponseComplete("answer", "Agent", "Checking Done", final=True)
     assert client.history[-1] == {"role": "assistant", "content": "Checking Done"}
+
+
+async def test_responses_reasoning_summary_is_display_only(chat_client, lookup_tool):
+    summary = "I'll look up the value first."
+    generator = CompletionGenerator(
+        [
+            ChatMessage.from_assistant(
+                tool_calls=[ToolCall(tool_name="lookup", arguments={}, id="lookup-1")],
+                meta={"finish_reason": "tool_calls"},
+            ),
+            ChatMessage.from_assistant("Done", meta={"finish_reason": "stop"}),
+        ],
+        leading_chunks=(
+            StreamingChunk(
+                content="",
+                index=0,
+                reasoning=ReasoningContent(
+                    reasoning_text="private trace",
+                    extra={"type": "response.reasoning_text.delta", "encrypted_content": "opaque"},
+                ),
+            ),
+            StreamingChunk(content="", meta={"type": "response.reasoning_text.done", "text": "private trace"}),
+            StreamingChunk(content="", meta={"type": "response.reasoning_summary_text.done", "text": ""}),
+            StreamingChunk(
+                content="",
+                meta={"type": "response.reasoning_summary_text.done", "text": summary, "item_id": "rs_provider"},
+            ),
+        ),
+    )
+    client = chat_client(Agent(chat_generator=generator, tools=[lookup_tool]))
+    events = []
+
+    assert await client.run("Hi", lambda _: None, emit=events.append) == "Done"
+    assert [type(event) for event in events] == [
+        ReasoningSummary,
+        ToolStarted,
+        ToolFinished,
+        ResponseDelta,
+        ResponseComplete,
+    ]
+    assert events[0] == ReasoningSummary(summary)
+    assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Done"}]
 
 
 async def test_v3_custom_hook_stop_can_complete_without_model_text(chat_client):

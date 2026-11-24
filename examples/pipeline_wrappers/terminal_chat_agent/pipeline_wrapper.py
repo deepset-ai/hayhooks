@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from haystack.components.agents import Agent
-from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.components.generators.chat import OpenAIResponsesChatGenerator
 from haystack.dataclasses import ChatMessage
 
 from hayhooks import BasePipelineWrapper, stream_agent_chat
@@ -22,10 +22,11 @@ class PipelineWrapper(BasePipelineWrapper):
             message = "EXAMPLE_CHAT_WORKSPACE must name an existing, accessible server-side directory."
             raise ValueError(message) from exc
         model = os.environ.get("EXAMPLE_AGENT_MODEL", "gpt-6-luna")
-        # GPT-6 Luna needs reasoning disabled for tool calls through Chat Completions.
-        generation_kwargs = {"reasoning_effort": "none"} if model == "gpt-6-luna" else None
+        generation_kwargs: dict[str, object] = {"store": False}
+        if model == "gpt-6-luna":
+            generation_kwargs["reasoning"] = {"effort": "low", "summary": "auto"}
         self.pipeline = Agent(
-            chat_generator=OpenAIChatGenerator(model=model, generation_kwargs=generation_kwargs),
+            chat_generator=OpenAIResponsesChatGenerator(model=model, generation_kwargs=generation_kwargs),
             tools=tools,
             system_prompt=(
                 "Help the user work with UTF-8 text files in the configured server workspace. "

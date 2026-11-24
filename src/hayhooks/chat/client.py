@@ -9,9 +9,10 @@ from typing import Literal
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from hayhooks.chat.events import ChatEvent, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
+from hayhooks.chat.events import ChatEvent, ReasoningSummary, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
 
 _EVENT_TYPES = {
+    "hayhooks.reasoning_summary": TypeAdapter(ReasoningSummary),
     "hayhooks.tool_call": TypeAdapter(ToolStarted),
     "hayhooks.tool_result": TypeAdapter(ToolFinished),
     "hayhooks.message": TypeAdapter(ResponseComplete),

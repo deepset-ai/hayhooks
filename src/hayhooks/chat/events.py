@@ -17,6 +17,11 @@ class ResponseComplete:
 
 
 @dataclass(frozen=True)
+class ReasoningSummary:
+    text: str
+
+
+@dataclass(frozen=True)
 class ToolStarted:
     call_id: str
     actor: str
@@ -31,4 +36,4 @@ class ToolFinished:
     error: bool = False
 
 
-ChatEvent = ResponseDelta | ResponseComplete | ToolStarted | ToolFinished
+ChatEvent = ResponseDelta | ResponseComplete | ReasoningSummary | ToolStarted | ToolFinished

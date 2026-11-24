@@ -25,7 +25,8 @@ hayhooks run
 
 `EXAMPLE_CHAT_WORKSPACE` is required and must name an existing server-side directory.
 The wrapper resolves it during setup, including configured directory aliases.
-`EXAMPLE_AGENT_MODEL` defaults to `gpt-6-luna`. The Agent uses at most ten steps per request.
+`EXAMPLE_AGENT_MODEL` defaults to `gpt-6-luna`. The Agent uses Haystack's `OpenAIResponsesChatGenerator` and runs at most ten steps per request.
+With the default model, the Agent requests reasoning summaries. Open a **Reasoning summary** row when one appears.
 
 In another terminal, deploy both Python files together and open chat.
 

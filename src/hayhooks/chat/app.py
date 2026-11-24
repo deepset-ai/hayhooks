@@ -17,7 +17,7 @@ from textual.widgets.text_area import Selection
 from textual.worker import Worker, get_current_worker
 
 from hayhooks.chat.client import ChatClient, ChatError
-from hayhooks.chat.events import ChatEvent, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
+from hayhooks.chat.events import ChatEvent, ReasoningSummary, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
 from hayhooks.tui.theme import apply_theme
 
 ROOMY_TERMINAL_HEIGHT = 32
@@ -80,7 +80,7 @@ class ToolCard(Collapsible):
             Static("RESULT", classes="detail-label"),
             self.output,
             title=f"{self.state} · {self.label}",
-            classes="tool-card running",
+            classes="detail-card running",
         )
         self.tooltip = f"{self.label} · Call {event.call_id} · Enter or click to expand"
 
@@ -299,6 +299,10 @@ class ChatApp(App):
                 card = ToolCard(event)
                 self.tool_cards[event.call_id] = card
                 await transcript.mount(card)
+            elif isinstance(event, ReasoningSummary):
+                await transcript.mount(
+                    Collapsible(Markdown(event.text), title="Reasoning summary", classes="detail-card")
+                )
             elif event.call_id in self.tool_cards:
                 self.tool_cards[event.call_id].finish(event)
             if follow:

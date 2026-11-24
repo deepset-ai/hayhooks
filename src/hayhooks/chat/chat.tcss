@@ -8,7 +8,7 @@ Screen.narrow #workspace { height: 2; }
 .entry .role { height: 1; text-style: bold; color: $text-muted; }
 .entry.assistant .role { color: $text; }
 .entry.error .role { color: $error; }
-.entry Markdown { margin: 0; padding: 0; background: transparent; }
+.entry Markdown, .detail-card Markdown { margin: 0; padding: 0; background: transparent; }
 #composer { height: 3; min-height: 3; border: solid $panel; padding: 0 1; background: $surface; }
 #composer:focus { border: solid $accent; }
 #actions { height: 1; padding: 0 1; }
@@ -22,13 +22,13 @@ Screen.narrow #workspace { height: 2; }
 Screen.roomy #composer { height: 5; }
 Screen.compact #welcome { margin: 0 1; }
 Screen.compact .entry { margin-top: 0; }
-.tool-card { height: auto; margin: 0; border: none; padding: 0 1; background: transparent; }
-.tool-card CollapsibleTitle { width: 1fr; height: 1; padding: 0; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis; }
-.tool-card.running CollapsibleTitle { color: $accent; }
-.tool-card.error CollapsibleTitle { color: $error; text-style: bold; }
-.tool-card.interrupted CollapsibleTitle { color: $warning; }
-.tool-card CollapsibleTitle:focus { background: $panel; color: $text; }
-.tool-card Contents { border: solid $text-muted; padding: 0 1 1 1; background: $surface; }
+.detail-card { height: auto; margin: 0; border: none; padding: 0 1; background: transparent; }
+.detail-card CollapsibleTitle { width: 1fr; height: 1; padding: 0; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis; }
+.detail-card.running CollapsibleTitle { color: $accent; }
+.detail-card.error CollapsibleTitle { color: $error; text-style: bold; }
+.detail-card.interrupted CollapsibleTitle { color: $warning; }
+.detail-card CollapsibleTitle:focus { background: $panel; color: $text; }
+.detail-card Contents { border: solid $text-muted; padding: 0 1 1 1; background: $surface; }
 .detail-label { color: $text-muted; margin-top: 1; height: 1; }
-.tool-card TextArea { height: auto; min-height: 3; max-height: 30vh; border: none; padding: 0 1; background: $background; }
-.tool-card TextArea:focus { border: solid $accent; }
+.detail-card TextArea { height: auto; min-height: 3; max-height: 30vh; border: none; padding: 0 1; background: $background; }
+.detail-card TextArea:focus { border: solid $accent; }

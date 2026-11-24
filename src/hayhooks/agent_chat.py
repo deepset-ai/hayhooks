@@ -117,6 +117,12 @@ async def _agent_events(  # noqa: C901, PLR0912
                     yield item
                 continue
             if (
+                item.meta.get("type") == "response.reasoning_summary_text.done"
+                and isinstance(summary := item.meta.get("text"), str)
+                and summary.strip()
+            ):
+                yield PipelineEvent(type="hayhooks.reasoning_summary", data={"text": summary})
+            if (
                 after_tool_result
                 and not item.tool_call_result
                 and (item.content or item.tool_calls or item.finish_reason not in {None, "tool_call_results"})
