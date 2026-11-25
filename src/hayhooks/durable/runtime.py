@@ -450,12 +450,15 @@ class DurableDeployment:
             enforce_owner=enforce_owner,
             allow_revision_mismatch=False,
         )
+        waiting = stored.control.status is ExecutionStatus.WAITING
+        if not waiting and answer_key is None:
+            raise InvalidExecutionTransitionError("only waiting executions can resume")
         if self.resume_model is not None:
             resume_input = self.resume_model.model_validate(resume_input).model_dump(mode="json")
-        digest = "" if answer_key is None else answer_digest(resume_input)
-        if stored.control.status is not ExecutionStatus.WAITING:
-            if answer_key is None:
-                raise InvalidExecutionTransitionError("only waiting executions can resume")
+        digest = (
+            "" if answer_key is None else answer_digest(resume_input, max_bytes=self.store.config.max_payload_bytes)
+        )
+        if not waiting:
             # Ask the store whether this key already resumed it; a key it does not know is refused.
             return await self.store.transition(
                 run_id,

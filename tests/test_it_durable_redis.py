@@ -118,15 +118,20 @@ async def test_redis_store_answer_keys(redis_store) -> None:
     assert 0 < await redis.ttl(answers) <= store.config.terminal_ttl_seconds
 
 
-async def test_redis_answer_without_terminal_keeps_a_backstop_expiry(redis_store) -> None:
+async def test_redis_answer_is_kept_while_the_run_waits_again(redis_store) -> None:
     redis, store = redis_store
     await store.submit(contract_control(store.deployment), b"input")
-    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
-    assert claimed is not None
-    await store.transition("run_1", Suspend(claimed.next_control.fence, "worker", 0, b"checkpoint", b"wait"))
-    await store.transition("run_1", Resume(0, "v1", b"answer", answer_key="k1", answer_digest="d1"))
-    ttl = await redis.ttl(store.keys.answers("run_1"))
-    assert store.config.terminal_ttl_seconds < ttl <= 2 * store.config.terminal_ttl_seconds
+    for label in (b"first", b"second"):
+        claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
+        assert claimed is not None
+        await store.transition("run_1", Suspend(claimed.next_control.fence, "worker", 0, b"checkpoint", label))
+        if label == b"first":
+            await store.transition("run_1", Resume(0, "v1", b"answer", answer_key="k1", answer_digest="d1"))
+    # The fixture's terminal TTL is 1 s: a run that waits longer than that still remembers its answers.
+    assert await redis.ttl(store.keys.answers("run_1")) == -1
+    await asyncio.sleep(1.2)
+    replayed = await store.transition("run_1", Resume(0, "v1", b"answer", answer_key="k1", answer_digest="d1"))
+    assert replayed.answer is None and replayed.next_control.status is ExecutionStatus.WAITING
 
 
 async def test_redis_wrong_type_answers_key_fails_before_any_write(redis_store) -> None:

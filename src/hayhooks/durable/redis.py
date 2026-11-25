@@ -998,12 +998,10 @@ class RedisExecutionStore:
         commands.extend(("SET", self.keys.payload(run_id, write.kind), write.data) for write in plan.payload_writes)
         commands.extend(("DEL", self.keys.payload(run_id, kind)) for kind in plan.payload_deletes)
         if plan.answer is not None:
-            answers_key = self.keys.answers(run_id)
-            commands.append(("HSET", answers_key, answer_field(plan.answer.key), plan.answer.digest))
-            # shortcut: a run that ends under a worker without this code never gets the terminal expiry below,
-            # so every answer also sets a backstop of twice the terminal TTL; a run that waits longer than that
-            # after an answer forgets it. Drop the backstop once every worker sets the terminal expiry.
-            commands.append(("EXPIRE", answers_key, 2 * self.config.terminal_ttl_seconds))
+            # No expiry until the run ends: an answer must be remembered for as long as the run can wait again.
+            # shortcut: a run that ends under a worker without this code keeps its (small) answers hash without an
+            # expiry; upgrade every worker sharing the store to drop that leak.
+            commands.append(("HSET", self.keys.answers(run_id), answer_field(plan.answer.key), plan.answer.digest))
         if plan.discard_progress:
             commands.append(("DEL", progress_key))
         elif plan.progress_events:
