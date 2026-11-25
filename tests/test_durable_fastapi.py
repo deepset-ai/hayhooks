@@ -238,9 +238,17 @@ def test_router_is_typed_prefix_and_root_path_safe(durable_app_factory, wait_for
         waiting = wait_for_execution(client, links["self"], "waiting")
         assert waiting["waiting"] == {"kind": "approval", "message": "Continue?"}
         assert client.post(links["resume"], json={"approved": "invalid"}).status_code == 422
-        assert client.post(links["resume"], json={"approved": True}).status_code == 202
+        answer = {"Idempotency-Key": "answer-1"}
+        answered = client.post(links["resume"], json={"approved": True}, headers=answer)
+        assert answered.status_code == 202 and "idempotent-replay" not in answered.headers
         completed = wait_for_execution(client, links["self"], "completed")
         assert completed["result"] == {"value": 1, "owner_id": None}
+        replayed = client.post(links["resume"], json={"approved": True}, headers=answer)
+        assert replayed.status_code == 202 and replayed.headers["idempotent-replay"] == "true"
+        assert replayed.json()["status"] == "completed"
+        assert client.post(links["resume"], json={"approved": False}, headers=answer).status_code == 409
+        too_long = {"Idempotency-Key": "x" * 513}
+        assert client.post(links["resume"], json={"approved": True}, headers=too_long).status_code == 422
         assert client.post(links["resume"], json={"approved": True}).status_code == 409
         assert client.post(links["cancel"]).status_code == 200
         assert client.get(links["stream"], headers={"Last-Event-ID": "invalid"}).status_code == 422

@@ -36,6 +36,7 @@ from hayhooks.durable.engine import (
     PayloadKind,
     ProgressEvent,
     RecoverExpiredLease,
+    Resume,
     TransitionPlan,
     became_terminal,
     decide,
@@ -64,6 +65,7 @@ from hayhooks.durable.store import (
     StreamChunk,
     SubmissionResult,
     _parse_creation_member,
+    answer_field,
     bind_store_command,
     chunk_read_count,
     creation_member,
@@ -205,7 +207,7 @@ if ARGV[4] ~= '' then
 end
 -- 4. Check each type-sensitive target before any mutation: Redis scripts have no rollback.
 -- HGETALL and HGET above already validate the control and capacity hashes.
-local checks = {RPUSH = 'LLEN', ZADD = 'ZCARD', ZREM = 'ZCARD'}
+local checks = {RPUSH = 'LLEN', ZADD = 'ZCARD', ZREM = 'ZCARD', HSET = 'HLEN'}
 local checked = {}
 local reset_streams = {}
 local probe = cursor
@@ -358,6 +360,9 @@ class RedisKeys:
 
     def chunks(self, run_id: str) -> str:
         return f"{self._execution(run_id)}:chunks"
+
+    def answers(self, run_id: str) -> str:
+        return f"{self._execution(run_id)}:answers"
 
     def payload(self, run_id: str, kind: PayloadKind) -> str:
         return f"{self._execution(run_id)}:{kind.value}"
@@ -868,13 +873,21 @@ class RedisExecutionStore:
         member = (
             RedisKeys.lease_member(run_id, command.indexed_fence) if isinstance(command, RecoverExpiredLease) else None
         )
+        answer = (
+            answer_field(command.answer_key) if isinstance(command, Resume) and command.answer_key is not None else None
+        )
         for attempt in range(self._transaction_retries):
             async with self.redis.pipeline(transaction=False) as pipe:
                 pipe.hgetall(self.keys.control(run_id))
                 pipe.time()
                 if member is not None:
                     pipe.zscore(self.keys.lease_expiry, member)
+                # Read after the control: only a commit that changes the control records an answer, so a
+                # record newer than the control snapshot fails that commit's compare-and-set below.
+                if answer is not None:
+                    pipe.hget(self.keys.answers(run_id), answer)
                 values, now, *indexed = await pipe.execute(raise_on_error=False)
+            recorded = _recorded_answer(indexed.pop()) if answer is not None else None
             if isinstance(now, Exception):
                 raise now
             current = self._control(values, run_id)
@@ -884,7 +897,10 @@ class RedisExecutionStore:
                 if current is None:
                     raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
                 now_ms = max(_milliseconds(now), current.updated_at_ms)
-                plan = decide(current, bind_store_command(command, now_ms, self.config))
+                bound = bind_store_command(command, now_ms, self.config)
+                if answer is not None:
+                    bound = replace(bound, recorded_digest=recorded)
+                plan = decide(current, bound)
             except (ExecutionNotFoundError, InvalidExecutionTransitionError):
                 if candidate_index is None:
                     raise
@@ -981,6 +997,13 @@ class RedisExecutionStore:
             commands.append(("HDEL", control_key, *removed_fields))
         commands.extend(("SET", self.keys.payload(run_id, write.kind), write.data) for write in plan.payload_writes)
         commands.extend(("DEL", self.keys.payload(run_id, kind)) for kind in plan.payload_deletes)
+        if plan.answer is not None:
+            answers_key = self.keys.answers(run_id)
+            commands.append(("HSET", answers_key, answer_field(plan.answer.key), plan.answer.digest))
+            # shortcut: a run that ends under a worker without this code never gets the terminal expiry below,
+            # so every answer also sets a backstop of twice the terminal TTL; a run that waits longer than that
+            # after an answer forgets it. Drop the backstop once every worker sets the terminal expiry.
+            commands.append(("EXPIRE", answers_key, 2 * self.config.terminal_ttl_seconds))
         if plan.discard_progress:
             commands.append(("DEL", progress_key))
         elif plan.progress_events:
@@ -1044,6 +1067,7 @@ class RedisExecutionStore:
                     control_key,
                     progress_key,
                     *(self.keys.payload(run_id, kind) for kind in PayloadKind),
+                    self.keys.answers(run_id),
                     self.keys.idempotency(control.idempotency_digest),
                 )
             )
@@ -1205,6 +1229,15 @@ def _decode_progress(raw_progress: Any, control: ExecutionControl) -> tuple[Prog
     ):
         raise ExecutionProgressCorruptionError("progress sequence contradicts control state")
     return tuple(progress)
+
+
+def _recorded_answer(reply: object) -> str | None:
+    """Decode one answer record read beside a control snapshot."""
+    if isinstance(reply, Exception):
+        if _wrong_type(reply):
+            raise ExecutionStoreCorruptionError("stored answer keys have an invalid type")
+        raise reply
+    return None if reply is None else _text(cast(bytes, reply))
 
 
 def _wrong_type(reply: object) -> bool:

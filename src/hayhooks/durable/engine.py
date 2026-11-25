@@ -73,6 +73,10 @@ class ExecutionPayloadSizeError(RuntimeError):
     pass
 
 
+class ExecutionIdempotencyConflictError(RuntimeError):
+    """An idempotency key was reused for different work."""
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionControl:
     """
@@ -166,6 +170,14 @@ class LeaseIndexUpdate:
 
 
 @dataclass(frozen=True, slots=True)
+class AnswerRecord:
+    """A resume's answer key and its answer's digest, recorded in the commit that resumes."""
+
+    key: str
+    digest: str
+
+
+@dataclass(frozen=True, slots=True)
 class TransitionPlan:
     next_control: ExecutionControl
     payload_writes: tuple[PayloadWrite, ...] = ()
@@ -173,6 +185,7 @@ class TransitionPlan:
     progress_events: tuple[ProgressEvent, ...] = ()
     lease_index_update: LeaseIndexUpdate | None = None
     discard_progress: bool = False
+    answer: AnswerRecord | None = None
 
 
 def plan_changes(current: ExecutionControl, plan: TransitionPlan) -> bool:
@@ -184,6 +197,7 @@ def plan_changes(current: ExecutionControl, plan: TransitionPlan) -> bool:
         or plan.progress_events
         or plan.lease_index_update
         or plan.discard_progress
+        or plan.answer
     )
 
 
@@ -264,10 +278,30 @@ class Suspend:
 
 @dataclass(frozen=True, slots=True)
 class Resume:
+    """
+    Requeue a waiting execution, optionally with a new checkpoint.
+
+    ``answer_key`` makes the resume idempotent: the store records it with ``answer_digest`` in the commit
+    that resumes, and a later resume with that key changes nothing (or conflicts, for another digest), even
+    once the execution waits again. The store binds ``recorded_digest``: the digest already recorded for the
+    key, if any.
+    """
+
     now_ms: int
     worker_revision: str
     checkpoint: bytes | None = None
     expected_version: int | None = None
+    answer_key: str | None = None
+    answer_digest: str = ""
+    recorded_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.answer_key is None:
+            return
+        for name in ("answer_key", "answer_digest"):
+            value = getattr(self, name)
+            if not value or len(value.encode()) > MAX_CONTROL_SCALAR_BYTES:
+                raise ValueError(f"{name} must be non-empty and at most {MAX_CONTROL_SCALAR_BYTES} bytes")
 
 
 @dataclass(frozen=True, slots=True)
@@ -486,25 +520,14 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
             lease_index_update=LeaseIndexUpdate(None, control.fence),
         )
     if isinstance(command, Resume):
-        if command.expected_version is not None and control.version != command.expected_version:
-            raise InvalidExecutionTransitionError("execution changed before it could resume")
-        if control.status is not ExecutionStatus.WAITING:
-            raise InvalidExecutionTransitionError("only waiting executions can resume")
-        if control.definition_revision != command.worker_revision:
-            raise InvalidExecutionTransitionError("definition revision is incompatible")
-        if control.cancel_requested_at_ms is not None:
-            return _cancel(control, command.now_ms)
-        writes = (PayloadWrite(PayloadKind.CHECKPOINT, command.checkpoint),) if command.checkpoint is not None else ()
-        next_control = _business(
-            control,
-            command.now_ms,
-            status=ExecutionStatus.QUEUED,
-        )
-        return TransitionPlan(
-            next_control,
-            payload_writes=writes,
-            payload_deletes=(PayloadKind.WAIT,),
-        )
+        if command.answer_key is not None and command.recorded_digest is not None:
+            if command.recorded_digest != command.answer_digest:
+                raise ExecutionIdempotencyConflictError("answer key was used for another answer")
+            return TransitionPlan(control)
+        plan = _resume(control, command)
+        if command.answer_key is None:
+            return plan
+        return replace(plan, answer=AnswerRecord(command.answer_key, command.answer_digest))
     if isinstance(command, (Complete, Fail)):
         require_owned(control, command.fence, command.worker_id, command.now_ms, command.lease_commit_safety_ms)
         completed = isinstance(command, Complete)
@@ -552,6 +575,28 @@ def decide(control: ExecutionControl, command: ExecutionCommand) -> TransitionPl
         )
         return TransitionPlan(next_control, lease_index_update=LeaseIndexUpdate(None, control.fence))
     raise TypeError(f"unsupported execution command {type(command).__name__}")
+
+
+def _resume(control: ExecutionControl, command: Resume) -> TransitionPlan:
+    if command.expected_version is not None and control.version != command.expected_version:
+        raise InvalidExecutionTransitionError("execution changed before it could resume")
+    if control.status is not ExecutionStatus.WAITING:
+        raise InvalidExecutionTransitionError("only waiting executions can resume")
+    if control.definition_revision != command.worker_revision:
+        raise InvalidExecutionTransitionError("definition revision is incompatible")
+    if control.cancel_requested_at_ms is not None:
+        return _cancel(control, command.now_ms)
+    writes = (PayloadWrite(PayloadKind.CHECKPOINT, command.checkpoint),) if command.checkpoint is not None else ()
+    next_control = _business(
+        control,
+        command.now_ms,
+        status=ExecutionStatus.QUEUED,
+    )
+    return TransitionPlan(
+        next_control,
+        payload_writes=writes,
+        payload_deletes=(PayloadKind.WAIT,),
+    )
 
 
 def _terminal(

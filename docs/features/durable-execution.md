@@ -499,6 +499,15 @@ explicitly, even with its default value, is a different request and returns
 `409`. Without an owner dependency, every caller shares one idempotency-key
 namespace; use unguessable keys such as UUIDs.
 
+A resume takes an `Idempotency-Key` too (`DurableDeployment.resume(...,
+answer_key=...)`). The store records the key in the commit that resumes the
+execution and keeps it for as long as the execution. Retrying it with the same
+input changes nothing and answers `202` with `Idempotent-Replay: true`, even
+once the execution waits again, so a retried answer never answers a later wait.
+The same key with other input returns `409`. A resume that was refused (the
+execution did not wait, or changed first) records nothing: retry it only while
+the execution still waits for that answer.
+
 ## Host lifecycle
 
 The portable package does not manage the host application. The host owns
