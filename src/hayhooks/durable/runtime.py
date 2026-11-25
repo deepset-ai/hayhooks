@@ -448,7 +448,9 @@ class DurableDeployment:
             await self.store.read(run_id),
             owner_id=owner_id,
             enforce_owner=enforce_owner,
-            allow_revision_mismatch=False,
+            # A keyed resume may be a retry of an answer the run took before this revision was deployed: the store
+            # replays a key it knows first, and refuses a new answer to a run of another revision itself.
+            allow_revision_mismatch=answer_key is not None,
         )
         waiting = stored.control.status is ExecutionStatus.WAITING
         if not waiting and answer_key is None:
@@ -480,6 +482,8 @@ class DurableDeployment:
         checkpoint = CheckpointEnvelope.model_validate(
             {**checkpoint.model_dump(mode="json"), "resume_input": resume_input}
         )
+        # shortcut: a retry at a later wait builds this checkpoint before the store can replay its key, so one that
+        # no longer fits with the old answer is refused as too large; read the answer record first to upgrade.
         plan = await self.store.transition(
             run_id,
             Resume(

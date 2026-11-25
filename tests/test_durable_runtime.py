@@ -1016,6 +1016,14 @@ async def test_keyed_resume_answers_each_wait_once(deployment_factory) -> None:
     assert replayed.answer is None and replayed.next_control == second.control
     with pytest.raises(ExecutionIdempotencyConflictError):
         await deployment.resume(run_id, {"value": 8}, answer_key="k1")
+    # A deployment of a newer revision still replays the answer; only a new answer needs the run's revision.
+    newer = await deployment_factory(
+        runner, store=deployment.store, revision="v2", resume_model=ResumeInput, start=False
+    )
+    assert (await newer.resume(run_id, {"value": 7}, answer_key="k1")).answer is None
+    for key in ("k2", None):
+        with pytest.raises(InvalidExecutionTransitionError, match="revision is incompatible"):
+            await newer.resume(run_id, {"value": 5}, answer_key=key)
     await deployment.resume(run_id, {"value": 5}, answer_key="k2")
 
     stored = await wait_for_execution(deployment, run_id, lambda value: value.control.terminal)
