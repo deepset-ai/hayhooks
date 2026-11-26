@@ -376,22 +376,16 @@ def create_durable_router(  # noqa: C901
         response.status_code = status.HTTP_200_OK if plan.next_control.terminal else status.HTTP_202_ACCEPTED
         return await _read_projected(request, deployment, route_names, execution_id, owner, enforce_owner)
 
-    async def resume_execution(  # noqa: PLR0913
+    async def resume_execution(
         execution_id: ExecutionId,
         response: Response,
         request: Request,
         owner_id: object = Depends(owner_dependency),
         resume_input: Any = Body(default=None),
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1),
     ) -> ExecutionResult:
         owner = _validated_owner(owner_id, enforce_owner=enforce_owner)
-        _validate_idempotency_key(idempotency_key)
-        plan = await deployment.resume(
-            execution_id, resume_input, owner_id=owner, enforce_owner=enforce_owner, answer_key=idempotency_key
-        )
+        await deployment.resume(execution_id, resume_input, owner_id=owner, enforce_owner=enforce_owner)
         response.status_code = status.HTTP_202_ACCEPTED
-        if plan.answer is None and idempotency_key is not None:
-            response.headers["Idempotent-Replay"] = "true"
         return await _read_projected(request, deployment, route_names, execution_id, owner, enforce_owner)
 
     if deployment.resume_model is not None:

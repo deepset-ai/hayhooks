@@ -991,48 +991,6 @@ async def test_typed_resume_reconstructs_waiting_execution(deployment_factory) -
     assert decode_json(stored.payloads[PayloadKind.RESULT], max_bytes=1_000) == {"value": 7}
 
 
-async def test_keyed_resume_answers_each_wait_once(deployment_factory) -> None:
-    async def runner(context: DurableContext, _request: Request) -> Result:
-        answers = context.state.setdefault("answers", [])
-        while len(answers) < 2:
-            resume_input = context.resume_input
-            if resume_input is None:
-                await context.suspend({"kind": "approval", "message": f"Question {len(answers) + 1}?"})
-            answers.append(ResumeInput.model_validate(resume_input).value)
-            await context.checkpoint()
-        return Result(value=sum(answers))
-
-    deployment = await deployment_factory(runner, resume_model=ResumeInput)
-    run_id = (await deployment.submit({"value": 1})).control.run_id
-
-    def waits_at(attempt: int):
-        return lambda value: value.control.status is ExecutionStatus.WAITING and value.control.run_attempt == attempt
-
-    await wait_for_execution(deployment, run_id, waits_at(1))
-    first = await deployment.resume(run_id, {"value": 7}, answer_key="k1")
-    assert first.answer is not None
-    second = await wait_for_execution(deployment, run_id, waits_at(2))
-    replayed = await deployment.resume(run_id, {"value": 7}, answer_key="k1")
-    assert replayed.answer is None and replayed.next_control == second.control
-    with pytest.raises(ExecutionIdempotencyConflictError):
-        await deployment.resume(run_id, {"value": 8}, answer_key="k1")
-    # A deployment of a newer revision still replays the answer; only a new answer needs the run's revision.
-    newer = await deployment_factory(
-        runner, store=deployment.store, revision="v2", resume_model=ResumeInput, start=False
-    )
-    assert (await newer.resume(run_id, {"value": 7}, answer_key="k1")).answer is None
-    for key in ("k2", None):
-        with pytest.raises(InvalidExecutionTransitionError, match="revision is incompatible"):
-            await newer.resume(run_id, {"value": 5}, answer_key=key)
-    await deployment.resume(run_id, {"value": 5}, answer_key="k2")
-
-    stored = await wait_for_execution(deployment, run_id, lambda value: value.control.terminal)
-    assert decode_json(stored.payloads[PayloadKind.RESULT], max_bytes=1_000) == {"value": 12}
-    assert (await deployment.resume(run_id, {"value": 5}, answer_key="k2")).answer is None
-    with pytest.raises(InvalidExecutionTransitionError):
-        await deployment.resume(run_id, {"value": 5}, answer_key="k3")
-
-
 async def test_application_failure_is_logged_with_its_cause(deployment_factory, caplog) -> None:
     async def runner(_context: DurableContext, _request: Request) -> dict[str, int]:
         raise ValueError("secret cause")

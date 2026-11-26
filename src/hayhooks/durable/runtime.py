@@ -57,7 +57,6 @@ from hayhooks.durable.models import (
     ExecutionKind,
     ExecutionProgress,
     PersistedError,
-    answer_digest,
     decode_json,
     encode_json,
     operation_fingerprint,
@@ -435,43 +434,17 @@ class DurableDeployment:
         *,
         owner_id: str | None = None,
         enforce_owner: bool = True,
-        answer_key: str | None = None,
     ) -> TransitionPlan:
-        """
-        Validate resume input and atomically requeue a waiting execution.
-
-        With ``answer_key`` the resume happens once: the same key with the same input changes nothing, even after
-        the execution waits again, and with another input raises ``ExecutionIdempotencyConflictError``.
-        """
+        """Validate resume input and atomically requeue a waiting execution."""
         stored = self._authorize_stored(
             run_id,
             await self.store.read(run_id),
             owner_id=owner_id,
             enforce_owner=enforce_owner,
-            # A keyed resume may be a retry of an answer the run took before this revision was deployed: the store
-            # replays a key it knows first, and refuses a new answer to a run of another revision itself.
-            allow_revision_mismatch=answer_key is not None,
+            allow_revision_mismatch=False,
         )
-        waiting = stored.control.status is ExecutionStatus.WAITING
-        if not waiting and answer_key is None:
+        if stored.control.status is not ExecutionStatus.WAITING:
             raise InvalidExecutionTransitionError("only waiting executions can resume")
-        if self.resume_model is not None:
-            resume_input = self.resume_model.model_validate(resume_input).model_dump(mode="json")
-        digest = (
-            "" if answer_key is None else answer_digest(resume_input, max_bytes=self.store.config.max_payload_bytes)
-        )
-        if not waiting:
-            # Ask the store whether this key already resumed it; a key it does not know is refused.
-            return await self.store.transition(
-                run_id,
-                Resume(
-                    now_ms=0,
-                    worker_revision=self.revision,
-                    expected_version=stored.control.version,
-                    answer_key=answer_key,
-                    answer_digest=digest,
-                ),
-            )
         try:
             checkpoint_payload = stored.payloads.get(PayloadKind.CHECKPOINT)
             if checkpoint_payload is None:
@@ -479,11 +452,11 @@ class DurableDeployment:
             checkpoint = self._decode_checkpoint(checkpoint_payload)
         except (ExecutionPayloadSizeError, TypeError, ValueError) as error:
             raise ExecutionStoreCorruptionError("stored checkpoint payload is invalid") from error
+        if self.resume_model is not None:
+            resume_input = self.resume_model.model_validate(resume_input).model_dump(mode="json")
         checkpoint = CheckpointEnvelope.model_validate(
             {**checkpoint.model_dump(mode="json"), "resume_input": resume_input}
         )
-        # shortcut: a retry at a later wait builds this checkpoint before the store can replay its key, so one that
-        # no longer fits with the old answer is refused as too large; read the answer record first to upgrade.
         plan = await self.store.transition(
             run_id,
             Resume(
@@ -493,8 +466,6 @@ class DurableDeployment:
                     checkpoint.model_dump(mode="json"), max_bytes=self.store.config.max_payload_bytes
                 ),
                 expected_version=stored.control.version,
-                answer_key=answer_key,
-                answer_digest=digest,
             ),
         )
         self._wake_workers()
