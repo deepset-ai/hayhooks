@@ -385,7 +385,7 @@ class MemoryExecutionStore:
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
         command = bind_store_command(command, max(self._clock(), current.updated_at_ms), self.config)
         if isinstance(command, Resume) and command.answer_key is not None:
-            recorded = self._answers.get(run_id, {}).get(answer_field(command.answer_key))
+            recorded = self._answers.get(run_id, {}).get(command.answer_key)
             command = replace(command, recorded_digest=recorded)
         plan = decide(current, command)
         validate_transition_plan(plan, self.config)
@@ -516,7 +516,7 @@ class MemoryExecutionStore:
             payloads.pop(kind, None)
 
         if plan.answer is not None:
-            self._answers.setdefault(control.run_id, {})[answer_field(plan.answer.key)] = plan.answer.digest
+            self._answers.setdefault(control.run_id, {})[plan.answer.key] = plan.answer.digest
         if plan.discard_progress:
             self._progress.pop(control.run_id, None)
         elif plan.progress_events:
@@ -648,11 +648,6 @@ def chunk_read_count(config: StoreConfig) -> int:
 def runnable_score(control: ExecutionControl) -> int:
     """Return the due-time score shared by every runnable index."""
     return control.available_at_ms if control.available_at_ms is not None else control.updated_at_ms
-
-
-def answer_field(answer_key: str) -> str:
-    """Name an answer key's record without storing the caller's key."""
-    return hashlib.sha256(b"hayhooks-durable:answer:" + answer_key.encode()).hexdigest()
 
 
 def bind_store_command(command: ExecutionCommand, now_ms: int, config: StoreConfig) -> ExecutionCommand:

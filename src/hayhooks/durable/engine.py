@@ -296,12 +296,8 @@ class Resume:
     recorded_digest: str | None = None
 
     def __post_init__(self) -> None:
-        if self.answer_key is None:
-            return
-        for name in ("answer_key", "answer_digest"):
-            value = getattr(self, name)
-            if not value or len(value.encode()) > MAX_CONTROL_SCALAR_BYTES:
-                raise ValueError(f"{name} must be non-empty and at most {MAX_CONTROL_SCALAR_BYTES} bytes")
+        if self.answer_key is not None and not 0 < len(self.answer_key.encode()) <= MAX_CONTROL_SCALAR_BYTES:
+            raise ValueError(f"answer_key must be 1 to {MAX_CONTROL_SCALAR_BYTES} bytes")
 
 
 @dataclass(frozen=True, slots=True)

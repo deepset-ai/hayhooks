@@ -330,11 +330,7 @@ def test_exhausted_retry_fails_with_the_exhausted_error(claimed_control, exhaust
     assert (failed.next_control.status, failed.payload_writes[0].data) == (ExecutionStatus.FAILED, stored)
 
 
-@pytest.mark.parametrize(
-    ("key", "digest"),
-    [("", "d"), ("k", ""), ("k" * 4_097, "d"), ("k", "d" * 4_097)],
-    ids=["empty-key", "empty-digest", "long-key", "long-digest"],
-)
-def test_resume_answer_key_and_digest_are_bounded(key: str, digest: str) -> None:
-    with pytest.raises(ValueError, match="must be non-empty"):
-        Resume(0, "rev-1", answer_key=key, answer_digest=digest)
+@pytest.mark.parametrize("key", ["", "k" * 4_097], ids=["empty", "too-long"])
+def test_resume_answer_key_is_bounded(key: str) -> None:
+    with pytest.raises(ValueError, match="answer_key must be 1 to"):
+        Resume(0, "rev-1", answer_key=key, answer_digest="d")

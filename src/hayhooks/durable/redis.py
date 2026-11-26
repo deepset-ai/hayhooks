@@ -65,7 +65,6 @@ from hayhooks.durable.store import (
     StreamChunk,
     SubmissionResult,
     _parse_creation_member,
-    answer_field,
     bind_store_command,
     chunk_read_count,
     creation_member,
@@ -873,9 +872,7 @@ class RedisExecutionStore:
         member = (
             RedisKeys.lease_member(run_id, command.indexed_fence) if isinstance(command, RecoverExpiredLease) else None
         )
-        answer = (
-            answer_field(command.answer_key) if isinstance(command, Resume) and command.answer_key is not None else None
-        )
+        answer = command.answer_key if isinstance(command, Resume) else None
         for attempt in range(self._transaction_retries):
             async with self.redis.pipeline(transaction=False) as pipe:
                 pipe.hgetall(self.keys.control(run_id))
@@ -1001,7 +998,7 @@ class RedisExecutionStore:
             # No expiry until the run ends: an answer must be remembered for as long as the run can wait again.
             # shortcut: a run that ends under a worker without this code keeps its (small) answers hash without an
             # expiry; upgrade every worker sharing the store to drop that leak.
-            commands.append(("HSET", self.keys.answers(run_id), answer_field(plan.answer.key), plan.answer.digest))
+            commands.append(("HSET", self.keys.answers(run_id), plan.answer.key, plan.answer.digest))
         if plan.discard_progress:
             commands.append(("DEL", progress_key))
         elif plan.progress_events:
