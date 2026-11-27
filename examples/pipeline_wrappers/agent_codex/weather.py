@@ -7,7 +7,7 @@ from haystack.tools import Tool
 
 from hayhooks import log
 
-WEATHER_AGENT_MODEL = "gpt-4o-mini"
+WEATHER_AGENT_MODEL = "gpt-6-luna"
 NO_WEATHER_CONTEXT = "NO_WEATHER_CONTEXT"
 
 _WEATHER_KEYWORDS = (

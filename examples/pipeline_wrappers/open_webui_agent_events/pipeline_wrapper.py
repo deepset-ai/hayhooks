@@ -11,7 +11,7 @@ from hayhooks.open_webui import OpenWebUIEvent, create_details_tag, create_statu
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         self.agent = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            chat_generator=OpenAIChatGenerator(model="gpt-6-luna"),
             system_prompt="You're a helpful agent",
         )
 

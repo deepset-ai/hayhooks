@@ -46,7 +46,7 @@ class PipelineWrapper(BasePipelineWrapper):
         weather_toolset = MCPToolset(server_info=StreamableHttpServerInfo(url=WEATHER_MCP_URL), eager_connect=True)
         weather_tools = [*weather_toolset]
         self.agent = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            chat_generator=OpenAIChatGenerator(model="gpt-6-luna"),
             system_prompt=(
                 "You are a weather assistant. Use the get_weather tool to fetch current conditions "
                 "for the requested city, then answer concisely with temperature, conditions, "

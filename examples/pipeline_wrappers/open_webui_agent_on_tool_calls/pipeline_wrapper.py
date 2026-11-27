@@ -43,7 +43,7 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         # Define a Haystack Agent that uses the weather tool.
         self.agent = Agent(
-            chat_generator=OpenAIChatGenerator(model="gpt-4o-mini"),
+            chat_generator=OpenAIChatGenerator(model="gpt-6-luna"),
             system_prompt="You're a helpful agent",
             tools=[weather_tool],
         )

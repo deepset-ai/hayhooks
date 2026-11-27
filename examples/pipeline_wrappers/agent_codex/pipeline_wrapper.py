@@ -25,7 +25,7 @@ from hayhooks import (
 from .client_tools import build_generation_kwargs
 from .weather import NO_WEATHER_CONTEXT, create_weather_agent, looks_like_weather_request
 
-AGENT_MODEL = "gpt-4.1-mini"
+AGENT_MODEL = "gpt-6-luna"
 
 
 def _is_tool_followup(input_items: list[dict]) -> bool:

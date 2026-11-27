@@ -46,7 +46,7 @@ components:
         strict: true
         type: env_var
       generation_kwargs: {}
-      model: gpt-4o-mini
+      model: gpt-6-luna
     type: haystack.components.generators.chat.openai.OpenAIChatGenerator
 
   prompt:
