@@ -41,6 +41,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+chat = [
+  "textual>=8.2.8,<9",
+  "httpx>=0.27,<1",
+]
 tui = [
   "textual>=8.2.8,<9",
 ]
@@ -115,7 +119,7 @@ build = "mkdocs build {args}"
 deploy = "mkdocs gh-deploy --remote-name origin --force --no-history -m \"Deploy docs via automation\" {args}"
 
 [tool.hatch.envs.test]
-features = ["mcp", "a2a", "tui"]
+features = ["mcp", "a2a", "tui", "chat"]
 extra-dependencies = [
   # By default, we test against Haystack v2. The `tests-haystack-v3` CI job covers Haystack v3.
   "haystack-ai>=2,<3",

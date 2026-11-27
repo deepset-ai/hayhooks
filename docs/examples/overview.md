@@ -6,6 +6,7 @@ This page lists all maintained Hayhooks examples with detailed descriptions and 
 
 | Example | Docs | Code | Description |
 |---|---|---|---|
+| Terminal chat with workspace tools | [Terminal chat](../features/terminal-chat.md#try-workspace-tools) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/terminal_chat_agent) | One Agent with tools to list, read, and write UTF-8 files in a server workspace |
 | Chat with Website (Streaming) | [chat-with-website.md](chat-with-website.md) | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_streaming) | Website Q&A with streaming |
 | Chat with Website (basic) | — | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website) | Minimal website Q&A wrapper |
 | Chat with Website (MCP) | — | [GitHub](https://github.com/deepset-ai/hayhooks/tree/main/examples/pipeline_wrappers/chat_with_website_mcp) | Exposes website Q&A as MCP Tool |
