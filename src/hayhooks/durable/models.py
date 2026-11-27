@@ -191,6 +191,12 @@ def operation_fingerprint(
     return hashlib.sha256(encode_json(value, max_bytes=max_bytes, canonical=True)).hexdigest()
 
 
+def answer_digest(resume_input: object, *, max_bytes: int = DEFAULT_MAX_JSON_BYTES) -> str:
+    """Hash a resume input canonically, so a retried answer can be told from another one."""
+    canonical = encode_json(_canonical_json(resume_input, max_bytes=max_bytes), max_bytes=max_bytes, canonical=True)
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def project_execution(
     stored: StoredExecution,
     *,

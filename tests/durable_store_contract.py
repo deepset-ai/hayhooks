@@ -377,3 +377,71 @@ async def assert_lost_lease_budget_contract(store: ExecutionStore) -> None:
         assert (stored.control.run_attempt, stored.control.lease_recoveries) == (lost, lost)
     assert stored.control.status is ExecutionStatus.FAILED
     assert stored.payloads[PayloadKind.ERROR] == ATTEMPTS_ERROR
+
+
+async def assert_answer_key_contract(store: ExecutionStore) -> None:  # noqa: PLR0915
+    """A keyed resume lands once: its retries change nothing, even at a later wait or after the run ended."""
+
+    async def wait(attempt_label: bytes) -> TransitionPlan:
+        claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
+        assert claimed is not None
+        return await store.transition(
+            "run_1", Suspend(claimed.next_control.fence, "worker", 0, b"checkpoint", attempt_label)
+        )
+
+    def answer(key: str, digest: str = "d1", **options: object) -> Resume:
+        return Resume(0, "v1", b"answer", answer_key=key, answer_digest=digest, **options)
+
+    await store.submit(contract_control(store.deployment), b"input")
+    first = await wait(b"first")
+    resumed = await store.transition("run_1", answer("k1", expected_version=first.next_control.version))
+    assert resumed.next_control.status is ExecutionStatus.QUEUED
+    assert resumed.answer is not None and resumed.answer.key == "k1"
+
+    replayed = await store.transition("run_1", answer("k1"))
+    assert replayed.next_control == resumed.next_control
+    assert replayed.answer is None and not replayed.payload_writes
+    with pytest.raises(ExecutionIdempotencyConflictError):
+        await store.transition("run_1", answer("k1", "d2"))
+    with pytest.raises(InvalidExecutionTransitionError, match="only waiting"):
+        await store.transition("run_1", answer("k2"))
+
+    second = await wait(b"second")
+    # The first answer's retry never answers the second wait, whatever version it read.
+    for version in (None, first.next_control.version, second.next_control.version):
+        retried = await store.transition("run_1", answer("k1", expected_version=version))
+        assert retried.next_control == second.next_control
+    stored = await store.read("run_1")
+    assert stored is not None and stored.payloads[PayloadKind.WAIT] == b"second"
+
+    # A refused answer records nothing, so it may answer the wait it was meant for once that still waits.
+    with pytest.raises(InvalidExecutionTransitionError, match="changed"):
+        await store.transition("run_1", answer("k2", expected_version=first.next_control.version))
+    raced = await asyncio.gather(
+        store.transition("run_1", answer("k2", expected_version=second.next_control.version)),
+        store.transition("run_1", answer("k2", expected_version=second.next_control.version)),
+    )
+    assert [plan.answer is not None for plan in raced].count(True) == 1
+    assert {plan.next_control.status for plan in raced} == {ExecutionStatus.QUEUED}
+
+    third = await wait(b"third")
+    losers = await asyncio.gather(
+        store.transition("run_1", answer("k3", expected_version=third.next_control.version)),
+        store.transition("run_1", answer("k4", expected_version=third.next_control.version)),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(outcome, InvalidExecutionTransitionError) for outcome in losers) == 1
+
+    plain = await wait(b"fourth")
+    unkeyed = await store.transition("run_1", Resume(0, "v1", b"plain"))
+    assert unkeyed.answer is None and unkeyed.next_control.version == plain.next_control.version + 1
+    claimed = await store.claim(Claim("worker", 0, 500, 3, "v1", ATTEMPTS_ERROR))
+    assert claimed is not None
+    await store.transition("run_1", Complete(claimed.next_control.fence, "worker", 0, b"done"))
+    for key in ("k1", "k2"):
+        ended = await store.transition("run_1", answer(key))
+        assert ended.next_control.status is ExecutionStatus.COMPLETED
+    with pytest.raises(ExecutionIdempotencyConflictError):
+        await store.transition("run_1", answer("k2", "d2"))
+    with pytest.raises(InvalidExecutionTransitionError):
+        await store.transition("run_1", answer("k5"))

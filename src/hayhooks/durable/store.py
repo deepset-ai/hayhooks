@@ -25,6 +25,7 @@ from hayhooks.durable.engine import (
     Complete,
     ExecutionCommand,
     ExecutionControl,
+    ExecutionIdempotencyConflictError,
     ExecutionLeaseLostError,
     ExecutionNotFoundError,
     ExecutionPayloadSizeError,
@@ -36,6 +37,7 @@ from hayhooks.durable.engine import (
     ProgressEvent,
     RecoverExpiredLease,
     ReleaseClaim,
+    Resume,
     ScheduleRetry,
     Suspend,
     TransitionPlan,
@@ -82,10 +84,6 @@ class ExecutionContentionError(ExecutionStoreError):
 
 class ExecutionAdmissionError(RuntimeError):
     """Admission was refused: the nonterminal limit is reached or the deployment stopped accepting submissions."""
-
-
-class ExecutionIdempotencyConflictError(RuntimeError):
-    """An idempotency key was reused for different work."""
 
 
 class ChunkCursorExpiredError(RuntimeError):
@@ -305,6 +303,7 @@ class MemoryExecutionStore:
         self._runnable: dict[str, int] = {}
         self._lease_expiry: dict[tuple[str, int], int] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
+        self._answers: dict[str, dict[str, str]] = {}
         self._terminal_cleanup: dict[str, tuple[int, int, str, tuple[str, str]]] = {}
         self._terminal_expiry: list[tuple[int, str]] = []
         self._chunk_expiry: list[tuple[int, str]] = []
@@ -385,6 +384,9 @@ class MemoryExecutionStore:
         if current is None:
             raise ExecutionNotFoundError(f"execution '{run_id}' was not found")
         command = bind_store_command(command, max(self._clock(), current.updated_at_ms), self.config)
+        if isinstance(command, Resume) and command.answer_key is not None:
+            recorded = self._answers.get(run_id, {}).get(command.answer_key)
+            command = replace(command, recorded_digest=recorded)
         plan = decide(current, command)
         validate_transition_plan(plan, self.config)
         self._apply(current, plan)
@@ -513,6 +515,8 @@ class MemoryExecutionStore:
         for kind in plan.payload_deletes:
             payloads.pop(kind, None)
 
+        if plan.answer is not None:
+            self._answers.setdefault(control.run_id, {})[plan.answer.key] = plan.answer.digest
         if plan.discard_progress:
             self._progress.pop(control.run_id, None)
         elif plan.progress_events:
@@ -613,6 +617,7 @@ class MemoryExecutionStore:
             if position < len(index) and index[position] == member:
                 index.pop(position)
         self._payloads.pop(run_id, None)
+        self._answers.pop(run_id, None)
         self._progress.pop(run_id, None)
         self._chunks.pop(run_id, None)
 
@@ -646,8 +651,10 @@ def runnable_score(control: ExecutionControl) -> int:
 
 
 def bind_store_command(command: ExecutionCommand, now_ms: int, config: StoreConfig) -> ExecutionCommand:
-    """Bind a store clock and lease policy before reduction."""
-    changes = {"now_ms": now_ms}
+    """Bind a store clock and lease policy before reduction; a store binds a resume's recorded answer itself."""
+    changes: dict[str, object] = {"now_ms": now_ms}
+    if isinstance(command, Resume):
+        changes["recorded_digest"] = None
     if isinstance(command, LEASE_COMMANDS):
         changes["lease_commit_safety_ms"] = config.lease_commit_safety_ms
     bound = replace(command, **changes)

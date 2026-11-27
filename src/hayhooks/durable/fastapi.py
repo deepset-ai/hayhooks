@@ -68,6 +68,20 @@ def _validated_owner(owner_id: object, *, enforce_owner: bool) -> str | None:
     return cast(str, owner_id)
 
 
+def _validate_idempotency_key(idempotency_key: str | None) -> None:
+    if idempotency_key is None:
+        return
+    try:
+        valid_key = len(idempotency_key.encode()) <= _MAX_HEADER_BYTES
+    except UnicodeError:
+        valid_key = False
+    if not valid_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Idempotency-Key must be at most 512 UTF-8 bytes",
+        )
+
+
 def _translate_errors(handler: Callable[..., Awaitable[Any]], deployment: str) -> Callable[..., Awaitable[Any]]:
     @wraps(handler)
     async def translated(*args: Any, **kwargs: Any) -> Any:
@@ -255,7 +269,7 @@ async def _stream_events(  # noqa: C901, PLR0913
         yield _sse("error", '{"detail":"Execution stream interrupted"}')
 
 
-def create_durable_router(  # noqa: C901, PLR0915
+def create_durable_router(  # noqa: C901
     deployment: DurableDeployment,
     *,
     owner_id_dependency: OwnerIdDependency | None,
@@ -319,16 +333,7 @@ def create_durable_router(  # noqa: C901, PLR0915
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1),
     ) -> ExecutionResult:
         owner = _validated_owner(owner_id, enforce_owner=enforce_owner)
-        if idempotency_key is not None:
-            try:
-                valid_key = len(idempotency_key.encode()) <= _MAX_HEADER_BYTES
-            except UnicodeError:
-                valid_key = False
-            if not valid_key:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Idempotency-Key must be at most 512 UTF-8 bytes",
-                )
+        _validate_idempotency_key(idempotency_key)
         submission = await deployment.submit(payload, owner_id=owner, idempotency_key=idempotency_key)
         # A new execution is queued with no payloads or progress, so the submitted control is its snapshot.
         stored = (

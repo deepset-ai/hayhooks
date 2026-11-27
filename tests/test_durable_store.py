@@ -28,6 +28,7 @@ from hayhooks.durable.store import (
 from tests.durable_store_contract import (
     ATTEMPTS_ERROR,
     CONTRACT_CONFIG,
+    assert_answer_key_contract,
     assert_cancel_after_lease_expiry_contract,
     assert_discard_progress_contract,
     assert_lost_lease_budget_contract,
@@ -57,6 +58,10 @@ async def test_memory_store_matches_contract(clock: Clock) -> None:
     store = MemoryExecutionStore("jobs", clock=clock, config=CONTRACT_CONFIG)
     await store.initialize()
     await assert_store_contract(store)
+
+
+async def test_memory_store_answer_keys(clock: Clock) -> None:
+    await assert_answer_key_contract(MemoryExecutionStore("jobs", clock=clock, config=CONTRACT_CONFIG))
 
 
 async def test_memory_store_routes_claims_by_revision(clock: Clock) -> None:

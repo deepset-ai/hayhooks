@@ -328,3 +328,9 @@ def test_exhausted_retry_fails_with_the_exhausted_error(claimed_control, exhaust
     reclaimed = claim(replace(queued.next_control, available_at_ms=None), now_ms=400).next_control
     failed = decide(reclaimed, replace(command, fence=reclaimed.fence, now_ms=500))
     assert (failed.next_control.status, failed.payload_writes[0].data) == (ExecutionStatus.FAILED, stored)
+
+
+@pytest.mark.parametrize("key", ["", "k" * 4_097], ids=["empty", "too-long"])
+def test_resume_answer_key_is_bounded(key: str) -> None:
+    with pytest.raises(ValueError, match="answer_key must be 1 to"):
+        Resume(0, "rev-1", answer_key=key, answer_digest="d")
