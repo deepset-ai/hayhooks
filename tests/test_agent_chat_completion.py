@@ -38,7 +38,8 @@ class CompletionGenerator:
                 await streaming_callback(chunk)
         result = self.run(messages, tools, streaming_callback)
         reply = result["replies"][0]
-        if reply.text:
+        text_at_finish = reply.meta.get("text_at_finish", False)
+        if reply.text and not text_at_finish:
             await streaming_callback(StreamingChunk(content=reply.text))
         for index, call in enumerate(reply.tool_calls):
             await streaming_callback(
@@ -56,7 +57,12 @@ class CompletionGenerator:
                 )
             )
         if reply.meta.get("stream_finish", True):
-            await streaming_callback(StreamingChunk(content="", finish_reason=reply.meta.get("finish_reason", "stop")))
+            await streaming_callback(
+                StreamingChunk(
+                    content=(reply.text or "") if text_at_finish else "",
+                    finish_reason=reply.meta.get("finish_reason", "stop"),
+                )
+            )
         await streaming_callback(StreamingChunk(content="", meta={"usage": {"total_tokens": 12}}))
         return result
 
@@ -165,6 +171,50 @@ async def test_later_model_success_finishes_after_tool_result(chat_client, looku
     assert events[2].result == "Found"
     assert events[-1].final is True
     assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Checking Done"}]
+
+
+@pytest.mark.parametrize(("finish_reason", "text_at_finish"), [("stop", False), ("length", False), ("stop", True)])
+async def test_terminal_chat_renders_text_around_tool(chat_client, lookup_tool, finish_reason, text_at_finish):
+    pytest.importorskip("textual")
+    from textual.widgets import Markdown, TextArea
+
+    from hayhooks.chat.app import ChatApp, ToolCard
+    from tests.test_terminal_chat import settle
+
+    prompt = "Read the file"
+    before_tool = "Let me read that file."
+    after_tool = "Here is the content."
+    replies = [
+        ChatMessage.from_assistant(
+            before_tool,
+            tool_calls=[ToolCall(tool_name="lookup", arguments={}, id="lookup-1")],
+            meta={"finish_reason": "tool_calls", "text_at_finish": text_at_finish},
+        ),
+        ChatMessage.from_assistant(after_tool, meta={"finish_reason": finish_reason}),
+    ]
+    client = chat_client(Agent(chat_generator=CompletionGenerator(replies), tools=[lookup_tool]))
+    app = ChatApp(client)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", TextArea)
+        composer.load_text(prompt)
+        await pilot.press("enter")
+        await settle(app, pilot)
+
+        rows = list(app.query_one("#transcript").children)
+        transcript = [row.output.text if isinstance(row, ToolCard) else row.query_one(Markdown).source for row in rows]
+        assert transcript[:4] == [prompt, before_tool, "Found", after_tool]
+        if finish_reason == "stop":
+            assert len(rows) == 4
+            assert client.history == [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": f"{before_tool}\n\n{after_tool}"},
+            ]
+        else:
+            assert [str(row.query_one(".role").render()) for row in (rows[1], rows[3])] == ["Agent · Incomplete"] * 2
+            assert "Response incomplete." in rows[4].query_one(Markdown).source
+            assert composer.text == prompt
+            assert client.history == []
 
 
 @pytest.mark.parametrize("tool_exit", [False, True])
