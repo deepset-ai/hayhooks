@@ -13,7 +13,7 @@ from textual.widgets import Button, Collapsible, Markdown, Static, TextArea
 
 from hayhooks.chat.app import ChatApp, ToolCard
 from hayhooks.chat.client import ChatClient, ChatError
-from hayhooks.chat.events import ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
+from hayhooks.chat.events import ResponseDelta, ToolFinished, ToolStarted
 from hayhooks.cli import hayhooks_cli
 
 
@@ -37,7 +37,7 @@ class BlockingRunner:
             await asyncio.sleep(0)
             self.closed.set()
         answer = "## Result\n\n```python\nprint('hello')\n```\n\n" + "Long answer.\n\n" * 30
-        emit(ResponseComplete("answer", "Agent", answer, final=True))
+        emit(ResponseDelta(0, answer))
         return answer
 
 
@@ -132,16 +132,15 @@ class StreamingRunner(BlockingRunner):
 
     async def run(self, prompt, progress, *, emit):
         self.prompts.append(prompt)
-        emit(ResponseDelta("answer", "Agent", self.text))
+        emit(ResponseDelta(0, self.text))
         emit(ToolStarted("call-1", "Agent", "read_file", '{"path": "[file].txt"}'))
         emit(ToolFinished("call-1", self.tool_output))
         emit(ToolStarted("call-2", "Agent", "read_file", '{"path": "missing.txt"}'))
         emit(ToolFinished("call-2", "File missing [literal]", error=True))
         self.entered.set()
         await self.release.wait()
-        emit(ResponseDelta("answer", "Agent", "reply"))
-        emit(ResponseComplete("answer", "Agent", self.text + "reply", final=True))
-        return self.text + "reply"
+        emit(ResponseDelta(1, "reply"))
+        return self.text + "\n\nreply"
 
 
 async def test_enter_newline_live_deltas_and_expandable_full_tool_results():
@@ -186,7 +185,7 @@ async def test_enter_newline_live_deltas_and_expandable_full_tool_results():
         assert success.output.scroll_y > 0
         runner.release.set()
         await settle(app, pilot)
-        assert sum(widget.source == "Early reply" for widget in app.query(Markdown)) == 1
+        assert [widget.source for widget in app.query(Markdown)] == ["hi\nthere\n!", "Early ", "reply"]
         assert len(app.query(ToolCard)) == 2
 
 
@@ -300,17 +299,16 @@ async def test_tool_editors_reflow_wrapped_text_after_terminal_resize(theme):
 async def test_stop_remains_incomplete_when_runner_suppresses_cancellation():
     class CancellationSuppressingRunner(BlockingRunner):
         async def run(self, prompt, progress, *, emit):
-            emit(ResponseDelta("answer", "Agent", "Partial answer"))
+            emit(ResponseDelta(0, "Partial answer"))
             emit(ToolStarted("call-1", "Agent", "write_file", "{}"))
             self.entered.set()
             with suppress(asyncio.CancelledError):
                 await self.release.wait()
             progress("Late progress")
-            emit(ResponseDelta("answer", "Agent", "Late delta"))
+            emit(ResponseDelta(1, "Late delta"))
             emit(ToolFinished("call-1", "Late tool result"))
             emit(ToolStarted("late", "Agent", "Late tool", "{}"))
-            emit(ResponseComplete("answer", "Agent", "Late answer", final=True))
-            return "Late answer"
+            return "Late delta"
 
     runner = CancellationSuppressingRunner()
     app = ChatApp(runner)
@@ -324,18 +322,18 @@ async def test_stop_remains_incomplete_when_runner_suppresses_cancellation():
         await settle(app, pilot)
         transcript = "\n".join(widget.source for widget in app.query(Markdown))
         assert "Partial answer" in transcript
-        assert "Late delta" not in transcript and "Late answer" not in transcript
+        assert "Late delta" not in transcript
         card = app.query_one(ToolCard)
         assert card.state == "Interrupted" and "Late tool result" not in card.output.text
         assert "Stopped receiving." in transcript and "Response incomplete." in transcript
         assert composer.text == "Start"
 
 
-async def test_stop_queued_with_final_event_preserves_success():
+async def test_stop_queued_as_runner_returns_preserves_success():
     class ReturningRunner(BlockingRunner):
         async def run(self, prompt, progress, *, emit):
             app.post_message(events.Key("escape", "\x1b"))
-            emit(ResponseComplete("answer", "Agent", "Completed answer", final=True))
+            emit(ResponseDelta(0, "Completed answer"))
             return "Completed answer"
 
     app = ChatApp(ReturningRunner())
@@ -350,10 +348,10 @@ async def test_stop_queued_with_final_event_preserves_success():
         assert composer.text == ""
 
 
-async def test_runner_failure_after_final_event_still_shows_incomplete_guidance():
+async def test_runner_failure_after_text_shows_incomplete_guidance():
     class FailingRunner(BlockingRunner):
         async def run(self, prompt, progress, *, emit):
-            emit(ResponseComplete("answer", "Agent", "Received answer", final=True))
+            emit(ResponseDelta(0, "Received answer"))
             message = "The response could not be accepted."
             raise ChatError(message)
 
@@ -532,7 +530,7 @@ class RecoveringRunner(BlockingRunner):
     async def run(self, prompt, progress, *, emit):
         self.prompts.append(prompt)
         if len(self.prompts) == 1:
-            emit(ResponseDelta("answer", "Agent", "Received partial answer"))
+            emit(ResponseDelta(0, "Received partial answer"))
             emit(ToolStarted("success", "Agent", "read_file", '{"path":"notes.txt"}'))
             emit(ToolFinished("success", "Saved result [literal]"))
             emit(ToolStarted("error", "Agent", "read_file", '{"path":"missing.txt"}'))
@@ -541,7 +539,7 @@ class RecoveringRunner(BlockingRunner):
             self.entered.set()
             await self.release.wait()
             raise self.error
-        emit(ResponseComplete("recovery", "Agent", "Recovered answer", final=True))
+        emit(ResponseDelta(0, "Recovered answer"))
         return "Recovered answer"
 
 
@@ -717,10 +715,10 @@ async def test_side_message_ids_cannot_replace_the_agent_answer(monkeypatch):
 
     stream = EventStream(
         [
-            side_message("answer", "Reviewer", "Checking"),
+            side_message("0", "Reviewer", "Checking"),
             frame({"choices": [{"delta": {"content": "Main "}}]}),
-            side_message("answer", "Reviewer", "Review complete"),
-            side_message("message:answer", "Editor", "Another note"),
+            side_message("0", "Reviewer", "Review complete"),
+            side_message("00", "Editor", "Another note"),
             frame({"choices": [{"delta": {"content": "answer"}, "finish_reason": "stop"}]}),
         ]
     )
@@ -843,9 +841,12 @@ async def test_remote_sse_to_eof_tools_and_completed_follow_up_history(monkeypat
     mock_http(monkeypatch, handler)
     client = ChatClient("http://server:1416", "custom-agent")
     events = []
-    assert await client.run("List", lambda _: None, emit=events.append) == "First answer"
+    assert await client.run("List", lambda _: None, emit=events.append) == "First \n\nanswer"
     assert stream.closed.is_set()
-    assert isinstance(events[-1], ResponseComplete) and events[-1].final
+    assert [event for event in events if isinstance(event, ResponseDelta)] == [
+        ResponseDelta(0, "First "),
+        ResponseDelta(1, "answer"),
+    ]
     assert any(
         isinstance(event, ToolStarted) and event.call_id == "real-id" and '\n  "path"' in event.arguments
         for event in events
@@ -855,7 +856,7 @@ async def test_remote_sse_to_eof_tools_and_completed_follow_up_history(monkeypat
     await client.run("Follow up", lambda _: None, emit=lambda _: None)
     assert requests[1]["messages"] == [
         {"role": "user", "content": "List"},
-        {"role": "assistant", "content": "First answer"},
+        {"role": "assistant", "content": "First \n\nanswer"},
         {"role": "user", "content": "Follow up"},
     ]
     assert requests[0]["model"] == "custom-agent" and requests[0]["stream"] is True
@@ -916,7 +917,7 @@ async def test_cancel_blocked_http_read_closes_response_and_discards_history(mon
     events = []
     task = asyncio.create_task(client.run("Hi", lambda _: None, emit=events.append))
     await asyncio.wait_for(stream.reading.wait(), 1)
-    assert events == [ResponseDelta("answer", "Agent", "Partial")]
+    assert events == [ResponseDelta(0, "Partial")]
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from hayhooks.chat.client import ChatClient, ChatError
-from hayhooks.chat.events import ResponseComplete, ResponseDelta, ToolFinished
+from hayhooks.chat.events import ResponseDelta, SideMessage, ToolFinished
 
 
 def frame(payload):
@@ -77,7 +77,7 @@ async def test_confirmed_completion_accepts_both_endpoint_markers(monkeypatch, t
     client, requests, stream = remote(monkeypatch, frames=[terminal])
     events = []
     assert await client.run("Hi", lambda _: None, emit=events.append) == "answer"
-    assert events == [ResponseDelta("answer", "Agent", "answer"), ResponseComplete("answer", "Agent", "answer", True)]
+    assert events == [ResponseDelta(0, "answer")]
     assert stream.closed and len(requests) == 1
     assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "answer"}]
 
@@ -105,10 +105,9 @@ async def test_unescaped_unicode_survives_chunked_chat_stream(monkeypatch, line_
     events = []
     assert await client.run("Hi", lambda _: None, emit=events.append) == content
     assert events == [
-        ResponseDelta("answer", "Agent", content),
-        ResponseComplete("side\u2028id", "Agent", content),
+        ResponseDelta(0, content),
+        SideMessage("side\u2028id", "Agent", content),
         ToolFinished("tool\u2029id", content),
-        ResponseComplete("answer", "Agent", content, True),
     ]
     assert stream.closed and len(requests) == 1
     assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": content}]
@@ -129,7 +128,7 @@ async def test_complete_event_arrives_before_next_byte(monkeypatch, chunks, afte
     task = asyncio.create_task(client.run("Hi", lambda _: None, emit=events.append))
     try:
         await asyncio.wait_for(stream.paused.wait(), 5)
-        assert events == [ResponseDelta("answer", "Agent", "answer")]
+        assert events == [ResponseDelta(0, "answer")]
     finally:
         release.set()
         answer = await task
@@ -153,7 +152,7 @@ async def test_multiline_data_and_unterminated_completion_marker(monkeypatch, li
     client, requests, stream = remote(monkeypatch, frames=[wire[index : index + 1] for index in range(len(wire))])
     events = []
     assert await client.run("Hi", lambda _: None, emit=events.append) == "answer"
-    assert events == [ResponseDelta("answer", "Agent", "answer"), ResponseComplete("answer", "Agent", "answer", True)]
+    assert events == [ResponseDelta(0, "answer")]
     assert stream.closed and len(requests) == 1
     assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "answer"}]
 
@@ -165,7 +164,7 @@ async def test_partial_eof_is_incomplete_and_not_history(monkeypatch, finish):
     with pytest.raises(ChatError, match="Completion is unknown") as caught:
         await client.run("Hi", lambda _: None, emit=events.append)
     assert caught.value.kind == "incomplete"
-    assert events == [ResponseDelta("answer", "Agent", "Partial")]
+    assert events == [ResponseDelta(0, "Partial")]
     assert client.history == [] and len(requests) == 1
 
 
@@ -176,7 +175,7 @@ async def test_finish_failure_keeps_same_frame_text_even_before_done(monkeypatch
     with pytest.raises(ChatError) as caught:
         await client.run("Hi", lambda _: None, emit=events.append)
     assert caught.value.kind == "provider"
-    assert events == [ResponseDelta("answer", "Agent", "Partial")]
+    assert events == [ResponseDelta(0, "Partial")]
     assert client.history == []
 
 
@@ -188,7 +187,7 @@ async def test_errors_after_stop_are_observed(monkeypatch, late):
     events = []
     with pytest.raises(ChatError):
         await client.run("Hi", lambda _: None, emit=events.append)
-    assert events == [ResponseDelta("answer", "Agent", "Partial")]
+    assert events == [ResponseDelta(0, "Partial")]
     assert client.history == [] and len(requests) == 1
 
 
@@ -276,7 +275,7 @@ async def test_side_message_alone_does_not_complete_turn(monkeypatch):
     events = []
     with pytest.raises(ChatError):
         await client.run("Hi", lambda _: None, emit=events.append)
-    assert events == [ResponseComplete("one", "Agent", "Intermediate")]
+    assert events == [SideMessage("one", "Agent", "Intermediate")]
     assert client.history == []
 
 
@@ -319,7 +318,7 @@ async def test_read_failure_after_stop_prevents_success(monkeypatch):
     with pytest.raises(ChatError, match="Completion is unknown"):
         await client.run("Hi", lambda _: None, emit=events.append)
     assert stream.closed and client.history == [] and len(requests) == 1
-    assert events == [ResponseDelta("answer", "Agent", "Partial")]
+    assert events == [ResponseDelta(0, "Partial")]
 
 
 async def test_cancellation_after_terminal_marker_still_discards_turn(monkeypatch):
@@ -331,7 +330,7 @@ async def test_cancellation_after_terminal_marker_still_discards_turn(monkeypatc
     with pytest.raises(asyncio.CancelledError):
         await task
     assert stream.closed and client.history == [] and len(requests) == 1
-    assert events == [ResponseDelta("answer", "Agent", "Partial")]
+    assert events == [ResponseDelta(0, "Partial")]
 
 
 @pytest.mark.parametrize("failure", [TypeError, AttributeError])

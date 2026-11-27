@@ -131,6 +131,8 @@ async def _agent_events(  # noqa: C901, PLR0912
                 after_tool_result = False
             if item.finish_reason and item.finish_reason != "tool_call_results" and not item.tool_call_result:
                 last_model_finish_reason = item.finish_reason
+            if item.content:
+                yield StreamingChunk(content=item.content)
             tool_deltas = item.tool_calls if announce_pending_calls else None
             for delta in tool_deltas or []:
                 calls.setdefault(delta.index, _Call()).add_delta(delta)
@@ -175,8 +177,6 @@ async def _agent_events(  # noqa: C901, PLR0912
                         "error": bool(result.error),
                     },
                 )
-            if item.content:
-                yield StreamingChunk(content=item.content)
         if finish := _completion_reason(agent, run_result, messages, last_model_finish_reason):
             yield StreamingChunk(content="", finish_reason=finish)
     finally:

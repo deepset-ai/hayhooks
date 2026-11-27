@@ -17,7 +17,7 @@ from textual.widgets.text_area import Selection
 from textual.worker import Worker, get_current_worker
 
 from hayhooks.chat.client import ChatClient, ChatError
-from hayhooks.chat.events import ChatEvent, ReasoningSummary, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
+from hayhooks.chat.events import ChatEvent, ReasoningSummary, ResponseDelta, SideMessage, ToolFinished, ToolStarted
 from hayhooks.tui.theme import apply_theme
 
 ROOMY_TERMINAL_HEIGHT = 32
@@ -112,12 +112,8 @@ class ResponseView:
 @dataclass
 class Turn:
     prompt: str
-    state: Literal["active", "stopped", "complete", "failed"] = "active"
+    state: Literal["active", "stopped", "finished"] = "active"
     worker: Worker | None = None
-
-    def finish(self, state: Literal["complete", "failed"]) -> None:
-        if self.state == "active":
-            self.state = state
 
 
 class ChatApp(App):
@@ -155,9 +151,9 @@ class ChatApp(App):
         self.runner = runner
         self.turn: Turn | None = None
         self.quit_requested = False
-        self.responses: dict[tuple[str, str], ResponseView] = {}
+        self.responses: dict[int | str, ResponseView] = {}
         self.tool_cards: dict[str, ToolCard] = {}
-        self.dirty: set[tuple[str, str]] = set()
+        self.dirty: set[int | str] = set()
         server = urlsplit(self.runner.server_url)
         self.server_identity = f"{server.scheme}://{server.netloc.rsplit('@', 1)[-1]}"
 
@@ -257,11 +253,8 @@ class ChatApp(App):
                 self.post_message(self.Progress(turn, text))
 
         def emit(event: ChatEvent) -> None:
-            if turn.state == "stopped":
-                return
-            if isinstance(event, ResponseComplete) and event.final:
-                turn.finish("complete")
-            self.post_message(self.Output(turn, event))
+            if turn.state != "stopped":
+                self.post_message(self.Output(turn, event))
 
         failure = None
         try:
@@ -273,7 +266,8 @@ class ChatApp(App):
             failure = str(error)
         except Exception:
             failure = "Chat could not finish this request. Check the server logs and affected files before retrying."
-        turn.finish("failed" if failure is not None else "complete")
+        if turn.state == "active":
+            turn.state = "finished"
         self.post_message(self.Finished(turn, failure))
 
     def on_chat_app_progress(self, message: Progress) -> None:
@@ -284,11 +278,12 @@ class ChatApp(App):
         if message.turn is not self.turn:
             return
         event = message.event
-        if isinstance(event, (ResponseDelta, ResponseComplete)):
-            source = "message" if isinstance(event, ResponseComplete) and not event.final else "answer"
-            key = (source, event.message_id)
+        if isinstance(event, (ResponseDelta, SideMessage)):
+            key, actor = (
+                (event.segment, "Agent") if isinstance(event, ResponseDelta) else (event.message_id, event.actor)
+            )
             if key not in self.responses:
-                self.responses[key] = ResponseView(await self._append(event.actor, ""), event.actor)
+                self.responses[key] = ResponseView(await self._append(actor, ""), actor)
             response = self.responses[key]
             response.text = response.text + event.text if isinstance(event, ResponseDelta) else event.text
             self.dirty.add(key)

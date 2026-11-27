@@ -9,13 +9,13 @@ from typing import Literal
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from hayhooks.chat.events import ChatEvent, ReasoningSummary, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
+from hayhooks.chat.events import ChatEvent, ReasoningSummary, ResponseDelta, SideMessage, ToolFinished, ToolStarted
 
 _EVENT_TYPES = {
     "hayhooks.reasoning_summary": TypeAdapter(ReasoningSummary),
     "hayhooks.tool_call": TypeAdapter(ToolStarted),
     "hayhooks.tool_result": TypeAdapter(ToolFinished),
-    "hayhooks.message": TypeAdapter(ResponseComplete),
+    "hayhooks.message": TypeAdapter(SideMessage),
 }
 
 
@@ -34,7 +34,8 @@ class ChatError(Exception):
 
 @dataclass(frozen=True)
 class _Frame:
-    events: tuple[ChatEvent, ...] = ()
+    event: ChatEvent | None = None
+    text: str | None = None
     complete: bool = False
     failure: str | None = None
 
@@ -137,8 +138,6 @@ def _custom_event(event: dict, progress: Callable[[str], None]) -> ChatEvent | N
         except json.JSONDecodeError:
             arguments = parsed.arguments
         return ToolStarted(parsed.call_id, parsed.actor, parsed.name, arguments)
-    if isinstance(parsed, ResponseComplete):
-        return ResponseComplete(parsed.message_id, parsed.actor, parsed.text)
     return parsed
 
 
@@ -160,7 +159,6 @@ def _choice_frame(payload: dict) -> _Frame:
     finish = choice.get("finish_reason")
     if (content is not None and not isinstance(content, str)) or (finish is not None and not isinstance(finish, str)):
         raise _invalid_data()
-    events = (ResponseDelta("answer", "Agent", content),) if content else ()
     failure = {
         "length": (
             "The model reached its output limit or the Agent reached its step limit. "
@@ -169,7 +167,7 @@ def _choice_frame(payload: dict) -> _Frame:
         ),
         "content_filter": "The model filtered the response. Revise the request or check the deployment's policy",
     }.get(finish)
-    return _Frame(events, complete=finish == "stop", failure=failure)
+    return _Frame(text=content, complete=finish == "stop", failure=failure)
 
 
 def _decode(data: str, progress: Callable[[str], None]) -> _Frame:
@@ -191,8 +189,7 @@ def _decode(data: str, progress: Callable[[str], None]) -> _Frame:
     event = payload["event"]
     if not isinstance(event, dict) or not isinstance(event.get("type"), str):
         raise _invalid_data()
-    parsed = _custom_event(event, progress)
-    return _Frame((parsed,)) if parsed else _Frame()
+    return _Frame(event=_custom_event(event, progress))
 
 
 class ChatClient:
@@ -215,23 +212,29 @@ class ChatClient:
         message = f"Deployment '{_safe_detail(self.pipeline)}': {cause}. {action}."
         return ChatError(message, kind=kind)
 
-    def _http_error(self, response: httpx.Response) -> ChatError:
-        try:
-            detail, code = _diagnostic(response.json())
-        except ValueError:
-            detail, code = "", None
-        kind = _HTTP_FAILURES.get(response.status_code, "server")
-        if code in _PROVIDER_CODES:
-            kind = "provider"
-        cause = f"Server returned HTTP {response.status_code}: {detail or 'The server supplied no cause'}"
-        request_id = response.headers.get("x-request-id")
-        if request_id:
-            cause += f" (request {_safe_detail(request_id)})"
-        return self._error(kind, cause)
+    async def _check_response(self, response: httpx.Response) -> None:
+        if response.is_error:
+            await response.aread()
+            try:
+                detail, code = _diagnostic(response.json())
+            except ValueError:
+                detail, code = "", None
+            kind = _HTTP_FAILURES.get(response.status_code, "server")
+            if code in _PROVIDER_CODES:
+                kind = "provider"
+            cause = f"Server returned HTTP {response.status_code}: {detail or 'The server supplied no cause'}"
+            request_id = response.headers.get("x-request-id")
+            if request_id:
+                cause += f" (request {_safe_detail(request_id)})"
+            raise self._error(kind, cause)
+        if "text/event-stream" not in response.headers.get("content-type", ""):
+            message = "The deployment did not return a chat event stream"
+            failure = self._error("protocol", message)
+            raise failure
 
     async def run(self, prompt: str, progress: Callable[[str], None], *, emit: Callable[[ChatEvent], None]) -> str:
         messages = [*self.history, {"role": "user", "content": prompt}]
-        text: list[str] = []
+        segments: list[list[str]] = [[]]
         complete = False
         timeout = httpx.Timeout(10.0, read=None)
         progress("Connecting")
@@ -244,23 +247,20 @@ class ChatClient:
                     json={"model": self.pipeline, "messages": messages, "stream": True},
                 ) as response,
             ):
-                if response.is_error:
-                    await response.aread()
-                    raise self._http_error(response)
-                if "text/event-stream" not in response.headers.get("content-type", ""):
-                    message = "The deployment did not return a chat event stream"
-                    failure = self._error("protocol", message)
-                    raise failure
+                await self._check_response(response)
                 progress(f"Connected · {self.pipeline}")
                 async for data in _sse_data(_sse_lines(response)):
                     try:
                         frame = _decode(data, progress)
                     except ChatError as error:
                         raise self._error(error.kind, str(error)) from error
-                    for event in frame.events:
-                        emit(event)
-                        if isinstance(event, ResponseDelta):
-                            text.append(event.text)
+                    if isinstance(frame.event, ToolStarted) and segments[-1]:
+                        segments.append([])
+                    if frame.event is not None:
+                        emit(frame.event)
+                    if frame.text:
+                        segments[-1].append(frame.text)
+                        emit(ResponseDelta(len(segments) - 1, frame.text))
                     if frame.failure:
                         failure = self._error("provider", frame.failure)
                         raise failure
@@ -273,7 +273,6 @@ class ChatClient:
         if not complete:
             failure = self._error("incomplete", "The chat stream ended without a completion marker")
             raise failure
-        answer = "".join(text)
-        emit(ResponseComplete("answer", "Agent", answer, final=True))
+        answer = "\n\n".join("".join(segment) for segment in segments if segment)
         self.history = [*messages, {"role": "assistant", "content": answer}]
         return answer

@@ -12,7 +12,7 @@ from haystack.tools import Tool
 
 from hayhooks import BasePipelineWrapper, stream_agent_chat
 from hayhooks.chat.client import ChatClient, ChatError
-from hayhooks.chat.events import ReasoningSummary, ResponseComplete, ResponseDelta, ToolFinished, ToolStarted
+from hayhooks.chat.events import ReasoningSummary, ResponseDelta, ToolFinished, ToolStarted
 from hayhooks.server.pipelines.registry import _PipelineRegistry
 from hayhooks.server.routers.openai import create_openai_router
 from hayhooks.server.utils.module_loader import create_pipeline_wrapper_instance
@@ -138,7 +138,6 @@ async def test_terminal_model_failure_retains_text_without_success_or_history(
     assert [event.text for event in events if isinstance(event, ResponseDelta)] == ["Partial"]
     if tool_exit:
         assert [event.result for event in events if isinstance(event, ToolFinished)] == ["Found"]
-    assert not any(isinstance(event, ResponseComplete) and event.final for event in events)
     assert client.history == history
 
 
@@ -157,20 +156,21 @@ async def test_later_model_success_finishes_after_tool_result(chat_client, looku
     client = chat_client(Agent(chat_generator=generator, tools=[lookup_tool]))
     events = []
 
-    assert await client.run("Hi", lambda _: None, emit=events.append) == "Checking Done"
+    assert await client.run("Hi", lambda _: None, emit=events.append) == "Checking \n\nDone"
 
     assert [type(event) for event in events] == [
         ResponseDelta,
         ToolStarted,
         ToolFinished,
         ResponseDelta,
-        ResponseComplete,
     ]
     assert events[1].call_id == events[2].call_id
     assert events[1].call_id.endswith(":lookup-1")
     assert events[2].result == "Found"
-    assert events[-1].final is True
-    assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Checking Done"}]
+    assert client.history == [
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Checking \n\nDone"},
+    ]
 
 
 @pytest.mark.parametrize(("finish_reason", "text_at_finish"), [("stop", False), ("length", False), ("stop", True)])
@@ -235,7 +235,7 @@ async def test_success_without_assistant_text_commits_history(chat_client, looku
 
     assert await client.run("Hi", lambda _: None, emit=events.append) == ""
 
-    assert sum(isinstance(event, ResponseComplete) and event.final for event in events) == 1
+    assert not any(isinstance(event, ResponseDelta) for event in events)
     assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": ""}]
     if tool_exit:
         assert [event.result for event in events if isinstance(event, ToolFinished)] == ["Found"]
@@ -268,7 +268,6 @@ async def test_agent_step_limit_preserves_work_without_committing_history(chat_c
     assert "before" in str(error.value) and "retry" in str(error.value)
     assert [event.text for event in events if isinstance(event, ResponseDelta)] == ([preamble] if preamble else [])
     assert [event.result for event in events if isinstance(event, ToolFinished)] == ["Found"]
-    assert not any(isinstance(event, ResponseComplete) and event.final for event in events)
     assert client.history == []
 
 
@@ -285,7 +284,7 @@ async def test_text_success_on_last_available_step_commits_history(chat_client, 
     events = []
 
     assert await client.run("Hi", lambda _: None, emit=events.append) == "Done"
-    assert events[-1] == ResponseComplete("answer", "Agent", "Done", final=True)
+    assert events == [ResponseDelta(0, "Done")]
     assert client.history[-1] == {"role": "assistant", "content": "Done"}
 
 
@@ -330,7 +329,6 @@ async def test_failed_exit_tool_does_not_make_step_limit_success(chat_client, lo
     assert any(event.error for event in results)
     if historical_success:
         assert any(event.result == "Found" and not event.error for event in results)
-    assert not any(isinstance(event, ResponseComplete) and event.final for event in events)
     assert client.history == []
 
 
@@ -366,7 +364,7 @@ async def test_parallel_exit_ignores_failure_of_non_exit_tool(chat_client, looku
 
     assert await client.run("Hi", lambda _: None, emit=events.append) == ""
     assert [event.error for event in events if isinstance(event, ToolFinished)] == [True, False]
-    assert events[-1] == ResponseComplete("answer", "Agent", "", final=True)
+    assert not any(isinstance(event, ResponseDelta) for event in events)
 
 
 async def test_recovered_model_limit_without_final_stream_marker_succeeds(chat_client, lookup_tool):
@@ -381,9 +379,9 @@ async def test_recovered_model_limit_without_final_stream_marker_succeeds(chat_c
     client = chat_client(Agent(chat_generator=CompletionGenerator(replies), tools=[lookup_tool]))
     events = []
 
-    assert await client.run("Hi", lambda _: None, emit=events.append) == "Checking Done"
-    assert events[-1] == ResponseComplete("answer", "Agent", "Checking Done", final=True)
-    assert client.history[-1] == {"role": "assistant", "content": "Checking Done"}
+    assert await client.run("Hi", lambda _: None, emit=events.append) == "Checking \n\nDone"
+    assert events[-1] == ResponseDelta(1, "Done")
+    assert client.history[-1] == {"role": "assistant", "content": "Checking \n\nDone"}
 
 
 async def test_responses_reasoning_summary_is_display_only(chat_client, lookup_tool):
@@ -422,7 +420,6 @@ async def test_responses_reasoning_summary_is_display_only(chat_client, lookup_t
         ToolStarted,
         ToolFinished,
         ResponseDelta,
-        ResponseComplete,
     ]
     assert events[0] == ReasoningSummary(summary)
     assert client.history == [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Done"}]
@@ -444,7 +441,7 @@ async def test_v3_custom_hook_stop_can_complete_without_model_text(chat_client):
     events = []
 
     assert await client.run("Hi", lambda _: None, emit=events.append) == ""
-    assert events == [ResponseComplete("answer", "Agent", "", final=True)]
+    assert events == []
     assert client.history[-1] == {"role": "assistant", "content": ""}
 
     agent = Agent(chat_generator=CompletionGenerator([]), hooks={"before_llm": [finish]})
@@ -488,5 +485,4 @@ async def test_v3_hook_continuation_cannot_turn_step_limit_into_tool_success(cha
         await client.run("Hi", lambda _: None, emit=events.append)
 
     assert [event.result for event in events if isinstance(event, ToolFinished)] == ["Found"]
-    assert not any(isinstance(event, ResponseComplete) and event.final for event in events)
     assert client.history == []

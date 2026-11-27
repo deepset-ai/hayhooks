@@ -3,17 +3,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ResponseDelta:
-    message_id: str
-    actor: str
+    segment: int
     text: str
 
 
 @dataclass(frozen=True)
-class ResponseComplete:
+class SideMessage:
     message_id: str
     actor: str
     text: str
-    final: bool = False
 
 
 @dataclass(frozen=True)
@@ -36,4 +34,4 @@ class ToolFinished:
     error: bool = False
 
 
-ChatEvent = ResponseDelta | ResponseComplete | ReasoningSummary | ToolStarted | ToolFinished
+ChatEvent = ResponseDelta | SideMessage | ReasoningSummary | ToolStarted | ToolFinished
