@@ -9,11 +9,12 @@ permissions:
 
 env:
   HATCH_VERSION: "1.16.5"
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 jobs:
   tests-haystack-main:
     runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     strategy:
       fail-fast: false
       matrix:
