@@ -441,6 +441,17 @@ def _execute_pipeline_in_thread(
         _SYNC_STREAMING_QUEUE.reset(token)
 
 
+def _drain_external_queue_sync(
+    external_event_queue: Queue[StreamingChunk | PipelineEvent | str | dict[str, Any]],
+) -> Generator[StreamingChunk | PipelineEvent | str | dict[str, Any], None, None]:
+    """Yields everything currently in the external queue without blocking."""
+    while True:
+        try:
+            yield external_event_queue.get_nowait()
+        except Empty:
+            break
+
+
 def _stream_chunks_from_queue_sync(
     internal_queue: Queue[StreamingChunk | Exception | None],
     external_event_queue: Queue[StreamingChunk | PipelineEvent | str | dict[str, Any]] | None = None,
@@ -462,12 +473,7 @@ def _stream_chunks_from_queue_sync(
     while not pipeline_done:
         # Process items from external queue first (non-blocking)
         if external_event_queue is not None:
-            while True:
-                try:
-                    external_item = external_event_queue.get_nowait()
-                    yield external_item
-                except Empty:
-                    break
+            yield from _drain_external_queue_sync(external_event_queue)
 
         # Process items from internal queue (with small timeout to allow checking external queue)
         try:
@@ -482,6 +488,10 @@ def _stream_chunks_from_queue_sync(
             # No item available, continue polling
             # The queue.get timeout already prevents CPU spinning
             pass
+
+    # Events queued after the last drain at the top of the loop would otherwise be lost
+    if external_event_queue is not None:
+        yield from _drain_external_queue_sync(external_event_queue)
 
 
 def _cleanup_pipeline_sync(thread: threading.Thread) -> None:
@@ -809,6 +819,17 @@ def _detach_pipeline_task(pipeline_task: asyncio.Task) -> None:
     pipeline_task.add_done_callback(_handle_shielded_pipeline_task_done)
 
 
+async def _drain_external_queue(
+    external_event_queue: asyncio.Queue[StreamingChunk | PipelineEvent | str | dict[str, Any]],
+) -> AsyncGenerator[StreamingChunk | PipelineEvent | str | dict[str, Any], None]:
+    """Yields everything currently in the external queue without blocking."""
+    while not external_event_queue.empty():
+        try:
+            yield external_event_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+
+
 async def _stream_chunks_from_queue(
     queue: asyncio.Queue[StreamingChunk],
     pipeline_task: asyncio.Task,
@@ -831,12 +852,8 @@ async def _stream_chunks_from_queue(
     while not pipeline_task.done() or not queue.empty():
         # Process items from external queue first (non-blocking)
         if external_event_queue is not None:
-            while not external_event_queue.empty():
-                try:
-                    external_item = external_event_queue.get_nowait()
-                    yield external_item
-                except asyncio.QueueEmpty:
-                    break
+            async for external_item in _drain_external_queue(external_event_queue):
+                yield external_item
 
         try:
             chunk = await asyncio.wait_for(queue.get(), timeout=_QUEUE_POLL_TIMEOUT_SECONDS)
@@ -849,6 +866,11 @@ async def _stream_chunks_from_queue(
         except Exception as e:
             log.opt(exception=True).error("Unexpected error in async streaming generator: {}", e)
             raise
+
+    # Events queued after the last drain at the top of the loop would otherwise be lost
+    if external_event_queue is not None:
+        async for external_item in _drain_external_queue(external_event_queue):
+            yield external_item
 
     # Final check for exception after draining queue
     _check_pipeline_task_exception(pipeline_task)
